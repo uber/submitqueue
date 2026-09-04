@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -48,7 +48,7 @@ func TestRequestStore_Get(t *testing.T) {
 		ID:           "monorepo/1",
 		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -137,7 +137,7 @@ func TestRequestStore_Create(t *testing.T) {
 		ID:           "monorepo/1",
 		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -204,7 +204,7 @@ func TestRequestStore_Update(t *testing.T) {
 		ID:           "monorepo/1",
 		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"}},
-		LandStrategy: mergestrategy.MergeStrategySquashRebase,
+		LandStrategy: landstrategy.StrategySquashRebase,
 		State:        entity.RequestStateValidated,
 		Version:      oldVersion,
 	}

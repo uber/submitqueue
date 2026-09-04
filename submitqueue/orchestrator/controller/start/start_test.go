@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
@@ -114,7 +114,7 @@ func TestController_Process_Success(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 	})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
@@ -155,7 +155,7 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 		ID:           "test-queue/42",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategySquashRebase,
+		LandStrategy: landstrategy.StrategySquashRebase,
 	}
 	delivery := makeDelivery(t, ctrl, landRequest)
 	require.NoError(t, controller.Process(context.Background(), delivery))
@@ -171,11 +171,11 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 func TestController_Process_AllStrategies(t *testing.T) {
 	tests := []struct {
 		name     string
-		strategy mergestrategy.MergeStrategy
+		strategy landstrategy.Strategy
 	}{
-		{"rebase", mergestrategy.MergeStrategyRebase},
-		{"squash rebase", mergestrategy.MergeStrategySquashRebase},
-		{"merge", mergestrategy.MergeStrategyMerge},
+		{"rebase", landstrategy.StrategyRebase},
+		{"squash rebase", landstrategy.StrategySquashRebase},
+		{"merge", landstrategy.StrategyMerge},
 	}
 
 	for _, tt := range tests {
@@ -203,7 +203,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 	})
 
 	assert.Error(t, controller.Process(context.Background(), delivery))
@@ -223,7 +223,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 	})
 
 	err := controller.Process(context.Background(), delivery)
@@ -245,7 +245,7 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 	})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))

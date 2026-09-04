@@ -33,11 +33,11 @@ func TestDLQBatchController_InterfaceAndAccessors(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
-	assert.Equal(t, "submitqueue-merge_dlq", c.Name())
-	assert.Equal(t, consumer.TopicKey("submitqueue-merge_dlq"), c.TopicKey())
-	assert.Equal(t, "orchestrator-merge-dlq", c.ConsumerGroup())
+	assert.Equal(t, "submitqueue-land_dlq", c.Name())
+	assert.Equal(t, consumer.TopicKey("submitqueue-land_dlq"), c.TopicKey())
+	assert.Equal(t, "orchestrator-land-dlq", c.ConsumerGroup())
 }
 
 func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
@@ -46,7 +46,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batch := entity.Batch{
 		ID: "q/batch/9", Queue: "q", Contains: []string{"q/1"},
-		State: entity.BatchStateMerging, Version: 2,
+		State: entity.BatchStateLanding, Version: 2,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), "q/batch/9").Return(batch, nil)
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
@@ -67,7 +67,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
 	payload, err := entity.BatchID{ID: "q/batch/9"}.ToBytes()
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestDLQBatchController_Process_MalformedPayloadFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	err := c.Process(context.Background(), delivery)
@@ -93,7 +93,7 @@ func TestDLQBatchController_Process_EmptyIDFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
 	payload, err := entity.BatchID{ID: ""}.ToBytes()
 	require.NoError(t, err)

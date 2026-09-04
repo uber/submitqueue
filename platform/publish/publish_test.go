@@ -143,8 +143,8 @@ func TestIntentID(t *testing.T) {
 		{
 			name:     "single cause",
 			entityID: "batch-1",
-			cause:    []string{"merged"},
-			want:     "batch-1/merged",
+			cause:    []string{"landed"},
+			want:     "batch-1/landed",
 		},
 		{
 			name:     "multiple causes join in order",
@@ -164,9 +164,9 @@ func TestIntentID(t *testing.T) {
 // The convention only works if the same cause is repeatable and a different
 // cause is distinguishable — the two properties every call site relies on.
 func TestIntentID_StableAcrossCallsAndDistinctPerCause(t *testing.T) {
-	assert.Equal(t, IntentID("batch-1", "merged"), IntentID("batch-1", "merged"))
-	assert.NotEqual(t, IntentID("batch-1", "merged"), IntentID("batch-1"))
-	assert.NotEqual(t, IntentID("batch-1", "merged"), IntentID("batch-1", "cancelling"))
+	assert.Equal(t, IntentID("batch-1", "landed"), IntentID("batch-1", "landed"))
+	assert.NotEqual(t, IntentID("batch-1", "landed"), IntentID("batch-1"))
+	assert.NotEqual(t, IntentID("batch-1", "landed"), IntentID("batch-1", "cancelling"))
 }
 
 func TestUniqueID(t *testing.T) {

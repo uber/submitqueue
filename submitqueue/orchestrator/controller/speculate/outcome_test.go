@@ -30,10 +30,10 @@ func setOf(entries ...entity.SpeculationPathEntry) entity.SpeculationPathSet {
 	return entity.SpeculationPathSet{Head: head, Paths: entries}
 }
 
-// The payoff case: a head merges as soon as the dependencies its passed build
+// The payoff case: a head lands as soon as the dependencies its passed build
 // was stacked on have landed, without waiting for the ones it was built
 // without or told to ignore.
-func TestMergeablePath(t *testing.T) {
+func TestLandablePath(t *testing.T) {
 	const (
 		succeeds = entity.DependencyAssumptionSucceeds
 		fails    = entity.DependencyAssumptionFails
@@ -49,23 +49,23 @@ func TestMergeablePath(t *testing.T) {
 		// dep2 is settled the way its assumption expects throughout, so dep1
 		// is the only thing under test.
 		{
-			name:       "waits for an assumed-succeeding dependency to merge",
+			name:       "waits for an assumed-succeeding dependency to land",
 			assumption: [2]entity.DependencyAssumption{succeeds, fails},
 			dep1State:  entity.BatchStateSpeculating,
 			dep2State:  entity.BatchStateFailed,
 			want:       false,
 		},
 		{
-			name:       "merges once it has",
+			name:       "lands once it has",
 			assumption: [2]entity.DependencyAssumption{succeeds, fails},
 			dep1State:  entity.BatchStateSucceeded,
 			dep2State:  entity.BatchStateFailed,
 			want:       true,
 		},
 		{
-			name:       "an assumed-succeeding dependency waits out its merge",
+			name:       "an assumed-succeeding dependency waits out its land",
 			assumption: [2]entity.DependencyAssumption{succeeds, fails},
-			dep1State:  entity.BatchStateMerging,
+			dep1State:  entity.BatchStateLanding,
 			dep2State:  entity.BatchStateFailed,
 			want:       false,
 		},
@@ -77,9 +77,9 @@ func TestMergeablePath(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "still waits while that dependency is merging",
+			name:       "still waits while that dependency is landing",
 			assumption: [2]entity.DependencyAssumption{fails, fails},
-			dep1State:  entity.BatchStateMerging,
+			dep1State:  entity.BatchStateLanding,
 			dep2State:  entity.BatchStateFailed,
 			want:       false,
 		},
@@ -91,14 +91,14 @@ func TestMergeablePath(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "merges once it has failed",
+			name:       "lands once it has failed",
 			assumption: [2]entity.DependencyAssumption{fails, fails},
 			dep1State:  entity.BatchStateFailed,
 			dep2State:  entity.BatchStateFailed,
 			want:       true,
 		},
 		{
-			name:       "merges once it has been cancelled",
+			name:       "lands once it has been cancelled",
 			assumption: [2]entity.DependencyAssumption{fails, fails},
 			dep1State:  entity.BatchStateCancelled,
 			dep2State:  entity.BatchStateFailed,
@@ -120,14 +120,14 @@ func TestMergeablePath(t *testing.T) {
 				dep2 = entity.BatchStateSpeculating
 			}
 			set := setOf(passedPath(tt.assumption[0], tt.assumption[1]))
-			_, ok := mergeablePath(set, snapWith(tt.dep1State, dep2))
+			_, ok := landablePath(set, snapWith(tt.dep1State, dep2))
 			assert.Equal(t, tt.want, ok)
 		})
 	}
 }
 
 // A path that has not passed cannot carry the head out of the queue.
-func TestMergeablePath_IgnoresUnpassedPaths(t *testing.T) {
+func TestLandablePath_IgnoresUnpassedPaths(t *testing.T) {
 	for _, status := range []entity.SpeculationPathStatus{
 		entity.SpeculationPathStatusPending,
 		entity.SpeculationPathStatusBuilding,
@@ -138,19 +138,19 @@ func TestMergeablePath_IgnoresUnpassedPaths(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			set := setOf(entryFor(
 				pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds), status))
-			_, ok := mergeablePath(set, snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded))
+			_, ok := landablePath(set, snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded))
 			assert.False(t, ok)
 		})
 	}
 }
 
 // A passed build whose assumptions reality has since contradicted is not a
-// licence to merge — it verified a world that did not happen.
-func TestMergeablePath_ExcludesBrokenPassedPath(t *testing.T) {
+// licence to land — it verified a world that did not happen.
+func TestLandablePath_ExcludesBrokenPassedPath(t *testing.T) {
 	set := setOf(passedPath(entity.DependencyAssumptionFails, entity.DependencyAssumptionFails))
 
 	// The path was built without dep1, but dep1 landed after all.
-	_, ok := mergeablePath(set, snapWith(entity.BatchStateSucceeded, entity.BatchStateSpeculating))
+	_, ok := landablePath(set, snapWith(entity.BatchStateSucceeded, entity.BatchStateSpeculating))
 	assert.False(t, ok)
 }
 
@@ -180,7 +180,7 @@ func TestBypassablePath(t *testing.T) {
 			head:      headBatch,
 			set:       setOf(allPaths...),
 			dep1State: entity.BatchStateSpeculating,
-			dep2State: entity.BatchStateMerging,
+			dep2State: entity.BatchStateLanding,
 			want:      true,
 		},
 		{
@@ -266,7 +266,7 @@ func TestBypassablePath(t *testing.T) {
 			dep2State: entity.BatchStateSpeculating,
 		},
 		{
-			name:      "leaves fully settled dependencies to strict merge",
+			name:      "leaves fully settled dependencies to strict land",
 			head:      headBatch,
 			set:       setOf(allPaths...),
 			dep1State: entity.BatchStateSucceeded,
@@ -285,10 +285,10 @@ func TestBypassablePath(t *testing.T) {
 	}
 }
 
-// livePassedPath is mergeablePath without the settled requirement, and the gap
+// livePassedPath is landablePath without the settled requirement, and the gap
 // between the two is the head's waiting room: its own work is done and all that
 // remains is other batches finishing. That window is reported to the members,
-// so it has to be recognised while mergeablePath still says no.
+// so it has to be recognised while landablePath still says no.
 func TestLivePassedPath(t *testing.T) {
 	const (
 		succeeds = entity.DependencyAssumptionSucceeds
@@ -404,12 +404,12 @@ func TestDecide(t *testing.T) {
 		pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails),
 		entity.SpeculationPathStatusBuilding)
 
-	assert.Equal(t, outcomeMerge, decide(headBatch, setOf(passed), allResolved))
+	assert.Equal(t, outcomeLand, decide(headBatch, setOf(passed), allResolved))
 	assert.Equal(t, outcomeFail, decide(headBatch, setOf(failed), allResolved))
 	assert.Equal(t, outcomeWait, decide(headBatch, setOf(building), allResolved))
 
 	// A passed path wins over a failed sibling: one way through is enough.
-	assert.Equal(t, outcomeMerge, decide(headBatch, setOf(failed, passed), allResolved))
+	assert.Equal(t, outcomeLand, decide(headBatch, setOf(failed, passed), allResolved))
 
 	allUnresolved := snapWith(entity.BatchStateSpeculating, entity.BatchStateSpeculating)
 	fullCoverage := setOf(
@@ -418,7 +418,7 @@ func TestDecide(t *testing.T) {
 		passedPath(entity.DependencyAssumptionFails, entity.DependencyAssumptionSucceeds),
 		passedPath(entity.DependencyAssumptionFails, entity.DependencyAssumptionFails),
 	)
-	assert.Equal(t, outcomeMerge, decide(headBatch, fullCoverage, allUnresolved))
+	assert.Equal(t, outcomeLand, decide(headBatch, fullCoverage, allUnresolved))
 }
 
 // Once a path has passed, its siblings cannot help the head but are still

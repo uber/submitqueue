@@ -118,7 +118,7 @@ services:
       mysql-queue:
         condition: service_healthy
 
-  # Runway performs the merge-conflict check and the committing merge. The
+  # Runway performs the land-conflict check and the committing land. The
   # orchestrator hands work to it on runway-owned topics and blocks on the
   # signal topics, so without runway a request stalls at "started". It only
   # needs the queue DB (shared with the orchestrator over mysql-queue); it has

@@ -1,0 +1,13 @@
+# Land targets for the "fake" example: there are none.
+#
+# Nothing here lands. The noop lander reports success without touching a
+# repository, which is what lets a request reach `landed` with no repository to
+# land into.
+#
+# That is the mode's limit, and worth knowing before reading anything into a
+# green run: `landed` here means the pipeline ran to completion, not that a
+# commit exists anywhere. Switch to PROVIDER=git for a real land into a local
+# repository, still without a credential — see ../git/land.yaml.
+
+defaults:
+  lander: {type: noop}

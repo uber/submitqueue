@@ -24,7 +24,7 @@ go_test(
     embed = [":go_default_library"],
     deps = [
         "//platform/base/change:go_default_library",
-        "//platform/base/mergestrategy:go_default_library",
+        "//platform/base/landstrategy:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/consumer/mock:go_default_library",

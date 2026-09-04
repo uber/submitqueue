@@ -38,7 +38,7 @@ const fakeRepo = "demo"
 // queue work, and the reason the quickstart needs neither a repository nor a
 // credential — at the cost of the URIs pointing at nothing, which is only
 // sound because the fake change provider echoes back whatever it is handed and
-// the noop merger never tries to fetch it.
+// the noop lander never tries to fetch it.
 type fakeSource struct{}
 
 func (fakeSource) baseSHA(_ context.Context, branch string) (string, error) {

@@ -43,9 +43,9 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dependencyanalysis"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/land"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/landconflictsignal"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/landsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/validate"
@@ -95,9 +95,9 @@ type Deps struct {
 //
 // Pipeline:
 //
-//	start → cancel → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → speculate → build → buildsignal ─┐
+//	start → cancel → validate ⇢ (runway) ⇢ landconflictsignal → batch → speculate → build → buildsignal ─┐
 //	                                                                       ↑  ↘             ↻ poll       │
-//	                                                                       │   merge → conclude          │
+//	                                                                       │   land → conclude           │
 //	                                                                       │     │                       │
 //	                                                                       └─────┴───────────────────────┘
 var Stages = []pipeline.Stage[Deps]{
@@ -128,21 +128,21 @@ var Stages = []pipeline.Stage[Deps]{
 		Name:          "validate",
 		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return validate.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, d.ChangeProvider, d.Validator, runwaymq.TopicKeyMergeConflictCheck, sc.TopicKey, sc.ConsumerGroup), nil
+			return validate.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, d.ChangeProvider, d.Validator, runwaymq.TopicKeyLandConflictCheck, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
-		Key:           runwaymq.TopicKeyMergeConflictCheckSignal,
-		Name:          "merge-conflict-check-signal",
+		Key:           runwaymq.TopicKeyLandConflictCheckSignal,
+		Name:          "land-conflict-check-signal",
 		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return mergeconflictsignal.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return landconflictsignal.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQMergeConflictSignalController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQLandConflictSignalController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
@@ -201,25 +201,25 @@ var Stages = []pipeline.Stage[Deps]{
 		},
 	},
 	{
-		Key:           topickey.TopicKeyMerge,
-		Name:          "submitqueue-merge",
+		Key:           topickey.TopicKeyLand,
+		Name:          "submitqueue-land",
 		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return merge.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, runwaymq.TopicKeyMerge, sc.TopicKey, sc.ConsumerGroup), nil
+			return land.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, runwaymq.TopicKeyLand, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
-		Key:           runwaymq.TopicKeyMergeSignal,
-		Name:          "merge-signal",
+		Key:           runwaymq.TopicKeyLandSignal,
+		Name:          "land-signal",
 		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return mergesignal.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return landsignal.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQMergeSignalController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQLandSignalController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
@@ -257,10 +257,10 @@ var Stages = []pipeline.Stage[Deps]{
 var PublishOnlyTopics = []pipeline.PublishOnlyTopic{
 	// Log: the orchestrator emits request-log entries; the gateway consumes them.
 	{Key: topickey.TopicKeyLog, Name: "log"},
-	// Merge-conflict check: the orchestrator publishes check requests to runway.
-	{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check"},
-	// Merge: the orchestrator publishes merge requests to runway.
-	{Key: runwaymq.TopicKeyMerge, Name: "runway-merge"},
+	// Land-conflict check: the orchestrator publishes check requests to runway.
+	{Key: runwaymq.TopicKeyLandConflictCheck, Name: "land-conflict-check"},
+	// Land: the orchestrator publishes land requests to runway.
+	{Key: runwaymq.TopicKeyLand, Name: "runway-land"},
 }
 
 // Controllers holds the orchestrator's RPC-facing controllers, constructed

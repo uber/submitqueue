@@ -26,7 +26,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/client"
 )
 
-// gitRemote is the authority in the change URIs this source mints. The merger
+// gitRemote is the authority in the change URIs this source mints. The lander
 // reads the ref and commit out of a URI and reaches the repository through its
 // own configured remote, so this identifies a change rather than routing to it
 // — which is why a local sandbox can carry a hostname it does not answer to.

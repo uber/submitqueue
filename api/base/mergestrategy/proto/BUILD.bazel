@@ -1,4 +1,0 @@
-exports_files(
-    ["mergestrategy.proto"],
-    visibility = ["//tool/proto:__pkg__"],
-)

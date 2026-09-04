@@ -10,10 +10,10 @@ go_proto_generated_files(
 )
 
 go_proto_generated_files(
-    name = "api_base_mergestrategy",
-    srcs = ["//api/base/mergestrategy/proto:mergestrategy.proto"],
+    name = "api_base_landstrategy",
+    srcs = ["//api/base/landstrategy/proto:landstrategy.proto"],
     gen_services = False,
-    out_dir = "api_base_mergestrategy",
+    out_dir = "api_base_landstrategy",
 )
 
 go_proto_generated_files(
@@ -35,11 +35,11 @@ go_proto_generated_files(
 
 go_proto_generated_files(
     name = "api_runway_messagequeue",
-    srcs = ["//api/runway/messagequeue/proto:merge.proto"],
+    srcs = ["//api/runway/messagequeue/proto:land.proto"],
     gen_services = False,
     imports = [
         "//api/base/change/proto:change.proto",
-        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/base/landstrategy/proto:landstrategy.proto",
         "//api/base/messagequeue/proto:messagequeue.proto",
     ],
     out_dir = "api_runway_messagequeue",
@@ -56,7 +56,7 @@ go_proto_generated_files(
     srcs = ["//api/submitqueue/gateway/proto:gateway.proto"],
     imports = [
         "//api/base/change/proto:change.proto",
-        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/base/landstrategy/proto:landstrategy.proto",
     ],
     out_dir = "api_submitqueue_gateway",
 )
@@ -94,7 +94,7 @@ filegroup(
     srcs = [
         ":api_base_change",
         ":api_base_hook",
-        ":api_base_mergestrategy",
+        ":api_base_landstrategy",
         ":api_base_messagequeue",
         ":api_runway",
         ":api_runway_messagequeue",

@@ -1,6 +1,6 @@
 # SubmitQueue Services
 
-Runnable wiring for the **SubmitQueue** domain's two services — the Gateway (entry point for land requests) and the Orchestrator (coordinates the pipeline) — wired with MySQL-backed extensions. The full Docker Compose workflow also starts Runway, which performs merge-conflict checks and merges.
+Runnable wiring for the **SubmitQueue** domain's two services — the Gateway (entry point for land requests) and the Orchestrator (coordinates the pipeline) — wired with MySQL-backed extensions. The full Docker Compose workflow also starts Runway, which performs land-conflict checks and lands changes.
 
 ## Starting
 

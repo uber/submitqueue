@@ -281,12 +281,12 @@ row appears on topic "start", partition key "monorepo/exp"
                  gateway              orchestrator          stovepipe            runway
 ────────────────────────────────────────────────────────────────────────────────────────────
  Deps seams   counter · storage ·  changeprovider ·      storage · counter ·  storage ·
-              queueconfig.Store ·  buildrunner · scorer  sourcecontrol.       merger Factory
+              queueconfig.Store ·  buildrunner · scorer  sourcecontrol.       lander Factory
               requestlog store     analyzer · validator  Factory ·
                                    (+7 speculation)      queueconfig.Store
 
- Stages       log                  start · cancel ·      process              mergeconflictcheck ·
- (rows)                            validate · batch ·                         merge
+ Stages       log                  start · cancel ·      process              landconflictcheck ·
+ (rows)                            validate · batch ·                         land
                                    … (+ DLQ column)
 
  Controllers  Gateway              Orchestrator          Stovepipe            Runway

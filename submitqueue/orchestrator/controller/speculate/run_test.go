@@ -187,7 +187,7 @@ func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculat
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: topickey.TopicKeyBuild, Name: "build", Queue: q},
-		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: q},
+		{Key: topickey.TopicKeyLand, Name: "submitqueue-land", Queue: q},
 		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: q},
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
 		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
@@ -279,20 +279,20 @@ func TestRun_PassesSnapshotToSpeculator(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	spec := &scriptedSpeculator{}
 
-	merging := entity.Batch{ID: "q/batch/merging", Queue: "q", State: entity.BatchStateMerging, Version: 1}
-	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead(), merging})
+	landing := entity.Batch{ID: "q/batch/landing", Queue: "q", State: entity.BatchStateLanding, Version: 1}
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead(), landing})
 	h.noBuildsDispatched()
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
 	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSpeculating}, nil)
 
 	existing := entity.SpeculationPathSet{Head: head, Version: 3}
 	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(existing, nil)
-	h.pathSets.EXPECT().Get(gomock.Any(), merging.ID).Return(entity.SpeculationPathSet{}, storage.ErrNotFound)
+	h.pathSets.EXPECT().Get(gomock.Any(), landing.ID).Return(entity.SpeculationPathSet{}, storage.ErrNotFound)
 
 	require.NoError(t, h.run(head))
 
 	require.Equal(t, 1, spec.calls)
-	assert.ElementsMatch(t, []string{dep1, dep2, head, merging.ID}, h.speculatedOver(),
+	assert.ElementsMatch(t, []string{dep1, dep2, head, landing.ID}, h.speculatedOver(),
 		"every batch the run read, in no particular order")
 	require.Len(t, spec.gotSets, 1)
 	assert.Equal(t, int32(3), spec.gotSets[0].Version)
@@ -525,7 +525,7 @@ func TestRun_DoesNotReReadFinishedPaths(t *testing.T) {
 	spec := &scriptedSpeculator{}
 
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead()})
-	// dep1 is unresolved, so the passed path cannot merge — this test is about
+	// dep1 is unresolved, so the passed path cannot land — this test is about
 	// observation being skipped, not about outcomes.
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSpeculating}, nil)
 	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateFailed}, nil)
@@ -633,7 +633,7 @@ func TestRun_DecidedHeadIsNotSpeculatedOn(t *testing.T) {
 
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead()})
 	h.noBuildsDispatched()
-	// Both dependencies resolved the way the passed path assumed, so it merges.
+	// Both dependencies resolved the way the passed path assumed, so it lands.
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
 	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateFailed}, nil)
 	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
@@ -642,26 +642,26 @@ func TestRun_DecidedHeadIsNotSpeculatedOn(t *testing.T) {
 		Version: 1,
 	}, nil)
 
-	// The head moves to merging. Its set is untouched: the only path is the
+	// The head moves to landing. Its set is untouched: the only path is the
 	// winner, and no proposal was applied.
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).
 		Return(nil)
 
 	require.NoError(t, h.run(head))
 
 	assert.Zero(t, spec.calls, "a decided head leaves nothing to speculate about")
-	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
-	assert.Contains(t, h.filed, entity.QueueBatchState{Queue: "q", State: entity.BatchStateMerging, BatchID: head},
+	assert.Equal(t, []string{"submitqueue-land"}, h.published)
+	assert.Contains(t, h.filed, entity.QueueBatchState{Queue: "q", State: entity.BatchStateLanding, BatchID: head},
 		"the outcome must file the head under its new state")
 	assert.Contains(t, h.unfiled, entity.QueueBatchState{State: entity.BatchStateSpeculating, BatchID: head},
 		"and drop the record under the state it left")
 }
 
-// The churn this ordering removes: a mergeable head must not gain a funded path
+// The churn this ordering removes: a landable head must not gain a funded path
 // that the same run immediately cancels — the dispatch would have started CI
 // for work nothing waits for.
-func TestRun_MergeableHeadGainsNoNewPath(t *testing.T) {
+func TestRun_LandableHeadGainsNoNewPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
 	other := pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionFails)
@@ -689,13 +689,13 @@ func TestRun_MergeableHeadGainsNoNewPath(t *testing.T) {
 
 	h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).
 		DoAndReturn(func(_ context.Context, s entity.SpeculationPathSet, _, _ int32) error {
-			require.Len(t, s.Paths, 2, "no path was funded for a head that is merging")
+			require.Len(t, s.Paths, 2, "no path was funded for a head that is landing")
 			assert.Equal(t, entity.SpeculationPathStatusPassed, s.Paths[0].Status)
 			assert.Equal(t, entity.SpeculationPathStatusCancelling, s.Paths[1].Status)
 			return nil
 		})
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).
 		Return(nil)
 
 	require.NoError(t, h.run(head))
@@ -705,7 +705,7 @@ func TestRun_MergeableHeadGainsNoNewPath(t *testing.T) {
 // The dispatch is what takes a batch out of this stage's hands, so sending it
 // before the write would let Runway act on an outcome a lost compare-and-swap
 // refused to record.
-func TestRun_MergeableHeadDispatchesAfterTheStateWrite(t *testing.T) {
+func TestRun_LandableHeadDispatchesAfterTheStateWrite(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
 
@@ -721,21 +721,21 @@ func TestRun_MergeableHeadDispatchesAfterTheStateWrite(t *testing.T) {
 
 	var publishedBeforeWrite []string
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).
 		DoAndReturn(func(context.Context, entity.Batch, int32, int32) error {
 			publishedBeforeWrite = append([]string(nil), h.published...)
 			return nil
 		})
 
 	require.NoError(t, h.run(head))
-	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
+	assert.Equal(t, []string{"submitqueue-land"}, h.published)
 	assert.Empty(t, publishedBeforeWrite,
-		"nothing may reach the merge stage before the state it acts on is written")
+		"nothing may reach the land stage before the state it acts on is written")
 }
 
 // The other half: a lost write means another writer owns the batch, so the
 // dispatch it would have justified is never sent.
-func TestRun_MergeableHeadDispatchesNothingWhenTheStateCASLoses(t *testing.T) {
+func TestRun_LandableHeadDispatchesNothingWhenTheStateCASLoses(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
 
@@ -749,7 +749,7 @@ func TestRun_MergeableHeadDispatchesNothingWhenTheStateCASLoses(t *testing.T) {
 		Version: 1,
 	}, nil).AnyTimes()
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).
 		Return(storage.ErrVersionMismatch)
 
 	require.NoError(t, h.run(head))
@@ -999,44 +999,44 @@ func TestRun_CancellingLostPathSetRaceSkipsTheTerminalWrite(t *testing.T) {
 }
 
 // The allocator rations a budget measured in occupied CI slots, and a path
-// holds its slot until its build actually stops. A merging head's superseded
+// holds its slot until its build actually stops. A landing head's superseded
 // siblings are still running, so hiding their set would let the allocator count
 // those slots as free and oversubscribe CI.
 func TestRun_SpeculatorSeesPathSetsOfNonOpenHeads(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	spec := &scriptedSpeculator{}
 
-	merging := entity.Batch{
-		ID: "q/batch/merging", Queue: "q", State: entity.BatchStateMerging, Version: 1,
+	landing := entity.Batch{
+		ID: "q/batch/landing", Queue: "q", State: entity.BatchStateLanding, Version: 1,
 	}
 	open := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 
-	h := newRunHarness(t, ctrl, spec, []entity.Batch{open, merging})
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{open, landing})
 	h.noBuildsDispatched()
 	h.pathSets.EXPECT().Get(gomock.Any(), head).
 		Return(entity.SpeculationPathSet{Head: head, Version: 1}, nil)
-	h.pathSets.EXPECT().Get(gomock.Any(), merging.ID).Return(entity.SpeculationPathSet{
-		Head: merging.ID,
+	h.pathSets.EXPECT().Get(gomock.Any(), landing.ID).Return(entity.SpeculationPathSet{
+		Head: landing.ID,
 		Paths: []entity.SpeculationPathEntry{
 			{ID: "still-running", Status: entity.SpeculationPathStatusCancelling, Attempt: 1},
 		},
 		Version: 1,
 	}, nil)
-	// The undispatched cancelling path is marked cancelled, so the merging head's set is
+	// The undispatched cancelling path is marked cancelled, so the landing head's set is
 	// rewritten even though it is closed to new work.
 	h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).
 		DoAndReturn(func(_ context.Context, s entity.SpeculationPathSet, _, _ int32) error {
-			assert.Equal(t, merging.ID, s.Head)
+			assert.Equal(t, landing.ID, s.Head)
 			assert.Equal(t, entity.SpeculationPathStatusCancelled, s.Paths[0].Status)
 			return nil
 		})
 
 	require.NoError(t, h.run(head))
 
-	assert.ElementsMatch(t, []entity.Batch{open, merging}, spec.gotBatches,
+	assert.ElementsMatch(t, []entity.Batch{open, landing}, spec.gotBatches,
 		"a closed head is still a fact the open ones are planned against")
 	require.Len(t, spec.gotSets, 2, "every in-flight path set counts against the budget")
-	assert.Equal(t, merging.ID, spec.gotSets[1].Head)
+	assert.Equal(t, landing.ID, spec.gotSets[1].Head)
 }
 
 // A queue whose only in-flight head is closed to new work still has to be
@@ -1047,13 +1047,13 @@ func TestRun_PersistsObservationsWithNoOpenHead(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	spec := &scriptedSpeculator{}
 
-	merging := entity.Batch{
-		ID: "q/batch/merging", Queue: "q", State: entity.BatchStateMerging, Version: 1,
+	landing := entity.Batch{
+		ID: "q/batch/landing", Queue: "q", State: entity.BatchStateLanding, Version: 1,
 	}
 
-	h := newRunHarness(t, ctrl, spec, []entity.Batch{merging})
-	h.pathSets.EXPECT().Get(gomock.Any(), merging.ID).Return(entity.SpeculationPathSet{
-		Head: merging.ID,
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{landing})
+	h.pathSets.EXPECT().Get(gomock.Any(), landing.ID).Return(entity.SpeculationPathSet{
+		Head: landing.ID,
 		Paths: []entity.SpeculationPathEntry{
 			{ID: "p1", Status: entity.SpeculationPathStatusCancelling, Attempt: 1},
 		},
@@ -1110,9 +1110,9 @@ func TestFanout_MintsADistinctMessageIDPerPublish(t *testing.T) {
 	assert.NotEqual(t, ids[0], ids[1])
 }
 
-// The merge dispatch is the mirror image: a batch merges once, so the ID has
+// The land dispatch is the mirror image: a batch lands once, so the ID has
 // to be stable across the redelivery and the self-heal that both re-derive it.
-func TestDispatchMerge_ReusesOneMessageIDPerBatch(t *testing.T) {
+func TestDispatchLand_ReusesOneMessageIDPerBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	var ids []string
@@ -1127,7 +1127,7 @@ func TestDispatchMerge_ReusesOneMessageIDPerBatch(t *testing.T) {
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: q},
+		{Key: topickey.TopicKeyLand, Name: "submitqueue-land", Queue: q},
 	})
 	require.NoError(t, err)
 
@@ -1137,8 +1137,8 @@ func TestDispatchMerge_ReusesOneMessageIDPerBatch(t *testing.T) {
 	)
 	batch := entity.Batch{ID: head, Queue: "q"}
 
-	require.NoError(t, c.dispatchMerge(context.Background(), batch))
-	require.NoError(t, c.dispatchMerge(context.Background(), batch))
+	require.NoError(t, c.dispatchLand(context.Background(), batch))
+	require.NoError(t, c.dispatchLand(context.Background(), batch))
 
 	require.Len(t, ids, 2)
 	assert.Equal(t, ids[0], ids[1])
@@ -1176,7 +1176,7 @@ func cascadePair(t *testing.T, ctrl *gomock.Controller, prerequisiteState entity
 // An outcome is only a fact once it commits. When the prerequisite's state write
 // loses its race, nothing derived from that outcome may be enacted — the winner
 // may have written something else entirely. A cancellation loses precisely to a
-// merge that got there first, which leaves the batch succeeded, and a dependent
+// land that got there first, which leaves the batch succeeded, and a dependent
 // broken by that success must not already have been failed on the assumption
 // it was cancelled.
 func TestRun_CascadeStopsWhenThePrerequisiteStateCASLoses(t *testing.T) {
@@ -1343,26 +1343,26 @@ func TestRun_TriggerBatchNeedsNoRecoverySignal(t *testing.T) {
 	assert.Equal(t, []string{"conclude"}, h.published)
 }
 
-// Merging needs the same signal for the same reason: the write drops the batch
+// Landing needs the same signal for the same reason: the write drops the batch
 // out of the speculating set, so nothing else would ever dispatch it.
-func TestRun_CascadeDerivedBatchIsGivenARecoverySignalBeforeItMerges(t *testing.T) {
+func TestRun_CascadeDerivedBatchIsGivenARecoverySignalBeforeItLands(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	merging := entity.Batch{ID: "q/batch/derived", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
-	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{merging})
+	landing := entity.Batch{ID: "q/batch/derived", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{landing})
 	h.noBuildsDispatched()
 
 	// No dependencies, so the passed path has nothing left to settle.
-	passedPath := entity.SpeculationPath{Head: merging.ID}
-	h.pathSets.EXPECT().Get(gomock.Any(), merging.ID).Return(entity.SpeculationPathSet{
-		Head:    merging.ID,
+	passedPath := entity.SpeculationPath{Head: landing.ID}
+	h.pathSets.EXPECT().Get(gomock.Any(), landing.ID).Return(entity.SpeculationPathSet{
+		Head:    landing.ID,
 		Paths:   []entity.SpeculationPathEntry{entryFor(passedPath, entity.SpeculationPathStatusPassed)},
 		Version: 1,
 	}, nil).AnyTimes()
 
 	var publishedBeforeWrite []string
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: merging.ID, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		Update(gomock.Any(), updateTo{id: landing.ID, state: entity.BatchStateLanding}, int32(1), int32(2)).
 		DoAndReturn(func(context.Context, entity.Batch, int32, int32) error {
 			publishedBeforeWrite = append([]string(nil), h.published...)
 			return nil
@@ -1372,7 +1372,7 @@ func TestRun_CascadeDerivedBatchIsGivenARecoverySignalBeforeItMerges(t *testing.
 	require.NoError(t, h.run(head))
 
 	assert.Equal(t, []string{"speculate"}, publishedBeforeWrite)
-	assert.Equal(t, []string{"speculate", "submitqueue-merge"}, h.published)
+	assert.Equal(t, []string{"speculate", "submitqueue-land"}, h.published)
 }
 
 // A cancelling path whose build is still running finishes only when CI actually
@@ -1424,7 +1424,7 @@ func TestRun_ReportsPassedPathWhileWaiting(t *testing.T) {
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{memberHead()})
 	h.noBuildsDispatched()
 	// dep1 has landed the way the path assumed; dep2 has not answered yet, so
-	// the head cannot merge but has nothing of its own left to run.
+	// the head cannot land but has nothing of its own left to run.
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
 	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSpeculating}, nil)
 
@@ -1436,7 +1436,7 @@ func TestRun_ReportsPassedPathWhileWaiting(t *testing.T) {
 	}, nil).AnyTimes()
 
 	require.NoError(t, h.run(head))
-	assert.Empty(t, h.published, "an unsettled head merges nowhere")
+	assert.Empty(t, h.published, "an unsettled head lands nowhere")
 
 	require.Len(t, h.logs, 1)
 	assert.Equal(t, "q/1", h.logs[0].RequestID)
@@ -1524,10 +1524,10 @@ func TestRun_ReportsInvalidatedWhenTheDependencyFailsInTheSameRun(t *testing.T) 
 	assert.Contains(t, got, entity.RequestEventInvalidated)
 }
 
-// A merge is decided on the same live passed path a wait would be reported
+// A land is decided on the same live passed path a wait would be reported
 // from, so without the gate every landed request would carry a wait it never
 // had.
-func TestRun_MergingHeadReportsSpeculatedAndNoWait(t *testing.T) {
+func TestRun_LandingHeadReportsSpeculatedAndNoWait(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
 
@@ -1541,7 +1541,7 @@ func TestRun_MergingHeadReportsSpeculatedAndNoWait(t *testing.T) {
 		Version: 1,
 	}, nil).AnyTimes()
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).Return(nil)
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).Return(nil)
 
 	require.NoError(t, h.run(head))
 
@@ -1561,7 +1561,7 @@ func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
 
 	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{memberHead()})
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSpeculating}, nil)
-	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateMerging}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateLanding}, nil)
 	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
 		Head: head,
 		Paths: []entity.SpeculationPathEntry{
@@ -1573,11 +1573,11 @@ func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
 		Version: 1,
 	}, nil).AnyTimes()
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).Return(nil)
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).Return(nil)
 
 	require.NoError(t, h.run(head))
 
-	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
+	assert.Equal(t, []string{"submitqueue-land"}, h.published)
 	assert.Zero(t, h.spec.calls)
 	require.Len(t, h.logs, 1)
 	assert.Equal(t, entity.RequestStatusSpeculated, h.logs[0].Status)
@@ -1587,15 +1587,15 @@ func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
 	assert.EqualValues(t, 1, counter.Value())
 }
 
-// The merge stage publishes landing as its first act on the dispatch. Both
+// The land stage publishes landing as its first act on the dispatch. Both
 // statuses are non-terminal, so the summary is decided on timestamp alone and
 // a speculated sent afterwards would beat the landing it precedes.
-func TestRun_SpeculatedIsReportedBeforeTheMergeDispatch(t *testing.T) {
+func TestRun_SpeculatedIsReportedBeforeTheLandDispatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
 
 	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{memberHead()})
-	h.failPublishTo("submitqueue-merge")
+	h.failPublishTo("submitqueue-land")
 	h.noBuildsDispatched()
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
 	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSucceeded}, nil)
@@ -1605,7 +1605,7 @@ func TestRun_SpeculatedIsReportedBeforeTheMergeDispatch(t *testing.T) {
 		Version: 1,
 	}, nil).AnyTimes()
 	h.batches.EXPECT().
-		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).Return(nil)
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateLanding}, int32(1), int32(2)).Return(nil)
 
 	require.Error(t, h.run(head))
 

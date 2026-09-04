@@ -221,7 +221,7 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1", "q/2"},
-		State: entity.BatchStateMerging, Version: 4,
+		State: entity.BatchStateLanding, Version: 4,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(4), int32(5)).Return(nil)

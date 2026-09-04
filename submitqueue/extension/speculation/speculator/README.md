@@ -1,6 +1,6 @@
 # speculator
 
-The `speculator` package defines the one speculation extension the speculate controller calls. A `Speculator` decides **which speculation paths to build and which running ones to cancel**, within the queue's build budget — and nothing else. It can never express a verdict: whether a batch merges or fails is fixed by the facts and computed by the controller, so swapping in a different `Speculator` changes which paths run, never a batch's outcome.
+The `speculator` package defines the one speculation extension the speculate controller calls. A `Speculator` decides **which speculation paths to build and which running ones to cancel**, within the queue's build budget — and nothing else. It can never express a verdict: whether a batch lands or fails is fixed by the facts and computed by the controller, so swapping in a different `Speculator` changes which paths run, never a batch's outcome.
 
 `Speculate` is handed the queue's in-flight batches plus any finalized batches still referenced as dependencies (each with its dependency list and state) and every path set for them — live and recently finished, so a `Speculator` will not re-propose a path that already passed or failed. It returns a list of build and cancel actions; a path it wants left as-is has no entry in the result. The controller validates the output (dropping builds it shouldn't propose and rejecting cancels of passed paths), so an implementation may read extra injected data without affecting correctness.
 

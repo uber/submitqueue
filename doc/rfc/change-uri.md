@@ -6,7 +6,7 @@ A change URI is the system-wide identity of a code change — a Pull Request, a 
 
 Every change URI is an RFC 3986 URI of the form `scheme://{host[:port]}/{path}`, with a uniform division of labor:
 
-- **scheme** — the provider *model*: how to parse the path and which extension family (change provider, merge checker, pusher) can act on it. One scheme per model — deployment flavors of the same model (github.com vs. GitHub Enterprise) do **not** get their own schemes, because the flavor is derivable from the host and two spellings for one instance would break identity.
+- **scheme** — the provider *model*: how to parse the path and which extension family (change provider, land checker, pusher) can act on it. One scheme per model — deployment flavors of the same model (github.com vs. GitHub Enterprise) do **not** get their own schemes, because the flavor is derivable from the host and two spellings for one instance would break identity.
 - **authority** — the provider *instance*: the `host[:port]` the change lives on. Mandatory.
 - **path** — the change within that instance, pinned to an exact code state (head SHA or diff ID), so staleness is detectable by comparing the pin against the provider's current state.
 

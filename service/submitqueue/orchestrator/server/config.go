@@ -134,7 +134,7 @@ type changeProviderConfig struct {
 // gitProviderConfig configures the git change provider, which derives change
 // metadata from a repository rather than asking a service for it.
 //
-// It mirrors Runway's merger block deliberately: each service keeps its own
+// It mirrors Runway's lander block deliberately: each service keeps its own
 // copy of a queue's repository and says for itself where that copy fetches
 // from, so the two are configured independently even when they name the same
 // remote.

@@ -50,7 +50,7 @@
 //
 //   - fake (default): a change is a URI and nothing else. No repository, no
 //     credential, no I/O — the fastest way to put traffic through the queue.
-//   - git: a branch pushed to the sandbox repository the stack merges into.
+//   - git: a branch pushed to the sandbox repository the stack lands into.
 //     Real commits, still no credential.
 //   - github: a real pull request over the REST API, which needs no clone and
 //     no git binary, only GITHUB_TOKEN — the same credential the stack uses.
@@ -66,7 +66,7 @@ import (
 	"strings"
 	"time"
 
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	"github.com/uber/submitqueue/submitqueue/client"
 	"golang.org/x/sync/errgroup"
@@ -130,7 +130,7 @@ func parseFlags() config {
 	flag.BoolVar(&c.tls, "tls", false, "dial the gateway with transport security")
 	flag.StringVar(&c.tokenEnv, "token-env", client.DefaultTokenEnv, "environment variable holding the gateway bearer token")
 	flag.StringVar(&c.queue, "queue", "demo-queue", "queue to land on")
-	flag.StringVar(&c.strategy, "strategy", "SQUASH_REBASE", "merge strategy")
+	flag.StringVar(&c.strategy, "strategy", "SQUASH_REBASE", "land strategy")
 	flag.Parse()
 
 	// Only the GitHub source reads a credential; the other two must not fail,
@@ -311,7 +311,7 @@ func newChangeSource(ctx context.Context, cfg config) (changeSource, func(), err
 }
 
 // sandboxRepo is the repository the git provider's sandbox holds, matching what
-// tool/gitsandbox creates and what demo/provider/git/merge.yaml merges into.
+// tool/gitsandbox creates and what demo/provider/git/land.yaml lands into.
 const sandboxRepo = "sandbox"
 
 // target describes where the run is creating changes, for the opening line.
@@ -441,7 +441,7 @@ func changeFileCount(tag string, change, min int) int {
 // lander enqueues a request. *client.Client is the real one; a test supplies
 // its own to observe when each change is enqueued relative to when it is created.
 type lander interface {
-	Land(ctx context.Context, queue string, uris []string, strategy mergestrategypb.Strategy) (string, error)
+	Land(ctx context.Context, queue string, uris []string, strategy landstrategypb.Strategy) (string, error)
 }
 
 // createAndEnqueue creates the changes and puts them on the queue, filling
@@ -465,7 +465,7 @@ func createAndEnqueue(
 	src changeSource,
 	sq lander,
 	cfg config,
-	strategy mergestrategypb.Strategy,
+	strategy landstrategypb.Strategy,
 	tag, baseSHA string,
 	t *client.Tracker,
 ) ([]change, error) {
@@ -494,7 +494,7 @@ func createIndependent(
 	src changeSource,
 	sq lander,
 	cfg config,
-	strategy mergestrategypb.Strategy,
+	strategy landstrategypb.Strategy,
 	tag, baseSHA string,
 	t *client.Tracker,
 ) ([]change, error) {
@@ -551,7 +551,7 @@ func createBurst(
 	src changeSource,
 	sq lander,
 	cfg config,
-	strategy mergestrategypb.Strategy,
+	strategy landstrategypb.Strategy,
 	tag, baseSHA string,
 	t *client.Tracker,
 ) ([]change, error) {
@@ -604,7 +604,7 @@ func createStack(
 	src changeSource,
 	sq lander,
 	cfg config,
-	strategy mergestrategypb.Strategy,
+	strategy landstrategypb.Strategy,
 	tag, baseSHA string,
 	t *client.Tracker,
 ) ([]change, error) {

@@ -12,7 +12,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/service/submitqueue/demo/requests",
     visibility = ["//visibility:private"],
     deps = [
-        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/base/landstrategy/protopb:go_default_library",
         "//platform/base/change/git:go_default_library",
         "//platform/base/change/github:go_default_library",
         "//platform/fakemarker:go_default_library",
@@ -24,7 +24,7 @@ go_library(
 
 go_binary(
     name = "requests",
-    # -provider git authors changes with the same pinned git the merger uses.
+    # -provider git authors changes with the same pinned git the lander uses.
     # Unused by the other two providers, which touch no repository.
     args = ["-git=$(location @git//:git)"],
     data = ["@git"],
@@ -41,12 +41,12 @@ go_test(
     data = ["@git"],
     embed = [":go_default_library"],
     # The git source drives a real repository, with the same pinned git the
-    # merger and the sandbox provisioner use.
+    # lander and the sandbox provisioner use.
     env = {
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
     },
     deps = [
-        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/base/landstrategy/protopb:go_default_library",
         "//platform/base/change/git:go_default_library",
         "//platform/fakemarker:go_default_library",
         "//platform/git/exec:go_default_library",

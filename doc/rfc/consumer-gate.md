@@ -27,7 +27,7 @@ The re-check loop has a bounded cost: while a gate is closed, each blocked parti
 
 ### Gate identity: consumer group, optionally narrowed to a partition
 
-Every controller subscribes with a unique consumer group (`orchestrator-batch`, `runway-merge`, …), so the consumer group *is* the controller's stable runtime name — the natural key for "stop this controller". A gate may optionally carry a partition key; absent one, it gates every partition. Partition-scoped gates keep unrelated traffic flowing through the same controller (e.g. parking one test queue's partition while other queues proceed), which matters if e2e scenarios ever run concurrently.
+Every controller subscribes with a unique consumer group (`orchestrator-batch`, `runway-land`, …), so the consumer group *is* the controller's stable runtime name — the natural key for "stop this controller". A gate may optionally carry a partition key; absent one, it gates every partition. Partition-scoped gates keep unrelated traffic flowing through the same controller (e.g. parking one test queue's partition while other queues proceed), which matters if e2e scenarios ever run concurrently.
 
 ### Gate state is a separate extension
 
@@ -75,9 +75,9 @@ If gate state cannot be read (directory missing, I/O error), the check logs, inc
 
 The cancellation scenario, expressed as stop → observe → start:
 
-1. The test closes the gate for `runway-mergeconflictcheck` (all partitions, or scoped to the test queue's partition key), before landing.
-2. It lands a request. The orchestrator runs it to the merge-conflict-check hand-off; runway's subscriber delivers the check message, and the gate parks it.
-3. The test awaits the parked record — proof the controller is stopped *and* holding exactly this message. Runway itself is still running; its RPC surface and merge controller are untouched.
+1. The test closes the gate for `runway-landconflictcheck` (all partitions, or scoped to the test queue's partition key), before landing.
+2. It lands a request. The orchestrator runs it to the land-conflict-check hand-off; runway's subscriber delivers the check message, and the gate parks it.
+3. The test awaits the parked record — proof the controller is stopped *and* holding exactly this message. Runway itself is still running; its RPC surface and land controller are untouched.
 4. While stopped, the test observes and acts: it cancels the request, awaits the terminal `cancelled` status through the existing event plane, and asserts no batch ever enrolled the request.
 5. The test opens the gate. Within a re-check tick the postponed delivery redelivers, clears the open gate, and proceeds into the controller as a fresh attempt (postponing resets retry accounting); runway answers the now-stale check, and the test asserts the signal is dropped for the halted request.
 

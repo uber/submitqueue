@@ -25,10 +25,10 @@ type outcome string
 const (
 	// outcomeWait means the batch's outcome is not decided yet.
 	outcomeWait outcome = "wait"
-	// outcomeMerge means the head can be handed to the merge stage: either a
+	// outcomeLand means the head can be handed to the land stage: either a
 	// passed path's assumptions have all come true, or passed paths cover every
 	// possible outcome of its unsettled dependencies.
-	outcomeMerge outcome = "merge"
+	outcomeLand outcome = "land"
 	// outcomeFail means no future remains in which the head could pass.
 	outcomeFail outcome = "fail"
 	// outcomeCancel means a batch the user asked to cancel has had every path
@@ -37,8 +37,8 @@ const (
 )
 
 // terminalState returns the batch state an outcome writes, and whether the
-// outcome leaves the batch terminal. Merge is the odd one out: it hands the
-// batch to the merge stage, which owns the terminal write that follows.
+// outcome leaves the batch terminal. Land is the odd one out: it hands the
+// batch to the land stage, which owns the terminal write that follows.
 func (v outcome) terminalState() (entity.BatchState, bool) {
 	switch v {
 	case outcomeFail:
@@ -52,11 +52,11 @@ func (v outcome) terminalState() (entity.BatchState, bool) {
 
 // decide returns the run's outcome on one open head, from the snapshot alone.
 func decide(head entity.Batch, set entity.SpeculationPathSet, snap snapshot) outcome {
-	if _, ok := mergeablePath(set, snap); ok {
-		return outcomeMerge
+	if _, ok := landablePath(set, snap); ok {
+		return outcomeLand
 	}
 	if _, ok := bypassablePath(head, set, snap); ok {
-		return outcomeMerge
+		return outcomeLand
 	}
 	if hasNoViableFuture(head, set, snap) {
 		return outcomeFail
@@ -64,23 +64,23 @@ func decide(head entity.Batch, set entity.SpeculationPathSet, snap snapshot) out
 	return outcomeWait
 }
 
-// mergeablePath returns a passed path whose merge preconditions are met: every
+// landablePath returns a passed path whose land preconditions are met: every
 // guess it made about a dependency has been borne out by that dependency's
 // actual state.
 //
 // This is what makes speculation pay — not by shortening the list the head
 // waits on, but by having already done the work. The build ran against the
 // guess while the dependencies were still resolving, so when they land the way
-// the path assumed there is nothing left to run and the head merges at once.
+// the path assumed there is nothing left to run and the head lands at once.
 //
-// A guess that has not been settled yet is not a licence to merge, whichever
+// A guess that has not been settled yet is not a licence to land, whichever
 // way it points. A path that assumed a dependency would fail was built without
 // that dependency's changes, so landing it while the dependency is still live
 // puts a combination on the trunk that no build ever validated — which is the
-// one thing the queue exists to prevent. The dependency merging is not enough
-// either: a merge can fail, so "on its way in" is still an open question, and
+// one thing the queue exists to prevent. The dependency landing is not enough
+// either: a land can fail, so "on its way in" is still an open question, and
 // the head waits for the answer.
-func mergeablePath(set entity.SpeculationPathSet, snap snapshot) (entity.SpeculationPathEntry, bool) {
+func landablePath(set entity.SpeculationPathSet, snap snapshot) (entity.SpeculationPathEntry, bool) {
 	for _, entry := range set.Paths {
 		if entry.Status != entity.SpeculationPathStatusPassed {
 			continue
@@ -115,10 +115,10 @@ func passedEntry(set entity.SpeculationPathSet) (entity.SpeculationPathEntry, bo
 // consistent with how its dependencies are resolving, whether or not they have
 // finished resolving.
 //
-// It is mergeablePath without the settled requirement, and the difference
+// It is landablePath without the settled requirement, and the difference
 // between the two is exactly the head's waiting room: work this head had to do
 // is done, and all that is left is other batches finishing. Reported rather
-// than acted on — nothing may merge on a path this loose, and decide is
+// than acted on — nothing may land on a path this loose, and decide is
 // deliberately not built on it.
 func livePassedPath(set entity.SpeculationPathSet, snap snapshot) (entity.SpeculationPathEntry, bool) {
 	for _, entry := range set.Paths {

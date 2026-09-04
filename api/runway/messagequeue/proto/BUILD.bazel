@@ -1,4 +1,4 @@
 exports_files(
-    ["merge.proto"],
+    ["land.proto"],
     visibility = ["//tool/proto:__pkg__"],
 )

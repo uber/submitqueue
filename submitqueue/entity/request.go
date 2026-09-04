@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 )
 
 // RequestState defines the possible states of a land request. They are internal and used to implement a state machine. A separate RequestStatus type is used to track the customer-friendly status of a request.
@@ -29,7 +29,7 @@ const (
 	RequestStateUnknown RequestState = ""
 	// RequestStateStarted is the initial state of a land request. It is confirmed by the system but the processing is not started yet.
 	RequestStateStarted RequestState = "started"
-	// RequestStateValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully.
+	// RequestStateValidated indicates that the request has been validated (duplicate check, landability check, etc.) successfully.
 	RequestStateValidated RequestState = "validated"
 	// RequestStateBatched indicates that the request is enrolled in a batch whose dependencies have been
 	// resolved. The CAS-write of this state is the serialization point against cancellation: it lands with
@@ -45,7 +45,7 @@ const (
 	RequestStateError RequestState = "error"
 	// RequestStateCancelling is the non-terminal intent state set when the user has requested cancellation but the
 	// request has not yet been transitioned to RequestStateCancelled. A request in this state may still reach
-	// RequestStateLanded or RequestStateError if a concurrent merge or failure wins the race; those terminal
+	// RequestStateLanded or RequestStateError if a concurrent land or failure wins the race; those terminal
 	// states prevail. Forward-progress controllers must treat this state the same as terminal (i.e. do not start
 	// any new work on the request).
 	RequestStateCancelling RequestState = "cancelling"
@@ -68,7 +68,7 @@ func IsRequestStateHalted(s RequestState) bool {
 	return IsRequestStateTerminal(s) || s == RequestStateCancelling
 }
 
-// Request defines a request to land (merge into target branch of the source control repository) a set of code changes.
+// Request defines a request to land a set of code changes on the source control repository's target branch.
 // The object is immutable after creation.
 type Request struct {
 	// ****************
@@ -83,7 +83,7 @@ type Request struct {
 	Change change.Change `json:"change"`
 	// LandStrategy is the source control integration strategy to use for this
 	// land operation. It applies to every URI of Change, the same way to each.
-	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
+	LandStrategy landstrategy.Strategy `json:"land_strategy"`
 
 	// ****************
 	// Following fields could be changed throughout the lifecycle of the request

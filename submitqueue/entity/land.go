@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 )
 
 // LandRequest represents the gateway-owned fields of a land request sent over the queue
@@ -33,7 +33,7 @@ type LandRequest struct {
 	Change change.Change `json:"change"`
 	// LandStrategy is the source control integration strategy to use for this
 	// land operation. It applies to every URI of Change, the same way to each.
-	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
+	LandStrategy landstrategy.Strategy `json:"land_strategy"`
 }
 
 // ToBytes serializes the LandRequest to JSON bytes for queue message payload.

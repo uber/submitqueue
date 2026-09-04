@@ -10,8 +10,8 @@ go_library(
 
 go_binary(
     name = "gitsandbox",
-    # The pinned git the merger uses, rather than whatever the host has, so a
-    # sandbox is seeded by the same build that later merges into it. `args` is
+    # The pinned git the lander uses, rather than whatever the host has, so a
+    # sandbox is seeded by the same build that later lands into it. `args` is
     # honored by `bazel run`, and flags the Makefile appends after `--` still
     # win, since Go's flag package takes the last occurrence.
     args = ["-git=$(location @git//:git)"],

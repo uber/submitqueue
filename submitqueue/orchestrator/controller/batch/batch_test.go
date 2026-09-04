@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
@@ -78,7 +78,7 @@ func testRequest() entity.Request {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}

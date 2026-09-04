@@ -30,7 +30,7 @@ A domain with no versioned entities (Runway holds no durable state of its own) p
 
 ## Payload
 
-Shaped per `type` by the domain that publishes it, add-only, and documented by that domain. It must carry the subject's id, and it must carry any fact recorded nowhere else — merge step outcomes, build failure detail — because for those the event is the only durable record.
+Shaped per `type` by the domain that publishes it, add-only, and documented by that domain. It must carry the subject's id, and it must carry any fact recorded nowhere else — land step outcomes, build failure detail — because for those the event is the only durable record.
 
 It must **not** be an entity snapshot. A snapshot is stale the moment it is redelivered, it competes with the store as a source of truth, and it drags a domain's schema into a contract shared by every domain. Hooks resolve entities from their stores.
 

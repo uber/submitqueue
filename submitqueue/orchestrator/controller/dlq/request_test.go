@@ -213,7 +213,7 @@ func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T)
 	for _, state := range []entity.BatchState{
 		entity.BatchStateCreated,
 		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
+		entity.BatchStateLanding,
 		entity.BatchStateCancelling,
 	} {
 		t.Run(string(state), func(t *testing.T) {

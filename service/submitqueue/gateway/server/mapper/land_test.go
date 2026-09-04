@@ -20,10 +20,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
@@ -41,13 +41,13 @@ func TestProtoToLandRequest(t *testing.T) {
 			req: &pb.LandRequest{
 				Queue:    "test-queue",
 				Change:   &changepb.Change{Uris: []string{uri}},
-				Strategy: mergestrategypb.Strategy_SQUASH_REBASE,
+				Strategy: landstrategypb.Strategy_SQUASH_REBASE,
 			},
 			// ID is not assigned by the mapper — the controller mints it.
 			expected: entity.LandRequest{
 				Queue:        "test-queue",
 				Change:       change.Change{URIs: []string{uri}},
-				LandStrategy: mergestrategy.MergeStrategySquashRebase,
+				LandStrategy: landstrategy.StrategySquashRebase,
 			},
 		},
 		{
@@ -56,7 +56,7 @@ func TestProtoToLandRequest(t *testing.T) {
 			// The mapper does not validate; it leaves URIs empty for the controller to reject.
 			expected: entity.LandRequest{
 				Queue:        "test-queue",
-				LandStrategy: mergestrategy.MergeStrategyRebase,
+				LandStrategy: landstrategy.StrategyRebase,
 			},
 		},
 		{
@@ -64,7 +64,7 @@ func TestProtoToLandRequest(t *testing.T) {
 			req: &pb.LandRequest{
 				Queue:    "test-queue",
 				Change:   &changepb.Change{Uris: []string{uri}},
-				Strategy: mergestrategypb.Strategy(9999),
+				Strategy: landstrategypb.Strategy(9999),
 			},
 			expectedErr: errUnknownStrategy,
 		},
@@ -83,24 +83,24 @@ func TestProtoToLandRequest(t *testing.T) {
 	}
 }
 
-func TestResolveMergeStrategy(t *testing.T) {
+func TestResolveLandStrategy(t *testing.T) {
 	tests := []struct {
 		name   string
-		in     mergestrategypb.Strategy
-		want   mergestrategy.MergeStrategy
+		in     landstrategypb.Strategy
+		want   landstrategy.Strategy
 		errMsg string
 	}{
-		{name: "default", in: mergestrategypb.Strategy_DEFAULT, want: mergestrategy.MergeStrategyRebase},
-		{name: "rebase", in: mergestrategypb.Strategy_REBASE, want: mergestrategy.MergeStrategyRebase},
-		{name: "squash_rebase", in: mergestrategypb.Strategy_SQUASH_REBASE, want: mergestrategy.MergeStrategySquashRebase},
-		{name: "merge", in: mergestrategypb.Strategy_MERGE, want: mergestrategy.MergeStrategyMerge},
-		{name: "promote", in: mergestrategypb.Strategy_PROMOTE, want: mergestrategy.MergeStrategyPromote},
-		{name: "unknown", in: mergestrategypb.Strategy(9999), errMsg: "unknown land strategy in proto message"},
+		{name: "default", in: landstrategypb.Strategy_DEFAULT, want: landstrategy.StrategyRebase},
+		{name: "rebase", in: landstrategypb.Strategy_REBASE, want: landstrategy.StrategyRebase},
+		{name: "squash_rebase", in: landstrategypb.Strategy_SQUASH_REBASE, want: landstrategy.StrategySquashRebase},
+		{name: "merge", in: landstrategypb.Strategy_MERGE, want: landstrategy.StrategyMerge},
+		{name: "promote", in: landstrategypb.Strategy_PROMOTE, want: landstrategy.StrategyPromote},
+		{name: "unknown", in: landstrategypb.Strategy(9999), errMsg: "unknown land strategy in proto message"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveMergeStrategy(tt.in)
+			got, err := resolveLandStrategy(tt.in)
 			if tt.errMsg != "" {
 				assert.ErrorContains(t, err, tt.errMsg)
 				return

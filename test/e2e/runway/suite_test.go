@@ -31,17 +31,17 @@ package e2e_test
 //
 // The stack runs the Runway service plus a queue MySQL. Runway is consumer-only
 // — it has no gateway — so the suite drives it the way its real client does: it
-// publishes a MergeRequest to an inbound merge topic and listens on the
-// corresponding signal topic for the MergeResult carrying its correlation id.
+// publishes a LandRequest to an inbound land topic and listens on the
+// corresponding signal topic for the LandResult carrying its correlation id.
 // That is the seam no other test covers: topic wiring, the protojson round-trip
 // over the wire, partition-key propagation, the ack-and-publish-FAILED path for
 // expected outcomes, and DLQ reconciliation.
 //
-// The service runs with MERGER=fake, so what a merge *does* is out of scope
+// The service runs with LANDER=fake, so what a land *does* is out of scope
 // here; the fake's marker tokens only pick which outcome Runway has to carry
-// back. Merge behavior proper — strategies, real conflicts, staleness, author
+// back. Land behavior proper — strategies, real conflicts, staleness, author
 // attribution — is covered against a real git remote in
-// runway/extension/merger/git/git_merger_test.go.
+// runway/extension/lander/git/git_lander_test.go.
 
 import (
 	"context"
@@ -69,7 +69,7 @@ type RunwayE2ESuite struct {
 	queue   extqueue.Queue
 
 	// Signal-topic observers, standing in for the client awaiting its results.
-	mergeSignal *observer
+	landSignal  *observer
 	checkSignal *observer
 
 	// seq mints unique correlation ids across the suite.
@@ -88,9 +88,9 @@ func (s *RunwayE2ESuite) SetupSuite() {
 	s.log.Logf("Starting Runway e2e test suite using docker-compose")
 
 	// Outcomes have to be steerable from the request payload, so the service
-	// runs the marker-driven fake merger instead of noop or git. Set before the
+	// runs the marker-driven fake lander instead of noop or git. Set before the
 	// stack is created: ComposeStack snapshots the environment at construction.
-	t.Setenv("SQ_RUNWAY_MERGER", "fake")
+	t.Setenv("SQ_RUNWAY_LANDER", "fake")
 
 	composeFile := testutil.Runfile("service/runway/server/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-runway",
@@ -118,7 +118,7 @@ func (s *RunwayE2ESuite) SetupSuite() {
 	require.NoError(t, err, "failed to create queue client")
 	t.Cleanup(func() { s.queue.Close() })
 
-	s.mergeSignal = s.observe(topicMergeSignal)
+	s.landSignal = s.observe(topicLandSignal)
 	s.checkSignal = s.observe(topicCheckSignal)
 
 	s.log.Logf("Runway e2e test suite ready")
@@ -130,27 +130,27 @@ func (s *RunwayE2ESuite) TearDownSuite() {
 	s.log.Logf("Tearing down Runway e2e test suite")
 }
 
-// TestMerge_HappyPath_PublishesMergedResult drives the committing merge: a
-// two-step request in, a SUCCEEDED result out on the merge-signal topic. It
+// TestLand_HappyPath_PublishesLandedResult drives the committing land: a
+// two-step request in, a SUCCEEDED result out on the land-signal topic. It
 // asserts the whole envelope the client depends on — the correlation id echoed,
 // every step attributable by its step id in application order, a produced
 // revision per step, and the partition key carried from request to result so
 // the client's per-queue ordering survives the round trip.
-func (s *RunwayE2ESuite) TestMerge_HappyPath_PublishesMergedResult() {
+func (s *RunwayE2ESuite) TestLand_HappyPath_PublishesLandedResult() {
 	t := s.T()
-	const queue = "e2e-runway/merge"
+	const queue = "e2e-runway/land"
 
-	request := s.mergeRequest(queue,
+	request := s.landRequest(queue,
 		step("base", baseURI),
 		step("candidate", baseURI),
 	)
-	s.publish(topicMerge, request)
+	s.publish(topicLand, request)
 
-	observed := s.mergeSignal.await(t, s.ctx, request.GetId())
+	observed := s.landSignal.await(t, s.ctx, request.GetId())
 	result := observed.result
 
 	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, result.GetOutcome())
-	assert.Empty(t, result.GetReason(), "a successful merge carries no reason")
+	assert.Empty(t, result.GetReason(), "a successful land carries no reason")
 	assert.Equal(t, queue, observed.partitionKey,
 		"the result must stay on the request's partition")
 
@@ -159,18 +159,18 @@ func (s *RunwayE2ESuite) TestMerge_HappyPath_PublishesMergedResult() {
 	assert.Equal(t, "candidate", result.GetSteps()[1].GetStepId())
 	for i, stepResult := range result.GetSteps() {
 		assert.NotEmpty(t, stepResult.GetOutputs(),
-			"step %d of a committing merge must report the revision it produced", i)
+			"step %d of a committing land must report the revision it produced", i)
 	}
 }
 
-// TestMergeConflictCheck_HappyPath_PublishesMergeableResult drives the dry-run
+// TestLandConflictCheck_HappyPath_PublishesLandableResult drives the dry-run
 // check on its own topic pair. The distinguishing assertion against the
-// committing merge is that a check commits nothing, so it reports no outputs.
-func (s *RunwayE2ESuite) TestMergeConflictCheck_HappyPath_PublishesMergeableResult() {
+// committing land is that a check commits nothing, so it reports no outputs.
+func (s *RunwayE2ESuite) TestLandConflictCheck_HappyPath_PublishesLandableResult() {
 	t := s.T()
 	const queue = "e2e-runway/check"
 
-	request := s.mergeRequest(queue, step("candidate", baseURI))
+	request := s.landRequest(queue, step("candidate", baseURI))
 	s.publish(topicCheck, request)
 
 	observed := s.checkSignal.await(t, s.ctx, request.GetId())
@@ -203,7 +203,7 @@ func (s *RunwayE2ESuite) TestTerminalFailure_AcksAndSignalsFailed() {
 		inbound  string
 		observer func() *observer
 	}{
-		{"merge", topicMerge, func() *observer { return s.mergeSignal }},
+		{"land", topicLand, func() *observer { return s.landSignal }},
 		{"conflict check", topicCheck, func() *observer { return s.checkSignal }},
 	}
 
@@ -213,7 +213,7 @@ func (s *RunwayE2ESuite) TestTerminalFailure_AcksAndSignalsFailed() {
 				t := s.T()
 				queue := "e2e-runway/failed"
 
-				request := s.mergeRequest(queue, step("candidate", markedURI(tt.marker)))
+				request := s.landRequest(queue, step("candidate", markedURI(tt.marker)))
 				s.publish(topic.inbound, request)
 
 				observed := topic.observer().await(t, s.ctx, request.GetId())
@@ -231,7 +231,7 @@ func (s *RunwayE2ESuite) TestTerminalFailure_AcksAndSignalsFailed() {
 }
 
 // TestUnexpectedFailure_ReconcilesFromDLQ covers the backstop. An unexpected
-// merger fault is not a terminal outcome, so the controller does not answer it;
+// lander fault is not a terminal outcome, so the controller does not answer it;
 // the consumer rejects the message to the dead-letter topic instead. Runway is
 // the sole responder on the client's correlation id, so a request that stopped
 // there would leave the client waiting forever — the DLQ reconciler is what
@@ -240,10 +240,10 @@ func (s *RunwayE2ESuite) TestUnexpectedFailure_ReconcilesFromDLQ() {
 	t := s.T()
 	const queue = "e2e-runway/dlq"
 
-	request := s.mergeRequest(queue, step("candidate", markedURI(markerError)))
-	s.publish(topicMerge, request)
+	request := s.landRequest(queue, step("candidate", markedURI(markerError)))
+	s.publish(topicLand, request)
 
-	observed := s.mergeSignal.await(t, s.ctx, request.GetId())
+	observed := s.landSignal.await(t, s.ctx, request.GetId())
 
 	assert.Equal(t, runwaypb.Outcome_FAILED, observed.result.GetOutcome())
 	assert.True(t, reconciled(observed.result),
@@ -265,17 +265,17 @@ func (s *RunwayE2ESuite) TestUndecodablePayload_DropsWithoutSignalling() {
 	t := s.T()
 	const queue = "e2e-runway/undecodable"
 
-	mark := s.mergeSignal.mark()
+	mark := s.landSignal.mark()
 
-	s.publishRaw(topicMerge, "e2e-runway/garbage", queue, []byte("{not a merge request"))
+	s.publishRaw(topicLand, "e2e-runway/garbage", queue, []byte("{not a land request"))
 
-	sentinel := s.mergeRequest(queue, step("candidate", baseURI))
-	s.publish(topicMerge, sentinel)
+	sentinel := s.landRequest(queue, step("candidate", baseURI))
+	s.publish(topicLand, sentinel)
 
-	observed := s.mergeSignal.await(t, s.ctx, sentinel.GetId())
+	observed := s.landSignal.await(t, s.ctx, sentinel.GetId())
 	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, observed.result.GetOutcome())
 
-	arrived := s.mergeSignal.newSince(mark)
+	arrived := s.landSignal.newSince(mark)
 	require.Len(t, arrived, 1,
 		"the undecodable payload must not signal; only the sentinel should have arrived")
 	assert.Equal(t, sentinel.GetId(), arrived[0].result.GetId())

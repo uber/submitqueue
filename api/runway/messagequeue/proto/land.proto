@@ -1,0 +1,132 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.runway.messagequeue;
+
+import "api/base/change/proto/change.proto";
+import "api/base/landstrategy/proto/landstrategy.proto";
+import "api/base/messagequeue/proto/messagequeue.proto";
+
+option go_package = "github.com/uber/submitqueue/api/runway/messagequeue/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "LandProto";
+option java_package = "com.uber.submitqueue.runway.messagequeue";
+
+// LandStep is one step of an ordered land: a single change applied with a
+// strategy. Runway applies the steps of a request in order on top of the land
+// target; the ordering encodes the base-layering (earlier steps are the
+// in-flight base, the last step is the candidate). A change may contain
+// multiple URIs (e.g. stacked PRs that land together).
+message LandStep {
+    // step_id is an opaque, caller-assigned identifier for this step. Runway
+    // treats it as an attribution token only -- it echoes it back per-step in
+    // StepResult so a multi-step result is attributable -- and never interprets
+    // its contents.
+    string step_id = 1;
+    // change is the code change to apply for this step. It may carry multiple
+    // URIs, which are a stack: each URI is its own unit of change, applied in
+    // the order given, each on top of the last.
+    uber.base.change.Change change = 2;
+    // strategy is how this step's change is integrated into the land target.
+    // It applies to every URI the change carries, the same way to each, so a
+    // step is never a mix of strategies. PROMOTE is the exception that admits
+    // only a single URI.
+    uber.base.landstrategy.Strategy strategy = 3;
+}
+
+// LandRequest is the payload a client publishes to one of Runway's land
+// queues: the land-conflict-check topic for a dry-run check, the land topic
+// for a committing land. The id is owned by the client so it can record the
+// in-flight work before publishing and correlate the asynchronous result;
+// Runway echoes it back unchanged.
+message LandRequest {
+    option (uber.base.messagequeue.topic_keys) = "land-conflict-check";
+    option (uber.base.messagequeue.topic_keys) = "runway-land";
+
+    // id is the client-owned correlation id for this request (one per request).
+    // Runway echoes it back on the result unchanged.
+    string id = 1;
+    // queue_name is the caller-provided queue name the request belongs to.
+    // Runway resolves the land target and provider config per-queue from this
+    // name; no target ref is passed.
+    string queue_name = 2;
+    // steps is the ordered application sequence: in-flight steps first, the
+    // candidate last. A single-element list expresses "candidate vs land
+    // target".
+    repeated LandStep steps = 3;
+}
+
+// StepOutput is a single output a land step produced on the land target.
+message StepOutput {
+    // id is the VCS-neutral revision identifier -- a git commit SHA, a Mercurial
+    // changeset hash, a Subversion revision number, a Perforce changelist, and so
+    // on.
+    string id = 1;
+    // (room to grow: author, committed_at, parent, ...)
+}
+
+// StepResult reports what happened to a single LandStep, so a multi-step result
+// is attributable to the step that produced (or failed to produce) it.
+message StepResult {
+    // step_id echoes the step_id of the step this result is for.
+    string step_id = 1;
+    // outputs are the revisions this step produced on the land target, in
+    // application order (the order the step created them on the target). Empty
+    // for a dry-run check, for a change already present on the target, or for a
+    // step that failed to apply.
+    repeated StepOutput outputs = 2;
+    // reason is a human-readable explanation when the step failed to apply.
+    // Empty on success.
+    string reason = 3;
+}
+
+// Outcome is the overall result of applying a LandRequest's ordered step
+// sequence.
+enum Outcome {
+    // OUTCOME_UNSPECIFIED is the zero value; a well-formed result never uses it.
+    OUTCOME_UNSPECIFIED = 0;
+    // SUCCEEDED means the whole sequence applied cleanly: landable for a
+    // dry-run check, landed for a committing land.
+    SUCCEEDED = 1;
+    // FAILED means the sequence could not be applied: a conflict for a dry-run
+    // check, a failed apply for a committing land.
+    FAILED = 2;
+}
+
+// LandResult is the payload Runway publishes to the corresponding signal queue
+// (land-conflict-check-signal for a check, land-signal for a land) once a
+// request completes.
+message LandResult {
+    option (uber.base.messagequeue.topic_keys) = "land-conflict-check-signal";
+    option (uber.base.messagequeue.topic_keys) = "land-signal";
+
+    // id echoes the client-owned correlation id from the request.
+    string id = 1;
+    // outcome is SUCCEEDED if the whole ordered step sequence applied cleanly
+    // (landable for a dry-run check, landed for a committing land), FAILED
+    // otherwise.
+    Outcome outcome = 2;
+    // reason is a human-readable explanation when outcome is FAILED. Empty on
+    // success.
+    string reason = 3;
+    // steps optionally reports per-step outcomes, in request order. A committing
+    // land populates each step's outputs with the revisions it produced; a
+    // dry-run check leaves them empty.
+    repeated StepResult steps = 4;
+    // queue_name echoes the caller-provided queue name from the request, so the
+    // consumer can route the result by queue without loading state first.
+    string queue_name = 5;
+}

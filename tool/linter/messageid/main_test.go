@@ -50,7 +50,7 @@ func f() { _ = messagequeue.NewMessage("id", nil, "part", nil) }`,
 			name: "publishing through the helper passes",
 			src: `package p
 import "github.com/uber/submitqueue/platform/publish"
-func f() { _ = publish.IntentID("batch-1", "merged") }`,
+func f() { _ = publish.IntentID("batch-1", "landed") }`,
 		},
 		{
 			name: "NewMessage of an unrelated package passes",
@@ -105,7 +105,7 @@ func TestAllowed(t *testing.T) {
 		{"platform/publish/publish.go", true},
 		{"platform/extension/messagequeue/mysql/subscriber.go", true},
 		{"submitqueue/orchestrator/controller/batch/batch.go", false},
-		{"runway/controller/merge/merge.go", false},
+		{"runway/controller/land/land.go", false},
 		// A path merely prefixed by an allowed root's name is not inside it.
 		{"platform/publishing/thing.go", false},
 	}

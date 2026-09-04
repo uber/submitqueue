@@ -36,7 +36,7 @@ GOIMPORTS_VERSION ?= v0.33.0
 # (the out_dir convention in tool/proto/BUILD.bazel) and copied back here. A
 # package may hold multiple .proto files (e.g. an RPC contract plus messagequeue
 # contracts); all generated stubs land in the same protopb/ dir.
-PROTO_PACKAGES = api/base/change api/base/hook api/base/mergestrategy api/base/messagequeue api/runway/messagequeue api/runway api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe stovepipe/core/messagequeue
+PROTO_PACKAGES = api/base/change api/base/hook api/base/landstrategy api/base/messagequeue api/runway/messagequeue api/runway api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe stovepipe/core/messagequeue
 
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
@@ -46,7 +46,7 @@ export REPO_ROOT := $(shell pwd)
 # path, so adding a provider is mostly adding a directory — see
 # service/submitqueue/demo/provider/README.md.
 #
-#   fake    a change is a URI; nothing merges anywhere. Needs nothing.
+#   fake    a change is a URI; nothing lands anywhere. Needs nothing.
 #   git     branches in a bare repository on disk; real fetch, cherry-pick, push.
 #   github  real pull requests. Needs a repository and GITHUB_TOKEN.
 PROVIDER ?= fake
@@ -60,7 +60,7 @@ PROVIDER_COMPOSE_FILE_git = service/submitqueue/docker-compose.git.yml
 PROVIDER_COMPOSE_FILE_github = service/submitqueue/docker-compose.provider.yml
 PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
 
-# Where PROVIDER=git keeps the bare repository it merges into. Outside the
+# Where PROVIDER=git keeps the bare repository it lands into. Outside the
 # repository, so a demo leaves nothing in a checkout, and bind-mounted rather
 # than kept in a volume so `git log` on the host can show what landed.
 #
@@ -118,7 +118,7 @@ endef
 #
 # The two have to agree. A change minted for one provider is meaningless to a
 # stack wired to another: fake changes point at no repository, so a stack
-# running the git merger rejects every one of them as a commit it cannot find,
+# running the git lander rejects every one of them as a commit it cannot find,
 # and fifty requests fail identically for a reason that is nowhere in the error.
 # The stack knows which provider it has — it is mounted at /etc/submitqueue —
 # so a run that was not told otherwise asks it rather than guessing.
@@ -263,10 +263,10 @@ demo-requests: ## Create N changes, enqueue each as it is created, and watch (PR
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
-e2e-git-test: ## Run the hermetic git E2E (real merger against a bare repo; no credentials)
+e2e-git-test: ## Run the hermetic git E2E (real lander against a bare repo; no credentials)
 	@echo "Running hermetic git end-to-end tests..."
 	@$(BAZEL) test //test/e2e/submitqueue:go_default_test --test_output=errors \
-		--test_filter='TestGitMergeE2E'
+		--test_filter='TestGitLandE2E'
 
 e2e-test: ## Run end-to-end tests (hermetic; Bazel builds all inputs; runs in parallel)
 	@echo "Running end-to-end tests (parallel)..."
@@ -403,7 +403,7 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "✅ All schemas applied successfully"
 
 local-init-runway-queue-schema: ## Apply queue schema only (mysql-queue) for Runway compose stacks
-	@echo "Applying queue schema to mysql-queue (Runway; consumes the merge queues)..."
+	@echo "Applying queue schema to mysql-queue (Runway; consumes the land queues)..."
 	@for file in platform/extension/messagequeue/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(RUNWAY_LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
@@ -494,8 +494,8 @@ local-submitqueue-restart: build-all-linux ## Restart all services (rebuild and 
 
 local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN)
 	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
-	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
-		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
+	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/land.yaml" \
+		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/land.yaml not found"; exit 2; }
 	@test -n "$(PROVIDER_COMPOSE_FILE)" \
 		|| { echo "Provider '$(PROVIDER)' has no compose overlay; add PROVIDER_COMPOSE_FILE_$(PROVIDER) to the Makefile"; exit 2; }
 	@if [ "$(PROVIDER)" = "git" ]; then \
@@ -519,7 +519,7 @@ local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|
 	@echo ""
 	@echo "Gateway gRPC port: $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@if [ "$(PROVIDER)" = "git" ]; then \
-		echo "Merge target:      $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \
+		echo "Land target:       $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \
 	fi
 	@echo ""
 	@echo "Generate traffic with:"
@@ -579,7 +579,7 @@ local-stovepipe-stop: ## Stop the Stovepipe service
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/landchecker/... ./runway/extension/lander/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions

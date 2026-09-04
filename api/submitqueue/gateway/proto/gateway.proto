@@ -22,7 +22,7 @@ option java_outer_classname = "GatewayProto";
 option java_package = "com.uber.submitqueue.gateway";
 
 import "api/base/change/proto/change.proto";
-import "api/base/mergestrategy/proto/mergestrategy.proto";
+import "api/base/landstrategy/proto/landstrategy.proto";
 
 // ***************
 // API domain definitions.
@@ -46,7 +46,7 @@ message PingResponse {
     string hostname = 4;
 }
 
-// LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+// LandRequest defines a request to land a set of code changes on the source control repository's target branch.
 //
 // SubmitQueue guarantees changes are landed in order with no other changes in between.
 // SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
@@ -59,7 +59,7 @@ message LandRequest {
     // Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
     // It applies to every URI the change carries, the same way to each — a land
     // request cannot pick a different strategy per URI.
-    uber.base.mergestrategy.Strategy strategy = 4;
+    uber.base.landstrategy.Strategy strategy = 4;
 }
 
 // LandResponse defines the response to a land request.
@@ -261,7 +261,7 @@ service SubmitQueueGateway {
     // state transition is performed in the background by the orchestrator and may not have completed by the time the
     // caller receives a response.
     //
-    // Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
+    // Cancellation is NOT GUARANTEED: a request that has already landed, or that races to completion before the cancel
     // signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
     // successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
     // error) must be checked through the request-summary or request-history APIs.

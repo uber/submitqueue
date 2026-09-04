@@ -15,7 +15,7 @@
 // Package gitexec locates a git binary and composes the environment git runs
 // in. It is the single source of truth for that environment across every
 // SubmitQueue caller — demo tooling, the change provider's repository, and the
-// Runway merger.
+// Runway lander.
 //
 // The environment has two halves. The scrub set denies git all ambient
 // configuration that could change what a command produces — a global hooks

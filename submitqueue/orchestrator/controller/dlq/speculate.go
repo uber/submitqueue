@@ -42,7 +42,7 @@ import (
 // So this reconciler reads the failure's subjects and acts on those. It also
 // republishes to speculate afterwards, because a dead letter here consumes an
 // edge the queue needed. Speculation is driven only by messages; a batch
-// admitted to Speculating produces no build to signal and no merge to conclude,
+// admitted to Speculating produces no build to signal and no land to conclude,
 // so once the message that would have funded it is gone, nothing is left to
 // look at it again. Without the republish the failure of one batch silently
 // strands every other batch in the queue.

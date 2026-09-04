@@ -27,7 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
+	gitlander "github.com/uber/submitqueue/runway/extension/lander/git"
 )
 
 // credentialFile is the name, inside the checkout's .git directory, of the
@@ -37,20 +37,20 @@ import (
 // repository does not print it back out.
 const credentialFile = "submitqueue-credentials.config"
 
-// provisionCheckout makes the working tree the git merger requires: a
+// provisionCheckout makes the working tree the git lander requires: a
 // repository at CheckoutPath with the configured remote, its credential in
 // place, and the target branch checked out.
 //
-// The merger deliberately does none of this — it declares that the checkout
+// The lander deliberately does none of this — it declares that the checkout
 // must already exist, so that it never has to decide whether a surprising
 // working tree is one it should repair or one it should refuse. Creating it is
-// the wiring layer's job, and doing it here keeps the decision out of the merge
+// the wiring layer's job, and doing it here keeps the decision out of the land
 // path.
 //
 // It is idempotent: an existing checkout has its remote URL and credential
 // brought back in line rather than being recreated, so a restart against a
 // persisted volume costs nothing and a rotated token takes effect.
-func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime gitmerger.GitRuntime, cfg mergerConfig) error {
+func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime gitlander.GitRuntime, cfg landerConfig) error {
 	if err := os.MkdirAll(cfg.CheckoutPath, 0o755); err != nil {
 		return fmt.Errorf("create checkout dir %q: %w", cfg.CheckoutPath, err)
 	}
@@ -77,14 +77,14 @@ func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime g
 		return fmt.Errorf("check out %s: %w", remoteRef, err)
 	}
 
-	// The merger points HOME here. Its own `git clean -fdx` may remove it
+	// The lander points HOME here. Its own `git clean -fdx` may remove it
 	// again, which is harmless — nothing is stored there, and the scrubbed
 	// environment means git reads no configuration from it either way.
 	if err := os.MkdirAll(filepath.Join(cfg.CheckoutPath, ".submitqueue-git-home", "xdg"), 0o700); err != nil {
 		return fmt.Errorf("create git home in %q: %w", cfg.CheckoutPath, err)
 	}
 
-	logger.Infow("provisioned merge checkout",
+	logger.Infow("provisioned land checkout",
 		"checkout", cfg.CheckoutPath,
 		"remote", cfg.Remote,
 		"remote_url", cfg.RemoteURL,
@@ -98,7 +98,7 @@ func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime g
 // initRepository creates the repository if the path does not already hold one,
 // reporting whether it had to. An existing repository is left in place: it may
 // carry fetched objects worth keeping, and re-creating it would discard them.
-func initRepository(ctx context.Context, runtime gitmerger.GitRuntime, cfg mergerConfig) (bool, error) {
+func initRepository(ctx context.Context, runtime gitlander.GitRuntime, cfg landerConfig) (bool, error) {
 	if info, err := os.Stat(filepath.Join(cfg.CheckoutPath, ".git")); err == nil && info.IsDir() {
 		return false, nil
 	}
@@ -110,7 +110,7 @@ func initRepository(ctx context.Context, runtime gitmerger.GitRuntime, cfg merge
 
 // configureRemote points the configured remote name at the configured URL,
 // adding it when absent and correcting it when it has drifted.
-func configureRemote(ctx context.Context, runtime gitmerger.GitRuntime, cfg mergerConfig) error {
+func configureRemote(ctx context.Context, runtime gitlander.GitRuntime, cfg landerConfig) error {
 	out, err := runGit(ctx, runtime, cfg.CheckoutPath, "remote")
 	if err != nil {
 		return fmt.Errorf("list remotes in %q: %w", cfg.CheckoutPath, err)
@@ -133,12 +133,12 @@ func configureRemote(ctx context.Context, runtime gitmerger.GitRuntime, cfg merg
 // writeCredential stores the remote's token as an HTTP Authorization header in
 // a config fragment the repository includes.
 //
-// The token deliberately never enters the remote URL. The merger folds git's
+// The token deliberately never enters the remote URL. The lander folds git's
 // stderr into the errors it returns, so a URL-embedded credential would be
 // reprinted into logs and dead-letter payloads by any failed fetch. It is kept
 // out of the command line for the same reason — a header written by this
 // process into a file it owns is visible to neither.
-func writeCredential(cfg mergerConfig) error {
+func writeCredential(cfg landerConfig) error {
 	path := filepath.Join(cfg.CheckoutPath, ".git", credentialFile)
 
 	if !cfg.needsHTTPCredential() {
@@ -179,7 +179,7 @@ func writeCredential(cfg mergerConfig) error {
 func setLocalConfig(checkoutPath, key, value string) error {
 	// Uses the ambient git rather than the pinned runtime: this touches only
 	// the repository's own config file, never the remote, and the pinned
-	// runtime exists to make *merge results* reproducible.
+	// runtime exists to make *land results* reproducible.
 	cmd := exec.Command("git", "config", "--local", "--replace-all", key, value)
 	cmd.Dir = checkoutPath
 	var stderr bytes.Buffer
@@ -192,9 +192,9 @@ func setLocalConfig(checkoutPath, key, value string) error {
 
 // runGit invokes the pinned git in dir with an environment scrubbed of ambient
 // configuration but retaining what is needed to reach a remote. It composes that
-// environment through gitexec.Env, the same source the merger uses, so
-// provisioning and merging authenticate — and behave — identically.
-func runGit(ctx context.Context, runtime gitmerger.GitRuntime, dir string, args ...string) ([]byte, error) {
+// environment through gitexec.Env, the same source the lander uses, so
+// provisioning and landing authenticate — and behave — identically.
+func runGit(ctx context.Context, runtime gitlander.GitRuntime, dir string, args ...string) ([]byte, error) {
 	full := append([]string{
 		"--exec-path=" + runtime.ExecPath,
 		"-c", "init.templateDir=" + runtime.TemplateDir,

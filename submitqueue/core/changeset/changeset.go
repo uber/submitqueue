@@ -14,7 +14,7 @@
 
 // Package changeset resolves batch identity into the changes a batch contains.
 // It is the single place the orchestrator walks batch -> requests -> changes,
-// consolidating what the build and merge controllers each did privately.
+// consolidating what the build and land controllers each did privately.
 // Decision/action extensions (scorer, buildrunner, and future
 // detail-aware conflict analyzers) take thin identity entities and resolve their
 // granular content through an injected Resolver instead of being handed
@@ -32,14 +32,14 @@ import (
 
 // Resolver turns batch identity into the changes the batch contains. Both methods
 // operate on a single batch — callers with several batches (a build's base, a
-// merge train) loop and keep the per-batch boundary by holding a slice per batch.
+// multi-batch land) loop and keep the per-batch boundary by holding a slice per batch.
 // The two methods differ only in fidelity: ChangesForBatch is the cheap URI-only
 // view; DetailedForBatch reads the change store for provider details.
 type Resolver interface {
 	// ChangesForBatch resolves a batch's contained requests into their raw
 	// changes (URIs only; no change-store read), in batch.Contains order. A batch
 	// with no requests yields an empty slice. Used by the build (base/head) and
-	// merge stages.
+	// land stages.
 	ChangesForBatch(ctx context.Context, batch entity.Batch) ([]change.Change, error)
 
 	// DetailedForBatch resolves a batch into its normalized, batch-level view:

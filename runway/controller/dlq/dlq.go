@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package dlq reconciles dead-lettered merge requests back to the client.
+// Package dlq reconciles dead-lettered land requests back to the client.
 //
-// Runway's inbound merge topics dead-letter a message after the primary
+// Runway's inbound land topics dead-letter a message after the primary
 // controller returns a non-retryable error or exhausts retries on a retryable
 // one. Runway is stateless and the sole responder on the client's correlation
 // id, so a dead-lettered request that produced no signal would leave the client
@@ -23,9 +23,9 @@
 // this reconciler is the backstop for everything else (unexpected faults, retry
 // exhaustion).
 //
-// On each delivery from a `{topic}_dlq` topic it decodes the same MergeRequest
+// On each delivery from a `{topic}_dlq` topic it decodes the same LandRequest
 // payload the primary controller consumes (the queue preserves the bytes
-// verbatim), and republishes a FAILED MergeResult — echoing the correlation id
+// verbatim), and republishes a FAILED LandResult — echoing the correlation id
 // — to the corresponding signal topic. Unlike the stovepipe/orchestrator DLQ
 // reconcilers it writes no entity state (Runway has none); the signal is the
 // resolution. A payload that cannot be decoded carries no correlation id to
@@ -54,7 +54,7 @@ import (
 // subscription's topic name matches the controller's TopicKey().
 const topicSuffix = "_dlq"
 
-// TopicKey returns the DLQ topic key for a primary merge topic. Exported so the
+// TopicKey returns the DLQ topic key for a primary land topic. Exported so the
 // wiring layer builds matching pairs without duplicating the suffix literal.
 func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
@@ -63,7 +63,7 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 // Verify Controller implements consumer.Controller at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// Controller consumes a merge topic's dead-letter queue and republishes a
+// Controller consumes a land topic's dead-letter queue and republishes a
 // terminal FAILED result to the corresponding signal topic.
 type Controller struct {
 	logger         *zap.SugaredLogger
@@ -89,11 +89,11 @@ type Params struct {
 	Logger *zap.SugaredLogger
 }
 
-// NewController creates a DLQ reconciler for a merge topic's dead-letter queue.
+// NewController creates a DLQ reconciler for a land topic's dead-letter queue.
 func NewController(p Params) *Controller {
 	return &Controller{
-		logger:         p.Logger.Named("merge_dlq_controller"),
-		metricsScope:   p.Scope.SubScope("merge_dlq_controller"),
+		logger:         p.Logger.Named("land_dlq_controller"),
+		metricsScope:   p.Scope.SubScope("land_dlq_controller"),
 		registry:       p.Registry,
 		topicKey:       p.TopicKey,
 		signalTopicKey: p.SignalTopicKey,
@@ -101,7 +101,7 @@ func NewController(p Params) *Controller {
 	}
 }
 
-// Process decodes the dead-lettered merge request and republishes a FAILED
+// Process decodes the dead-lettered land request and republishes a FAILED
 // result to the signal topic so the client's correlation id resolves. Returns
 // nil to ack; an error to nack (retried indefinitely under
 // AlwaysRetryableProcessor).
@@ -111,12 +111,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	msg := delivery.Message()
 	meta := delivery.Metadata()
 
-	request := &runwaymq.MergeRequest{}
+	request := &runwaymq.LandRequest{}
 	if err := runwaymq.Unmarshal(msg.Payload, request); err != nil {
 		// No correlation id is recoverable, so there is nothing to resolve for
 		// the client. Log and ack (drop) rather than retry forever.
 		metrics.NamedCounter(c.metricsScope, opName, "undecodable", 1)
-		c.logger.Errorw("dlq reconcile: undecodable merge request, dropping",
+		c.logger.Errorw("dlq reconcile: undecodable land request, dropping",
 			"err", err,
 			"original_topic", meta["dlq.original_topic"],
 		)
@@ -125,7 +125,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	reason := meta["dlq.last_error"]
 	if reason == "" {
-		reason = "runway failed to process the merge request"
+		reason = "runway failed to process the land request"
 	}
 
 	c.logger.Warnw("dlq reconcile: publishing terminal failure",
@@ -136,7 +136,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"last_error", reason,
 	)
 
-	result := &runwaymq.MergeResult{
+	result := &runwaymq.LandResult{
 		Id:        request.GetId(),
 		Outcome:   runwaypb.Outcome_FAILED,
 		Reason:    fmt.Sprintf("dead-lettered: %s", reason),
@@ -152,16 +152,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil
 }
 
-// publish serializes a MergeResult and publishes it to the signal topic.
+// publish serializes a LandResult and publishes it to the signal topic.
 //
 // Named for the dead letter, because the live handler answers the same request
 // on the same topic under the bare correlation ID. Reusing that ID would let
 // this terminal failure be deduplicated against an answer that was already
 // sent, and the caller would go on waiting for a result nothing will produce.
-func (c *Controller) publish(ctx context.Context, result *runwaymq.MergeResult, partitionKey string) error {
+func (c *Controller) publish(ctx context.Context, result *runwaymq.LandResult, partitionKey string) error {
 	payload, err := runwaymq.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("failed to serialize merge result: %w", err)
+		return fmt.Errorf("failed to serialize land result: %w", err)
 	}
 
 	if err := publish.Message(ctx, c.registry, c.signalTopicKey,

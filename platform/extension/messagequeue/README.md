@@ -100,7 +100,7 @@ for delivery := range deliveries {
 
 A message ID is the deduplication key, scoped to its topic and partition key. A backend matches a publish against messages it still holds — including ones already consumed, since reclamation is lazy and may lag delivery by an unbounded interval — and a collision is reported to the publisher as a success that stored nothing. There is no error to retry and no row to deliver.
 
-The ID therefore names the *occasion* to publish, not the entity published about. An entity's own ID buys exactly one message for that entity for as long as the backend remembers the first, so a stage that announces a batch at creation and another that wakes it after a merge would collide, and the wake-up would vanish.
+The ID therefore names the *occasion* to publish, not the entity published about. An entity's own ID buys exactly one message for that entity for as long as the backend remembers the first, so a stage that announces a batch at creation and another that wakes it after a land would collide, and the wake-up would vanish.
 
 Producers do not choose IDs by hand. They publish through `platform/publish`, whose `IntentID(entityID, cause...)` composes the entity with the cause of this particular message: a retry of the same cause dedups, which is what makes redelivery safe, while a new cause about the same entity can never be swallowed. `UniqueID` is the fallback for a cause with nothing stable to name it by, and it trades that idempotency for guaranteed delivery.
 

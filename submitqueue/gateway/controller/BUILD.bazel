@@ -45,7 +45,7 @@ go_test(
     deps = [
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//platform/base/change:go_default_library",
-        "//platform/base/mergestrategy:go_default_library",
+        "//platform/base/landstrategy:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",

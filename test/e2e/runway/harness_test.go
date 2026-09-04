@@ -14,7 +14,7 @@
 
 package e2e_test
 
-// Helpers for the Runway e2e suite: the client side of the merge contract
+// Helpers for the Runway e2e suite: the client side of the land contract
 // (publish a request, await the correlated result) plus the request builders
 // the tests vary.
 
@@ -26,7 +26,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	strategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -36,10 +36,10 @@ import (
 // other side of that contract, so it addresses topics by the same keys the
 // service registers (see service/runway/server/main.go newTopicRegistry).
 var (
-	topicMerge       = runwaymq.TopicKeyMerge.String()
-	topicMergeSignal = runwaymq.TopicKeyMergeSignal.String()
-	topicCheck       = runwaymq.TopicKeyMergeConflictCheck.String()
-	topicCheckSignal = runwaymq.TopicKeyMergeConflictCheckSignal.String()
+	topicLand        = runwaymq.TopicKeyLand.String()
+	topicLandSignal  = runwaymq.TopicKeyLandSignal.String()
+	topicCheck       = runwaymq.TopicKeyLandConflictCheck.String()
+	topicCheckSignal = runwaymq.TopicKeyLandConflictCheckSignal.String()
 )
 
 // reconciledPrefix is what the DLQ reconciler prepends to the reason of a
@@ -52,30 +52,30 @@ const reconciledPrefix = "dead-lettered: "
 
 // reconciled reports whether a result came from the DLQ reconciler rather than
 // from the primary controller.
-func reconciled(result *runwaymq.MergeResult) bool {
+func reconciled(result *runwaymq.LandResult) bool {
 	return strings.HasPrefix(result.GetReason(), reconciledPrefix)
 }
 
 // baseURI is a well-formed change URI. Tests append a "sq-fake=<token>" marker
-// to steer the fake merger; without one it merges cleanly.
+// to steer the fake lander; without one it lands cleanly.
 const baseURI = "github://github.example.com/uber/runway-e2e/pull/1/abcdef0123456789abcdef0123456789abcdef01"
 
-// Marker tokens the fake merger recognizes (runway/extension/merger/fake).
+// Marker tokens the fake lander recognizes (runway/extension/lander/fake).
 const (
-	markerConflict = "merge-conflict"
-	markerInvalid  = "merge-invalid"
-	markerError    = "merge-error"
+	markerConflict = "land-conflict"
+	markerInvalid  = "land-invalid"
+	markerError    = "land-error"
 )
 
-// markedURI returns baseURI carrying the given fake-merger marker token.
+// markedURI returns baseURI carrying the given fake-lander marker token.
 func markedURI(token string) string {
 	return baseURI + "?sq-fake=" + token
 }
 
-// observedResult is a MergeResult as it arrived on a signal topic, with the
+// observedResult is a LandResult as it arrived on a signal topic, with the
 // envelope fields the tests assert on alongside the payload.
 type observedResult struct {
-	result       *runwaymq.MergeResult
+	result       *runwaymq.LandResult
 	messageID    string
 	partitionKey string
 }
@@ -118,7 +118,7 @@ func (o *observer) await(t *testing.T, ctx context.Context, id string) observedR
 		require.NotNil(t, delivery, "nil delivery on %s", o.topic)
 
 		msg := delivery.Message()
-		result := &runwaymq.MergeResult{}
+		result := &runwaymq.LandResult{}
 		require.NoError(t, runwaymq.Unmarshal(msg.Payload, result),
 			"failed to decode result on %s", o.topic)
 		require.NoError(t, delivery.Ack(ctx), "failed to ack result on %s", o.topic)
@@ -152,13 +152,13 @@ func (s *RunwayE2ESuite) observe(topic string) *observer {
 	return &observer{topic: topic, ch: ch}
 }
 
-// publish sends a merge request to one of Runway's inbound topics, partitioned
+// publish sends a land request to one of Runway's inbound topics, partitioned
 // by queue name exactly as the orchestrator publishes it.
-func (s *RunwayE2ESuite) publish(topic string, request *runwaymq.MergeRequest) {
+func (s *RunwayE2ESuite) publish(topic string, request *runwaymq.LandRequest) {
 	t := s.T()
 
 	payload, err := runwaymq.Marshal(request)
-	require.NoError(t, err, "failed to marshal merge request")
+	require.NoError(t, err, "failed to marshal land request")
 
 	s.publishRaw(topic, request.GetId(), request.GetQueueName(), payload)
 }
@@ -173,22 +173,22 @@ func (s *RunwayE2ESuite) publishRaw(topic, id, partitionKey string, payload []by
 	s.log.Logf("published %s to %s (partition %s)", id, topic, partitionKey)
 }
 
-// mergeRequest builds a request with a unique correlation id. Ids must be
+// landRequest builds a request with a unique correlation id. Ids must be
 // unique across the suite: the queue deduplicates publishes on
 // (topic, partition, id), and the correlation id is the message id on both the
 // request and its result, so a reused id silently drops a publish.
-func (s *RunwayE2ESuite) mergeRequest(queue string, steps ...*runwaymq.MergeStep) *runwaymq.MergeRequest {
+func (s *RunwayE2ESuite) landRequest(queue string, steps ...*runwaymq.LandStep) *runwaymq.LandRequest {
 	s.seq++
-	return &runwaymq.MergeRequest{
+	return &runwaymq.LandRequest{
 		Id:        fmt.Sprintf("%s/%d", queue, s.seq),
 		QueueName: queue,
 		Steps:     steps,
 	}
 }
 
-// step builds one merge step applying the given URIs with REBASE.
-func step(id string, uris ...string) *runwaymq.MergeStep {
-	return &runwaymq.MergeStep{
+// step builds one land step applying the given URIs with REBASE.
+func step(id string, uris ...string) *runwaymq.LandStep {
+	return &runwaymq.LandStep{
 		StepId:   id,
 		Change:   &changepb.Change{Uris: uris},
 		Strategy: strategypb.Strategy_REBASE,

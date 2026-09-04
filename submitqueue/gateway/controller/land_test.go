@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -103,7 +103,7 @@ func testLandRequest(queue string) entity.LandRequest {
 	return entity.LandRequest{
 		Queue:        queue,
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 	}
 }
 
@@ -412,7 +412,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	req := entity.LandRequest{
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 	}
 	result, err := controller.Land(ctx, req)
 
@@ -467,7 +467,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
 	assert.Equal(t, []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
-	assert.Equal(t, mergestrategy.MergeStrategyRebase, deserializedReq.LandStrategy)
+	assert.Equal(t, landstrategy.StrategyRebase, deserializedReq.LandStrategy)
 }
 
 func TestLand_ReturnsErrorWhenPublishFails(t *testing.T) {

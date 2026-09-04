@@ -6,16 +6,16 @@ Each domain has its own subdirectory with a dedicated README:
 
 - [`submitqueue/`](submitqueue/README.md) — the multi-service SubmitQueue domain (Gateway + Orchestrator).
 - [`stovepipe/`](stovepipe/README.md) — the single-service Stovepipe domain (ingest → process → build → buildsignal → record).
-- [`runway/`](runway/README.md) — the single-service Runway landing service (consumes the merge queues).
+- [`runway/`](runway/README.md) — the single-service Runway landing service (consumes the land queues).
 
 ## Services
 
 | Service | Port | Domain | RPCs | Backing stores |
 |---------|------|--------|------|----------------|
 | **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land`, `Cancel`, `GetRequestSummaryByID`, `GetRequestSummaryByChangeURI`, `List`, `GetRequestHistoryByID`, `GetRequestHistoryByChangeURI` | MySQL app + queue |
-| **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes start, cancel, validate, merge-conflict-check-signal, batch, dependency-analysis, speculate, build, buildsignal, submitqueue-merge, merge-signal, conclude, submitqueue-hook, and paired DLQ topics) | MySQL app + queue |
+| **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes start, cancel, validate, land-conflict-check-signal, batch, dependency-analysis, speculate, build, buildsignal, submitqueue-land, land-signal, conclude, submitqueue-hook, and paired DLQ topics) | MySQL app + queue |
 | **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes process, build, buildsignal, record, stovepipe-hook, and paired DLQ topics) | MySQL storage + queue |
-| **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & runway-merge topics) | MySQL queue |
+| **Runway** | 8086 | `runway` | `Ping` (+ consumes land-conflict-check & runway-land topics) | MySQL queue |
 
 Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port (use `make local-*-ps` / `docker port` to discover it).
 

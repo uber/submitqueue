@@ -183,7 +183,7 @@ QUEUE_LOG_LEVEL=debug make local-submitqueue-start
 
 The queue's own logic is real in every mode: validation, batching, conflict analysis, speculation, the request log, and the whole trail from `accepted` to `landed`.
 
-In `fake` mode, everything at the edges is not. There is no repository, so a change is a URI that points at nothing; the build runner passes instantly; and Runway uses the **noop merger**, which reports success without touching anything. `landed` here means the pipeline ran to completion — not that a commit exists anywhere.
+In `fake` mode, everything at the edges is not. There is no repository, so a change is a URI that points at nothing; the build runner passes instantly; and Runway uses the **noop lander**, which reports success without touching anything. `landed` here means the pipeline ran to completion — not that a commit exists anywhere.
 
 For that, take the next rung.
 
@@ -200,7 +200,7 @@ Still no credential. `PROVIDER=git` provisions a bare repository at `/tmp/sq-san
 ✅ Stack is running against provider 'git'.
 
 Gateway gRPC port: 55295
-Merge target:      /tmp/sq-sandbox/sandbox.git
+Land target:       /tmp/sq-sandbox/sandbox.git
 ```
 
 Then the same command as before, unchanged:
@@ -209,7 +209,7 @@ Then the same command as before, unchanged:
 make demo-requests
 ```
 
-`demo-requests` creates changes for whichever provider the running stack was started with, so there is nothing to repeat and nothing to keep in sync. The two must agree — a fake change points at no repository, so a stack running the git merger rejects every one of them as a commit it cannot find — and rather than leaving that to memory, a run with no `PROVIDER` of its own asks the stack which one it has. Passing one that disagrees still works, and says so before it starts.
+`demo-requests` creates changes for whichever provider the running stack was started with, so there is nothing to repeat and nothing to keep in sync. The two must agree — a fake change points at no repository, so a stack running the git lander rejects every one of them as a commit it cannot find — and rather than leaving that to memory, a run with no `PROVIDER` of its own asks the stack which one it has. Passing one that disagrees still works, and says so before it starts.
 
 Now `demo-requests` pushes real branches with real commits, and landing them is a real cherry-pick and push. Look at the repository itself:
 
@@ -244,7 +244,7 @@ The last rung is the only one that needs credentials, and the only one where a c
 
 ### What you need
 
-A **scratch repository** you are willing to have commits pushed to and branches force-moved on. Do not point this at anything you care about — the merger pushes to the target branch and rewrites the head branch of every change it lands.
+A **scratch repository** you are willing to have commits pushed to and branches force-moved on. Do not point this at anything you care about — the lander pushes to the target branch and rewrites the head branch of every change it lands.
 
 A **token** for it, scoped to that one repository.
 
@@ -253,7 +253,7 @@ For a **fine-grained** token, grant these repository permissions. Each is here b
 | Permission | Access | Needed by |
 |---|---|---|
 | Metadata | Read | mandatory on every fine-grained token; GitHub adds it for you |
-| Contents | Read and write | the git merger — clone, fetch, push to the target branch, and force-move each landed change's head branch |
+| Contents | Read and write | the git lander — clone, fetch, push to the target branch, and force-move each landed change's head branch |
 | Pull requests | Read | the change provider reads pull request metadata, and `land -pr` reads the head commit |
 | Pull requests | Read **and write** | only for `make demo-requests`, which opens pull requests |
 | Actions | Read and write | the build runner — dispatch a run per batch, poll it, cancel it |
@@ -264,7 +264,7 @@ Two things people get caught by. Fine-grained tokens must have the repository ex
 
 ### Configure and run
 
-Everything provider-specific is one directory: [`service/submitqueue/demo/provider/github/`](../../service/submitqueue/demo/provider/github). Edit the three marked lines in `merge.yaml`:
+Everything provider-specific is one directory: [`service/submitqueue/demo/provider/github/`](../../service/submitqueue/demo/provider/github). Edit the three marked lines in `land.yaml`:
 
 ```yaml
 remoteUrl: https://github.com/<you>/<your-scratch-repo>.git
@@ -364,9 +364,9 @@ make land QUEUE=demo-queue \
   URI='git://demo.example.com/demo/refs%2Fheads%2Fbad/2222222222222222222222222222222222222222?sq-fake=build-fail'
 ```
 
-That request walks the same path as far as `speculating`, records `building`, and then goes terminal at `error` instead of landing. Other tokens follow the same `sq-fake=<token>` convention and are documented on the fake they drive — `provider-error` on the change provider, `unmergeable` and `mergecheck-error` on the merge checker, `trigger-error` and `build-error` on the build runner.
+That request walks the same path as far as `speculating`, records `building`, and then goes terminal at `error` instead of landing. Other tokens follow the same `sq-fake=<token>` convention and are documented on the fake they drive — `provider-error` on the change provider, `unlandable` and `landcheck-error` on the land checker, `trigger-error` and `build-error` on the build runner.
 
-A hand-written URI like the one above belongs to the `fake` rung alone. On `git` it names a commit the merger cannot fetch, and on `github` the change provider tries to resolve it as a pull request — both fail, but for reasons that have nothing to do with the marker.
+A hand-written URI like the one above belongs to the `fake` rung alone. On `git` it names a commit the lander cannot fetch, and on `github` the change provider tries to resolve it as a pull request — both fail, but for reasons that have nothing to do with the marker.
 
 Submit a good change into the **same folder** as a failing one and you can watch what makes a queue worth having: the two are batched in order, and the second speculates on the first landing. When the first fails, that guess is contradicted, the second re-plans, and it lands anyway.
 
@@ -390,11 +390,11 @@ Both MySQL services mount **anonymous** volumes, so a stop/start cycle orphans a
 
 **A land is rejected before it returns an sqid.** The URI failed validation: 40 hex characters of SHA, and a percent-encoded `refs/…` ref.
 
-**Everything reports `error` immediately.** Check the queue name exists in [`queues.yaml`](../../service/submitqueue/gateway/server/queues.yaml) and is configured in the provider directory you are running. A queue with no entry in `merge.yaml` gets the noop merger by design, so it will appear to land without pushing anything.
+**Everything reports `error` immediately.** Check the queue name exists in [`queues.yaml`](../../service/submitqueue/gateway/server/queues.yaml) and is configured in the provider directory you are running. A queue with no entry in `land.yaml` gets the noop lander by design, so it will appear to land without pushing anything.
 
 **`PROVIDER=git` lands report `error`.** Read Runway's log and look for the git command that failed. A change whose branch was never pushed to the sandbox, or a `demo-requests` run whose `PROVIDER` did not match the stack's, both surface here as a failed fetch or cherry-pick.
 
-**`PROVIDER=github`: the push is rejected on the first try.** Branch protection on `main` — required status checks, or a linear-history or no-force-push rule — applies to the merger like anyone else. Either relax it on the scratch repo or add the token's identity to the bypass list.
+**`PROVIDER=github`: the push is rejected on the first try.** Branch protection on `main` — required status checks, or a linear-history or no-force-push rule — applies to the lander like anyone else. Either relax it on the scratch repo or add the token's identity to the bypass list.
 
 **`PROVIDER=github`: the change lands but the pull request stays open.** Two causes, distinguishable in Runway's logs. If the change came from a **fork**, this is expected and permanent: the head branch lives in the contributor's repository, which this stack has no business writing to, and the log says `no head branch on this remote for change`. Otherwise it is **protection on the head branch** blocking the force update, logged as `could not move change head branch`. The land itself succeeded either way — the failure is reported and deliberately not retried, because the push already happened and cannot be undone.
 

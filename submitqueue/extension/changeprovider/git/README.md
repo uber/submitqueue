@@ -14,7 +14,7 @@ A change that shares no history with what it claims to land on is an error, not 
 
 ## What this package is, and isn't
 
-This package is only the derivation: parse the URI, pick the baseline, read the diff and author, shape the result. Everything about *reaching* the repository — the local bare copy, fetching, merge bases, authentication, the git command environment — is transport plumbing that lives in [`platform/git/repo`](../../../../platform/git/repo) (built on [`platform/git/exec`](../../../../platform/git/exec)), which the merger and any other git caller share. The provider depends on a small `Repository` interface it defines, so it holds no `os/exec` and no credential handling of its own.
+This package is only the derivation: parse the URI, pick the baseline, read the diff and author, shape the result. Everything about *reaching* the repository — the local bare copy, fetching, merge bases, authentication, the git command environment — is transport plumbing that lives in [`platform/git/repo`](../../../../platform/git/repo) (built on [`platform/git/exec`](../../../../platform/git/exec)), which the lander and any other git caller share. The provider depends on a small `Repository` interface it defines, so it holds no `os/exec` and no credential handling of its own.
 
 ## Tests
 

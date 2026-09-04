@@ -48,7 +48,7 @@ type ChangeOutcome struct {
 }
 
 // BatchOutcome groups the per-change outcomes for a single pushed batch, so a
-// merge-train push (several batches in one call) stays correlatable back to the
+// multi-batch land push (several batches in one call) stays correlatable back to the
 // batch each change belonged to. There is no per-batch status: a push is
 // all-or-nothing across the whole call, so a per-batch pass/fail would be
 // uniformly redundant.

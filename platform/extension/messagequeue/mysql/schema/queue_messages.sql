@@ -1,7 +1,7 @@
 -- MESSAGES TABLE (Immutable Log)
 -- Single table for all topics. Partition key determines distribution across workers.
 -- Messages are append-only; per-consumer-group delivery tracking is in queue_delivery_state.
--- Example: topic="merge_queue", partition_key="uber/cadence"
+-- Example: topic="land_queue", partition_key="uber/cadence"
 
 CREATE TABLE IF NOT EXISTS queue_messages (
     -- Auto-incrementing global offset for ordering

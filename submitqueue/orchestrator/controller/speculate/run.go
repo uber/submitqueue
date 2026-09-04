@@ -49,7 +49,7 @@ func (c *Controller) run(ctx context.Context, store storage.Storage, trigger ent
 	if len(snap.speculating) == 0 {
 		// No head is open to new work, so there is nothing to ask the
 		// Speculator. The dispatch step still runs: what the build stages saw about a
-		// merging or cancelling head's paths has to be persisted so those
+		// landing or cancelling head's paths has to be persisted so those
 		// paths stop counting against the budget.
 		return c.dispatch(ctx, trigger.Queue, snap, nil)
 	}
@@ -292,7 +292,7 @@ func terminalPathStatus(status entity.BuildStatus) entity.SpeculationPathStatus 
 // head's dependencies are the facts its paths are built from, so a dependency
 // withheld is one the Speculator has to plan around blind. Every in-flight
 // path set goes over for the same reason: a path holds its CI slot until its
-// build actually stops, so a merging head's superseded siblings and a
+// build actually stops, so a landing head's superseded siblings and a
 // cancelling head's live builds spend the budget just like a speculating
 // head's do. Hiding either would let the allocator count occupied slots as
 // free and oversubscribe CI.
@@ -301,7 +301,7 @@ func terminalPathStatus(status entity.BuildStatus) entity.SpeculationPathStatus 
 // head, and check rejects any proposal aimed at a head that is not
 // speculating. A head this run has just decided still reads as Speculating
 // here, but it can only rebuild the path that already passed — see
-// mergeablePath — which the allocator skips as finished.
+// landablePath — which the allocator skips as finished.
 func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]entity.Speculation, error) {
 	spec, err := c.speculators.For(speculator.Config{QueueName: queue})
 	if err != nil {

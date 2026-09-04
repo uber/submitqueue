@@ -13,7 +13,7 @@
 
 services:
   # Queue Database - Messaging infrastructure (messages, offsets, partition leases).
-  # Runway consumes the merge-conflict-check and merge queues from here.
+  # Runway consumes the land-conflict-check and land queues from here.
   mysql-queue:
     image: mysql:8.0
     environment:
@@ -43,10 +43,10 @@ services:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
       - PORT=:8080
-      # Merger implementation. Empty (the default) resolves from the merge
-      # environment: git when MERGE_CHECKOUT_PATH is set, noop otherwise. The
-      # e2e suite sets SQ_RUNWAY_MERGER=fake to drive outcomes from the payload.
-      - MERGER=${SQ_RUNWAY_MERGER:-}
+      # Lander implementation. Empty (the default) resolves from the land
+      # environment: git when LAND_CHECKOUT_PATH is set, noop otherwise. The
+      # e2e suite sets SQ_RUNWAY_LANDER=fake to drive outcomes from the payload.
+      - LANDER=${SQ_RUNWAY_LANDER:-}
       # Queue infrastructure connection
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       # Level for the queue's own logs; info by default so its per-message

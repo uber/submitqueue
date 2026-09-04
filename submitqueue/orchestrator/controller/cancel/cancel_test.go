@@ -517,7 +517,7 @@ func TestProcess_NonCancellableBatchSuppressesRequestCancellation(t *testing.T) 
 		name  string
 		state entity.BatchState
 	}{
-		{name: "merging", state: entity.BatchStateMerging},
+		{name: "landing", state: entity.BatchStateLanding},
 		{name: "succeeded", state: entity.BatchStateSucceeded},
 		{name: "failed", state: entity.BatchStateFailed},
 		{name: "cancelled", state: entity.BatchStateCancelled},

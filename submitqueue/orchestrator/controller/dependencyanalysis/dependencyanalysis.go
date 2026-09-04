@@ -219,7 +219,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "reannounced", 1)
 
 	default:
-		// Speculating or merging: the announcement landed and the batch has
+		// Speculating or landing: the announcement landed and the batch has
 		// already moved past this stage.
 		metrics.NamedCounter(c.metricsScope, opName, "already_admitted", 1)
 		return nil
@@ -246,7 +246,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // with its own hand-off. This is where that is resolved: the topic is
 // partitioned by queue and consumed in order, so the first hand-off through
 // here enrols the request and the second finds it and stops. Without the check
-// the same change would end up in two live batches, both admitted, both merged.
+// the same change would end up in two live batches, both admitted, both landed.
 func (c *Controller) requestEnrolledInAnotherBatch(ctx context.Context, store storage.Storage, batch entity.Batch) (bool, error) {
 	for _, requestID := range batch.Contains {
 		existing, stale, err := corebatch.FindByRequestID(ctx, store, requestID)

@@ -27,16 +27,16 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
+	gitlander "github.com/uber/submitqueue/runway/extension/lander/git"
 )
 
 // testRuntime resolves the pinned git the Bazel target supplies. Provisioning
-// runs real git, so these tests use the same runtime the merger will.
-func testRuntime(t *testing.T) gitmerger.GitRuntime {
+// runs real git, so these tests use the same runtime the lander will.
+func testRuntime(t *testing.T) gitlander.GitRuntime {
 	t.Helper()
 	executable := gitexectest.Git(t)
 	templateDescription := gitexectest.Runfile(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
-	return gitmerger.GitRuntime{
+	return gitlander.GitRuntime{
 		Executable:  executable,
 		ExecPath:    filepath.Dir(executable),
 		TemplateDir: filepath.Dir(templateDescription),
@@ -44,7 +44,7 @@ func testRuntime(t *testing.T) gitmerger.GitRuntime {
 }
 
 // seedBareRepo creates a bare repository holding one commit on branch and
-// returns its path — the shape of the remote a merge target points at.
+// returns its path — the shape of the remote a land target points at.
 func seedBareRepo(t *testing.T, branch string) string {
 	t.Helper()
 	runtime := testRuntime(t)
@@ -68,7 +68,7 @@ func seedBareRepo(t *testing.T, branch string) string {
 	return bare
 }
 
-func mustRunGit(t *testing.T, ctx context.Context, runtime gitmerger.GitRuntime, dir string, args ...string) string {
+func mustRunGit(t *testing.T, ctx context.Context, runtime gitlander.GitRuntime, dir string, args ...string) string {
 	t.Helper()
 	out, err := runGit(ctx, runtime, dir, args...)
 	require.NoError(t, err, "git %s", strings.Join(args, " "))
@@ -76,10 +76,10 @@ func mustRunGit(t *testing.T, ctx context.Context, runtime gitmerger.GitRuntime,
 }
 
 // localCheckout builds a config pointing at a freshly seeded bare repo.
-func localCheckout(t *testing.T, bare string) mergerConfig {
+func localCheckout(t *testing.T, bare string) landerConfig {
 	t.Helper()
-	cfg := mergerConfig{
-		Type:         mergerTypeGit,
+	cfg := landerConfig{
+		Type:         landerTypeGit,
 		RemoteURL:    "file://" + bare,
 		CheckoutPath: filepath.Join(t.TempDir(), "checkout"),
 	}
@@ -94,7 +94,7 @@ func TestProvisionCheckout_CreatesUsableWorkingTree(t *testing.T) {
 
 	require.NoError(t, provisionCheckout(ctx, zaptest.NewLogger(t).Sugar(), runtime, cfg))
 
-	// The merger resets to refs/remotes/<remote>/<target> on every cycle, so
+	// The lander resets to refs/remotes/<remote>/<target> on every cycle, so
 	// that ref existing is what makes the checkout usable at all.
 	assert.NotEmpty(t, mustRunGit(t, ctx, runtime, cfg.CheckoutPath, "rev-parse", "origin/main"))
 	assert.Equal(t, "main", mustRunGit(t, ctx, runtime, cfg.CheckoutPath, "rev-parse", "--abbrev-ref", "HEAD"))
@@ -157,7 +157,7 @@ func TestProvisionCheckout_LocalRemoteCarriesNoCredential(t *testing.T) {
 }
 
 func TestWriteCredential_KeepsTokenOutOfTheRemoteURL(t *testing.T) {
-	// The merger folds git's stderr into the errors it returns, so a token in
+	// The lander folds git's stderr into the errors it returns, so a token in
 	// the remote URL would be reprinted by any failed fetch. This is the
 	// property that keeps it out of logs and dead-letter payloads.
 	const token = "s3cret-token-value"
@@ -219,8 +219,8 @@ func TestWriteCredential_RemovesFragmentWhenNoLongerNeeded(t *testing.T) {
 func TestWriteCredential_RejectsUnsetToken(t *testing.T) {
 	// Failing here beats cloning anonymously and reporting a confusing 404 on a
 	// private repository later.
-	cfg := mergerConfig{
-		Type:         mergerTypeGit,
+	cfg := landerConfig{
+		Type:         landerTypeGit,
 		RemoteURL:    "https://example.com/o/r.git",
 		CheckoutPath: t.TempDir(),
 		TokenEnv:     "TEST_TOKEN_DEFINITELY_NOT_SET",
@@ -244,8 +244,8 @@ func TestResolveGitRuntime_HonorsEnvironmentOverrides(t *testing.T) {
 }
 
 func TestResolveGitRuntime_DerivesExecPathFromTheBinary(t *testing.T) {
-	// The trap this removes: the merger requires all three paths, so a
-	// deployment that sets only MERGE_CHECKOUT_PATH used to fail at startup.
+	// The trap this removes: the lander requires all three paths, so a
+	// deployment that sets only LAND_CHECKOUT_PATH used to fail at startup.
 	pinned := testRuntime(t)
 	t.Setenv("GIT_EXECUTABLE", pinned.Executable)
 	t.Setenv("GIT_EXEC_PATH", "")

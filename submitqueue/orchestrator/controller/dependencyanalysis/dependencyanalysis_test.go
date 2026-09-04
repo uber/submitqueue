@@ -410,7 +410,7 @@ func TestController_Process_HaltedBatchAcksWithoutPublishing(t *testing.T) {
 // A batch already admitted got its announcement; re-sending one would only buy
 // a redundant re-plan.
 func TestController_Process_AlreadyAdmittedAcksWithoutPublishing(t *testing.T) {
-	for _, state := range []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateMerging} {
+	for _, state := range []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateLanding} {
 		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 

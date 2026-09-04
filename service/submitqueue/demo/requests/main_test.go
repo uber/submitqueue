@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	"github.com/uber/submitqueue/submitqueue/client"
 )
 
@@ -233,9 +233,9 @@ func (r recordingSource) open(ctx context.Context, spec changeSpec) (openedChang
 }
 
 // landerFunc adapts a function to the lander interface.
-type landerFunc func(context.Context, string, []string, mergestrategypb.Strategy) (string, error)
+type landerFunc func(context.Context, string, []string, landstrategypb.Strategy) (string, error)
 
-func (f landerFunc) Land(ctx context.Context, queue string, uris []string, s mergestrategypb.Strategy) (string, error) {
+func (f landerFunc) Land(ctx context.Context, queue string, uris []string, s landstrategypb.Strategy) (string, error) {
 	return f(ctx, queue, uris, s)
 }
 
@@ -252,7 +252,7 @@ func TestCreateBurst_EnqueuesOnlyAfterEveryChangeIsCreated(t *testing.T) {
 
 	var mu sync.Mutex
 	createdWhenLanded := make([]int64, 0, count)
-	lander := landerFunc(func(context.Context, string, []string, mergestrategypb.Strategy) (string, error) {
+	lander := landerFunc(func(context.Context, string, []string, landstrategypb.Strategy) (string, error) {
 		mu.Lock()
 		createdWhenLanded = append(createdWhenLanded, atomic.LoadInt64(&created))
 		mu.Unlock()
@@ -261,7 +261,7 @@ func TestCreateBurst_EnqueuesOnlyAfterEveryChangeIsCreated(t *testing.T) {
 
 	tracker := client.NewTracker(client.NewRows(count))
 	got, err := createBurst(context.Background(), src, lander, cfg,
-		mergestrategypb.Strategy_SQUASH_REBASE, "run", "base", tracker)
+		landstrategypb.Strategy_SQUASH_REBASE, "run", "base", tracker)
 	require.NoError(t, err)
 	require.Len(t, got, count)
 

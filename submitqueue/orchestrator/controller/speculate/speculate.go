@@ -79,12 +79,12 @@ func NewController(
 //
 //   - Created: the batch is admitted first, which makes it visible to the
 //     Speculator (proposals may only target Speculating heads). Reaching an
-//     outcome on it in the same run is safe: a merge needs a passed path, and
+//     outcome on it in the same run is safe: a land needs a passed path, and
 //     a head admitted this instant has no paths at all.
 //   - Already terminal: its conclude publish is repeated in case a previous
 //     one was lost — idempotent on the batch ID — and the run that follows is
 //     how dependents learn of an outcome no run has seen yet (a batch
-//     finalized by another stage, e.g. the merge signal recording a landed
+//     finalized by another stage, e.g. the land signal recording a landed
 //     push, was never seen breaking the paths that bet against it).
 //
 // Everything else — funding paths, cancelling broken ones, driving a
@@ -137,11 +137,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 	}
 
-	// A Merging batch has left the set finalize walks, so a message naming it
+	// A Landing batch has left the set finalize walks, so a message naming it
 	// is the only thing that will look at it again.
-	if batch.State == entity.BatchStateMerging {
-		metrics.NamedCounter(c.metricsScope, opName, "self_heal_merging", 1)
-		if err := c.dispatchMerge(ctx, batch); err != nil {
+	if batch.State == entity.BatchStateLanding {
+		metrics.NamedCounter(c.metricsScope, opName, "self_heal_landing", 1)
+		if err := c.dispatchLand(ctx, batch); err != nil {
 			return c.attributed(err, entity.BatchSubject(batch.ID))
 		}
 	}
@@ -209,7 +209,7 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 //
 // Callers choose msgID, because this controller publishes for two different
 // kinds of reason. A hand-off that happens once in a batch's life — dispatching
-// it to merge, concluding it — names its cause with publish.IntentID, so a
+// it to land, concluding it — names its cause with publish.IntentID, so a
 // redelivery that re-derives the same decision is deduplicated instead of
 // enacting it twice. A repeat-until-effective nudge — a dispatch re-sent until
 // the build stage records it, a fan-out repeated in case an earlier one was
