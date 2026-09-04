@@ -78,10 +78,9 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		// classifies every error as retryable. That is deliberate — the recoverable
 		// cause is deployment skew, where a newer producer's payload shape reaches a
 		// not-yet-upgraded consumer and decodes fine once the rollout completes. A
-		// genuinely malformed payload exhausts the DLQ subscription's MaxAttempts
-		// backstop and is dropped by the subscriber with a warning log; acking it here
-		// instead would skip reconciliation silently and leave the referenced request
-		// non-terminal.
+		// genuinely malformed payload remains available for operator inspection and
+		// removal; acking it here would skip reconciliation silently and leave the
+		// referenced request non-terminal.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
 	if pr.Id == "" {

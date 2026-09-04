@@ -325,7 +325,7 @@ func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
 	}
 
-	if d.retry.MaxAttempts > 0 && d.attempt >= d.retry.MaxAttempts {
+	if retryBudgetExhausted(d.retry.MaxAttempts, d.attempt) {
 		d.subscriber.logger.Warnw("message exhausted retry budget, dead-lettering",
 			"topic", d.topic,
 			"partition_key", d.partitionKey,
@@ -1120,8 +1120,7 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 			return fmt.Errorf("mark delivered offset=%d: %w", row.Offset, err)
 		}
 
-		// Check if message has exceeded retry limit
-		if retryCount >= cfg.Retry.MaxAttempts {
+		if retryBudgetExhausted(cfg.Retry.MaxAttempts, retryCount) {
 			s.logger.Warnw("message exceeded retry limit",
 				"topic", sub.topic,
 				"consumer_group", cfg.ConsumerGroup,
@@ -1542,6 +1541,10 @@ func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
 		return maxBackoffMs
 	}
 	return int64(backoff)
+}
+
+func retryBudgetExhausted(maxAttempts, attempts int) bool {
+	return maxAttempts > 0 && attempts >= maxAttempts
 }
 
 func validateRetryConfig(retry extqueue.RetryConfig) error {
