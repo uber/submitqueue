@@ -81,6 +81,7 @@ go_test(
         "//api/base/hook:go_default_library",
         "//platform/consumer:go_default_library",
         "//stovepipe/controller/dlq:go_default_library",
+        "//stovepipe/core/requestlog:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",

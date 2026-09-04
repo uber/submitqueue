@@ -304,7 +304,7 @@ func run() error {
 
 	storageFty := storageFactory{backend: store}
 	materializer := requestlog.NewMaterializer(scope)
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl, brf, hookResolver{})
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
 		return err
 	}
@@ -416,6 +416,7 @@ func registerPrimaryControllers(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Factory,
+	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
 	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
@@ -427,6 +428,7 @@ func registerPrimaryControllers(
 		logger,
 		scope,
 		store,
+		materializer,
 		queueconfigdefault.NewStore(),
 		sourceControl,
 		registry,

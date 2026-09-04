@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -47,6 +48,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	queueConfigs  queueconfig.Store
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
@@ -65,6 +67,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	queueConfigs queueconfig.Store,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
@@ -75,6 +78,7 @@ func NewController(
 		logger:        logger.Named("process_controller"),
 		metricsScope:  scope.SubScope("process_controller"),
 		stores:        stores,
+		materializer:  materializer,
 		queueConfigs:  queueConfigs,
 		sourceControl: sourceControl,
 		registry:      registry,
@@ -116,6 +120,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateProcessing:
+		if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonUnknown); err != nil {
+			return err
+		}
 		// Announce here as well as at admit: this is the only path a redelivery
 		// takes once the transition is durable, so an admit that failed after
 		// persisting would otherwise lose the start event for good. The event id
@@ -129,7 +136,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 		}
 		return nil
-	case entity.RequestStateSuperseded, entity.RequestStateSucceeded, entity.RequestStateFailed, entity.RequestStateCancelled:
+	case entity.RequestStateSuperseded:
+		return c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonSupersededByNewerHead)
+	case entity.RequestStateSucceeded, entity.RequestStateFailed, entity.RequestStateCancelled:
 		// Terminal: a newer head preempted this request, or its build already finished.
 		// A stale redelivery has nothing left to do.
 		return nil
@@ -192,8 +201,15 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 	if cmp >= 0 {
 		return false, nil
 	}
-	if err := c.supersedeRequest(ctx, store, request); err != nil {
+	request, err = c.supersedeRequest(ctx, store, request)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		return false, err
+	}
+	if request.State != entity.RequestStateSuperseded {
+		return true, nil
+	}
+	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonSupersededByNewerHead); err != nil {
 		return false, err
 	}
 	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1, metrics.TagsFromContext(ctx)...)
@@ -263,6 +279,10 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 		return nil
 	}
 
+	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonUnknown); err != nil {
+		return err
+	}
+
 	if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
 		return err
 	}
@@ -282,6 +302,14 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 		"build_strategy", string(request.BuildStrategy),
 		"base_uri", request.BaseURI,
 	)
+	return nil
+}
+
+func (c *Controller) persistStateLog(ctx context.Context, store storage.Storage, request entity.Request, reason entity.RequestOutcomeReason) error {
+	log := requestlog.NewRequestStateLog(request, reason)
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record %s state for request %s: %w", request.State, request.ID, err)
+	}
 	return nil
 }
 
@@ -413,13 +441,13 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 	}
 }
 
-// supersedeRequest transitions a request from accepted to superseded, retrying on version conflicts.
-func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage, request entity.Request) error {
+// supersedeRequest returns the canonical row so the log uses the version that won any CAS race.
+func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage, request entity.Request) (entity.Request, error) {
 	reqStore := store.GetRequestStore()
 
 	for {
 		if request.State != entity.RequestStateAccepted {
-			return nil
+			return request, nil
 		}
 
 		updated := request
@@ -429,14 +457,15 @@ func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
-					return fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
+					return entity.Request{}, fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
 				}
 				request = got
 				continue
 			}
-			return fmt.Errorf("failed to supersede request %s: %w", request.ID, err)
+			return entity.Request{}, fmt.Errorf("failed to supersede request %s: %w", request.ID, err)
 		}
-		return nil
+		updated.Version = newVersion
+		return updated, nil
 	}
 }
 

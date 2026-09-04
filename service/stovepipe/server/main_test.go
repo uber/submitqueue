@@ -25,6 +25,7 @@ import (
 	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -56,7 +57,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	primary := &recordingConsumer{}
 	deadLetter := &recordingConsumer{}
 
-	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, registry,
+	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
 		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{})
 	require.NoError(t, err)
 
