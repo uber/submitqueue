@@ -62,6 +62,10 @@ type RunwayServer struct {
 	pingController *controller.PingController
 }
 
+const mergerOverrideFake = "fake"
+
+var errExplicitGitConfigurationRequired = errors.New(`MERGER="git" requires usable Git configuration: set MERGE_CHECKOUT_PATH or set MERGE_CONFIG_PATH to a config containing at least one git merger`)
+
 // Ping delegates to the controller.
 func (s *RunwayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
 	return s.pingController.Ping(ctx, req)
@@ -307,17 +311,21 @@ func run() error {
 
 // newMergerFactory builds the mergers for the server.
 //
-// MERGER pins every queue to one implementation explicitly, which is how a test
-// holds the service to a fake without a git checkout. Left unset, each queue
-// resolves its own merge target through the merge configuration, so a
-// deployment can serve several repositories from one Runway.
+// MERGER=fake and MERGER=noop pin every queue to one implementation.
+// MERGER=git requires the resolved merge configuration to contain a Git target.
+// Left unset, each queue resolves its own merge target through configuration.
 //
 // The fake is reachable only through MERGER, never through the configuration
 // file: an implementation whose outcomes are steered by markers in a change URI
 // has no business being selectable by a production config.
 func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
-	switch impl := strings.ToLower(strings.TrimSpace(os.Getenv("MERGER"))); impl {
-	case "fake":
+	startup, err := resolveMergerStartupConfig(logger)
+	if err != nil {
+		return nil, err
+	}
+
+	switch startup.selection {
+	case mergerOverrideFake:
 		// Marker-driven outcomes, for e2e tests that need Runway to fail on
 		// demand without a git checkout. Never production.
 		logger.Info("MERGER=fake; using marker-driven fake merger for every queue")
@@ -325,16 +333,9 @@ func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope
 	case "noop":
 		logger.Info("MERGER=noop; using noop merger for every queue")
 		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
-	case "", "git":
-		// Fall through to the configured per-queue merge targets.
-	default:
-		return nil, fmt.Errorf("invalid MERGER %q", impl)
 	}
 
-	cfg, err := loadMergeConfigFromEnv(logger)
-	if err != nil {
-		return nil, err
-	}
+	cfg := startup.targets
 
 	// The git runtime is resolved only when something actually needs it, so a
 	// deployment running nothing but the noop merger does not require git to be
@@ -383,6 +384,31 @@ func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope
 		zap.Int("queue_overrides", len(byQueue)),
 	)
 	return mergerRegistry{byQueue: byQueue, fallback: fallback}, nil
+}
+
+type mergerStartupConfig struct {
+	selection string
+	targets   mergeConfig
+}
+
+func resolveMergerStartupConfig(logger *zap.Logger) (mergerStartupConfig, error) {
+	selection := strings.ToLower(strings.TrimSpace(os.Getenv("MERGER")))
+	switch selection {
+	case mergerOverrideFake, mergerTypeNoop:
+		return mergerStartupConfig{selection: selection}, nil
+	case "", mergerTypeGit:
+	default:
+		return mergerStartupConfig{}, fmt.Errorf("invalid MERGER %q", selection)
+	}
+
+	cfg, err := loadMergeConfigFromEnv(logger)
+	if err != nil {
+		return mergerStartupConfig{}, err
+	}
+	if selection == mergerTypeGit && !cfg.usesGit() {
+		return mergerStartupConfig{}, errExplicitGitConfigurationRequired
+	}
+	return mergerStartupConfig{selection: selection, targets: cfg}, nil
 }
 
 // loadMergeConfigFromEnv reads the merge configuration file when one is

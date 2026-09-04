@@ -15,7 +15,7 @@ These topic keys and their wire contracts are owned by the queue's producer side
 
 ### Merger backend
 
-The merge work is done by the [`merger`](../../runway/extension/merger) extension, resolved **per queue** — so one Runway can serve several repositories by giving each queue its own merge target. By default every queue gets the **noop** merger (always succeeds — for local dev and compose). Point `MERGE_CONFIG_PATH` at a merge configuration file to wire real **git** merge targets, or set `MERGE_CHECKOUT_PATH` to configure a single one from the environment (see Configuration).
+The merge work is done by the [`merger`](../../runway/extension/merger) extension, resolved **per queue** — so one Runway can serve several repositories by giving each queue its own merge target. By default every queue gets the **noop** merger (always succeeds — for local dev and compose). Point `MERGE_CONFIG_PATH` at a merge configuration file to wire real **git** merge targets, or set `MERGE_CHECKOUT_PATH` to configure a single one from the environment (see Configuration). Setting `MERGER=git` makes Git configuration mandatory: startup fails unless one of those sources defines at least one Git target.
 
 Two queues naming the same checkout resolve to the *same* merger instance, which is what serializes them against each other: a git merger locks the working tree it owns, and two instances over one tree would reset it out from under each other mid-merge. Naming one checkout for two *different* targets is rejected at startup.
 
@@ -71,6 +71,7 @@ The Runway controllers themselves live under [`runway/controller/`](../../runway
 | `QUEUE_MYSQL_DSN` | yes      | Queue database DSN                            | —                        |
 | `PORT`            | no       | gRPC listen address                           | `:8086`                  |
 | `HOSTNAME`        | no       | Subscriber name for the queue consumer        | `runway-<unix_ts>`       |
+| `MERGER`          | no       | Explicit merger selection. `git` requires `MERGE_CHECKOUT_PATH` or a `MERGE_CONFIG_PATH` file containing at least one Git target; `noop` forces synthetic success; `fake` is test-only. Unset resolves from the merge configuration and retains the noop fallback. | — |
 | `MERGE_CONFIG_PATH` | no | Path to the per-queue merge configuration file (see above). Takes precedence over the `MERGE_*` variables below, which configure a single target. | — |
 | `MERGE_CHECKOUT_PATH` | no   | Absolute path to the git checkout the merger owns. When unset (and no config file), the noop merger is used. | — (noop) |
 | `MERGE_REMOTE`    | no       | Git remote to fetch/push                       | `origin`                 |
