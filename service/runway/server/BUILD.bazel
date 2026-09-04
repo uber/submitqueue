@@ -79,6 +79,7 @@ go_test(
     srcs = [
         "checkout_test.go",
         "config_test.go",
+        "main_test.go",
     ],
     # Checkout provisioning runs real git, so the test uses the same pinned
     # runtime the merger does rather than whatever git the host happens to have.
@@ -101,6 +102,8 @@ go_test(
         "//runway/extension/merger/git:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
         "@org_uber_go_zap//zaptest:go_default_library",
+        "@org_uber_go_zap//zaptest/observer:go_default_library",
     ],
 )
