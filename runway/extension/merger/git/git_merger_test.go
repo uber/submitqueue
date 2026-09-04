@@ -35,6 +35,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 	"github.com/uber/submitqueue/runway/extension/merger"
 )
@@ -210,6 +211,8 @@ func TestCherryPickRange_NonConflictFailureIsRetryable(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, merger.ErrConflict), "a non-conflict failure must stay retryable")
 	assert.False(t, errors.Is(err, merger.ErrInvalidRequest))
+	var commandErr *gitexec.CommandError
+	assert.ErrorAs(t, err, &commandErr)
 }
 
 func TestCherryPickRange_RealConflictIsErrConflict(t *testing.T) {
@@ -623,10 +626,14 @@ func TestClassifyMergeFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := m.classifyMergeFailure(ref, []byte(tt.out), tt.conflicted)
+			cause := errors.New("git exited")
+			err := m.classifyMergeFailure(ref, []byte(tt.out), tt.conflicted, cause)
 			require.Error(t, err)
 			assert.Equal(t, tt.wantConflict, errors.Is(err, merger.ErrConflict))
 			assert.Equal(t, tt.wantInvalid, errors.Is(err, merger.ErrInvalidRequest))
+			if !tt.wantConflict && !tt.wantInvalid {
+				assert.ErrorIs(t, err, cause)
+			}
 		})
 	}
 }
