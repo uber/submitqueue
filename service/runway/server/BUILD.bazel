@@ -22,6 +22,7 @@ go_library(
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
+        "//platform/errs/git:go_default_library",
         "//platform/errs/mysql:go_default_library",
         "//platform/extension/consumergate:go_default_library",
         "//platform/extension/consumergate/file:go_default_library",
@@ -79,6 +80,7 @@ go_test(
     srcs = [
         "checkout_test.go",
         "config_test.go",
+        "main_test.go",
     ],
     # Checkout provisioning runs real git, so the test uses the same pinned
     # runtime the merger does rather than whatever git the host happens to have.
@@ -97,10 +99,19 @@ go_test(
     },
     deps = [
         "//api/base/mergestrategy/protopb:go_default_library",
+        "//platform/base/failure:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/extension/consumergate/noop:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mock:go_default_library",
+        "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
         "//runway/extension/merger/git:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
         "@org_uber_go_zap//zaptest:go_default_library",
     ],
 )

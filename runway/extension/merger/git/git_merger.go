@@ -694,7 +694,7 @@ func (m *gitMerger) applyMerge(ctx context.Context, rs resolvedStep) (applied, e
 			// does not establish that anything collided.
 			conflicted := m.hasUnmergedPaths(ctx)
 			_, _ = m.run(ctx, nil, "merge", "--abort")
-			return applied{}, m.classifyMergeFailure(ref, o, conflicted)
+			return applied{}, m.classifyMergeFailure(ref, o, conflicted, err)
 		}
 		mergeSHA, err := m.headSHA(ctx)
 		if err != nil {
@@ -776,16 +776,10 @@ func (m *gitMerger) promote(ctx context.Context, req *runwaymq.MergeRequest, rs 
 	return nil, fmt.Errorf("exceeded %d promote attempts due to remote contention: %w", m.maxPushAttempts, lastErr)
 }
 
-// classifyMergeFailure decides what a failed `git merge` actually means, given
-// whether the index was left holding conflicted entries.
-//
-// Not every refusal is a conflict, and reporting one as such tells the client
-// its change collides with the target when nothing of the sort happened. Two
-// non-conflicts land here: an import of an unrelated history, refused outright
-// and fixed by configuration rather than by rebasing, and any other way git
-// can exit non-zero — a missing object, an unreadable repository, a killed
-// process — which is infrastructure and should be retried, not made terminal.
-func (m *gitMerger) classifyMergeFailure(ref changeRef, out []byte, conflicted bool) error {
+// classifyMergeFailure distinguishes invalid requests and content conflicts
+// from Git infrastructure failures. A non-conflict preserves its command error
+// so the service error processor can classify the diagnostic.
+func (m *gitMerger) classifyMergeFailure(ref changeRef, out []byte, conflicted bool, cause error) error {
 	detail := strings.TrimSpace(string(out))
 	if strings.Contains(detail, "refusing to merge unrelated histories") {
 		coremetrics.NamedCounter(m.metricsScope, "merge", "unrelated_histories", 1)
@@ -794,7 +788,7 @@ func (m *gitMerger) classifyMergeFailure(ref changeRef, out []byte, conflicted b
 	}
 	if !conflicted {
 		coremetrics.NamedCounter(m.metricsScope, "merge", "merge_errors", 1)
-		return fmt.Errorf("git merge %s: %s", ref.SHA, detail)
+		return fmt.Errorf("git merge %s: %w", ref.SHA, cause)
 	}
 	coremetrics.NamedCounter(m.metricsScope, "merge", "merge_conflicts", 1)
 	return fmt.Errorf("%w: git merge %s: %s", merger.ErrConflict, ref.SHA, detail)
@@ -882,17 +876,14 @@ func (m *gitMerger) cherryPickRange(ctx context.Context, base, head string) erro
 			continue
 		}
 		// Ask the index what happened before aborting clears it. A non-zero
-		// exit alone does not mean the change conflicts — a missing object, an
-		// unreadable repository or a killed process all land here too, and
-		// calling those conflicts tells the client its change collides with
-		// the target and permanently fails a request that a retry might well
-		// have completed.
+		// exit alone does not establish a conflict; without unmerged paths,
+		// preserve the command error for infrastructure classification.
 		conflicted := m.hasUnmergedPaths(ctx)
 		_, _ = m.run(ctx, nil, "cherry-pick", "--abort")
 		detail := strings.TrimSpace(string(out))
 		if !conflicted {
 			coremetrics.NamedCounter(m.metricsScope, "merge", "cherry_pick_errors", 1)
-			return fmt.Errorf("git cherry-pick %s..%s: %w: %s", base, head, err, detail)
+			return fmt.Errorf("git cherry-pick %s..%s: %w", base, head, err)
 		}
 		coremetrics.NamedCounter(m.metricsScope, "merge", "cherry_pick_conflicts", 1)
 		return fmt.Errorf("%w: git cherry-pick %s..%s: %s", merger.ErrConflict, base, head, detail)
@@ -989,7 +980,8 @@ func (m *gitMerger) refetchTipSHA(ctx context.Context) (string, error) {
 // descendant. `git merge-base --is-ancestor` exits 0 for true, 1 for false;
 // any other exit is a real error.
 func (m *gitMerger) isAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
-	cmd := m.command(ctx, "merge-base", "--is-ancestor", ancestor, descendant)
+	args := []string{"merge-base", "--is-ancestor", ancestor, descendant}
+	cmd := m.command(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -1000,7 +992,12 @@ func (m *gitMerger) isAncestor(ctx context.Context, ancestor, descendant string)
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return false, nil
 	}
-	return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %w: %s", ancestor, descendant, err, strings.TrimSpace(stderr.String()))
+	message := err.Error()
+	if detail := strings.TrimSpace(stderr.String()); detail != "" {
+		message += ": " + detail
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %w",
+		ancestor, descendant, gitexec.CommandFailure(ctx, args, message, err))
 }
 
 // commitTreeSHA returns the tree SHA recorded in the commit object at ref.
@@ -1038,7 +1035,11 @@ func (m *gitMerger) runAs(ctx context.Context, author authorIdent, stdin []byte,
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		message := err.Error()
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			message += ": " + detail
+		}
+		return nil, gitexec.CommandFailure(ctx, args, message, err)
 	}
 	return stdout.Bytes(), nil
 }
@@ -1056,7 +1057,15 @@ func (m *gitMerger) runCombinedAs(ctx context.Context, author authorIdent, stdin
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		message := err.Error()
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			message += ": " + detail
+		}
+		return out, gitexec.CommandFailure(ctx, args, message, err)
+	}
+	return out, nil
 }
 
 // command builds a git command with the committer identity injected via -c
