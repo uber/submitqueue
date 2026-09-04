@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -374,8 +375,13 @@ func TestMerge_Rebase_RetriesWhenRemoteMovesUnderUs(t *testing.T) {
 	featureSHA := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
 	f.installRaceHook(t, []string{raceSHA})
 
-	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
-	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_REBASE, "s1", uri(featureSHA))))
+	m := f.newMergerWith(t, func(p *Params) {
+		p.CheckStaleness = true
+		p.UpdateHeadBranch = true
+	})
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_REBASE, "s1", gitURI("feature/a", featureSHA)),
+	))
 	require.NoError(t, err)
 	require.Len(t, res.GetSteps(), 1)
 	require.Len(t, res.GetSteps()[0].GetOutputs(), 1)
@@ -388,6 +394,7 @@ func TestMerge_Rebase_RetriesWhenRemoteMovesUnderUs(t *testing.T) {
 	assert.Equal(t, raceSHA, commits[0], "race commit landed first via the hook")
 	assert.Equal(t, res.GetSteps()[0].GetOutputs()[0].GetId(), commits[1],
 		"our cherry-pick landed on top after the retry")
+	assert.Equal(t, res.GetSteps()[0].GetOutputs()[0].GetId(), f.remoteSHA(t, "feature/a"))
 	assert.Equal(t, "hello\nearth\n", f.remoteFile(t, "hello.txt"))
 }
 
@@ -1189,6 +1196,73 @@ func TestMerge_StaleChangeRejected(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMerge_StaleAlreadySatisfiedSucceeds(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy mergestrategypb.Strategy
+	}{
+		{name: "rebase", strategy: mergestrategypb.Strategy_REBASE},
+		{name: "squash rebase", strategy: mergestrategypb.Strategy_SQUASH_REBASE},
+		{name: "merge", strategy: mergestrategypb.Strategy_MERGE},
+		{name: "promote", strategy: mergestrategypb.Strategy_PROMOTE},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupGitFixture(t)
+			stale := f.pushPRCommit(t, "feature/satisfied", "satisfied.txt", "satisfied\n", "satisfied")
+			switch tt.strategy {
+			case mergestrategypb.Strategy_REBASE, mergestrategypb.Strategy_SQUASH_REBASE:
+				f.landOnMain(t, stale)
+			case mergestrategypb.Strategy_MERGE, mergestrategypb.Strategy_PROMOTE:
+				f.advanceMain(t, stale)
+			}
+			mainBefore := f.remoteHEAD(t)
+			current := f.pushPRCommitFrom(t, stale, "feature/satisfied", "current.txt", "current\n", "current")
+			require.NotEqual(t, stale, current)
+
+			m := f.newMergerWith(t, func(p *Params) { p.CheckStaleness = true })
+			res, err := m.Merge(context.Background(), req("b",
+				stepOf(tt.strategy, "s1", gitURI("feature/satisfied", stale)),
+			))
+			require.NoError(t, err)
+			assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+			assert.Equal(t, mainBefore, f.remoteHEAD(t))
+		})
+	}
+}
+
+func TestMerge_StalePendingChangeRejected(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy mergestrategypb.Strategy
+	}{
+		{name: "rebase", strategy: mergestrategypb.Strategy_REBASE},
+		{name: "squash rebase", strategy: mergestrategypb.Strategy_SQUASH_REBASE},
+		{name: "merge", strategy: mergestrategypb.Strategy_MERGE},
+		{name: "promote", strategy: mergestrategypb.Strategy_PROMOTE},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupGitFixture(t)
+			base := f.remoteHEAD(t)
+			stale := f.pushPRCommitFrom(t, base, "feature/pending", "stale.txt", "stale\n", "stale")
+			mustGit(t, f.authorDir, "push", "origin", stale+":refs/heads/archive/stale")
+			current := f.pushPRCommitFrom(t, base, "feature/pending", "current.txt", "current\n", "current")
+			require.NotEqual(t, stale, current)
+
+			m := f.newMergerWith(t, func(p *Params) { p.CheckStaleness = true })
+			_, err := m.Merge(context.Background(), req("b",
+				stepOf(tt.strategy, "s1", gitURI("feature/pending", stale)),
+			))
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, merger.ErrInvalidRequest))
+			assert.Equal(t, base, f.remoteHEAD(t))
+		})
+	}
+}
+
 func TestMerge_StalenessCheckOffByDefault(t *testing.T) {
 	f := setupGitFixture(t)
 	stale := f.pushPRCommit(t, "feature/s", "s.txt", "v1\n", "v1")
@@ -1601,6 +1675,10 @@ func (f gitFixture) advanceMain(t *testing.T, sha string) {
 // it to that SHA.
 func uri(sha string) string {
 	return fmt.Sprintf("github://github.example.com/uber/submitqueue/pull/1/%s", sha)
+}
+
+func gitURI(branch, sha string) string {
+	return fmt.Sprintf("git://git.example.com/uber/submitqueue/%s/%s", url.PathEscape("refs/heads/"+branch), sha)
 }
 
 // installRaceHook writes a pre-receive hook on the bare remote that simulates

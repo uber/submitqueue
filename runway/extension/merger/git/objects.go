@@ -93,7 +93,7 @@ func (m *gitMerger) hasCommit(ctx context.Context, sha string) bool {
 // that no longer exists yields no verdict rather than a failure: the change may
 // legitimately have been closed, and ensureObjects has already established that
 // the commit itself is present.
-func (m *gitMerger) checkStale(ctx context.Context, refs []changeRef) error {
+func (m *gitMerger) checkStale(ctx context.Context, refs []changeRef, tracked headBranchTracker) error {
 	if !m.checkStaleness {
 		return nil
 	}
@@ -110,6 +110,10 @@ func (m *gitMerger) checkStale(ctx context.Context, refs []changeRef) error {
 			continue
 		}
 		if current := fields[0]; current != ref.SHA {
+			branch, movedTo, moved := tracked.lookup(ref.SHA)
+			if moved && branch == ref.Ref && movedTo == current {
+				continue
+			}
 			coremetrics.NamedCounter(m.metricsScope, "merge", "stale_changes", 1)
 			return fmt.Errorf("%w: change is stale: %s names commit %s but %s now points at %s",
 				merger.ErrInvalidRequest, ref.Label, ref.SHA, ref.Ref, current)
