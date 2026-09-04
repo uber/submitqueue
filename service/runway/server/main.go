@@ -146,7 +146,7 @@ func run() error {
 	}
 	defer mysqlQueue.Close()
 
-	logger.Info("initialized queue", zap.String("dsn", queueDSN))
+	logQueueInitialized(logger)
 
 	subscriberName := os.Getenv("HOSTNAME")
 	if subscriberName == "" {
@@ -303,6 +303,12 @@ func run() error {
 	}
 
 	return err
+}
+
+const queueBackendMySQL = "mysql"
+
+func logQueueInitialized(logger *zap.Logger) {
+	logger.Info("initialized queue", zap.String("backend", queueBackendMySQL))
 }
 
 // newMergerFactory builds the mergers for the server.
