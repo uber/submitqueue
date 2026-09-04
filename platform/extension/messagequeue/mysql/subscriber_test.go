@@ -536,9 +536,7 @@ func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 			retry:   extqueue.RetryConfig{MaxAttempts: 1},
 			wantDLQ: true,
 		},
-		// A zero budget is not "dead-letter immediately" — it is unconfigured,
-		// and the poll loop still governs.
-		{name: "unset budget never dead-letters here", attempt: 9},
+		{name: "unlimited budget keeps retrying beyond former cap", attempt: 1001},
 	}
 
 	for _, tt := range tests {
@@ -579,6 +577,97 @@ func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 
 			require.NoError(t, d.Nack(context.Background(), f))
 			assert.True(t, d.acknowledged)
+		})
+	}
+}
+
+func TestPartitionWorker_PollRetryLimit(t *testing.T) {
+	tests := []struct {
+		name            string
+		maxAttempts     int
+		retryCount      int
+		expectAck       bool
+		expectDelivery  bool
+		expectedAttempt int
+	}{
+		{
+			name:        "finite subscription acknowledges after visibility expiry exhausts retries",
+			maxAttempts: 3,
+			retryCount:  3,
+			expectAck:   true,
+		},
+		{
+			name:            "unlimited subscription redelivers after visibility expiry",
+			maxAttempts:     0,
+			retryCount:      1001,
+			expectDelivery:  true,
+			expectedAttempt: 1002,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockMessageStore := NewMockmessageStore(ctrl)
+			mockOffsetStore := NewMockoffsetStore(ctrl)
+			mockDeliveryState := NewMockdeliveryStateStore(ctrl)
+
+			s := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMessageStore,
+				mockOffsetStore,
+				NewMockpartitionLeaseStore(ctrl),
+				newTestHeartbeatStore(ctrl),
+				mockDeliveryState,
+			)
+
+			cfg := testSubscriptionConfig()
+			cfg.Retry.MaxAttempts = tt.maxAttempts
+			cfg.DLQ.Enabled = false
+			deliveryCh := make(chan extqueue.Delivery, 1)
+			sub := &subscription{
+				topic:      "test_topic",
+				config:     cfg,
+				deliveryCh: deliveryCh,
+				workers:    make(map[string]*partitionWorker),
+			}
+			worker := &partitionWorker{
+				partitionKey: "part-1",
+				sub:          sub,
+				subscriber:   s,
+				done:         make(chan struct{}),
+			}
+			row := messageRow{
+				ID:           "msg-1",
+				Offset:       1,
+				PartitionKey: "part-1",
+				Payload:      []byte("payload"),
+				PublishedAt:  time.Now().UnixMilli(),
+			}
+
+			mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(nil)
+			mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(int64(0), nil).Times(2)
+			mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), cfg.BatchSize).Return([]messageRow{row}, nil)
+			mockDeliveryState.EXPECT().GetDeliveryState(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(1)).
+				Return(DeliveryState{InvisibleUntil: time.Now().Add(-time.Second).UnixMilli(), RetryCount: tt.retryCount}, true, nil)
+			mockDeliveryState.EXPECT().MarkDelivered(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(1), cfg.VisibilityTimeoutMs).
+				Return(tt.retryCount, nil)
+			if tt.expectAck {
+				mockDeliveryState.EXPECT().MarkAcked(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(1)).Return(nil)
+			}
+			mockMessageStore.EXPECT().GetOffsetsAbove(gomock.Any(), "test_topic", "part-1", int64(0), watermarkAdvancementLimit).Return([]int64{1}, nil)
+			mockDeliveryState.EXPECT().AdvanceWatermark(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(0), []int64{1}).Return(int64(0), nil)
+
+			require.NoError(t, worker.pollAndDeliver(context.Background()))
+
+			select {
+			case delivery := <-deliveryCh:
+				require.True(t, tt.expectDelivery)
+				assert.Equal(t, tt.expectedAttempt, delivery.Attempt())
+			default:
+				assert.False(t, tt.expectDelivery)
+			}
 		})
 	}
 }

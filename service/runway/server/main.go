@@ -643,7 +643,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		// DLQ topics: the reconciler consumes these and republishes a FAILED
 		// result to the corresponding signal topic. Names match the primary
 		// topic name plus the "_dlq" suffix the subscriber uses when
-		// dead-lettering (see dlq.TopicKey / DefaultSubscriptionConfig).
+		// dead-lettering (see dlq.TopicKey / DLQSubscriptionConfig).
 		{
 			Key:   dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheck),
 			Name:  "merge-conflict-check_dlq",

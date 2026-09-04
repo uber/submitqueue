@@ -85,7 +85,7 @@ One operational consequence worth knowing before relying on any of this: **retry
 ### Choosing a processor
 
 - **Primary pipeline consumer** → `NewClassifierProcessor(...)`. Controllers' explicit `NewUserError` / `NewDependencyError` wraps must survive so user errors don't get retried, and unclassified backend errors must be inspected by the registered classifiers.
-- **DLQ reconciliation consumer** → `AlwaysRetryableProcessor`. The DLQ is the last stop; any unprocessable message must come back for another attempt rather than silently drop. The DLQ subscription itself runs with a very high `Retry.MaxAttempts` and with its own DLQ disabled, so "always retryable + bounded-but-effectively-infinite attempts" is the convergence guarantee.
+- **DLQ reconciliation consumer** → `AlwaysRetryableProcessor`. The DLQ is the last stop; any unprocessable message must come back for another attempt rather than silently drop. The DLQ subscription itself runs with unlimited attempts (`Retry.MaxAttempts = 0`) and with its own DLQ disabled, so every returned error remains retryable until reconciliation succeeds or an operator removes the message.
 
 ## Adding a Backend-Specific Classifier
 

@@ -74,7 +74,7 @@ subConfig.DLQ.TopicSuffix = "_dlq"                    // DLQ topic suffix
 | `VisibilityTimeoutMs` | How long messages are invisible after fetch. Must exceed max processing time for `BatchSize=1` |
 | `LeaseRenewalIntervalMs` | How often to renew partition leases |
 | `LeaseDurationMs` | How long leases remain valid without renewal |
-| `Retry.MaxAttempts` | Maximum processing attempts before DLQ |
+| `Retry.MaxAttempts` | Maximum processing attempts before DLQ; zero retries indefinitely |
 | `DLQ.TopicSuffix` | Suffix appended to topic name for DLQ (e.g., `"orders"` → `"orders_dlq"`) |
 
 ## Package Layout

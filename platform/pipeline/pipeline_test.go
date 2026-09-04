@@ -415,6 +415,7 @@ func TestBuildTopicConfigs(t *testing.T) {
 	assert.Equal(t, consumer.TopicKey("start"), configs[0].Key)
 	assert.Equal(t, "start", configs[0].Name)
 	assert.Equal(t, "orchestrator", configs[0].Subscription.ConsumerGroup)
+	assert.Positive(t, configs[0].Subscription.Retry.MaxAttempts)
 
 	// Verify DLQ config derived from primary.
 	assert.Equal(t, consumer.TopicKey("start_dlq"), configs[1].Key)
@@ -425,6 +426,7 @@ func TestBuildTopicConfigs(t *testing.T) {
 	expected := extqueue.DLQSubscriptionConfig("test-sub", "orchestrator-dlq")
 	assert.Equal(t, expected.DLQ.Enabled, configs[1].Subscription.DLQ.Enabled)
 	assert.Equal(t, expected.Retry.MaxAttempts, configs[1].Subscription.Retry.MaxAttempts)
+	assert.Zero(t, configs[1].Subscription.Retry.MaxAttempts)
 
 	// Verify validate stage (primary + DLQ).
 	assert.Equal(t, consumer.TopicKey("validate"), configs[2].Key)

@@ -78,11 +78,9 @@ func TestDLQSubscriptionConfig(t *testing.T) {
 
 	assert.Equal(t, "worker-1", config.SubscriberName)
 	assert.Equal(t, "consumer-1-dlq", config.ConsumerGroup)
-
-	// The DLQ consumer must not dead-letter its own failures (no "_dlq_dlq"
-	// cascade) and needs a far larger retry budget than a primary consumer.
 	assert.False(t, config.DLQ.Enabled)
-	assert.Greater(t, config.Retry.MaxAttempts, DefaultSubscriptionConfig("worker-1", "consumer-1").Retry.MaxAttempts)
+	assert.Zero(t, config.Retry.MaxAttempts)
+	assert.Positive(t, DefaultSubscriptionConfig("worker-1", "consumer-1").Retry.MaxAttempts)
 }
 
 func TestSubscriptionConfig_DifferentConsumerGroups(t *testing.T) {
