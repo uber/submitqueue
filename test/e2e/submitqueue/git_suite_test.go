@@ -38,12 +38,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/test/testutil"
@@ -67,6 +71,7 @@ type GitMergeSuite struct {
 	gatewayClient gatewaypb.SubmitQueueGatewayClient
 	db            *sql.DB
 	queueDB       *sql.DB
+	gate          *consumergatefile.Store
 
 	// git is the pinned git the test drives the bare repository with — the same
 	// build the merger uses inside the container.
@@ -89,7 +94,9 @@ func (s *GitMergeSuite) SetupSuite() {
 	s.git = gitexectest.Git(t)
 	containerUser := dockerContainerUser(t)
 	t.Setenv("SQ_CONTAINER_USER", containerUser)
-	t.Setenv("SQ_CONSUMER_GATE_DIR", t.TempDir())
+	gateDir := t.TempDir()
+	t.Setenv("SQ_CONSUMER_GATE_DIR", gateDir)
+	s.gate = consumergatefile.New(gateDir)
 
 	// The bare repository lives in a host directory bind-mounted into Runway, so
 	// the test can seed it and read back exactly what the merger pushed.
@@ -218,6 +225,37 @@ func (s *GitMergeSuite) TestLand_MovesEachChangeHeadBranchToItsLandedCommit() {
 	s.True(s.isAncestorOfMain(s.branchSHA("feature/head-2")))
 }
 
+func (s *GitMergeSuite) TestLand_RetryAfterResultPublishFailure_ReconcilesLandedState() {
+	const consumerGroup = "runway-merge"
+	gateKey := consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: gitQueue}
+	require.NoError(s.T(), s.gate.Close(s.ctx, gateKey, consumergate.Metadata{
+		Reason:      "install a batch-scoped fail-once result publisher before merge",
+		CreatedBy:   "GitMergeSuite",
+		CreatedAtMs: time.Now().UnixMilli(),
+	}))
+	defer func() {
+		require.NoError(s.T(), s.gate.Open(s.ctx, gateKey))
+	}()
+
+	before := s.mainSHA()
+	head := s.pushChange("feature/retry-result", map[string]string{"retry-result.txt": "retry result\n"}, "add retry result")
+	sqid := s.land(gitQueue, s.uri("feature/retry-result", head))
+	batchID := s.awaitBatchID(sqid)
+	s.awaitParkedMerge(batchID)
+	s.installMergeSignalFailOnce(batchID)
+
+	require.NoError(s.T(), s.gate.Open(s.ctx, gateKey))
+	s.requireStatus(sqid, entity.RequestStatusLanded)
+
+	landed := s.mainSHA()
+	s.NotEqual(before, landed)
+	s.NotEqual(head, landed)
+	s.Equal("retry result\n", s.fileOnMain("retry-result.txt"))
+	s.Equal(landed, s.branchSHA("feature/retry-result"))
+	s.Equal(2, s.mergeSignalPublishAttemptCount(batchID),
+		"two result publications prove the runway-merge delivery was retried")
+}
+
 func (s *GitMergeSuite) TestLand_Conflict_FailsAndLeavesTheTargetUntouched() {
 	// Two changes editing the same line from the same base: the first lands,
 	// the second cannot be replayed onto it.
@@ -236,11 +274,7 @@ func (s *GitMergeSuite) TestLand_Conflict_FailsAndLeavesTheTargetUntouched() {
 	s.Equal(loser, s.branchSHA("feature/conflict-b"))
 }
 
-func (s *GitMergeSuite) TestLand_ResubmittedAfterLanding_IsRejectedAsStale() {
-	// Landing a change moves its head branch to the commit it became, so the
-	// URI that was submitted no longer describes where that branch points. The
-	// staleness check catches exactly that, which is what stops a change from
-	// being replayed onto the target a second time.
+func (s *GitMergeSuite) TestLand_ResubmittedAfterLanding_IsSuccessfulNoOp() {
 	head := s.pushChange("feature/already", map[string]string{"already.txt": "already\n"}, "add already")
 	s.requireStatus(s.land(gitQueue, s.uri("feature/already", head)), entity.RequestStatusLanded)
 
@@ -249,8 +283,8 @@ func (s *GitMergeSuite) TestLand_ResubmittedAfterLanding_IsRejectedAsStale() {
 	landedAs := s.branchSHA("feature/already")
 	s.NotEqual(head, landedAs, "the head branch moved to the landed commit")
 
-	s.requireStatus(s.land(gitQueue, s.uri("feature/already", head)), entity.RequestStatusError)
-	s.Equal(settled, s.mainSHA(), "a stale resubmission must not move the target")
+	s.requireStatus(s.land(gitQueue, s.uri("feature/already", head)), entity.RequestStatusLanded)
+	s.Equal(settled, s.mainSHA(), "an already-satisfied resubmission must not move the target")
 	s.Equal(updates, s.mainRefUpdateCount(), "and must not push at all")
 	s.Equal(landedAs, s.branchSHA("feature/already"), "nor disturb the change's branch")
 }
@@ -284,6 +318,87 @@ func (s *GitMergeSuite) requireStatus(sqid string, want entity.RequestStatus) {
 		return isTerminalStatus(got)
 	})
 	s.Require().Equal(want, got, "request %s reached the wrong terminal status", sqid)
+}
+
+func (s *GitMergeSuite) awaitBatchID(sqid string) string {
+	var batchID string
+	pollUntil(persistPollInterval, func() bool {
+		err := s.db.QueryRowContext(s.ctx,
+			"SELECT batch_id FROM request_batch WHERE queue = ? AND request_id = ? ORDER BY batch_id LIMIT 1",
+			gitQueue, sqid,
+		).Scan(&batchID)
+		return err == nil
+	})
+	return batchID
+}
+
+func (s *GitMergeSuite) awaitParkedMerge(batchID string) {
+	pollUntil(persistPollInterval, func() bool {
+		parked, err := s.gate.ListParked(s.ctx, "runway-merge")
+		if err != nil {
+			return false
+		}
+		for _, delivery := range parked {
+			if delivery.Topic == runwaymq.TopicKeyMerge.String() && delivery.MessageID == batchID {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (s *GitMergeSuite) installMergeSignalFailOnce(messageID string) {
+	t := s.T()
+	const (
+		triggerName = "e2e_fail_merge_signal_once"
+		tableName   = "e2e_merge_signal_fail_once"
+	)
+	_, err := s.queueDB.ExecContext(s.ctx, "DROP TRIGGER IF EXISTS "+triggerName)
+	require.NoError(t, err)
+	_, err = s.queueDB.ExecContext(s.ctx, "DROP TABLE IF EXISTS "+tableName)
+	require.NoError(t, err)
+	_, err = s.queueDB.ExecContext(s.ctx, "CREATE TABLE "+tableName+" (message_id VARCHAR(191) CHARACTER SET ascii PRIMARY KEY, remaining INT NOT NULL, attempts INT NOT NULL) ENGINE=MyISAM")
+	require.NoError(t, err)
+	_, err = s.queueDB.ExecContext(s.ctx, "INSERT INTO "+tableName+" (message_id, remaining, attempts) VALUES (?, 1, 0)", messageID)
+	require.NoError(t, err)
+	_, err = s.queueDB.ExecContext(s.ctx, `
+CREATE TRIGGER `+triggerName+`
+BEFORE INSERT ON queue_messages
+FOR EACH ROW
+BEGIN
+    IF NEW.topic = 'merge-signal'
+       AND JSON_UNQUOTE(JSON_EXTRACT(CONVERT(NEW.payload USING utf8mb4), '$.outcome')) = 'SUCCEEDED'
+    THEN
+        UPDATE `+tableName+`
+        SET attempts = attempts + 1
+        WHERE message_id = NEW.id;
+        UPDATE `+tableName+`
+        SET remaining = remaining - 1
+        WHERE message_id = NEW.id AND remaining > 0;
+        IF ROW_COUNT() > 0 THEN
+            SIGNAL SQLSTATE '40001'
+                SET MYSQL_ERRNO = 1213,
+                    MESSAGE_TEXT = 'injected fail-once merge-signal publication failure';
+        END IF;
+    END IF;
+END`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, dropTriggerErr := s.queueDB.ExecContext(s.ctx, "DROP TRIGGER IF EXISTS "+triggerName)
+		require.NoError(t, dropTriggerErr)
+		_, dropTableErr := s.queueDB.ExecContext(s.ctx, "DROP TABLE IF EXISTS "+tableName)
+		require.NoError(t, dropTableErr)
+	})
+}
+
+func (s *GitMergeSuite) mergeSignalPublishAttemptCount(batchID string) int {
+	var attempts int
+	err := s.queueDB.QueryRowContext(s.ctx,
+		"SELECT attempts FROM e2e_merge_signal_fail_once WHERE message_id = ?",
+		batchID,
+	).Scan(&attempts)
+	s.Require().NoError(err)
+	return attempts
 }
 
 // uri builds the git:// change URI for a branch pinned at a commit. The ref is
@@ -424,6 +539,7 @@ func (s *GitMergeSuite) runGit(dir string, args ...string) string {
 	s.T().Helper()
 	cmd := exec.Command(s.git, args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_EXEC_PATH="+filepath.Dir(s.git))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

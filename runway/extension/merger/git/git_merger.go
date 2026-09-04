@@ -420,16 +420,11 @@ func (o *providerCheck) check(ref changeRef, stepID string) error {
 // strategies (REBASE, SQUASH_REBASE, MERGE), retrying on remote contention when
 // committing. For a dry run it applies the steps locally then discards them.
 func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRequest, steps []resolvedStep, commit bool) (*runwaymq.MergeResult, error) {
-	// Fetch and vet every change the request names before the first attempt, so
-	// an unusable request fails without having touched the checkout. This sits
-	// outside the retry loop deliberately: the refs are fixed for the whole
-	// request, and re-checking them per attempt would re-query the remote to
-	// learn what it already told us.
+	// Fetch every change the request names before the first attempt. Freshness
+	// is checked after local application, when the merger knows whether the
+	// target already satisfies the request.
 	refs := stepChangeRefs(steps)
 	if err := m.ensureObjects(ctx, refs); err != nil {
-		return nil, err
-	}
-	if err := m.checkStale(ctx, refs); err != nil {
 		return nil, err
 	}
 
@@ -439,8 +434,27 @@ func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRe
 	// the branch is moved on rather than stranded on a commit that never landed.
 	tracked := make(headBranchTracker)
 	for attempt := 1; attempt <= m.maxPushAttempts; attempt++ {
-		baseSHA, stepResults, err := m.tryApply(ctx, steps, commit, tracked)
-		if err == nil {
+		baseSHA, stepResults, heads, err := m.tryApply(ctx, steps)
+		if err != nil {
+			if staleErr := m.checkStale(ctx, refs, tracked); staleErr != nil {
+				return nil, staleErr
+			}
+
+			// A conflict is terminal — no retry. The failing apply function
+			// already discarded its in-progress Git operation.
+			if errors.Is(err, merger.ErrConflict) {
+				return nil, err
+			}
+			if !commit || baseSHA == "" {
+				return nil, err
+			}
+		} else if !stepResultsHaveOutputs(stepResults) {
+			m.logger.Debugw("merge complete", "id", req.GetId(), "target", m.target, "commit", commit)
+			return successResult(req, stepResults), nil
+		} else {
+			if staleErr := m.checkStale(ctx, refs, tracked); staleErr != nil {
+				return nil, staleErr
+			}
 			if !commit {
 				// Discard the local commits the dry run created so the checkout
 				// is clean for the next operation, and report empty Outputs.
@@ -448,25 +462,28 @@ func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRe
 					return nil, fmt.Errorf("discard after dry-run: %w", derr)
 				}
 				stripOutputs(stepResults)
+				m.logger.Debugw("merge complete", "id", req.GetId(), "target", m.target, "commit", commit)
+				return successResult(req, stepResults), nil
 			}
-			m.logger.Debugw("merge complete", "id", req.GetId(), "target", m.target, "commit", commit)
-			return successResult(req, stepResults), nil
-		}
 
-		// A conflict is terminal — no retry. Discard any partial dry-run state.
-		if errors.Is(err, merger.ErrConflict) {
-			if !commit {
-				_ = m.resetToRemote(ctx)
+			if m.updateHeadBranch {
+				err = m.updateHeadBranches(ctx, heads, tracked)
 			}
-			return nil, err
+			if err == nil {
+				if pushErr := m.push(ctx); pushErr != nil {
+					coremetrics.NamedCounter(m.metricsScope, "merge", "git_push_errors", 1)
+					err = pushErr
+				}
+			}
+			if err == nil {
+				m.logger.Debugw("merge complete", "id", req.GetId(), "target", m.target, "commit", commit)
+				return successResult(req, stepResults), nil
+			}
 		}
 
 		// Only a push failure caused by the remote tip moving under us (between
 		// reset and push) is worth retrying; everything else is fatal. baseSHA
 		// is empty when the failure happened before reset captured a base.
-		if !commit || baseSHA == "" {
-			return nil, err
-		}
 		currentSHA, refetchErr := m.refetchTipSHA(ctx)
 		if refetchErr != nil {
 			return nil, fmt.Errorf("refetch after push failure failed: %v (original push error: %w)", refetchErr, err)
@@ -490,43 +507,26 @@ func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRe
 	return nil, fmt.Errorf("exceeded %d merge attempts due to remote contention: %w", m.maxPushAttempts, lastErr)
 }
 
-// tryApply runs one full reset+apply(+push) cycle. The returned baseSHA is the
-// SHA the cycle was based on (set as soon as resetToRemote completes) so the
-// caller can distinguish concurrent-push contention from other failures. The
-// tracker carries head-branch state across attempts; see headBranchTracker.
-func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep, commit bool, tracked headBranchTracker) (string, []*runwaymq.StepResult, error) {
+// tryApply resets to the current target and applies every step locally. Remote
+// writes remain with the caller so freshness can be checked after application
+// but before any ref is updated.
+func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep) (string, []*runwaymq.StepResult, []headUpdate, error) {
 	if err := m.resetToRemote(ctx); err != nil {
 		coremetrics.NamedCounter(m.metricsScope, "merge", "reset_errors", 1)
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	baseSHA, err := m.headSHA(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 
 	stepResults, heads, err := m.applySteps(ctx, steps)
 	if err != nil {
 		// The failing apply function aborts its own in-progress git operation;
 		// the next attempt starts with resetToRemote regardless.
-		return baseSHA, nil, err
+		return baseSHA, nil, nil, err
 	}
-
-	if commit {
-		// The head branches move first, as their own push. A provider decides
-		// merged-versus-closed while processing the push to the target, against
-		// the head it has recorded at that moment, so a head that moves later —
-		// or in the same atomic push — is recorded too late. See headbranch.go.
-		if m.updateHeadBranch {
-			if err := m.updateHeadBranches(ctx, heads, tracked); err != nil {
-				return baseSHA, nil, err
-			}
-		}
-		if err := m.push(ctx); err != nil {
-			coremetrics.NamedCounter(m.metricsScope, "merge", "git_push_errors", 1)
-			return baseSHA, nil, err
-		}
-	}
-	return baseSHA, stepResults, nil
+	return baseSHA, stepResults, heads, nil
 }
 
 // applied is what one step produced: the commits created on the target, and the
@@ -714,15 +714,10 @@ func (m *gitMerger) promote(ctx context.Context, req *runwaymq.MergeRequest, rs 
 	sha := ref.SHA
 
 	// PROMOTE does not go through tryApply, so it performs the same availability
-	// and freshness checks itself. Without them a commit the remote cannot
-	// supply turns every containment query into a plain error, which the
-	// consumer retries forever instead of reporting. They sit outside the retry
-	// loop because the commit under promotion is fixed for the whole request —
-	// only the target tip moves between attempts.
+	// check itself. Without it a commit the remote cannot supply turns every
+	// containment query into a plain error, which the consumer retries forever
+	// instead of reporting.
 	if err := m.ensureObjects(ctx, []changeRef{ref}); err != nil {
-		return nil, err
-	}
-	if err := m.checkStale(ctx, []changeRef{ref}); err != nil {
 		return nil, err
 	}
 
@@ -746,6 +741,10 @@ func (m *gitMerger) promote(ctx context.Context, req *runwaymq.MergeRequest, rs 
 		}
 		if contained {
 			return promoteResult(req, rs, sha, commit), nil
+		}
+
+		if err := m.checkStale(ctx, []changeRef{ref}, nil); err != nil {
+			return nil, err
 		}
 
 		// Only a true fast-forward is allowed; divergence is a terminal conflict.
@@ -1165,6 +1164,15 @@ func stripOutputs(steps []*runwaymq.StepResult) {
 	for _, s := range steps {
 		s.Outputs = nil
 	}
+}
+
+func stepResultsHaveOutputs(steps []*runwaymq.StepResult) bool {
+	for _, step := range steps {
+		if len(step.GetOutputs()) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // successResult builds a SUCCEEDED MergeResult echoing the request id.
