@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
@@ -73,7 +74,7 @@ func liveRequest() entity.Request {
 
 func batchIDPayload(t *testing.T, id, queue string) []byte {
 	t.Helper()
-	payload, err := entity.BatchID{ID: id, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyDependencyAnalysis, id, queue)
 	require.NoError(t, err)
 	return payload
 }
@@ -494,7 +495,7 @@ func TestController_Process_StampsQueueOnAnnouncement(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, batch.ID, testQueue)))
 
 	require.Len(t, announced, 1)
-	bid, err := entity.BatchIDFromBytes(announced[0].Payload)
+	bid, err := sqmq.UnmarshalBatchID(sqmq.TopicKeySpeculate, announced[0].Payload)
 	require.NoError(t, err)
 	assert.Equal(t, batch.ID, bid.ID)
 	assert.Equal(t, testQueue, bid.Queue)
@@ -658,7 +659,7 @@ func TestController_Process_PublishesBatchedLogOnPromotion(t *testing.T) {
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			if topic == "log" {
-				entry, err := entity.RequestLogFromBytes(msg.Payload)
+				entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 				require.NoError(t, err)
 				logs = append(logs, entry)
 			}

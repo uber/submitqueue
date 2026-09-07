@@ -15,7 +15,6 @@
 package entity
 
 import (
-	"encoding/json"
 	"time"
 )
 
@@ -217,27 +216,4 @@ func (r RequestLog) Value() string {
 		return string(r.Event)
 	}
 	return string(r.Status)
-}
-
-// ToBytes serializes the RequestLog to JSON bytes for queue message payload.
-func (r RequestLog) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// RequestLogFromBytes deserializes a RequestLog from JSON bytes.
-// If metadata is absent from the JSON, it will be initialized as an empty map.
-// An entry without a type predates the field, when every entry recorded a status.
-func RequestLogFromBytes(data []byte) (RequestLog, error) {
-	var log RequestLog
-	err := json.Unmarshal(data, &log)
-	if err != nil {
-		return log, err
-	}
-	if log.Metadata == nil {
-		log.Metadata = make(map[string]string)
-	}
-	if log.Type == "" {
-		log.Type = RequestLogTypeStatus
-	}
-	return log, nil
 }

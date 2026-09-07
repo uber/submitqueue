@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
@@ -42,7 +43,7 @@ import (
 // the build ID, or the batch and path the entry is about. Deriving it from the
 // wall clock or a random value would defeat the dedupe entirely.
 func PublishLog(ctx context.Context, registry consumer.TopicRegistry, logEntry entity.RequestLog, partitionKey string, occurrence string) error {
-	payload, err := logEntry.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.LogFromEntity(logEntry))
 	if err != nil {
 		return fmt.Errorf("failed to serialize request log: %w", err)
 	}

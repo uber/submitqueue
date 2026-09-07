@@ -1,0 +1,42 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.submitqueue.messagequeue;
+
+import "api/base/change/proto/change.proto";
+import "api/base/mergestrategy/proto/mergestrategy.proto";
+import "api/base/messagequeue/proto/messagequeue.proto";
+
+option go_package = "github.com/uber/submitqueue/submitqueue/core/messagequeue/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "StartProto";
+option java_package = "com.uber.submitqueue.submitqueue.messagequeue";
+
+// Start is the payload the gateway publishes to the start stage: the
+// gateway-owned land inputs and the minted request id. start persists a Request
+// from these fields; producer and consumer do not share a store at this seam.
+message Start {
+    option (uber.base.messagequeue.topic_keys) = "start";
+
+    // id is the minted request id. Format: "<queue>/<counter>".
+    string id = 1;
+    // queue is the name of the queue processing the land request.
+    string queue = 2;
+    // change is the set of code changes to land.
+    uber.base.change.Change change = 3;
+    // land_strategy is the source-control integration strategy for every URI of change.
+    uber.base.mergestrategy.Strategy land_strategy = 4;
+}

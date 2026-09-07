@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/consumer"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -69,7 +70,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
-	payload, err := entity.BatchID{ID: "q/batch/9", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "q/batch/9", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -81,7 +82,7 @@ func TestDLQBatchController_Process_TenantPayloadQueueMismatchAcks(t *testing.T)
 	store := storagemock.NewMockStorage(ctrl)
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
-	payload, err := entity.BatchID{ID: "q/batch/9", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "q/batch/9", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
@@ -106,7 +107,7 @@ func TestDLQBatchController_Process_EmptyIDFails(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
-	payload, err := entity.BatchID{ID: "", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)

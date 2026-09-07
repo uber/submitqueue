@@ -31,6 +31,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
@@ -75,7 +76,7 @@ func requestWithState(request entity.Request, state entity.RequestState) entity.
 
 // requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
 func requestIDPayload(t *testing.T, id string) []byte {
-	payload, err := entity.RequestID{ID: id, Queue: "test-queue"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyValidate, id, "test-queue")
 	require.NoError(t, err)
 	return payload
 }
@@ -710,7 +711,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
-			log, err := entity.RequestLogFromBytes(msg.Payload)
+			log, err := sqmq.UnmarshalRequestLog(msg.Payload)
 			require.NoError(t, err)
 			gotLog = log
 			return nil
@@ -774,7 +775,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	// before validation ever ran and this test would stop covering termination.
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
-			entry, err := entity.RequestLogFromBytes(msg.Payload)
+			entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 			if err == nil && entry.Status == entity.RequestStatusError {
 				return fmt.Errorf("publish boom")
 			}

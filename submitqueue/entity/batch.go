@@ -194,15 +194,3 @@ type BatchID struct {
 	// Queue is the name of the queue processing the batch. Empty on payloads written before the field existed.
 	Queue string `json:"queue"`
 }
-
-// ToBytes serializes the BatchID to JSON bytes for queue message payload.
-func (b BatchID) ToBytes() ([]byte, error) {
-	return json.Marshal(b)
-}
-
-// BatchIDFromBytes deserializes a BatchID from JSON bytes.
-func BatchIDFromBytes(data []byte) (BatchID, error) {
-	var bid BatchID
-	err := json.Unmarshal(data, &bid)
-	return bid, err
-}

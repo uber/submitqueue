@@ -24,6 +24,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -44,7 +45,7 @@ func speculateRegistry(t *testing.T, ctrl *gomock.Controller, logPublishes int, 
 	logPublisher := queuemock.NewMockPublisher(ctrl)
 	logPublisher.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, message entityqueue.Message) error {
-			entry, err := entity.RequestLogFromBytes(message.Payload)
+			entry, err := sqmq.UnmarshalRequestLog(message.Payload)
 			require.NoError(t, err)
 			if logs != nil {
 				*logs = append(*logs, entry)
@@ -58,7 +59,7 @@ func speculateRegistry(t *testing.T, ctrl *gomock.Controller, logPublishes int, 
 	specPublisher := queuemock.NewMockPublisher(ctrl)
 	specPublisher.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, message entityqueue.Message) error {
-			bid, err := entity.BatchIDFromBytes(message.Payload)
+			bid, err := sqmq.UnmarshalBatchID(sqmq.TopicKeySpeculate, message.Payload)
 			require.NoError(t, err)
 			*captured = append(*captured, bid.ID)
 			return nil
@@ -148,7 +149,7 @@ func TestDLQSpeculateController_Process_Attribution(t *testing.T) {
 			registry := speculateRegistry(t, ctrl, 1, &republished, &logs)
 			c := newSpeculateController(registry, store, t)
 
-			payload, err := entity.BatchID{ID: "q/batch/named", Queue: "q"}.ToBytes()
+			payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/named", "q")
 			require.NoError(t, err)
 
 			delivery := newMockDeliveryWithFailure(ctrl, payload, tt.recordedFailure, tt.failed)
@@ -201,7 +202,7 @@ func TestDLQSpeculateController_Process_RetriggersQueue(t *testing.T) {
 	registry := speculateRegistry(t, ctrl, 0, &republished, nil)
 	c := newSpeculateController(registry, store, t)
 
-	payload, err := entity.BatchID{ID: "q/batch/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDeliveryWithFailure(ctrl, payload, failure.New("boom"), true)
@@ -240,7 +241,7 @@ func TestDLQSpeculateController_Process_NoRetriggerWithoutProgress(t *testing.T)
 	registry := speculateRegistry(t, ctrl, 0, &republished, nil)
 	c := newSpeculateController(registry, store, t)
 
-	payload, err := entity.BatchID{ID: "q/batch/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDeliveryWithFailure(ctrl, payload, failure.New("boom"), true)
@@ -275,7 +276,7 @@ func TestDLQSpeculateController_Process_TenantPayloadQueueMismatchAcks(t *testin
 	store := storagemock.NewMockStorage(ctrl)
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 
-	payload, err := entity.BatchID{ID: "q/batch/named", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/named", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
@@ -287,7 +288,7 @@ func TestDLQSpeculateController_Process_EmptyIDFails(t *testing.T) {
 
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 
-	payload, err := entity.BatchID{ID: "", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)

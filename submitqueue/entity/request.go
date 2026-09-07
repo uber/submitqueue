@@ -115,15 +115,3 @@ type RequestID struct {
 	// Queue is the name of the queue processing the land request. Empty on payloads written before the field existed.
 	Queue string `json:"queue"`
 }
-
-// ToBytes serializes the RequestID to JSON bytes for queue message payload.
-func (r RequestID) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// RequestIDFromBytes deserializes a RequestID from JSON bytes.
-func RequestIDFromBytes(data []byte) (RequestID, error) {
-	var rid RequestID
-	err := json.Unmarshal(data, &rid)
-	return rid, err
-}

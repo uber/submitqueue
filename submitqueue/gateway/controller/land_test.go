@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -463,7 +464,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, "test-queue", publishedMessage.PartitionKey)
 
 	// Verify payload can be deserialized
-	deserializedReq, err := entity.LandRequestFromBytes(publishedMessage.Payload)
+	deserializedReq, err := sqmq.UnmarshalLandRequest(publishedMessage.Payload)
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)

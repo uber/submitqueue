@@ -131,7 +131,7 @@ var Stages = []pipeline.Stage[Deps]{
 			return validate.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, d.ChangeProvider, d.Validator, runwaymq.TopicKeyMergeConflictCheck, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID(topickey.TopicKeyValidate), sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
@@ -153,7 +153,7 @@ var Stages = []pipeline.Stage[Deps]{
 			return batch.NewController(d.Logger, d.Scope, sc.Registry, d.Counter, d.Storage, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID(topickey.TopicKeyBatch), sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{

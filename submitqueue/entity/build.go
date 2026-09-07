@@ -98,18 +98,6 @@ type BuildID struct {
 	Queue string `json:"queue"`
 }
 
-// ToBytes serializes the BuildID to JSON bytes for queue message payload.
-func (b BuildID) ToBytes() ([]byte, error) {
-	return json.Marshal(b)
-}
-
-// BuildIDFromBytes deserializes a BuildID from JSON bytes.
-func BuildIDFromBytes(data []byte) (BuildID, error) {
-	var bid BuildID
-	err := json.Unmarshal(data, &bid)
-	return bid, err
-}
-
 // BuildMetadata carries provider-defined free-form metadata about a build
 // (e.g. build URL, duration, commit SHA). Keys and values are
 // implementation-defined; callers should not assume any particular schema.

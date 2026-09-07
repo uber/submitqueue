@@ -15,8 +15,6 @@
 package entity
 
 import (
-	"encoding/json"
-
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
@@ -34,18 +32,6 @@ type LandRequest struct {
 	// LandStrategy is the source control integration strategy to use for this
 	// land operation. It applies to every URI of Change, the same way to each.
 	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
-}
-
-// ToBytes serializes the LandRequest to JSON bytes for queue message payload.
-func (r LandRequest) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// LandRequestFromBytes deserializes a LandRequest from JSON bytes.
-func LandRequestFromBytes(data []byte) (LandRequest, error) {
-	var req LandRequest
-	err := json.Unmarshal(data, &req)
-	return req, err
 }
 
 // LandResult is the outcome of accepting a land request. It carries the ID the

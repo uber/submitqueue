@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
@@ -84,7 +85,7 @@ func (h *procHarness) listsInFlight(batches ...entity.Batch) {
 
 func batchIDPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	payload, err := entity.BatchID{ID: id, Queue: "test-queue"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, id, "test-queue")
 	require.NoError(t, err)
 	return payload
 }
@@ -141,7 +142,7 @@ func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *pr
 				return publishErr
 			}
 			if topic == "log" {
-				entry, err := entity.RequestLogFromBytes(msg.Payload)
+				entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 				require.NoError(t, err)
 				h.logs = append(h.logs, entry)
 				return nil

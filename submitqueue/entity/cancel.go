@@ -14,8 +14,6 @@
 
 package entity
 
-import "encoding/json"
-
 // CancelRequest represents a cancellation request sent over the queue from the gateway to the orchestrator.
 // It identifies the request to cancel by its ID and carries an optional human-readable reason for observability.
 type CancelRequest struct {
@@ -25,16 +23,4 @@ type CancelRequest struct {
 	Queue string `json:"queue"`
 	// Reason is an optional free-form explanation of why the cancellation was requested.
 	Reason string `json:"reason"`
-}
-
-// ToBytes serializes the CancelRequest to JSON bytes for queue message payload.
-func (r CancelRequest) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// CancelRequestFromBytes deserializes a CancelRequest from JSON bytes.
-func CancelRequestFromBytes(data []byte) (CancelRequest, error) {
-	var req CancelRequest
-	err := json.Unmarshal(data, &req)
-	return req, err
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -76,7 +77,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	landRequest, err := entity.LandRequestFromBytes(msg.Payload)
+	landRequest, err := sqmq.UnmarshalLandRequest(msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
@@ -147,8 +148,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // The request ID is the message ID with no cause: a request is handed to the
 // next stage once, so a redelivery that re-hands it is meant to dedup away.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
-	rid := entity.RequestID{ID: requestID, Queue: queue}
-	payload, err := rid.ToBytes()
+	payload, err := sqmq.MarshalID(key, requestID, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}

@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -206,7 +207,7 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue, failureReason s
 // with and partitioned by the batch's queue. metadata rides the message as
 // side-band headers (nil for none).
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue string, metadata map[string]string) error {
-	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(key, batchID, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}

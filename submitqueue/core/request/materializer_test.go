@@ -300,9 +300,8 @@ func TestLogWins(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Cases above leave Type unset when the entry is a status, so the
-			// table reads as being about the ordering rules under test. This
-			// mirrors production exactly: logWins only ever sees entries that
-			// came through RequestLogFromBytes, which applies the same default.
+			// table reads as being about the ordering rules under test. An
+			// untyped entry is a status, matching UnmarshalRequestLog.
 			incoming := tt.incoming
 			if incoming.Type == "" {
 				incoming.Type = entity.RequestLogTypeStatus
