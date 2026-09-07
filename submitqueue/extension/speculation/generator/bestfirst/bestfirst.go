@@ -14,8 +14,8 @@
 
 // Package bestfirst provides a probability-ordered speculation path generator.
 //
-// Throughout, a probability is the [0, 1] value a scorer gives; a score is its
-// logarithm. Scores are summed and compared, never exponentiated, so wide
+// Throughout, a probability is the [0, 1] value a scorer gives; a score is
+// its logarithm. Scores are summed and compared, never exponentiated, so wide
 // heads cannot underflow into ties. The algorithm — per-head streams
 // enumerating flip subsets lazily, merged through one global heap — is
 // documented in doc/rfc/submitqueue/speculation-generator-best-first.md.
@@ -49,10 +49,10 @@ func New(s scorer.Scorer) generator.Generator {
 	return &bestFirst{scorer: s}
 }
 
-// Generate scores the unresolved dependencies of the snapshot's Speculating
+// Generate prices the unresolved dependencies of the snapshot's Speculating
 // heads and opens a lazy global best-first iterator. The snapshot is taken as
 // given: it is the caller's to keep well formed, and nothing here re-checks it.
-func (g *bestFirst) Generate(ctx context.Context, batches []entity.Batch) (generator.Iterator, error) {
+func (g *bestFirst) Generate(ctx context.Context, batches []entity.Batch, pathSets []entity.SpeculationPathSet) (generator.Iterator, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -61,9 +61,13 @@ func (g *bestFirst) Generate(ctx context.Context, batches []entity.Batch) (gener
 	for _, batch := range batches {
 		batchByID[batch.ID] = batch
 	}
+	pathsByHead := make(map[string]entity.SpeculationPathSet, len(pathSets))
+	for _, set := range pathSets {
+		pathsByHead[set.Head] = set
+	}
 	heads, unresolvedIDs := speculatingHeads(batches, batchByID)
 
-	probabilityByID, err := g.score(ctx, unresolvedIDs, batchByID)
+	probabilityByID, err := g.score(ctx, unresolvedIDs, batchByID, pathsByHead)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +105,14 @@ func speculatingHeads(batches []entity.Batch, batchByID map[string]entity.Batch)
 	return heads, slices.Sorted(maps.Keys(unresolved))
 }
 
-// score asks the scorer for each unresolved dependency exactly once, however
-// many heads wait on it.
+// score asks the scorer for each unresolved dependency exactly once,
+// however many heads wait on it. Each dependency is priced against its own path
+// set, zero-valued for one that has never speculated.
 //
 // A dependency that cannot be priced takes defaultProbability rather than
 // ending the run — one unusable number must not cost the queue every candidate
 // it had. Only cancellation is an error.
-func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[string]entity.Batch) (map[string]float64, error) {
+func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[string]entity.Batch, pathsByHead map[string]entity.SpeculationPathSet) (map[string]float64, error) {
 	probabilityByID := make(map[string]float64, len(ids))
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
@@ -116,16 +121,16 @@ func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[strin
 		batch, known := batchByID[id]
 		if !known {
 			// A batch the snapshot never carried is zero in every field, not
-			// just missing — scoring it would price some other batch entirely,
+			// just missing — pricing it would price some other batch entirely,
 			// or fail on its empty queue. It is unpriceable, not cheap.
 			probabilityByID[id] = defaultProbability
 			continue
 		}
-		probability, err := g.scorer.Score(ctx, batch, entity.SpeculationPathSet{})
+		probability, err := g.scorer.Score(ctx, batch, pathsByHead[id])
 		if err != nil {
-			// A scorer that failed because the caller went away has not found
-			// an unpriceable dependency — it has found a dead ctx, which ends
-			// the run. The loop's own check would not catch it on the last
+			// A scorer that failed because the caller went away has not
+			// found an unpriceable dependency — it has found a dead ctx, which
+			// ends the run. The loop's own check would not catch it on the last
 			// dependency, and a cancelled Generate must never hand back an
 			// iterator.
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -139,11 +144,11 @@ func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[strin
 }
 
 // defaultProbability stands in for a score that is not a probability, one the
-// scorer could not produce at all, and one for a dependency the snapshot never
-// carried. It is optimistic on purpose: a dependency nobody could estimate is
-// treated as very likely to succeed, which keeps its head's preferred path near
-// the front rather than burying it or dropping the queue's whole snapshot on
-// one bad number.
+// scorer could not produce at all, and one for a dependency the snapshot
+// never carried. It is optimistic on purpose: a dependency nobody could
+// estimate is treated as very likely to succeed, which keeps its head's preferred
+// path near the front rather than burying it or dropping the queue's whole
+// snapshot on one bad number.
 const defaultProbability = 0.95
 
 // asProbability keeps a usable score and substitutes the default for anything

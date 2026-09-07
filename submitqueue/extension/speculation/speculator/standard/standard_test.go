@@ -44,10 +44,13 @@ func assumptionFor(p entity.SpeculationPath, dep string) entity.DependencyAssump
 	return entity.DependencyAssumptionUnknown
 }
 
-// constScorer is a minimal scorer.Scorer that scores every batch identically.
+// constScorer is a minimal scorer.Scorer that prices every
+// batch identically.
 type constScorer struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return c.v, nil }
+func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
+	return c.v, nil
+}
 
 func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	batches := []entity.Batch{
@@ -89,7 +92,7 @@ func TestComposed_WiresGeneratorIntoAllocator(t *testing.T) {
 	gen := generatormock.NewMockGenerator(ctrl)
 	alloc := allocatormock.NewMockAllocator(ctrl)
 
-	gen.EXPECT().Generate(gomock.Any(), batches).Return(iter, nil)
+	gen.EXPECT().Generate(gomock.Any(), batches, gomock.Any()).Return(iter, nil)
 	alloc.EXPECT().Allocate(gomock.Any(), pathSets, iter).Return(want, nil)
 
 	got, err := New(testCfg, gen, alloc).Speculate(context.Background(), batches, pathSets)
@@ -104,7 +107,7 @@ func TestComposed_PropagatesGeneratorError(t *testing.T) {
 	gen := generatormock.NewMockGenerator(ctrl)
 	alloc := allocatormock.NewMockAllocator(ctrl)
 
-	gen.EXPECT().Generate(gomock.Any(), gomock.Any()).Return(nil, errGenerate)
+	gen.EXPECT().Generate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errGenerate)
 	// Allocate must not be called when Generate fails (no alloc.EXPECT()).
 
 	_, err := New(testCfg, gen, alloc).Speculate(context.Background(), nil, nil)

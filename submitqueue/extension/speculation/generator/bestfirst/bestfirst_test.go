@@ -26,14 +26,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/evidence"
 )
 
-// stubScorer scores each batch by ID, defaulting to 0.5 for unknown batches. It
-// is a minimal scorer.Scorer for exercising the generator without a resolver.
+// stubScorer scores each batch by ID, defaulting to 0.5 for unknown batches.
+// It is a minimal scorer.Scorer for exercising the generator without a resolver.
 type stubScorer struct {
 	scores map[string]float64
 }
@@ -125,7 +127,7 @@ func iteratorOf(t *testing.T, iter generator.Iterator) *candidateIterator {
 	return it
 }
 
-// countingScorer records how many times each batch is scored.
+// countingScorer records how many times each batch is priced.
 type countingScorer struct {
 	scores map[string]float64
 	calls  map[string]int
@@ -145,17 +147,19 @@ func (c *countingScorer) Score(_ context.Context, b entity.Batch, _ entity.Specu
 	return 0.5, nil
 }
 
-// errScorer always fails, to exercise error propagation from scoring.
+// errScorer always fails, to exercise error propagation from pricing.
 type errScorer struct{}
 
 func (errScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
 	return 0, assert.AnError
 }
 
-// constScorer scores every batch identically, regardless of ID.
+// constScorer prices every batch identically, regardless of ID.
 type constScorer struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return c.v, nil }
+func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
+	return c.v, nil
+}
 
 // wideHead builds one Speculating head over n unresolved dependencies, each at a
 // distinct score so no two combinations tie.
@@ -181,7 +185,7 @@ func TestBestFirst_OrderingAndEnumeration(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.9, "q/B": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := forHead(drainAll(t, iter), "q/C")
 
@@ -222,7 +226,7 @@ func TestBestFirst_PinsResolvedDependencies(t *testing.T) {
 				{ID: "q/A", State: tt.state},
 				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A"}},
 			}
-			iter, err := New(scored(nil)).Generate(context.Background(), batches)
+			iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			cands := forHead(drainAll(t, iter), "q/H")
 
@@ -245,7 +249,7 @@ func TestBestFirst_ResolvedDependenciesDropOutOfSearch(t *testing.T) {
 			Dependencies: []string{"q/succeeded", "q/failed", "q/open"}},
 	}
 	iter, err := New(scored(map[string]float64{"q/open": 0.7})).
-		Generate(context.Background(), batches)
+		Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := forHead(drainAll(t, iter), "q/H")
 
@@ -269,7 +273,7 @@ func TestBestFirst_EmitsExactSequenceAcrossHeads(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.9, "q/B": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -304,7 +308,7 @@ func TestBestFirst_PreferredAssumptionFollowsScore(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/high": 0.8, "q/low": 0.3})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -352,7 +356,7 @@ func TestBestFirst_OnlySpeculatingHeadsProduceCandidates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			batches := []entity.Batch{{ID: "q/H", State: tt.state}}
 
-			iter, err := New(scored(nil)).Generate(context.Background(), batches)
+			iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			cands := drainAll(t, iter)
 
@@ -371,7 +375,7 @@ func TestBestFirst_HeadWithNoDependencies(t *testing.T) {
 		{ID: "q/H", State: entity.BatchStateSpeculating},
 	}
 
-	iter, err := New(scored(nil)).Generate(context.Background(), batches)
+	iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -390,7 +394,7 @@ func TestBestFirst_AbsorbsScorerError(t *testing.T) {
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A"}},
 	}
 
-	iter, err := New(errScorer{}).Generate(context.Background(), batches)
+	iter, err := New(errScorer{}).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	cands := forHead(drainAll(t, iter), "q/H")
@@ -408,13 +412,102 @@ func TestBestFirst_NeverScoresAnAbsentDependency(t *testing.T) {
 	}
 	sc := newCountingScorer(map[string]float64{})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	cands := drainAll(t, iter)
 	require.Len(t, cands, 2, "the absent dependency is still an open question with two sides")
 	assert.Zero(t, sc.total, "the scorer is never handed a batch the snapshot did not carry")
 	assert.InDelta(t, math.Log(defaultProbability), cands[0].RankingScore, 1e-9)
+}
+
+// recordingScorer keeps the path set each batch was priced against.
+type recordingScorer struct {
+	seen map[string]entity.SpeculationPathSet
+}
+
+func (r *recordingScorer) Score(_ context.Context, b entity.Batch, paths entity.SpeculationPathSet) (float64, error) {
+	r.seen[b.ID] = paths
+	return 0.5, nil
+}
+
+// Each dependency is priced against its own progress, not the queue's. A
+// dependency with no set has simply never speculated, which is silence rather
+// than an error.
+func TestBestFirst_PricesEachDependencyAgainstItsOwnPathSet(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/built", State: entity.BatchStateSpeculating},
+		{ID: "q/fresh", State: entity.BatchStateSpeculating},
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/built", "q/fresh"}},
+	}
+	built := entity.SpeculationPathSet{
+		Queue: "q",
+		Head:  "q/built",
+		Paths: []entity.SpeculationPathEntry{{ID: "p1", Status: entity.SpeculationPathStatusPassed}},
+	}
+	pred := &recordingScorer{seen: map[string]entity.SpeculationPathSet{}}
+
+	_, err := New(pred).Generate(context.Background(), batches, []entity.SpeculationPathSet{built})
+	require.NoError(t, err)
+
+	assert.Equal(t, built, pred.seen["q/built"], "a dependency is priced against its own set")
+	assert.Equal(t, entity.SpeculationPathSet{}, pred.seen["q/fresh"], "a dependency that never speculated has no set")
+}
+
+// flatScorer prices every batch the same, so ranking can only move when the
+// evidence scorer sees a path set.
+type flatScorer struct{}
+
+func (flatScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return 0.5, nil }
+
+// PathPassed on a green all-succeed build is the join the generator exists to
+// consume: same scorer price, different evidence, different rank.
+func TestBestFirst_EvidencePathPassedRanksTheGreenDependencyFirst(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/built", State: entity.BatchStateSpeculating},
+		{ID: "q/fresh", State: entity.BatchStateSpeculating},
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/built", "q/fresh"}},
+	}
+	built := entity.SpeculationPathSet{
+		Queue: "q",
+		Head:  "q/built",
+		Paths: []entity.SpeculationPathEntry{{
+			ID:     "p1",
+			Status: entity.SpeculationPathStatusPassed,
+			Path: entity.SpeculationPath{
+				Head: "q/built",
+				Dependencies: []entity.PathDependency{{
+					Batch:      "q/dep0",
+					Assumption: entity.DependencyAssumptionSucceeds,
+				}},
+			},
+		}},
+	}
+	pred, err := evidence.New(
+		scorer.Config{QueueName: "q"},
+		flatScorer{},
+		evidence.Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1},
+		tally.NoopScope,
+	)
+	require.NoError(t, err)
+
+	iter, err := New(pred).Generate(context.Background(), batches, []entity.SpeculationPathSet{built})
+	require.NoError(t, err)
+	cands := forHead(drainAll(t, iter), "q/H")
+	require.NotEmpty(t, cands)
+	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[0].Path, "q/built"))
+
+	var failScore float64
+	foundFail := false
+	for _, c := range cands {
+		if assumptionFor(c.Path, "q/built") == entity.DependencyAssumptionFails {
+			failScore = c.RankingScore
+			foundFail = true
+			break
+		}
+	}
+	require.True(t, foundFail)
+	assert.Greater(t, cands[0].RankingScore, failScore)
 }
 
 // A merging dependency is still in progress — the merge can fail — so it stays
@@ -428,7 +521,7 @@ func TestBestFirst_MergingDependencyStaysOpen(t *testing.T) {
 	}
 	sc := newCountingScorer(map[string]float64{"q/landing": 0.9})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -443,7 +536,7 @@ func TestBestFirst_GeneratesOnlyWhatIsPulled(t *testing.T) {
 	const deps, space = 12, 1 << 12
 	batches, sc := wideHead(deps)
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	it := iteratorOf(t, iter)
 
@@ -480,7 +573,7 @@ func TestBestFirst_DrainYieldsEveryCombinationOnce(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.9, "q/B": 0.7, "q/C": 0.6})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -530,7 +623,7 @@ func TestBestFirst_ScoresGloballyNonIncreasing(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.85, "q/B": 0.3, "q/C": 0.65})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -554,7 +647,7 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 			{ID: "q/c", State: entity.BatchStateSpeculating},
 		}
 
-		iter, err := New(scored(nil)).Generate(context.Background(), batches)
+		iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 		cands := drainAll(t, iter)
 
@@ -577,7 +670,7 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 		}
 		sc := scored(map[string]float64{"q/coinA": 0.5, "q/coinB": 0.5})
 
-		iter, err := New(sc).Generate(context.Background(), batches)
+		iter, err := New(sc).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 		cands := drainAll(t, iter)
 
@@ -612,9 +705,9 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 		}
 		sc := scored(map[string]float64{"q/A": 0.5, "q/B": 0.5, "q/C": 0.5})
 
-		first, err := New(sc).Generate(context.Background(), batches)
+		first, err := New(sc).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
-		second, err := New(sc).Generate(context.Background(), batches)
+		second, err := New(sc).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 
 		a, b := drainAll(t, first), drainAll(t, second)
@@ -627,7 +720,7 @@ func TestBestFirst_NextMakesNoScorerCalls(t *testing.T) {
 	batches, _ := wideHead(6)
 	sc := newCountingScorer(map[string]float64{})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	afterGenerate := sc.total
@@ -647,7 +740,7 @@ func TestBestFirst_MemoizesDependencyScoresAcrossHeads(t *testing.T) {
 	}
 	sc := newCountingScorer(map[string]float64{"q/shared": 0.7})
 
-	_, err := New(sc).Generate(context.Background(), batches)
+	_, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, sc.calls["q/shared"], "a shared dependency is scored once")
@@ -679,7 +772,7 @@ func TestBestFirst_MatchesBruteForceEnumeration(t *testing.T) {
 					ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: deps,
 				})
 
-				iter, err := New(scored(scores)).Generate(context.Background(), batches)
+				iter, err := New(scored(scores)).Generate(context.Background(), batches, nil)
 				require.NoError(t, err)
 				got := drainAll(t, iter)
 
@@ -750,7 +843,7 @@ func TestBestFirst_WideHeadsRankWithoutUnderflow(t *testing.T) {
 	wide("q/narrow", narrowWidth)
 	wide("q/wide", wideWidth)
 
-	iter, err := New(constScorer{depScore}).Generate(context.Background(), batches)
+	iter, err := New(constScorer{depScore}).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	first, ok, err := iter.Next(context.Background())
@@ -788,7 +881,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		iter, err := New(scored(nil)).Generate(ctx, batches)
+		iter, err := New(scored(nil)).Generate(ctx, batches, nil)
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, iter)
 	})
@@ -797,7 +890,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Minute))
 		defer cancel()
 
-		_, err := New(scored(nil)).Generate(ctx, batches)
+		_, err := New(scored(nil)).Generate(ctx, batches, nil)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
@@ -805,7 +898,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		// Generate on a live context so the stream has candidates waiting; the
 		// cancel lands between pulls, which is where a caller that has given up
 		// actually stops.
-		iter, err := New(scored(nil)).Generate(context.Background(), batches)
+		iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 
 		_, ok, err := iter.Next(context.Background())
@@ -829,14 +922,14 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		iter, err := New(cancellingScorer{cancel: cancel}).Generate(ctx, batches)
+		iter, err := New(cancellingScorer{cancel: cancel}).Generate(ctx, batches, nil)
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, iter)
 	})
 }
 
-// cancellingScorer kills the context and then fails, the way a scorer whose
-// own call was cancelled would.
+// cancellingScorer kills the context and then fails, the way a scorer
+// whose own call was cancelled would.
 type cancellingScorer struct{ cancel context.CancelFunc }
 
 func (s cancellingScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
@@ -870,7 +963,7 @@ func TestBestFirst_DefaultsScoreOutsideUnitInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iter, err := New(constScorer{tt.score}).Generate(context.Background(), batches)
+			iter, err := New(constScorer{tt.score}).Generate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			cands := drainAll(t, iter)
 
@@ -898,7 +991,7 @@ func TestBestFirst_ImpossibleFlipScoresNegativeInfinity(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/certain": 1.0, "q/toss": 0.6})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -932,7 +1025,7 @@ func TestBestFirst_ResolvedDependenciesAreNeverScored(t *testing.T) {
 	}
 	sc := newCountingScorer(map[string]float64{"q/running": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -953,7 +1046,7 @@ func TestBestFirst_ReturnedPathsAreIndependent(t *testing.T) {
 	// scribbling on what it was handed must not reach the paths still to come.
 	batches, _ := wideHead(3)
 	iter, err := New(scored(map[string]float64{"q/dep00": 0.9, "q/dep01": 0.8, "q/dep02": 0.7})).
-		Generate(context.Background(), batches)
+		Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	first, ok, err := iter.Next(context.Background())
@@ -1010,7 +1103,7 @@ func TestBestFirst_ScoresAreSummedFromTheHeadsBestScore(t *testing.T) {
 		want[s.scoreFor(taken)]++
 	}
 
-	iter, err := New(scored(scores)).Generate(context.Background(), batches)
+	iter, err := New(scored(scores)).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	got := map[float64]int{}
 	for _, c := range drainAll(t, iter) {
@@ -1038,7 +1131,7 @@ func TestBestFirst_UntouchedHeadsNeverWorkOutFlips(t *testing.T) {
 		scores[dep] = 0.6 + 0.005*float64(i)
 	}
 
-	iter, err := New(scored(scores)).Generate(context.Background(), batches)
+	iter, err := New(scored(scores)).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	it := iteratorOf(t, iter)
 
@@ -1078,7 +1171,7 @@ func TestBestFirst_AFailedPullConsumesNothing(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/dep": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	cancelled, cancel := context.WithCancel(context.Background())
