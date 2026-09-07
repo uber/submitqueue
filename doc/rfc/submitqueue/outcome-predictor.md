@@ -86,18 +86,22 @@ The second is a different set of changes. `B` may call something `A` introduces 
 
 So `pathPassed` and `pathFailed` both look only at paths that assume every dependency *succeeds*. Results on any other path are skipped. This is a filter on which results are evidence, not a check on whether an assumption came true — nothing here revisits that.
 
-## Rejected
+## Rejected alternatives
 
-**One contract, with the evidence on `Score`.** Tried: every scorer that prices content took a parameter it discarded, and the composite forwarded one it never read.
+Design choices a reader might suggest after the sections above. Each names the alternative, why it fails here, and what this RFC does instead.
 
-**One estimate over content and evidence together.** They change at different rates and need different amounts of data, and it would force every queue onto the same content scorer.
+### Fold path evidence into `Score`
 
-**Adding to the probability instead of multiplying odds.** Leaves the range, needs clamping, and the same increment means different things at different prices.
+Give `Score` the speculate run's path sets so one call returns a situation-aware price. We tried it: content scorers took the parameter and discarded it; the composite forwarded evidence it never read. **Instead:** keep `Score` for the change; add `Predictor` for the situation (see [The idea](#the-idea)).
 
-**More dimensions on the bucket table.** A second dimension squares it, a third makes it unwritable, and every cell is still a guess.
+### One model for content and evidence
 
-**Putting *merging* / *cancelling* in the Generator.** Tried and reverted: a merge can fail, so nothing is settled, and how much a state is worth is a price.
+Train or tune a single estimate over diff shape and build outcomes together. Content signals and situation signals change at different rates, need different amounts of data, and would force every queue onto the same content scorer. **Instead:** scorer stays per-queue; evidence factors layer on in YAML.
 
-**A scoring stage.** Prices only mean anything inside the run that produced them; storing them would make them stale by construction.
+### Treat *merging* and *cancelling* as settled in the Generator
 
-**The predictor reads the path-set store.** Cheaper plumbing, stale or split-brain snapshot. The run reads once.
+Rank a *merging* batch like Succeeded and a *cancelling* batch like Cancelled. We tried and reverted: a merge can still fail, so the rank was wrong once outcomes diverged. **Instead:** only terminal states short-circuit in the Generator; *merging* and *cancelling* are predictor factors (see [Evidence](#evidence)).
+
+### Let the predictor read the path-set store
+
+`Predict` loads path sets from storage on each call — smaller API, fewer parameters. Each call can see a different snapshot mid-run (stale or split-brain relative to the rank the Generator is building). **Instead:** the speculate run reads path sets once per dependency and passes them in.
