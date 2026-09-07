@@ -45,7 +45,11 @@ type Generator interface {
 	// duplicate, or self dependency. That is a precondition the caller owns: a
 	// generator may assume it and is not required to detect a breach, so a
 	// malformed snapshot yields undefined candidates rather than an error.
-	Generate(ctx context.Context, batches []entity.Batch) (Iterator, error)
+	//
+	// pathSets is what each batch's builds have done so far, at most one set per
+	// head and none for a batch nothing has speculated on. It is part of the
+	// same snapshot as batches and carries the same holding rules.
+	Generate(ctx context.Context, batches []entity.Batch, pathSets []entity.SpeculationPathSet) (Iterator, error)
 }
 
 // Iterator is a pull-based stream of candidate paths. Beyond what ranking
