@@ -21,6 +21,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"go.uber.org/mock/gomock"
@@ -35,7 +36,7 @@ func newTestLogRegistry(
 	publisher := queuemock.NewMockPublisher(ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, message entityqueue.Message) error {
-			logEntry, err := entity.RequestLogFromBytes(message.Payload)
+			logEntry, err := sqmq.UnmarshalRequestLog(message.Payload)
 			require.NoError(t, err)
 			require.Equal(t, logEntry.Queue, message.Tenant)
 			return publishFn(logEntry)

@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -82,8 +83,7 @@ func NewController(
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
-	// Deserialize request ID from payload
-	rid, err := entity.RequestIDFromBytes(msg.Payload)
+	rid, err := sqmq.UnmarshalRequestID(c.topicKey, msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
@@ -210,7 +210,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // The message ID is the bare batch ID, with no cause: a batch is handed over
 // once in its life, so a redelivery that re-sends it is meant to be dropped.
 func (c *Controller) publishToDependencyAnalysis(ctx context.Context, batch entity.Batch) error {
-	payload, err := entity.BatchID{ID: batch.ID, Queue: batch.Queue}.ToBytes()
+	payload, err := sqmq.MarshalID(topickey.TopicKeyDependencyAnalysis, batch.ID, batch.Queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}

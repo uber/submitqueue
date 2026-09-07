@@ -22,8 +22,8 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
-	"github.com/uber/submitqueue/submitqueue/entity"
 	"go.uber.org/zap"
 )
 
@@ -70,8 +70,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	// Deserialize request log entry
-	logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+	logEntry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count

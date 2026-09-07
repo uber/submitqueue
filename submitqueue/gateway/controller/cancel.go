@@ -23,6 +23,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -129,7 +130,7 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 
 // publishToQueue publishes a cancel request to the cancel queue for async processing.
 func (c *cancelController) publishToQueue(ctx context.Context, cancelRequest entity.CancelRequest) error {
-	payload, err := cancelRequest.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.CancelFromEntity(cancelRequest))
 	if err != nil {
 		return fmt.Errorf("failed to serialize cancel request: %w", err)
 	}

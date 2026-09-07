@@ -168,7 +168,7 @@ Paths follow the directory layout: shared packages live under `platform/` at the
 - Queue contracts: external `github.com/uber/submitqueue/api/{domain}/messagequeue`; internal `github.com/uber/submitqueue/{domain}/core/messagequeue`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
-- Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; internal topic keys live with the owning domain contract (for example `submitqueue/core/topickey` and `stovepipe/core/messagequeue`); external queue topic keys live with their published contract (for example `api/runway/messagequeue`)
+- Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; internal topic keys live with the owning domain contract (for example `submitqueue/core/messagequeue` and `stovepipe/core/messagequeue`); external queue topic keys live with their published contract (for example `api/runway/messagequeue`)
 - Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/request`)
 - Shared entities: `github.com/uber/submitqueue/platform/base/{pkg}` (e.g. `.../platform/base/messagequeue`)
 - Shared extensions: `github.com/uber/submitqueue/platform/extension/{ext}[/{impl}]` (e.g. `.../platform/extension/messagequeue/mysql`)
@@ -200,7 +200,7 @@ New queue contracts are defined in **proto3** (`.proto` under `proto/`, generate
 
 The message types are generated; the contract package adds only generic `protojson` glue — `Marshal(m)` / `Unmarshal[T](b, m)` — owning the wire conventions: `UseProtoNames` (snake_case fields), UPPER_SNAKE enum values, int64-as-string, unknown fields discarded on read (additive evolution). The topic key(s) carrying a message are declared on the message via the `topic_keys` proto option — a `google.protobuf.MessageOptions` extension defined in `api/base/messagequeue`. A topic key is a stable logical name, not a concrete wire topic; each implementer maps it to its backend's topic name, and a `TopicKeys(msg)` reflection helper reads the option back. It is contract metadata, not the hot path — publish/consume still routes on `consumer.TopicKey` + `TopicRegistry`. The contract package owns both halves: the proto payload and the `TopicKey` constants for its topic keys. A contract test round-trips the payloads and asserts every topic key is bound to exactly one message. Shared field types (`Change`, `Strategy`) are shared protos under `api/base/{change,mergestrategy}`. `api/runway/messagequeue/` is the reference example.
 
-SubmitQueue's internal pipeline predates the proto-backed convention. It continues to serialize domain entities with `encoding/json` and declares its logical keys in `submitqueue/core/topickey/`. Do not convert or mix these wire formats incidentally; treat migration as an explicit compatibility change.
+SubmitQueue's internal pipeline contract lives at `submitqueue/core/messagequeue/` (proto3 + protojson, one message per topic key). `MarshalID`/`UnmarshalID` take the topic key so consume uses the bound message. Proto filenames that would collide with another domain in the protobuf registry are prefixed (`submitqueuemerge.proto`, `submitqueuebuild.proto`, `submitqueuebuildsignal.proto`). `submitqueue/core/topickey` re-exports the topic-key constants from that package.
 
 ### Naming Conventions
 

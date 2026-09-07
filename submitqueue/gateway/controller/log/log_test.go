@@ -23,6 +23,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -98,7 +99,7 @@ func TestController_Process(t *testing.T) {
 			payload := tt.rawPayload
 			if tt.logEntry != nil {
 				var err error
-				payload, err = tt.logEntry.ToBytes()
+				payload, err = sqmq.Marshal(sqmq.LogFromEntity(*tt.logEntry))
 				require.NoError(t, err)
 			}
 			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, tt.setupStore(ctrl), topickey.TopicKeyLog, "gateway-log")
@@ -123,7 +124,7 @@ func TestController_Process(t *testing.T) {
 func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logEntry := newRequestLog("test-queue/1", entity.RequestStatusStarted, 1, "", nil)
-	payload, err := logEntry.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.LogFromEntity(*logEntry))
 	require.NoError(t, err)
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, newUnusedMaterializer(ctrl), topickey.TopicKeyLog, "gateway-log")
 	msg := entityqueue.NewMessage(logEntry.RequestID, payload, logEntry.Queue, nil)

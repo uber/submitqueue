@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "batch.pb.go",
+        "cancel.pb.go",
+        "conclude.pb.go",
+        "dependencyanalysis.pb.go",
+        "log.pb.go",
+        "speculate.pb.go",
+        "start.pb.go",
+        "submitqueuebuild.pb.go",
+        "submitqueuebuildsignal.pb.go",
+        "submitqueuemerge.pb.go",
+        "validate.pb.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/core/messagequeue/protopb",
+    visibility = [
+        "//service/submitqueue:__subpackages__",
+        "//submitqueue:__subpackages__",
+        "//test:__subpackages__",
+    ],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/base/messagequeue/protopb:go_default_library",
+        "@org_golang_google_protobuf//reflect/protoreflect:go_default_library",
+        "@org_golang_google_protobuf//runtime/protoimpl:go_default_library",
+    ],
+)

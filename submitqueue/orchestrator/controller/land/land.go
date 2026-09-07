@@ -36,6 +36,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -97,7 +98,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	bid, err := entity.BatchIDFromBytes(msg.Payload)
+	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)

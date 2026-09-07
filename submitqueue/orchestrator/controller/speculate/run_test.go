@@ -25,6 +25,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
@@ -172,7 +173,7 @@ func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculat
 				return assert.AnError
 			}
 			if topic == "log" {
-				entry, err := entity.RequestLogFromBytes(msg.Payload)
+				entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 				require.NoError(t, err)
 				h.logs = append(h.logs, entry)
 				return nil
@@ -267,7 +268,7 @@ func TestRun_DispatchStampsQueueAndPartitionsByHead(t *testing.T) {
 	require.NoError(t, h.run(head))
 
 	require.Len(t, h.messages, 1)
-	got, err := entity.BatchIDFromBytes(h.messages[0].Payload)
+	got, err := sqmq.UnmarshalBatchID(sqmq.TopicKeySpeculate, h.messages[0].Payload)
 	require.NoError(t, err)
 	assert.Equal(t, head, got.ID)
 	assert.Equal(t, "q", got.Queue, "the payload must name the real queue, not the partition key")

@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -39,9 +40,9 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-// requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
+// requestIDPayload serializes a Batch payload for the batch controller.
 func requestIDPayload(t *testing.T, id, queue string) []byte {
-	payload, err := entity.RequestID{ID: id, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, id, queue)
 	require.NoError(t, err)
 	return payload
 }
@@ -130,7 +131,7 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, request entity.Request, 
 	payload := requestIDPayload(t, request.ID, request.Queue)
 	tenant := request.Queue
 	if payloadQueue != "" {
-		bytes, err := entity.RequestID{ID: request.ID, Queue: payloadQueue}.ToBytes()
+		bytes, err := sqmq.MarshalID(sqmq.TopicKeyBatch, request.ID, payloadQueue)
 		require.NoError(t, err)
 		payload = bytes
 		tenant = payloadQueue
@@ -227,7 +228,7 @@ func TestController_Process_StampsQueueOnHandoffPayload(t *testing.T) {
 
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, request, "")))
 	require.Len(t, handoffs, 1)
-	bid, err := entity.BatchIDFromBytes(handoffs[0].Payload)
+	bid, err := sqmq.UnmarshalBatchID(sqmq.TopicKeyDependencyAnalysis, handoffs[0].Payload)
 	require.NoError(t, err)
 	assert.Equal(t, request.Queue, bid.Queue)
 	assert.Equal(t, request.Queue, handoffs[0].PartitionKey)
@@ -411,7 +412,7 @@ func TestController_Process_PublishesBatchingStatus(t *testing.T) {
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			if topic == "log" {
-				entry, err := entity.RequestLogFromBytes(msg.Payload)
+				entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 				require.NoError(t, err)
 				logs = append(logs, entry)
 			}

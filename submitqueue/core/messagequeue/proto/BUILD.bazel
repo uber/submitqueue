@@ -1,0 +1,16 @@
+exports_files(
+    [
+        "batch.proto",
+        "cancel.proto",
+        "conclude.proto",
+        "dependencyanalysis.proto",
+        "log.proto",
+        "speculate.proto",
+        "start.proto",
+        "submitqueuebuild.proto",
+        "submitqueuebuildsignal.proto",
+        "submitqueuemerge.proto",
+        "validate.proto",
+    ],
+    visibility = ["//tool/proto:__pkg__"],
+)

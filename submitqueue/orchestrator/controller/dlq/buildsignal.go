@@ -23,7 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/submitqueue/entity"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
@@ -74,7 +74,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 
 	msg := delivery.Message()
 
-	buildID, err := entity.BuildIDFromBytes(msg.Payload)
+	buildID, err := sqmq.UnmarshalBuildID(primaryTopicKey(c.topicKey), msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to decode build id from dlq payload: %w", err)

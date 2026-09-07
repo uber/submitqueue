@@ -38,6 +38,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -101,7 +102,7 @@ func NewController(
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
-	bid, err := entity.BatchIDFromBytes(msg.Payload)
+	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
@@ -380,7 +381,7 @@ func (c *Controller) loadBase(ctx context.Context, store storage.Storage, path e
 // away while the original signal is still in the queue's un-GC'd window (see
 // publish.IntentID).
 func (c *Controller) publishBuildSignal(ctx context.Context, buildID, queue string) error {
-	payload, err := entity.BuildID{ID: buildID, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, buildID, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize build ID: %w", err)
 	}

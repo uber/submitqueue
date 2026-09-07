@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
@@ -90,7 +91,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller, batchState entity.Bat
 	logPub := queuemock.NewMockPublisher(ctrl)
 	logPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
-			entry, err := entity.RequestLogFromBytes(msg.Payload)
+			entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 			require.NoError(t, err)
 			h.logs = append(h.logs, entry)
 			return nil
@@ -166,7 +167,7 @@ func (h *testHarness) wanted() {
 // is returned so tests can expect a Hold for the next poll.
 func delivery(t *testing.T, ctrl *gomock.Controller) *consumermock.MockDelivery {
 	t.Helper()
-	payload, err := entity.BuildID{ID: testBuildID, Queue: "test-queue"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, testBuildID, "test-queue")
 	require.NoError(t, err)
 	msg := entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)
 	msg.Tenant = "test-queue"
@@ -201,7 +202,7 @@ func TestController_Identity(t *testing.T) {
 func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
-	payload, err := entity.BuildID{ID: testBuildID, Queue: "test-queue"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, testBuildID, "test-queue")
 	require.NoError(t, err)
 	msg := entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)
 	msg.Tenant = "other-queue"

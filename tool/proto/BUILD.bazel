@@ -73,6 +73,31 @@ go_proto_generated_files(
     out_dir = "api_stovepipe",
 )
 
+# SubmitQueue internal queue contract (message-only, no RPC service).
+go_proto_generated_files(
+    name = "submitqueue_core_messagequeue",
+    srcs = [
+        "//submitqueue/core/messagequeue/proto:batch.proto",
+        "//submitqueue/core/messagequeue/proto:cancel.proto",
+        "//submitqueue/core/messagequeue/proto:conclude.proto",
+        "//submitqueue/core/messagequeue/proto:dependencyanalysis.proto",
+        "//submitqueue/core/messagequeue/proto:log.proto",
+        "//submitqueue/core/messagequeue/proto:speculate.proto",
+        "//submitqueue/core/messagequeue/proto:start.proto",
+        "//submitqueue/core/messagequeue/proto:submitqueuebuild.proto",
+        "//submitqueue/core/messagequeue/proto:submitqueuebuildsignal.proto",
+        "//submitqueue/core/messagequeue/proto:submitqueuemerge.proto",
+        "//submitqueue/core/messagequeue/proto:validate.proto",
+    ],
+    gen_services = False,
+    imports = [
+        "//api/base/change/proto:change.proto",
+        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/base/messagequeue/proto:messagequeue.proto",
+    ],
+    out_dir = "submitqueue_core_messagequeue",
+)
+
 # Stovepipe internal queue contract (message-only, no RPC service).
 go_proto_generated_files(
     name = "stovepipe_core_messagequeue",
@@ -102,5 +127,6 @@ filegroup(
         ":api_submitqueue_gateway",
         ":api_submitqueue_orchestrator",
         ":stovepipe_core_messagequeue",
+        ":submitqueue_core_messagequeue",
     ],
 )

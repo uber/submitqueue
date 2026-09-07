@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -86,7 +87,7 @@ func (c *speculateController) Process(ctx context.Context, delivery consumer.Del
 
 	msg := delivery.Message()
 
-	bid, err := entity.BatchIDFromBytes(msg.Payload)
+	bid, err := sqmq.UnmarshalBatchID(primaryTopicKey(c.topicKey), msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to decode batch id from dlq payload: %w", err)
@@ -200,7 +201,7 @@ func (c *speculateController) retrigger(ctx context.Context, store storage.Stora
 		}
 	}
 
-	payload, err := entity.BatchID{ID: next, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, next, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}

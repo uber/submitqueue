@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -201,8 +202,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 
 // publishToQueue publishes a land request to the request queue for async processing.
 func (c *landController) publishToQueue(ctx context.Context, landRequest entity.LandRequest) error {
-	// Serialize land request entity to JSON
-	payload, err := landRequest.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(landRequest))
 	if err != nil {
 		return fmt.Errorf("failed to serialize land request: %w", err)
 	}
@@ -210,7 +210,6 @@ func (c *landController) publishToQueue(ctx context.Context, landRequest entity.
 	// Publish the request into the pipeline:
 	// - Message ID: landRequest.ID with no cause — a request enters once, so a
 	//   retry of this same publish dedups instead of enqueuing it twice
-	// - Payload: serialized LandRequest entity
 	// - Partition key: landRequest.Queue (ensures ordering per queue)
 	if err := publish.Message(ctx, c.registry, topickey.TopicKeyStart, publish.MessageParams{
 		Tenant:       landRequest.Queue,

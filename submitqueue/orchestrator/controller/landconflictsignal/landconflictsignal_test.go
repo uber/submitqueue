@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -125,14 +126,14 @@ func TestProcess_LandablePublishesToBatch(t *testing.T) {
 
 	// First publish: validated log entry.
 	assert.Equal(t, "log", gotTopics[0])
-	logEntry, err := entity.RequestLogFromBytes(gotPayloads[0])
+	logEntry, err := sqmq.UnmarshalRequestLog(gotPayloads[0])
 	require.NoError(t, err)
 	assert.Equal(t, entity.RequestStatusValidated, logEntry.Status)
 	assert.Equal(t, int32(2), logEntry.RequestVersion)
 
 	// Second publish: request ID to batch topic.
 	assert.Equal(t, "batch", gotTopics[1])
-	rid, err := entity.RequestIDFromBytes(gotPayloads[1])
+	rid, err := sqmq.UnmarshalRequestID(sqmq.TopicKeyBatch, gotPayloads[1])
 	require.NoError(t, err)
 	assert.Equal(t, testRequestID, rid.ID)
 }
@@ -181,7 +182,7 @@ func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 
 	// The single publish is the terminal log entry carrying the conflict reason.
 	assert.Equal(t, "log", gotTopic)
-	logEntry, err := entity.RequestLogFromBytes(gotPayload)
+	logEntry, err := sqmq.UnmarshalRequestLog(gotPayload)
 	require.NoError(t, err)
 	assert.Equal(t, entity.RequestStatusError, logEntry.Status)
 	assert.Equal(t, int32(2), logEntry.RequestVersion)

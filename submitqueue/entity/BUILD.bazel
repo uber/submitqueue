@@ -38,8 +38,6 @@ go_test(
     srcs = [
         "batch_test.go",
         "build_test.go",
-        "cancel_test.go",
-        "land_test.go",
         "request_log_test.go",
         "request_test.go",
         "speculation_test.go",

@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -61,7 +62,7 @@ func requestWithState(request entity.Request, state entity.RequestState) entity.
 
 // cancelPayload serializes a CancelRequest to JSON bytes for test message payloads.
 func cancelPayload(t *testing.T, id, reason string) []byte {
-	payload, err := entity.CancelRequest{ID: id, Queue: "q", Reason: reason}.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.CancelFromEntity(entity.CancelRequest{ID: id, Queue: "q", Reason: reason}))
 	require.NoError(t, err)
 	return payload
 }
@@ -392,7 +393,7 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	var records []pubRec
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			bid, err := sqmq.UnmarshalBatchID(sqmq.TopicKeySpeculate, msg.Payload)
 			require.NoError(t, err)
 			records = append(records, pubRec{topic: topic, msgID: msg.ID, payloadID: bid.ID})
 			return nil
@@ -465,7 +466,7 @@ func TestProcess_CancelsEveryApplicableBatch(t *testing.T) {
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
 			// The message ID is the queue's dedup key and is distinct per
 			// publish; the payload carries the batch ID the consumer acts on.
-			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			bid, err := sqmq.UnmarshalBatchID(sqmq.TopicKeySpeculate, msg.Payload)
 			require.NoError(t, err)
 			operations = append(operations, "publish:"+bid.ID)
 			return nil
@@ -506,7 +507,7 @@ func TestProcess_BatchFailureDoesNotPreventLaterCancellation(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch2, entity.BatchStateCancelling), int32(2), int32(3)).Return(nil)
 	publisher.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
-			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			bid, err := sqmq.UnmarshalBatchID(sqmq.TopicKeySpeculate, msg.Payload)
 			require.NoError(t, err)
 			assert.Equal(t, batch2.ID, bid.ID)
 			return nil

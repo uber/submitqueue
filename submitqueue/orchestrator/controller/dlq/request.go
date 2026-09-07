@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -40,7 +41,7 @@ type RequestIDDecoder func(payload []byte) (entity.RequestID, error)
 // DecodeLandRequestID extracts the request ID from a LandRequest payload
 // (the shape used by the start topic).
 func DecodeLandRequestID(payload []byte) (entity.RequestID, error) {
-	lr, err := entity.LandRequestFromBytes(payload)
+	lr, err := sqmq.UnmarshalLandRequest(payload)
 	if err != nil {
 		return entity.RequestID{}, err
 	}
@@ -50,17 +51,19 @@ func DecodeLandRequestID(payload []byte) (entity.RequestID, error) {
 // DecodeCancelRequestID extracts the request ID from a CancelRequest payload
 // (the shape used by the cancel topic).
 func DecodeCancelRequestID(payload []byte) (entity.RequestID, error) {
-	cr, err := entity.CancelRequestFromBytes(payload)
+	cr, err := sqmq.UnmarshalCancelRequest(payload)
 	if err != nil {
 		return entity.RequestID{}, err
 	}
 	return entity.RequestID{ID: cr.ID, Queue: cr.Queue}, nil
 }
 
-// DecodeRequestID extracts the request ID from a RequestID payload (the shape
-// used by the validate and batch topics).
-func DecodeRequestID(payload []byte) (entity.RequestID, error) {
-	return entity.RequestIDFromBytes(payload)
+// DecodeRequestID extracts the request ID from a validate or batch payload.
+// primary is the originating topic (TopicKeyValidate or TopicKeyBatch), not the DLQ key.
+func DecodeRequestID(primary consumer.TopicKey) RequestIDDecoder {
+	return func(payload []byte) (entity.RequestID, error) {
+		return sqmq.UnmarshalRequestID(primary, payload)
+	}
 }
 
 // requestController is the DLQ reconciler for request-scoped pipeline stages.
