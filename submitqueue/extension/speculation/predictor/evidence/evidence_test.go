@@ -82,8 +82,7 @@ func TestPredict_NeutralFactorsReturnTheScorersPrice(t *testing.T) {
 }
 
 func TestPredict_AppliesOneFactorPerEvidence(t *testing.T) {
-	// 0.5 has odds of exactly 1, so the resulting odds are the factor itself and
-	// the expected probability is factor/(1+factor).
+	// At scorer price 0.5, factor f revises the price to f/(1+f).
 	tests := []struct {
 		name    string
 		factors Factors

@@ -12,14 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package evidence revises a Scorer's price by multiplying its odds by one
-// factor per piece of evidence about the batch's progress.
-//
-// Odds rather than the probability itself, because a factor then means the same
-// thing wherever it applies and the result cannot leave [0, 1]. Written as logs
-// and summed, the same arithmetic is a logistic regression, which is what lets
-// hand-written factors later be replaced by fitted ones without changing the
-// form. See doc/rfc/submitqueue/outcome-predictor.md.
+// Package evidence revises a Scorer's price with factors for observed batch
+// progress. See doc/rfc/submitqueue/outcome-predictor.md.
 package evidence
 
 import (
@@ -35,9 +29,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 )
 
-// Factors are the odds multipliers, one per piece of evidence. A factor of 1
-// leaves the price alone. Named fields rather than a keyed map, so an evidence
-// name that does not exist fails to compile instead of being ignored.
+// Factors revise the scorer's price, one per piece of evidence. A factor of 1
+// leaves the price alone. Named fields make unknown evidence fail to compile.
 type Factors struct {
 	// PathPassed applies once when a build has passed on the batch's
 	// all-succeed path.
@@ -55,9 +48,7 @@ func AllOnes() Factors {
 	return Factors{PathPassed: 1, PathFailed: 1, Merging: 1, Cancelling: 1}
 }
 
-// epsilon bounds the price away from 0 and 1, which have no finite odds.
-// Without it a certain scorer could never be revised by any evidence — and
-// certainty about an unfinished batch is the scorer overstating what it sees.
+// epsilon keeps exact certainty revisable while remaining close to the scorer.
 const epsilon = 1e-6
 
 // evidence is a predictor.Predictor that revises a scorer's price.
@@ -66,7 +57,7 @@ type evidence struct {
 	cfg predictor.Config
 	// base prices the batch's change; its price is what the factors revise.
 	base scorer.Scorer
-	// factors are the odds multipliers applied to that price.
+	// factors revise the scorer's price with observed evidence.
 	factors Factors
 	// scope is the tally scope for emitting metrics.
 	scope tally.Scope
@@ -75,10 +66,7 @@ type evidence struct {
 // New creates an evidence predictor bound to the queue named in cfg, revising
 // base's price by factors.
 //
-// It returns an error rather than panic on a nil base or a non-positive factor:
-// configuration rejects those today, but the fitted-factor file loader planned
-// in doc/rfc/submitqueue/outcome-predictor.md bypasses configuration entirely,
-// and on that path this check is the only guard.
+// It rejects a nil base and non-positive factors.
 func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.Scope) (predictor.Predictor, error) {
 	if base == nil {
 		return nil, fmt.Errorf("evidence.New: base must not be nil")
@@ -89,8 +77,8 @@ func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.
 		"Merging":    factors.Merging,
 		"Cancelling": factors.Cancelling,
 	} {
-		// Zero would pin the prediction to 0 and negative has no meaning as a
-		// multiplier on odds.
+		// Zero would permanently pin matching batches to 0; negatives cannot
+		// represent either direction in the factor contract.
 		if !(factor > 0) {
 			return nil, fmt.Errorf("evidence.New: factor %s must be positive, got %v", name, factor)
 		}
@@ -98,8 +86,8 @@ func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.
 	return &evidence{cfg: cfg, base: base, factors: factors, scope: scope}, nil
 }
 
-// Predict prices the batch's change through the base scorer, then multiplies
-// the odds of that price by one factor per piece of evidence.
+// Predict prices the batch's change, combines its evidence factors, and revises
+// the scorer's price with the result.
 func (r *evidence) Predict(ctx context.Context, batch entity.Batch, paths entity.SpeculationPathSet) (ret predictor.Probability, retErr error) {
 	op := metrics.Begin(r.scope, "predict", metrics.FastLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
@@ -115,33 +103,25 @@ func (r *evidence) Predict(ctx context.Context, batch entity.Batch, paths entity
 		return 0, fmt.Errorf("base scorer returned %v, which is not a probability", price)
 	}
 
-	odds := oddsOf(math.Min(math.Max(price, epsilon), 1-epsilon))
+	factor := math.Pow(r.factors.PathFailed, float64(countFailed(paths)))
 	if hasPassedAllSucceedPath(paths) {
-		odds *= r.factors.PathPassed
+		factor *= r.factors.PathPassed
 	}
-	odds *= math.Pow(r.factors.PathFailed, float64(countFailed(paths)))
 	switch batch.State {
 	case entity.BatchStateMerging:
-		odds *= r.factors.Merging
+		factor *= r.factors.Merging
 	case entity.BatchStateCancelling:
-		odds *= r.factors.Cancelling
+		factor *= r.factors.Cancelling
 	}
-	return probabilityOf(odds), nil
+	return revise(math.Min(math.Max(price, epsilon), 1-epsilon), factor), nil
 }
 
-// oddsOf converts a probability to odds. p is bounded away from 1, so this is
-// finite.
-func oddsOf(p float64) float64 {
-	return p / (1 - p)
-}
-
-// probabilityOf converts odds back to a probability. Overflowed odds read as
-// certainty rather than the NaN the division would produce.
-func probabilityOf(odds float64) predictor.Probability {
-	if math.IsInf(odds, 1) {
+// revise applies the combined factor while keeping the result a probability.
+func revise(price, factor float64) predictor.Probability {
+	if math.IsInf(factor, 1) {
 		return 1
 	}
-	return predictor.Probability(odds / (1 + odds))
+	return predictor.Probability(price * factor / (1 - price + price*factor))
 }
 
 // hasPassedAllSucceedPath reports a passed build on the batch's all-succeed
