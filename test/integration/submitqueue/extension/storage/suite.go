@@ -319,7 +319,7 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	emptyCollections := got
 	emptyCollections.Contains = []string{}
 	emptyCollections.Dependencies = []string{}
-	emptyCollections.State = entity.BatchStateMerging
+	emptyCollections.State = entity.BatchStateLanding
 	require.NoError(t, store.Update(ctx, emptyCollections, 2, 3))
 
 	got, err = store.Get(ctx, batch.ID)
@@ -329,7 +329,7 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	assert.Empty(t, got.Contains)
 	assert.NotNil(t, got.Dependencies)
 	assert.Empty(t, got.Dependencies)
-	assert.Equal(t, entity.BatchStateMerging, got.State)
+	assert.Equal(t, entity.BatchStateLanding, got.State)
 	assert.Equal(t, int32(3), got.Version)
 
 	stale := got
@@ -375,7 +375,7 @@ func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
 	assert.ElementsMatch(t, []entity.QueueBatchState{speculating}, got)
 
 	// An empty bucket lists empty, not an error.
-	got, err = storeA.List(ctx, entity.BatchStateMerging)
+	got, err = storeA.List(ctx, entity.BatchStateLanding)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 

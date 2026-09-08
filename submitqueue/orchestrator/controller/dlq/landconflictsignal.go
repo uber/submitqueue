@@ -27,11 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// mergeConflictSignalController is the DLQ reconciler for the
-// mergeconflictsignal topic. Its payload carries a runway
+// landConflictSignalController is the DLQ reconciler for the
+// landconflictsignal topic. Its payload carries a runway
 // MergeResult whose id is the request id echoed back, so
 // reconciliation fails that request directly via failRequest.
-type mergeConflictSignalController struct {
+type landConflictSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
@@ -40,12 +40,12 @@ type mergeConflictSignalController struct {
 	consumerGroup string
 }
 
-// Verify mergeConflictSignalController implements consumer.Controller at compile time.
-var _ consumer.Controller = (*mergeConflictSignalController)(nil)
+// Verify landConflictSignalController implements consumer.Controller at compile time.
+var _ consumer.Controller = (*landConflictSignalController)(nil)
 
-// NewDLQMergeConflictSignalController builds a DLQ controller for the
-// mergeconflictsignal topic.
-func NewDLQMergeConflictSignalController(
+// NewDLQLandConflictSignalController builds a DLQ controller for the
+// landconflictsignal topic.
+func NewDLQLandConflictSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
@@ -54,7 +54,7 @@ func NewDLQMergeConflictSignalController(
 	consumerGroup string,
 ) consumer.Controller {
 	name := string(topicKey) + "_controller"
-	return &mergeConflictSignalController{
+	return &landConflictSignalController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
@@ -64,8 +64,8 @@ func NewDLQMergeConflictSignalController(
 	}
 }
 
-// Process reconciles a single DLQ delivery for the mergeconflictsignal topic.
-func (c *mergeConflictSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
+// Process reconciles a single DLQ delivery for the landconflictsignal topic.
+func (c *landConflictSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
 
 	msg := delivery.Message()
@@ -73,7 +73,7 @@ func (c *mergeConflictSignalController) Process(ctx context.Context, delivery co
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
-		return fmt.Errorf("failed to decode merge conflict check result from dlq payload: %w", err)
+		return fmt.Errorf("failed to decode land conflict check result from dlq payload: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
@@ -106,16 +106,16 @@ func (c *mergeConflictSignalController) Process(ctx context.Context, delivery co
 }
 
 // Name returns the controller name for logging and metrics.
-func (c *mergeConflictSignalController) Name() string {
+func (c *landConflictSignalController) Name() string {
 	return string(c.topicKey)
 }
 
 // TopicKey returns the topic key this controller subscribes to.
-func (c *mergeConflictSignalController) TopicKey() consumer.TopicKey {
+func (c *landConflictSignalController) TopicKey() consumer.TopicKey {
 	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
-func (c *mergeConflictSignalController) ConsumerGroup() string {
+func (c *landConflictSignalController) ConsumerGroup() string {
 	return c.consumerGroup
 }

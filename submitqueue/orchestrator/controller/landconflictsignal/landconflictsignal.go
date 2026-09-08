@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package mergeconflictsignal consumes merge-conflict check results from runway's
-// signal queue, correlates them to the request by the echoed id, and either
-// advances the request to the batch stage (mergeable) or fails it (conflicted).
-// Unlike buildsignal it is purely result-driven — runway pushes the result, so
+// Package landconflictsignal consumes merge-conflict results from Runway's
+// signal queue, correlates them to the land request by the echoed id, and either
+// advances the request to the batch stage (landable) or fails it (conflicted).
+// Unlike buildsignal it is purely result-driven — Runway pushes the result, so
 // there is no poll loop or self-reschedule.
-package mergeconflictsignal
+package landconflictsignal
 
 import (
 	"context"
@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles mergeconflictsignal queue messages. Implements consumer.Controller.
+// Controller handles landconflictsignal queue messages. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -50,7 +50,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new mergeconflictsignal controller for the orchestrator.
+// NewController creates a new landconflictsignal controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -60,8 +60,8 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("mergeconflictsignal_controller"),
-		metricsScope:  scope.SubScope("mergeconflictsignal_controller"),
+		logger:        logger.Named("landconflictsignal_controller"),
+		metricsScope:  scope.SubScope("landconflictsignal_controller"),
 		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -72,7 +72,7 @@ func NewController(
 // Process consumes a runway check result and advances or fails the request.
 // Returns nil to ack, or error to nack/reject.
 //
-// A not-mergeable verdict is an expected outcome of the check, not a failure:
+// A not-landable verdict is an expected outcome of the check, not a failure:
 // the request is driven to terminal Error inline and the message is acked. Only
 // infrastructure faults — deserialize, storage, the terminal transition, and the
 // batch publish — return an error and reject to the DLQ, where the request is
@@ -87,7 +87,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
-		return fmt.Errorf("failed to deserialize merge conflict check result: %w", err)
+		return fmt.Errorf("failed to deserialize land conflict check result: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
 		return fmt.Errorf("invalid message identity: %w", err)
@@ -106,9 +106,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get request %s: %w", result.Id, err)
 	}
 
-	c.logger.Infow("received mergeconflict signal",
+	c.logger.Infow("received landconflict signal",
 		"request_id", request.ID,
-		"mergeable", result.Outcome == runwaypb.Outcome_SUCCEEDED,
+		"landable", result.Outcome == runwaypb.Outcome_SUCCEEDED,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
@@ -116,7 +116,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Short-circuit halted requests: the cancel path owns driving them terminal.
 	if entity.IsRequestStateHalted(request.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
-		c.logger.Infow("skipping mergeconflict signal for halted request",
+		c.logger.Infow("skipping landconflict signal for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
 		)
@@ -124,8 +124,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	if result.Outcome != runwaypb.Outcome_SUCCEEDED {
-		metrics.NamedCounter(c.metricsScope, opName, "not_mergeable", 1)
-		c.logger.Infow("request not mergeable",
+		metrics.NamedCounter(c.metricsScope, opName, "not_landable", 1)
+		c.logger.Infow("request not landable",
 			"request_id", request.ID,
 			"reason", result.Reason,
 		)
@@ -136,7 +136,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
-	// Advance the request to Validated now that the merge-conflict check passed.
+	// Advance the request to Validated now that the land-conflict check passed.
 	newVersion := request.Version + 1
 	request.State = entity.RequestStateValidated
 	if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
@@ -165,7 +165,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // failRequest drives the request to terminal RequestStateError and records the
-// conflict reason on the request log. A not-mergeable verdict is an expected
+// conflict reason on the request log. A not-landable verdict is an expected
 // terminal outcome of the check, so the request is concluded here directly.
 //
 // Idempotent under at-least-once delivery: a redelivery whose request is already
@@ -225,7 +225,7 @@ func (c *Controller) publishRequestID(ctx context.Context, key consumer.TopicKey
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "mergeconflictsignal"
+	return "landconflictsignal"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

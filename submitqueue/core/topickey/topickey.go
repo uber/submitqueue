@@ -44,16 +44,16 @@ const (
 	// so the state machine re-evaluates, and holds the delivery for the next
 	// poll when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
-	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
-	TopicKeyMerge TopicKey = "submitqueue-merge"
-	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
+	// TopicKeyLand is the pipeline stage where speculated batches are published for landing.
+	TopicKeyLand TopicKey = "submitqueue-land"
+	// TopicKeyConclude is the pipeline stage where landed requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
 	// TopicKeyLog is the pipeline stage where per-request logs are written.
 	TopicKeyLog TopicKey = "log"
 )
 
 // MetadataKeyFailureReason is the conclude message's metadata attribute carrying
-// a failed batch's human-readable reason. Set by the failure sites (merge and
+// a failed batch's human-readable reason. Set by the failure sites (land and
 // speculate) on the conclude publish and read by conclude to stamp the request's
 // terminal log; absent on the landed and cancelled paths.
 const MetadataKeyFailureReason = "failure_reason"

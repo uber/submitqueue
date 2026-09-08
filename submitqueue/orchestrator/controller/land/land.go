@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package merge implements the trigger stage for the asynchronous merge. It
-// consumes a batch ready to land, builds the full merge request from the
+// Package land implements the trigger stage for the asynchronous land. It
+// consumes a batch ready to land, builds the full land request from the
 // batch's member requests (one step per request, in Contains order), and
-// publishes it to runway's merge queue using the batch id as the client-owned
-// correlation id. Runway performs the merge out of process and publishes the
-// result to the merge-signal queue, which the mergesignal stage consumes and
+// publishes it to Runway's merge queue using the batch id as the client-owned
+// correlation id. Runway executes the request as a merge and publishes the
+// result to the merge-signal queue, which the landsignal stage consumes and
 // correlates back to the batch by that id.
-package merge
+package land
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -41,13 +41,13 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
-// Controller handles merge queue messages. Implements consumer.Controller.
+// Controller handles land queue messages. Implements consumer.Controller.
 //
-// It loads the batch and its member requests, assembles the full merge request
+// It loads the batch and its member requests, assembles the full land request
 // (one step per member request, in Contains order, each carrying that request's
-// change and land strategy), and publishes it to runway's merge queue. Runway
-// performs the merge out of process and returns the result on the merge-signal
-// queue; the mergesignal stage consumes it and transitions the batch. This
+// change and land strategy), and publishes it to Runway's merge queue. Runway
+// executes the request as a merge and returns the result on the merge-signal
+// queue; the landsignal stage consumes it and transitions the batch. This
 // controller therefore performs no state transition itself.
 type Controller struct {
 	logger         *zap.SugaredLogger
@@ -62,8 +62,8 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new merge controller for the orchestrator.
-// runwayTopicKey is the runway-owned topic this controller publishes merge
+// NewController creates a new land controller for the orchestrator.
+// runwayTopicKey is the runway-owned topic this controller publishes land
 // requests to (TopicKeyMerge).
 func NewController(
 	logger *zap.SugaredLogger,
@@ -75,8 +75,8 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:         logger.Named("merge_controller"),
-		metricsScope:   scope.SubScope("merge_controller"),
+		logger:         logger.Named("land_controller"),
+		metricsScope:   scope.SubScope("land_controller"),
 		stores:         stores,
 		registry:       registry,
 		runwayTopicKey: runwayTopicKey,
@@ -85,12 +85,12 @@ func NewController(
 	}
 }
 
-// Process publishes the full merge request to runway. Returns nil to ack
+// Process publishes the full Runway merge request for this land. Returns nil to ack
 // (success), or error to nack/reject.
 //
 // Error classification: deserialize and storage failures are non-retryable
 // (reject to DLQ). The publish to runway is retryable — it is the hand-off that
-// keeps the merge alive, so a transient enqueue blip should replay rather than
+// keeps the land alive, so a transient enqueue blip should replay rather than
 // strand the batch.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
@@ -126,7 +126,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
-	c.logger.Infow("received merge event",
+	c.logger.Infow("received land event",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"state", string(batch.State),
@@ -135,27 +135,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Short-circuit halted batches (terminal or cancelling): no merge should be
+	// Short-circuit halted batches (terminal or cancelling): no land should be
 	// kicked off for a batch that will not proceed. Unlike the old synchronous
-	// merge there is no terminal re-fan-out here — the mergesignal stage owns the
+	// land there is no terminal re-fan-out here — the landsignal stage owns the
 	// state transition and fan-out once runway's result returns, so a redelivery
 	// at this stage simply acks.
 	if entity.IsBatchStateHalted(batch.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
-		c.logger.Infow("skipping merge for halted batch",
+		c.logger.Infow("skipping land for halted batch",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
 		)
 		return nil
 	}
 
-	// Build the full payload runway needs to perform the merge. The batch id is
+	// Build the full merge payload Runway needs to execute the land. The batch id is
 	// the client-owned correlation id, so a redelivery republishes the same id
 	// and runway dedupes on it; the result is matched straight back to the batch.
-	req, err := c.buildMergeRequest(ctx, store, batch)
+	req, err := c.buildLandRequest(ctx, store, batch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to build merge request for batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to build land request for batch %s: %w", batch.ID, err)
 	}
 
 	// Report that the members are landing before the request goes out, so a
@@ -173,7 +173,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to publish to runway merge: %w", err)
 	}
 
-	c.logger.Infow("published merge to runway",
+	c.logger.Infow("published merge request to Runway",
 		"batch_id", batch.ID,
 		"steps", len(req.Steps),
 		"topic_key", c.runwayTopicKey,
@@ -182,10 +182,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// buildMergeRequest loads the batch's member requests and assembles the runway
-// merge request: one MergeStep per request, in Contains order, attributed by
+// buildLandRequest loads the batch's member requests and assembles the runway
+// MergeRequest: one MergeStep per request, in Contains order, attributed by
 // request id and carrying that request's change and land strategy.
-func (c *Controller) buildMergeRequest(ctx context.Context, store storage.Storage, batch entity.Batch) (*runwaymq.MergeRequest, error) {
+func (c *Controller) buildLandRequest(ctx context.Context, store storage.Storage, batch entity.Batch) (*runwaymq.MergeRequest, error) {
 	steps := make([]*runwaymq.MergeStep, 0, len(batch.Contains))
 	for _, requestID := range batch.Contains {
 		request, err := store.GetRequestStore().Get(ctx, requestID)
@@ -208,29 +208,31 @@ func (c *Controller) buildMergeRequest(ctx context.Context, store storage.Storag
 // toProtoStrategy maps the shared mergestrategy.MergeStrategy entity to the
 // proto Strategy enum carried on the wire. An unknown strategy maps to DEFAULT,
 // letting runway apply the queue's configured default.
-func toProtoStrategy(s mergestrategy.MergeStrategy) strategypb.Strategy {
+func toProtoStrategy(s mergestrategy.MergeStrategy) mergestrategypb.Strategy {
 	switch s {
 	case mergestrategy.MergeStrategyRebase:
-		return strategypb.Strategy_REBASE
+		return mergestrategypb.Strategy_REBASE
 	case mergestrategy.MergeStrategySquashRebase:
-		return strategypb.Strategy_SQUASH_REBASE
+		return mergestrategypb.Strategy_SQUASH_REBASE
 	case mergestrategy.MergeStrategyMerge:
-		return strategypb.Strategy_MERGE
+		return mergestrategypb.Strategy_MERGE
+	case mergestrategy.MergeStrategyPromote:
+		return mergestrategypb.Strategy_PROMOTE
 	default:
-		return strategypb.Strategy_DEFAULT
+		return mergestrategypb.Strategy_DEFAULT
 	}
 }
 
-// publish serializes the runway merge request and publishes it to the given
+// publish serializes the Runway merge request and publishes it to the given
 // topic key, partitioned by queue.
 //
-// The correlation ID is the message ID with no cause: a batch is asked to merge
+// The correlation ID is the message ID with no cause: a batch is asked to land
 // once, so a redelivery that re-asks is meant to dedup rather than have Runway
 // merge the same batch twice.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, req *runwaymq.MergeRequest, partitionKey string) error {
 	payload, err := runwaymq.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("failed to serialize merge request: %w", err)
+		return fmt.Errorf("failed to serialize land request: %w", err)
 	}
 
 	if err := publish.Message(ctx, c.registry, key, publish.MessageParams{
@@ -247,7 +249,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, req *ru
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "merge"
+	return "land"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

@@ -147,7 +147,7 @@ func TestEnsureRecord(t *testing.T) {
 	batch := entity.Batch{
 		ID:      "monorepo/batch/7",
 		Queue:   "monorepo",
-		State:   entity.BatchStateMerging,
+		State:   entity.BatchStateLanding,
 		Version: 5,
 	}
 	storeErr := errors.New("storage failed")

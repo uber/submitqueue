@@ -830,9 +830,9 @@ func (s *SQLQueueIntegrationSuite) TestDedupOutlivesConsumption() {
 
 	// Naming the cause is what gets it through.
 	require.NoError(t, publisher.Publish(s.ctx, topic,
-		testMessage("batch-1/merged", []byte("woken"), "queue-1", nil)))
+		testMessage("batch-1/landed", []byte("woken"), "queue-1", nil)))
 	second := receive(t, deliveryChan)
-	assert.Equal(t, "batch-1/merged", second.Message().ID)
+	assert.Equal(t, "batch-1/landed", second.Message().ID)
 	assert.Equal(t, []byte("woken"), second.Message().Payload)
 	require.NoError(t, second.Ack(s.ctx))
 }

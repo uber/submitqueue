@@ -50,7 +50,7 @@ func f() { _ = messagequeue.NewMessage("id", nil, "part", nil) }`,
 			name: "publishing through the helper passes",
 			src: `package p
 import "github.com/uber/submitqueue/platform/publish"
-func f() { _ = publish.IntentID("batch-1", "merged") }`,
+func f() { _ = publish.IntentID("batch-1", "landed") }`,
 		},
 		{
 			name: "NewMessage of an unrelated package passes",
