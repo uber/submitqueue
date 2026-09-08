@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"time"
@@ -249,7 +250,7 @@ type bucketConfig struct {
 }
 
 // speculatorConfig tunes how much CI a queue's speculation may occupy. It has no
-// `type`: there is one speculator, composed from the queue's scorer, and what
+// `type`: there is one speculator, composed from the queue's predictor, and what
 // varies between queues is what it is allowed to spend.
 type speculatorConfig struct {
 	// BuildBudget caps how many builds this queue may have occupying CI at once,
@@ -264,8 +265,9 @@ type speculatorConfig struct {
 type predictorConfig struct {
 	Type string `yaml:"type"`
 	// Factors revise the scorer's price, one per piece of evidence and keyed by
-	// evidence name. An omitted factor is neutral, so an omitted block ranks on
-	// the scorer's price alone.
+	// evidence name. An omitted key keeps the inherited value, or 1 if neither
+	// defaults nor the queue named it. An omitted predictor block inherits the
+	// whole default, so every factor stays 1 until someone sets one.
 	Factors map[string]float64 `yaml:"factors"`
 }
 
@@ -394,9 +396,28 @@ func (c profilesConfig) resolve(q namedQueueProfileConfig) queueProfileConfig {
 		profile.Speculator = *q.Speculator
 	}
 	if q.Predictor != nil {
-		profile.Predictor = *q.Predictor
+		profile.Predictor = overlayPredictor(profile.Predictor, *q.Predictor)
 	}
 	return profile
+}
+
+// overlayPredictor keeps default factors the queue did not name. A present
+// predictor block is otherwise a normal extension override: type replaces when
+// set, and named factor keys win.
+func overlayPredictor(base, override predictorConfig) predictorConfig {
+	if override.Type != "" {
+		base.Type = override.Type
+	}
+	if len(override.Factors) == 0 {
+		return base
+	}
+	merged := maps.Clone(base.Factors)
+	if merged == nil {
+		merged = make(map[string]float64, len(override.Factors))
+	}
+	maps.Copy(merged, override.Factors)
+	base.Factors = merged
+	return base
 }
 
 func (p *queueProfileConfig) normalizeAndValidate(where string) error {
