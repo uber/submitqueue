@@ -35,7 +35,7 @@ type Factors struct {
 	// PathPassed applies once when a build has passed on the batch's
 	// all-succeed path.
 	PathPassed float64
-	// PathFailed applies once per failed all-succeed path, compounding.
+	// PathFailed applies once when the all-succeed path has failed.
 	PathFailed float64
 	// Merging applies while the batch is merging.
 	Merging float64
@@ -66,7 +66,7 @@ type evidence struct {
 // New creates an evidence predictor bound to the queue named in cfg, revising
 // base's price by factors.
 //
-// It rejects a nil base and non-positive factors.
+// It rejects a nil base and factors that are non-finite or not positive.
 func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.Scope) (predictor.Predictor, error) {
 	if base == nil {
 		return nil, fmt.Errorf("evidence.New: base must not be nil")
@@ -79,8 +79,8 @@ func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.
 	} {
 		// Zero would permanently pin matching batches to 0; negatives cannot
 		// represent either direction in the factor contract.
-		if !(factor > 0) {
-			return nil, fmt.Errorf("evidence.New: factor %s must be positive, got %v", name, factor)
+		if !(factor > 0) || math.IsInf(factor, 0) {
+			return nil, fmt.Errorf("evidence.New: factor %s must be finite and positive, got %v", name, factor)
 		}
 	}
 	return &evidence{cfg: cfg, base: base, factors: factors, scope: scope}, nil
@@ -103,9 +103,12 @@ func (r *evidence) Predict(ctx context.Context, batch entity.Batch, paths entity
 		return 0, fmt.Errorf("base scorer returned %v, which is not a probability", price)
 	}
 
-	factor := math.Pow(r.factors.PathFailed, float64(countFailed(paths)))
+	factor := 1.0
 	if hasPassedAllSucceedPath(paths) {
 		factor *= r.factors.PathPassed
+	}
+	if hasFailedAllSucceedPath(paths) {
+		factor *= r.factors.PathFailed
 	}
 	switch batch.State {
 	case entity.BatchStateMerging:
@@ -113,15 +116,19 @@ func (r *evidence) Predict(ctx context.Context, batch entity.Batch, paths entity
 	case entity.BatchStateCancelling:
 		factor *= r.factors.Cancelling
 	}
+	if factor == 1 {
+		return predictor.Probability(price), nil
+	}
 	return revise(math.Min(math.Max(price, epsilon), 1-epsilon), factor), nil
 }
 
 // revise applies the combined factor while keeping the result a probability.
 func revise(price, factor float64) predictor.Probability {
 	if math.IsInf(factor, 1) {
-		return 1
+		return 1 - epsilon
 	}
-	return predictor.Probability(price * factor / (1 - price + price*factor))
+	revised := price * factor / (1 - price + price*factor)
+	return predictor.Probability(math.Min(math.Max(revised, epsilon), 1-epsilon))
 }
 
 // hasPassedAllSucceedPath reports a passed build on the batch's all-succeed
@@ -149,15 +156,13 @@ func assumesAllSucceed(path entity.SpeculationPath) bool {
 	return true
 }
 
-// countFailed counts failed builds on the batch's all-succeed path; each one
-// compounds. Flip-subset failures are ignored: they were built under different
-// assumptions, the same filter PathPassed uses.
-func countFailed(paths entity.SpeculationPathSet) int {
-	failed := 0
+// hasFailedAllSucceedPath reports a failed build on the batch's all-succeed
+// path. Flip-subset failures were built under different assumptions.
+func hasFailedAllSucceedPath(paths entity.SpeculationPathSet) bool {
 	for _, entry := range paths.Paths {
 		if entry.Status == entity.SpeculationPathStatusFailed && assumesAllSucceed(entry.Path) {
-			failed++
+			return true
 		}
 	}
-	return failed
+	return false
 }
