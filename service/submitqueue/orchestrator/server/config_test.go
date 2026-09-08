@@ -713,3 +713,18 @@ func TestLoadProfilesConfig_ReadsPredictorFactors(t *testing.T) {
 	assert.Equal(t, 12.0, factors.Merging)
 	assert.Equal(t, 0.1, factors.Cancelling)
 }
+
+func TestLoadProfilesConfig_QueuePredictorFactorsOverlayDefaults(t *testing.T) {
+	cfg, err := loadProfilesConfig(writeProfiles(t,
+		"defaults:\n  predictor:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\nqueues:\n  - name: q\n    predictor:\n      factors: {pathPassed: 4}\n"))
+	require.NoError(t, err)
+
+	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Predictor)
+	assert.Equal(t, 4.0, factors.PathPassed)
+	assert.Equal(t, 0.3, factors.PathFailed)
+	assert.Equal(t, 12.0, factors.Merging)
+	assert.Equal(t, 0.1, factors.Cancelling)
+
+	defaults := factorsFrom(cfg.Defaults.Predictor)
+	assert.Equal(t, 10.0, defaults.PathPassed)
+}

@@ -460,6 +460,31 @@ type flatScorer struct{}
 
 func (flatScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return 0.5, nil }
 
+func evidenceScorer(t *testing.T, factors evidence.Factors) scorer.Scorer {
+	t.Helper()
+	s, err := evidence.New(scorer.Config{QueueName: "q"}, flatScorer{}, factors, tally.NoopScope)
+	require.NoError(t, err)
+	return s
+}
+
+func allSucceedSet(head string, status entity.SpeculationPathStatus) entity.SpeculationPathSet {
+	return entity.SpeculationPathSet{
+		Queue: "q",
+		Head:  head,
+		Paths: []entity.SpeculationPathEntry{{
+			ID:     "p1",
+			Status: status,
+			Path: entity.SpeculationPath{
+				Head: head,
+				Dependencies: []entity.PathDependency{{
+					Batch:      "q/dep0",
+					Assumption: entity.DependencyAssumptionSucceeds,
+				}},
+			},
+		}},
+	}
+}
+
 // PathPassed on a green all-succeed build is the join the generator exists to
 // consume: same scorer price, different evidence, different rank.
 func TestBestFirst_EvidencePathPassedRanksTheGreenDependencyFirst(t *testing.T) {
@@ -468,30 +493,9 @@ func TestBestFirst_EvidencePathPassedRanksTheGreenDependencyFirst(t *testing.T) 
 		{ID: "q/fresh", State: entity.BatchStateSpeculating},
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/built", "q/fresh"}},
 	}
-	built := entity.SpeculationPathSet{
-		Queue: "q",
-		Head:  "q/built",
-		Paths: []entity.SpeculationPathEntry{{
-			ID:     "p1",
-			Status: entity.SpeculationPathStatusPassed,
-			Path: entity.SpeculationPath{
-				Head: "q/built",
-				Dependencies: []entity.PathDependency{{
-					Batch:      "q/dep0",
-					Assumption: entity.DependencyAssumptionSucceeds,
-				}},
-			},
-		}},
-	}
-	pred, err := evidence.New(
-		scorer.Config{QueueName: "q"},
-		flatScorer{},
-		evidence.Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1},
-		tally.NoopScope,
-	)
-	require.NoError(t, err)
+	pred := evidenceScorer(t, evidence.Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1})
 
-	iter, err := New(pred).Generate(context.Background(), batches, []entity.SpeculationPathSet{built})
+	iter, err := New(pred).Generate(context.Background(), batches, []entity.SpeculationPathSet{allSucceedSet("q/built", entity.SpeculationPathStatusPassed)})
 	require.NoError(t, err)
 	cands := forHead(drainAll(t, iter), "q/H")
 	require.NotEmpty(t, cands)
@@ -510,25 +514,56 @@ func TestBestFirst_EvidencePathPassedRanksTheGreenDependencyFirst(t *testing.T) 
 	assert.Greater(t, cands[0].RankingScore, failScore)
 }
 
+func TestBestFirst_EvidencePathFailedPrefersTheFailedSide(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/failed", State: entity.BatchStateSpeculating},
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/failed"}},
+	}
+	pred := evidenceScorer(t, evidence.Factors{PathPassed: 1, PathFailed: 0.25, Merging: 1, Cancelling: 1})
+
+	iter, err := New(pred).Generate(context.Background(), batches, []entity.SpeculationPathSet{allSucceedSet("q/failed", entity.SpeculationPathStatusFailed)})
+	require.NoError(t, err)
+	cands := forHead(drainAll(t, iter), "q/H")
+	require.Len(t, cands, 2)
+	assert.Equal(t, entity.DependencyAssumptionFails, assumptionFor(cands[0].Path, "q/failed"))
+	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[1].Path, "q/failed"))
+	assert.Greater(t, cands[0].RankingScore, cands[1].RankingScore)
+}
+
+func TestBestFirst_EvidenceCancellingPrefersTheFailedSide(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/stopping", State: entity.BatchStateCancelling},
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/stopping"}},
+	}
+	pred := evidenceScorer(t, evidence.Factors{PathPassed: 1, PathFailed: 1, Merging: 1, Cancelling: 0.25})
+
+	iter, err := New(pred).Generate(context.Background(), batches, nil)
+	require.NoError(t, err)
+	cands := drainAll(t, iter)
+	require.Len(t, cands, 2)
+	assert.Equal(t, entity.DependencyAssumptionFails, assumptionFor(cands[0].Path, "q/stopping"))
+	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[1].Path, "q/stopping"))
+	assert.Greater(t, cands[0].RankingScore, cands[1].RankingScore)
+}
+
 // A merging dependency is still in progress — the merge can fail — so it stays
-// an open question here like any other. Whether a path betting against it is
-// worth funding is a matter of price, which is the scorer's to say, not a
-// state the search hard-codes.
+// an open question here like any other. How much it is worth is a scorer
+// price, not a fact the search hard-codes.
 func TestBestFirst_MergingDependencyStaysOpen(t *testing.T) {
 	batches := []entity.Batch{
 		{ID: "q/landing", State: entity.BatchStateMerging},
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/landing"}},
 	}
-	sc := newCountingScorer(map[string]float64{"q/landing": 0.9})
+	pred := evidenceScorer(t, evidence.Factors{PathPassed: 1, PathFailed: 1, Merging: 19, Cancelling: 1})
 
-	iter, err := New(sc).Generate(context.Background(), batches, nil)
+	iter, err := New(pred).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
-	assert.Equal(t, 1, sc.calls["q/landing"], "a merging dependency is priced like any other")
 	require.Len(t, cands, 2, "both sides of a merge that has not landed yet")
 	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[0].Path, "q/landing"))
 	assert.Equal(t, entity.DependencyAssumptionFails, assumptionFor(cands[1].Path, "q/landing"))
+	assert.Greater(t, cands[0].RankingScore, cands[1].RankingScore)
 }
 
 func TestBestFirst_GeneratesOnlyWhatIsPulled(t *testing.T) {
