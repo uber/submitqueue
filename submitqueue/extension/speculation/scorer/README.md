@@ -4,6 +4,8 @@ A `Scorer` returns the probability that a batch ultimately succeeds — reaches 
 
 Callers may score every batch a queue is waiting on, so implementations should be cheap. A speculation run scores each batch at most once, but it does not carry results across runs; anything expensive belongs behind the implementation's own cache.
 
+The default speculation pipeline does not rank on the scorer directly. The queue's `Predictor` is built over its `Scorer` and revises the scorer's price with path-set evidence before `bestfirst` ranks paths. The scorer still prices only the change; it does not see path sets.
+
 Like the other extensions, a `Scorer` is selected **per queue** by the wiring layer through the `Config` (queue name) and `Factory` interface.
 
 ## Implementations
