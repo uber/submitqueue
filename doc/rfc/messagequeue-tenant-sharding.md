@@ -23,7 +23,17 @@ The MQ schema does not use `queue` — that word is overloaded (SubmitQueue doma
 
 ## Schema
 
-Every table's primary key leads with `tenant`. Tenant, topic, consumer-group, and subscriber identifiers use `VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin`; partition keys and message IDs use explicit `VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin`. This keeps operational identifiers readable, preserves unrestricted UTF-8 ordering keys and IDs, and keeps the largest composite key within InnoDB's 3072-byte limit. The backend validates each contract before database access. Secondary indexes that do not lead with `tenant` are removed except `queue_messages.idx_offset`, which InnoDB requires because the `AUTO_INCREMENT offset` column must be leftmost in an index.
+Every table's primary key leads with `tenant`. Secondary indexes that do not lead with `tenant` are removed except `queue_messages.idx_offset`, which InnoDB requires because the `AUTO_INCREMENT offset` column must be leftmost in an index. The Go backend validates each identifier before database access so a bad value fails in the process, not as a SQL error.
+
+### Column types and limits
+
+`VARCHAR(255)` is a *character* limit, not a universal byte limit. The character set decides how many bytes that is, what bytes are legal, and how equality and ordering work.
+
+`CHARACTER SET ascii COLLATE ascii_bin NOT NULL` is for operational identifiers the service owns: `tenant`, `topic`, `consumer_group`, `subscriber_name`, `leased_by`, `original_topic`. ASCII is bytes `0x00`–`0x7F` only (one byte per character), so `VARCHAR(255)` is **255 bytes**. `ascii_bin` compares those bytes as-is: case-sensitive (`Foo` ≠ `foo`), no Unicode folding, `ORDER BY` is byte order. `NOT NULL` rejects SQL `NULL`; the empty string is a different value and the backend still rejects empty tenant/topic/consumer-group before insert. The backend additionally rejects embedded `NUL` bytes.
+
+`CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL` is for caller-chosen keys that may be real Unicode: `partition_key` and message `id`. utf8mb4 is the full Unicode set (up to 4 bytes per character, including supplementary planes). `VARCHAR(255)` is **255 characters** (at most 1020 bytes). `utf8mb4_bin` compares by binary code points: case-sensitive, no accent folding. The table default `DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin` covers `payload`-adjacent text (`TEXT` / `JSON`) the same way.
+
+These two encodings keep composite primary keys inside InnoDB's **3072-byte** index limit. InnoDB counts utf8mb4 at 4 bytes per character, so a key of three ASCII `VARCHAR(255)` columns plus one utf8mb4 `VARCHAR(255)` is `255 + 255 + 255 + 1020 = 1785` bytes before the `BIGINT` offset; two utf8mb4 columns plus two ASCII columns stay under the cap as well. Putting `tenant` (the shard key) in utf8mb4 would spend four times the index budget on a value that is always an ASCII queue name.
 
 ### `queue_messages`
 
