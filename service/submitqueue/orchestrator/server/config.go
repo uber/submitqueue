@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -614,8 +615,8 @@ func (p *predictorConfig) normalizeAndValidate(where string) error {
 		}
 		// Zero would permanently pin matching batches to 0; negatives cannot
 		// represent either direction in the factor contract.
-		if factor <= 0 {
-			return fmt.Errorf("%s: predictor factor %q is %v, must be positive", where, name, factor)
+		if !(factor > 0) || math.IsInf(factor, 0) {
+			return fmt.Errorf("%s: predictor factor %q is %v, must be finite and positive", where, name, factor)
 		}
 	}
 	return nil

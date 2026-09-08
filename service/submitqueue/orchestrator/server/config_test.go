@@ -676,6 +676,7 @@ func TestLoadProfilesConfig_RejectsBadPredictors(t *testing.T) {
 		{name: "unknown factor", contents: "defaults:\n  predictor:\n    factors: {pathPased: 2}\n"},
 		{name: "zero factor", contents: "defaults:\n  predictor:\n    factors: {merging: 0}\n"},
 		{name: "negative factor", contents: "defaults:\n  predictor:\n    factors: {pathFailed: -1}\n"},
+		{name: "infinite factor", contents: "defaults:\n  predictor:\n    factors: {pathPassed: .inf}\n"},
 		{name: "bad factor on a queue override", contents: "defaults: {}\nqueues:\n  - name: q\n    predictor:\n      factors: {merging: 0}\n"},
 	}
 	for _, tt := range tests {
