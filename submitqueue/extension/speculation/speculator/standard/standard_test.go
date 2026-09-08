@@ -92,7 +92,7 @@ func TestComposed_WiresGeneratorIntoAllocator(t *testing.T) {
 	gen := generatormock.NewMockGenerator(ctrl)
 	alloc := allocatormock.NewMockAllocator(ctrl)
 
-	gen.EXPECT().Generate(gomock.Any(), batches, gomock.Any()).Return(iter, nil)
+	gen.EXPECT().Generate(gomock.Any(), batches, pathSets).Return(iter, nil)
 	alloc.EXPECT().Allocate(gomock.Any(), pathSets, iter).Return(want, nil)
 
 	got, err := New(testCfg, gen, alloc).Speculate(context.Background(), batches, pathSets)
