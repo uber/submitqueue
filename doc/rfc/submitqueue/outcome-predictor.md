@@ -58,6 +58,8 @@ predictor:
 
 The example values above are guesses, for reading the tables. The shipped default is to omit `factors` (every factor `1`).
 
+Profiles may set factors under `defaults.predictor` and revise them per queue. An omitted key keeps the inherited value — from defaults, or `1` when neither side named it. A queue `predictor` block overlays only the keys it names; it does not replace the whole map. An omitted `predictor` block on a queue inherits the defaults entirely, so every factor stays `1` until someone sets one.
+
 ## Evidence
 
 | YAML key | When it applies | Typical direction |
