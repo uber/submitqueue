@@ -12,6 +12,14 @@ defaults:
   buildRunner: {type: fake}
   # Serialize conservatively unless a queue says otherwise.
   analyzer: {type: all}
+  # Same example factors as ../fake/profiles.yaml — see that file for why they
+  # are written out rather than left at the neutral default of 1.
+  predictor:
+    factors:
+      pathPassed: 10
+      pathFailed: 0.3
+      merging: 12
+      cancelling: 0.1
 
 queues:
   # The queue `make demo-requests` and `make land` use by default. Serializes

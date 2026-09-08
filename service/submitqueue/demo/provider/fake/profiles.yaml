@@ -22,6 +22,15 @@ defaults:
   # 1 the queue explores one path at a time, and raising it lets it hedge more
   # of the outcomes it is waiting on. Four is the built-in default.
   speculator: {buildBudget: 4}
+  # Example evidence factors from the outcome-predictor RFC. Omitted keys would
+  # stay at 1 and ranking would stay on the scorer alone; writing them out makes
+  # the demo show how path results and batch state revise that price.
+  predictor:
+    factors:
+      pathPassed: 10
+      pathFailed: 0.3
+      merging: 12
+      cancelling: 0.1
 
 queues:
   # The queue `make demo-requests` and `make land` use by default.
