@@ -2,15 +2,15 @@
 
 How likely a batch is to reach Succeeded, given the scorer's price for the change plus what this speculate run has already observed.
 
-See [speculation.md](speculation.md) for batches, paths, heads, and the Speculator. This document is the price the default Generator ranks on.
+See [speculation.md](speculation.md) for batches, paths, heads, and the Speculator. This document specifies the dependency probability the default Generator uses to rank paths.
 
 ## The idea
 
-The **scorer** prices the change (lines, files, who wrote it). That number does not move after the batch is admitted.
+The **scorer** prices the change from content signals such as its size. That number does not move after the batch is admitted.
 
 The **predictor** prices the situation. It starts from the scorer's price and revises it with facts the speculate run already holds: a path *passed*, a path *failed*, the batch is *merging*, the batch is *cancelling*.
 
-`bestfirst` ranks a path by the probability that every unresolved assumption holds. It now asks the predictor for that probability, not the scorer. Two heads whose changes score the same can rank differently once one of them has a *passed* build.
+`bestfirst` ranks a path by the probability that every unresolved dependency assumption holds. For each dependency, the predictor returns the probability of *succeeds* and `bestfirst` uses its complement for *fails*. Equal scorer prices can therefore produce different rankings for later heads once one dependency has a *passed* build.
 
 They are two contracts because they answer different questions. Putting path-set evidence on `Score` was tried: every content scorer took a parameter it discarded.
 
@@ -24,9 +24,9 @@ A factor revises the scorer's price. It is not itself a probability: `10` does n
 | --- | --- |
 | `1` | Leave the scorer's price alone (the default if the key is omitted) |
 | greater than `1` | More likely to reach Succeeded |
-| between `0` and `1` | Less likely to reach Succeeded |
+| between `0` and `1` (exclusive) | Less likely to reach Succeeded |
 
-Config rejects `0` and negatives. There is no upper cap.
+Config accepts any finite value greater than `0`; there is no finite upper cap.
 
 The unconfigured scorer prices every batch at `0.5`. From that price, one factor `f` produces:
 
@@ -40,9 +40,9 @@ The unconfigured scorer prices every batch at `0.5`. From that price, one factor
 
 A scorer price of `0.6` with `pathPassed: 10` becomes about `0.94`. `merging: 12` on top of that becomes about `0.995`.
 
-`pathFailed: 0.3` from `0.5` becomes about `0.23`. A second *failed* path of the same kind multiplies again. `0` is rejected: it would pin the batch at probability 0 for the rest of the run.
+`pathFailed: 0.3` from `0.5` becomes about `0.23`. It applies at most once because the path set has one current entry for the all-*succeeds* path; retry attempts replace that entry rather than adding evidence. `0` is rejected because it would pin matching batches at probability 0.
 
-The arithmetic multiplies odds (`p / (1-p)`), then converts back, so the result stays in `(0, 1)` and the same factor means the same thing at any scorer price. Adding to the probability does neither.
+When a factor revises the price, the arithmetic multiplies odds (`p / (1-p)`) and converts back, so the result stays in `(0, 1)` and the same factor means the same thing at any scorer price. Neutral factors return the scorer's price unchanged, including `0` or `1`. Adding to the probability provides neither property.
 
 YAML:
 
@@ -63,7 +63,7 @@ The example values above are guesses, for reading the tables. The shipped defaul
 | YAML key | When it applies | Typical direction |
 | --- | --- | --- |
 | `pathPassed` | Once, if a path that assumes every dependency *succeeds* has *passed* | Up |
-| `pathFailed` | Once per *failed* path that assumes every dependency *succeeds* | Down |
+| `pathFailed` | Once, if the path that assumes every dependency *succeeds* has *failed* | Down |
 | `merging` | While the batch is *merging* | Up |
 | `cancelling` | While the batch is *cancelling* | Down |
 
@@ -104,4 +104,4 @@ Rank a *merging* batch like Succeeded and a *cancelling* batch like Cancelled. W
 
 ### Let the predictor read the path-set store
 
-`Predict` loads path sets from storage on each call — smaller API, fewer parameters. Each call can see a different snapshot mid-run (stale or split-brain relative to the rank the Generator is building). **Instead:** the speculate run reads path sets once per dependency and passes them in.
+`Predict` loads path sets from storage on each call — smaller API, fewer parameters. Each call can see a different snapshot mid-run (stale or split-brain relative to the rank the Generator is building). **Instead:** the speculate run reads all path sets as one snapshot and passes the matching set for each dependency.
