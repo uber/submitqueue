@@ -1,0 +1,5 @@
+filegroup(
+    name = "vschema",
+    srcs = ["vschema.json"],
+    visibility = ["//visibility:public"],
+)

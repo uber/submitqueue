@@ -1,0 +1,50 @@
+{
+  "sharded": true,
+  "vindexes": {
+    "tenant_xxhash": {
+      "type": "xxhash"
+    }
+  },
+  "tables": {
+    "queue_delivery_state": {
+      "column_vindexes": [
+        {
+          "column": "tenant",
+          "name": "tenant_xxhash"
+        }
+      ]
+    },
+    "queue_messages": {
+      "column_vindexes": [
+        {
+          "column": "tenant",
+          "name": "tenant_xxhash"
+        }
+      ]
+    },
+    "queue_offsets": {
+      "column_vindexes": [
+        {
+          "column": "tenant",
+          "name": "tenant_xxhash"
+        }
+      ]
+    },
+    "queue_partition_leases": {
+      "column_vindexes": [
+        {
+          "column": "tenant",
+          "name": "tenant_xxhash"
+        }
+      ]
+    },
+    "queue_subscriber_heartbeats": {
+      "column_vindexes": [
+        {
+          "column": "tenant",
+          "name": "tenant_xxhash"
+        }
+      ]
+    }
+  }
+}

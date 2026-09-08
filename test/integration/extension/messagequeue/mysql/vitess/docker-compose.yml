@@ -1,0 +1,22 @@
+services:
+  vtcombo:
+    platform: linux/amd64
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: test/integration/extension/messagequeue/mysql/vitess/Dockerfile
+    command:
+      - /vt/bin/vttestserver
+      - --alsologtostderr
+      - --keyspaces=submitqueue
+      - --mysql-bind-host=0.0.0.0
+      - --num-shards=2
+      - --port=33574
+      - --schema-dir=/vt/test-schema
+      - --vtcombo-bind-host=0.0.0.0
+    ports:
+      - "33577"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "33577"]
+      interval: 2s
+      timeout: 2s
+      retries: 90
