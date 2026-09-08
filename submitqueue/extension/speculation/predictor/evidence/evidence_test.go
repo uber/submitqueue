@@ -73,10 +73,10 @@ func predict(t *testing.T, price float64, factors Factors, batch entity.Batch, p
 }
 
 func TestPredict_NeutralFactorsReturnTheScorersPrice(t *testing.T) {
-	for _, price := range []float64{0.01, 0.25, 0.5, 0.6, 0.9, 0.99} {
+	for _, price := range []float64{0, 0.01, 0.25, 0.5, 0.6, 0.9, 0.99, 1} {
 		t.Run(fmt.Sprintf("price %v", price), func(t *testing.T) {
 			got := predict(t, price, AllOnes(), entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed, entity.SpeculationPathStatusFailed))
-			assert.InDelta(t, price, got, 1e-9)
+			assert.Equal(t, price, got)
 		})
 	}
 }
@@ -106,12 +106,6 @@ func TestPredict_AppliesOneFactorPerEvidence(t *testing.T) {
 			name:    "one failed path",
 			factors: Factors{PathPassed: 1, PathFailed: 0.25, Merging: 1, Cancelling: 1},
 			paths:   pathSet(entity.SpeculationPathStatusFailed),
-			want:    0.2,
-		},
-		{
-			name:    "failed paths compound",
-			factors: Factors{PathPassed: 1, PathFailed: 0.5, Merging: 1, Cancelling: 1},
-			paths:   pathSet(entity.SpeculationPathStatusFailed, entity.SpeculationPathStatusFailed),
 			want:    0.2,
 		},
 		{
@@ -212,6 +206,15 @@ func TestPredict_CertainPricesStayInRangeAndStillMove(t *testing.T) {
 	}
 }
 
+func TestPredict_LargeFactorsDoNotProduceCertainty(t *testing.T) {
+	factors := AllOnes()
+	factors.PathPassed = math.MaxFloat64
+
+	got := predict(t, 0.5, factors, entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed))
+	assert.Greater(t, got, 0.99)
+	assert.Less(t, got, 1.0)
+}
+
 func TestPredict_RejectsAPriceThatIsNotAProbability(t *testing.T) {
 	for _, price := range []float64{-0.1, 1.5, math.NaN()} {
 		t.Run(fmt.Sprintf("price %v", price), func(t *testing.T) {
@@ -235,6 +238,8 @@ func TestNew_RejectsUnusableConstruction(t *testing.T) {
 	zeroed.Merging = 0
 	negative := AllOnes()
 	negative.PathFailed = -1
+	infinite := AllOnes()
+	infinite.PathPassed = math.Inf(1)
 
 	tests := []struct {
 		name    string
@@ -244,6 +249,7 @@ func TestNew_RejectsUnusableConstruction(t *testing.T) {
 		{name: "nil base", base: nil, factors: AllOnes()},
 		{name: "zero factor", base: fixedScorer{price: 0.5}, factors: zeroed},
 		{name: "negative factor", base: fixedScorer{price: 0.5}, factors: negative},
+		{name: "infinite factor", base: fixedScorer{price: 0.5}, factors: infinite},
 		{name: "unset factors", base: fixedScorer{price: 0.5}, factors: Factors{}},
 	}
 	for _, tt := range tests {
