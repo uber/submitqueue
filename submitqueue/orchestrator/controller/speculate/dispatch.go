@@ -34,7 +34,7 @@ import (
 //
 // It walks every in-flight batch, not only the speculating ones. Proposals
 // apply to speculating heads alone and are simply absent for the rest, but
-// observations are not: a merging or cancelling head's paths keep holding CI
+// observations are not: a landing or cancelling head's paths keep holding CI
 // slots until their builds stop, and this is the only writer that can record
 // that they have. Batches already finalized arrive here clean —
 // commitOutcome persisted their set with their outcome — so only their

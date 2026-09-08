@@ -108,7 +108,7 @@ var (
 	}
 
 	// LongLatencyBuckets suits long-running pipeline work and external calls
-	// (~5ms to hours): builds, merges, git pushes, and external provider calls.
+	// (~5ms to hours): builds, lands, git pushes, and external provider calls.
 	LongLatencyBuckets = tally.DurationBuckets{
 		5 * time.Millisecond,
 		10 * time.Millisecond,

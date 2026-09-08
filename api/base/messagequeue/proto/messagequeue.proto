@@ -28,7 +28,7 @@ option java_package = "com.uber.submitqueue.base.messagequeue";
 // in any domain — annotates itself with stable logical topic key(s), making the
 // key-to-payload binding part of the language-neutral proto contract rather than
 // out-of-band Go wiring. A single payload may list several keys (one shape can
-// serve a queue pair, e.g. a dry-run check and a committing merge). Domains
+// serve a queue pair, e.g. a dry-run check and a committing operation). Domains
 // import this rather than redefining their own.
 extend google.protobuf.MessageOptions {
     // topic_keys are the stable logical topic keys that carry this message — not

@@ -200,7 +200,7 @@ Still no credential. `PROVIDER=git` provisions a bare repository at `/tmp/sq-san
 ✅ Stack is running against provider 'git'.
 
 Gateway gRPC port: 55295
-Merge target:      /tmp/sq-sandbox/sandbox.git
+Land target:       /tmp/sq-sandbox/sandbox.git
 ```
 
 Then the same command as before, unchanged:
@@ -364,7 +364,7 @@ make land QUEUE=demo-queue \
   URI='git://demo.example.com/demo/refs%2Fheads%2Fbad/2222222222222222222222222222222222222222?sq-fake=build-fail'
 ```
 
-That request walks the same path as far as `speculating`, records `building`, and then goes terminal at `error` instead of landing. Other tokens follow the same `sq-fake=<token>` convention and are documented on the fake they drive — `provider-error` on the change provider, `unmergeable` and `mergecheck-error` on the merge checker, `trigger-error` and `build-error` on the build runner.
+That request walks the same path as far as `speculating`, records `building`, and then goes terminal at `error` instead of landing. Other tokens follow the same `sq-fake=<token>` convention and are documented on the fake they drive — `provider-error` on the change provider, `trigger-error` and `build-error` on the build runner, and `merge-conflict`, `merge-invalid`, and `merge-error` on Runway's merger.
 
 A hand-written URI like the one above belongs to the `fake` rung alone. On `git` it names a commit the merger cannot fetch, and on `github` the change provider tries to resolve it as a pull request — both fail, but for reasons that have nothing to do with the marker.
 

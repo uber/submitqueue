@@ -4,7 +4,7 @@ The consumer side of the hooks framework: the stage that turns hook events on a 
 
 ## Why a stage at all
 
-Side effects must never stall or fail the pipeline, and "fire and forget" must not mean lossy — a merge-failure comment that silently never posts is a support ticket. A durable queue between the two resolves the tension: the producer's obligation ends once the event is enqueued, which is fast and local, and everything after that gets real retry semantics and a dead-letter queue.
+Side effects must never stall or fail the pipeline, and "fire and forget" must not mean lossy — a land-failure comment that silently never posts is a support ticket. A durable queue between the two resolves the tension: the producer's obligation ends once the event is enqueued, which is fast and local, and everything after that gets real retry semantics and a dead-letter queue.
 
 Calling hooks inline would give up both halves. It couples pipeline latency to whatever an integration talks to, and a crash between the state write and the call drops the notification with nothing to replay.
 

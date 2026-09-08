@@ -50,7 +50,7 @@ Such effects require a provider-supported idempotency key, a stable operation id
 
 The speculate topic is a dirty signal for a queue, not a command to transition only the named batch. A run reloads the queue's in-flight batches, dependency outcomes, path sets, and build results; admits any batches still in `Created`; commits outcomes to a fixed point; asks the configured speculator for new proposals; persists changed path sets; and dispatches pending builds.
 
-A batch can advance to merge when one passed path matches all settled dependency outcomes. It can also advance while dependencies remain unsettled when passed paths cover every possible outcome of those dependencies, proving that the head passed regardless of how they finish.
+A batch can advance to land when one passed path matches all settled dependency outcomes. It can also advance while dependencies remain unsettled when passed paths cover every possible outcome of those dependencies, proving that the head passed regardless of how they finish.
 
 Path-set changes are persisted before build dispatch. Terminal outcomes are committed before later decisions derive from them. Selected request-log announcements are intentionally published before their corresponding state write so replay cannot lose the observation.
 

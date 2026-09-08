@@ -47,10 +47,10 @@ const (
 // each drop.
 //
 // The Speculator is an extension, so its output is untrusted input: it decides
-// which paths run, never whether a batch merges or fails. Every rule here
+// which paths run, never whether a batch lands or fails. Every rule here
 // protects an invariant the extension could otherwise break — acting on a batch
 // that is finalizing, resurrecting a path a resolved dependency has ruled out,
-// or discarding a passed build the queue is about to merge on. A proposal that
+// or discarding a passed build the queue is about to use for landing. A proposal that
 // trips one of these is a bug in the Speculator, not a normal outcome, which is
 // why the caller counts them.
 func filterProposals(proposals []entity.Speculation, snap snapshot) ([]entity.Speculation, []rejection) {
@@ -130,9 +130,9 @@ func rejectionReason(proposal entity.Speculation, snap snapshot) (rejection, boo
 // combination its assumptions name. With the length check and position-wise
 // equality, a missing, extra, or duplicate dependency is also impossible.
 //
-// A malformed path is not merely suboptimal, it is unmergeable — the merge
-// preconditions are read off the path's assumptions (see mergeablePath), so a
-// path missing a dependency would let its head merge without waiting for it.
+// A malformed path is not merely suboptimal, it is unlandable — the land
+// preconditions are read off the path's assumptions (see landablePath), so a
+// path missing a dependency would let its head land without waiting for it.
 func isWellFormed(path entity.SpeculationPath, head entity.Batch) bool {
 	if path.Head != head.ID {
 		return false
