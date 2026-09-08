@@ -27,6 +27,7 @@ import (
 const (
 	testConsumerGroup  = "test-consumer"
 	testSubscriberName = "test-subscriber"
+	testTenant         = "test-tenant"
 )
 
 func setupoffsetStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, offsetStore) {
@@ -49,10 +50,10 @@ func TestOffsetStore_Initialize(t *testing.T) {
 	partitionKey := "part1"
 
 	mock.ExpectExec("INSERT IGNORE INTO queue_offsets").
-		WithArgs(testConsumerGroup, topic, partitionKey, sqlmock.AnyArg()).
+		WithArgs(testTenant, topic, partitionKey, testConsumerGroup, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err := store.Initialize(ctx, topic, partitionKey, testConsumerGroup)
+	err := store.Initialize(ctx, testTenant, topic, partitionKey, testConsumerGroup)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -69,7 +70,7 @@ func TestOffsetStore_GetAckedOffset(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				rows := sqlmock.NewRows([]string{"offset_acked"}).AddRow(int64(100))
 				mock.ExpectQuery("SELECT offset_acked FROM queue_offsets").
-					WithArgs(testConsumerGroup, "test_topic", "part1").
+					WithArgs(testTenant, "test_topic", "part1", testConsumerGroup).
 					WillReturnRows(rows)
 			},
 			expectedOffset: 100,
@@ -79,7 +80,7 @@ func TestOffsetStore_GetAckedOffset(t *testing.T) {
 			name: "offset not found returns zero",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT offset_acked FROM queue_offsets").
-					WithArgs(testConsumerGroup, "test_topic", "part1").
+					WithArgs(testTenant, "test_topic", "part1", testConsumerGroup).
 					WillReturnError(sql.ErrNoRows)
 			},
 			expectedOffset: 0,
@@ -98,7 +99,7 @@ func TestOffsetStore_GetAckedOffset(t *testing.T) {
 
 			tt.setup(mock)
 
-			offset, err := store.GetAckedOffset(ctx, topic, partitionKey, testConsumerGroup)
+			offset, err := store.GetAckedOffset(ctx, testTenant, topic, partitionKey, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -120,10 +121,10 @@ func TestOffsetStore_UpdateAckedOffset(t *testing.T) {
 	offset := int64(150)
 
 	mock.ExpectExec("UPDATE queue_offsets").
-		WithArgs(offset, sqlmock.AnyArg(), testConsumerGroup, topic, partitionKey, offset).
+		WithArgs(offset, sqlmock.AnyArg(), testTenant, topic, partitionKey, testConsumerGroup, offset).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.UpdateAckedOffset(ctx, topic, partitionKey, offset, testConsumerGroup)
+	err := store.UpdateAckedOffset(ctx, testTenant, topic, partitionKey, offset, testConsumerGroup)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -167,15 +168,15 @@ func TestOffsetStore_GetMinAckedOffset(t *testing.T) {
 
 			if tt.queryErr {
 				mock.ExpectQuery("SELECT COALESCE\\(MIN\\(offset_acked\\), 0\\) FROM queue_offsets").
-					WithArgs("test_topic", "part-1").
+					WithArgs(testTenant, "test_topic", "part-1").
 					WillReturnError(fmt.Errorf("db error"))
 			} else {
 				mock.ExpectQuery("SELECT COALESCE\\(MIN\\(offset_acked\\), 0\\) FROM queue_offsets").
-					WithArgs("test_topic", "part-1").
+					WithArgs(testTenant, "test_topic", "part-1").
 					WillReturnRows(sqlmock.NewRows([]string{"min"}).AddRow(tt.minOffset))
 			}
 
-			offset, found, err := store.GetMinAckedOffset(context.Background(), "test_topic", "part-1")
+			offset, found, err := store.GetMinAckedOffset(context.Background(), testTenant, "test_topic", "part-1")
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -199,7 +200,7 @@ func TestOffsetStore_DeleteOffset(t *testing.T) {
 			name: "deletes the consumer group's offset row",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_offsets").
-					WithArgs(testConsumerGroup, "test_topic", "part-1").
+					WithArgs(testTenant, "test_topic", "part-1", testConsumerGroup).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -207,7 +208,7 @@ func TestOffsetStore_DeleteOffset(t *testing.T) {
 			name: "idempotent - row already gone",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_offsets").
-					WithArgs(testConsumerGroup, "test_topic", "part-1").
+					WithArgs(testTenant, "test_topic", "part-1", testConsumerGroup).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 		},
@@ -215,7 +216,7 @@ func TestOffsetStore_DeleteOffset(t *testing.T) {
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_offsets").
-					WithArgs(testConsumerGroup, "test_topic", "part-1").
+					WithArgs(testTenant, "test_topic", "part-1", testConsumerGroup).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantErr: true,
@@ -229,7 +230,7 @@ func TestOffsetStore_DeleteOffset(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.DeleteOffset(context.Background(), "test_topic", "part-1", testConsumerGroup)
+			err := store.DeleteOffset(context.Background(), testTenant, "test_topic", "part-1", testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

@@ -46,6 +46,7 @@ type publishedMsg struct {
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, meta map[string]string) *consumermock.MockDelivery {
 	t.Helper()
 	msg := entityqueue.NewMessage(testID, payload, testPartitionKey, nil)
+	msg.Tenant = testQueue
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Metadata().Return(meta).AnyTimes()
@@ -112,6 +113,7 @@ func TestProcess_DecodableRepublishesFailure(t *testing.T) {
 	require.Len(t, *published, 1)
 	got := (*published)[0]
 	assert.Equal(t, "merge-signal", got.topic)
+	assert.Equal(t, testQueue, got.msg.Tenant)
 
 	result := &runwaymq.MergeResult{}
 	require.NoError(t, runwaymq.Unmarshal(got.msg.Payload, result))
@@ -128,5 +130,23 @@ func TestProcess_UndecodableAcksAndPublishesNothing(t *testing.T) {
 	delivery := newDelivery(t, ctrl, []byte("{bad"), map[string]string{"dlq.original_topic": "runway-merge"})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
+	assert.Empty(t, *published)
+}
+
+func TestProcess_TenantPayloadQueueMismatchAcksAndPublishesNothing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	registry, published := newRegistry(t, ctrl)
+	controller := newController(t, registry)
+
+	req := &runwaymq.MergeRequest{Id: testID, QueueName: testQueue}
+	payload, err := runwaymq.Marshal(req)
+	require.NoError(t, err)
+	msg := entityqueue.NewMessage(testID, payload, testPartitionKey, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+	d.EXPECT().Metadata().Return(map[string]string{"dlq.original_topic": "runway-merge"}).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), d))
 	assert.Empty(t, *published)
 }

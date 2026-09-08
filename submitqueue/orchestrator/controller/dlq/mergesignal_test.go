@@ -56,7 +56,7 @@ func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 1, State: entity.RequestStateProcessing,
+		ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -72,11 +72,22 @@ func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
 
 	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
 
-	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
+	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
 	require.NoError(t, c.Process(context.Background(), delivery))
+}
+
+func TestDLQMergeSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storagemock.NewMockStorage(ctrl)
+	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+
+	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
+	require.NoError(t, err)
+
+	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
 }
 
 func TestDLQMergeSignalController_Process_MalformedPayloadFails(t *testing.T) {

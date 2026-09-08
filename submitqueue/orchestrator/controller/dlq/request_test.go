@@ -49,7 +49,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 1, State: entity.RequestStateStarted,
+		ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateStarted,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -72,12 +72,23 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 	require.NoError(t, c.Process(context.Background(), delivery))
 }
 
+func TestDLQRequestController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storagemock.NewMockStorage(ctrl)
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
+
+	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	require.NoError(t, err)
+
+	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
+}
+
 func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/7", Version: 2, State: entity.RequestStateBatched,
+		ID: "q/7", Queue: "q", Version: 2, State: entity.RequestStateBatched,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/7").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(2), int32(3)).Return(nil)
@@ -93,7 +104,7 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
 
-	payload, err := entity.CancelRequest{ID: "q/7", Reason: "user"}.ToBytes()
+	payload, err := entity.CancelRequest{ID: "q/7", Queue: "q", Reason: "user"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -105,7 +116,7 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/3", Version: 1, State: entity.RequestStateValidated,
+		ID: "q/3", Queue: "q", Version: 1, State: entity.RequestStateValidated,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/3").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -122,7 +133,7 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
-	payload, err := entity.RequestID{ID: "q/3"}.ToBytes()
+	payload, err := entity.RequestID{ID: "q/3", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -134,7 +145,7 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
-		ID: "q/1", Version: 5, State: entity.RequestStateLanded,
+		ID: "q/1", Queue: "q", Version: 5, State: entity.RequestStateLanded,
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -144,7 +155,7 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
-	payload, err := entity.RequestID{ID: "q/1"}.ToBytes()
+	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -176,7 +187,7 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
-	payload, err := entity.RequestID{ID: ""}.ToBytes()
+	payload, err := entity.RequestID{ID: "", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -190,10 +201,17 @@ func newMockDelivery(ctrl *gomock.Controller, payload []byte) *consumermock.Mock
 	return newMockDeliveryWithFailure(ctrl, payload, failure.Failure{}, false)
 }
 
-// newMockDeliveryWithFailure builds a delivery that also reports a recorded
-// failure, as a redelivery from a DLQ topic does.
+func newMockDeliveryWithTenant(ctrl *gomock.Controller, payload []byte, tenant string) *consumermock.MockDelivery {
+	return newMockDeliveryWithTenantAndFailure(ctrl, payload, tenant, failure.Failure{}, false)
+}
+
 func newMockDeliveryWithFailure(ctrl *gomock.Controller, payload []byte, f failure.Failure, failed bool) *consumermock.MockDelivery {
+	return newMockDeliveryWithTenantAndFailure(ctrl, payload, "q", f, failed)
+}
+
+func newMockDeliveryWithTenantAndFailure(ctrl *gomock.Controller, payload []byte, tenant string, f failure.Failure, failed bool) *consumermock.MockDelivery {
 	msg := queue.NewMessage("dlq-msg-1", payload, "", nil)
+	msg.Tenant = tenant
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -252,7 +270,7 @@ func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T)
 func TestDLQRequestController_Process_FailsWhenEveryBatchIsTerminal(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	request := entity.Request{ID: "q/1", Version: 1, State: entity.RequestStateBatched}
+	request := entity.Request{ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateBatched}
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -296,7 +314,7 @@ func TestDLQRequestController_Process_FailsWhenCreatingBatchNeverClaimed(t *test
 		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
-			request := entity.Request{ID: "q/1", Version: 1, State: state}
+			request := entity.Request{ID: "q/1", Queue: "q", Version: 1, State: state}
 			requestStore := storagemock.NewMockRequestStore(ctrl)
 			requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil).Times(2)
 			requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -338,7 +356,7 @@ func TestDLQRequestController_Process_SkipsWhenCreatingBatchAlreadyClaimed(t *te
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").
-		Return(entity.Request{ID: "q/1", Version: 2, State: entity.RequestStateBatched}, nil)
+		Return(entity.Request{ID: "q/1", Queue: "q", Version: 2, State: entity.RequestStateBatched}, nil)
 	// Update must NOT be called — the batch owns the outcome.
 
 	associations := storagemock.NewMockRequestBatchStore(ctrl)

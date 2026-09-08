@@ -139,8 +139,12 @@ func (c *cancelController) publishToQueue(ctx context.Context, cancelRequest ent
 	// The request ID is the message ID with no cause: a request is cancelled at
 	// most once, so a second Cancel for one already being cancelled is meant to
 	// dedup rather than enqueue redundant work.
-	if err := publish.Message(ctx, c.registry, topickey.TopicKeyCancel,
-		publish.IntentID(cancelRequest.ID), payload, cancelRequest.ID); err != nil {
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyCancel, publish.MessageParams{
+		Tenant:       cancelRequest.Queue,
+		ID:           publish.IntentID(cancelRequest.ID),
+		Payload:      payload,
+		PartitionKey: cancelRequest.ID,
+	}); err != nil {
 		return fmt.Errorf("failed to publish cancel request message: %w", err)
 	}
 

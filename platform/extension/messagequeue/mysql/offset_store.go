@@ -38,8 +38,8 @@ func newOffsetStore(db *sql.DB, scope tally.Scope) offsetStore {
 	}
 }
 
-// Initialize creates an offset entry for a topic+partition if it doesn't exist
-func (s *sqloffsetStore) Initialize(ctx context.Context, topic string, partitionKey string, consumerGroup string) (retErr error) {
+// Initialize creates an offset entry for a tenant+topic+partition if it doesn't exist
+func (s *sqloffsetStore) Initialize(ctx context.Context, tenant string, topic string, partitionKey string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "initialize", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -49,19 +49,19 @@ func (s *sqloffsetStore) Initialize(ctx context.Context, topic string, partition
 
 	// Try to insert, ignore if already exists
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT IGNORE INTO %s (consumer_group, topic, partition_key, offset_acked, updated_at)
-		VALUES (?, ?, ?, 0, ?)
-	`, OffsetsTableName), consumerGroup, topic, partitionKey, now)
+		INSERT IGNORE INTO %s (tenant, topic, partition_key, consumer_group, offset_acked, updated_at)
+		VALUES (?, ?, ?, ?, 0, ?)
+	`, OffsetsTableName), tenant, topic, partitionKey, consumerGroup, now)
 
 	if err != nil {
-		return fmt.Errorf("initialize offset topic=%s partition=%s: %w", topic, partitionKey, err)
+		return fmt.Errorf("initialize offset tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	return nil
 }
 
-// GetAckedOffset returns the current acked offset for a topic+partition
-func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) (_ int64, retErr error) {
+// GetAckedOffset returns the current acked offset for a tenant+topic+partition
+func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, tenant string, topic string, partitionKey string, consumerGroup string) (_ int64, retErr error) {
 	op := metrics.Begin(s.scope, "get_acked_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -69,8 +69,8 @@ func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, parti
 
 	var offset int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT offset_acked FROM %s WHERE consumer_group = ? AND topic = ? AND partition_key = ?
-	`, OffsetsTableName), consumerGroup, topic, partitionKey).Scan(&offset)
+		SELECT offset_acked FROM %s WHERE tenant = ? AND topic = ? AND partition_key = ? AND consumer_group = ?
+	`, OffsetsTableName), tenant, topic, partitionKey, consumerGroup).Scan(&offset)
 
 	if err == sql.ErrNoRows {
 		// Partition not yet initialized, return 0
@@ -78,14 +78,14 @@ func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, parti
 	}
 
 	if err != nil {
-		return 0, fmt.Errorf("get acked offset topic=%s partition=%s: %w", topic, partitionKey, err)
+		return 0, fmt.Errorf("get acked offset tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	return offset, nil
 }
 
-// UpdateAckedOffset updates the offset_acked for a topic+partition (only if new offset is greater)
-func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64, consumerGroup string) (retErr error) {
+// UpdateAckedOffset updates the offset_acked for a tenant+topic+partition (only if new offset is greater)
+func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, tenant string, topic string, partitionKey string, offset int64, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "update_acked_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -96,30 +96,30 @@ func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, topic string, pa
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s
 		SET offset_acked = ?, updated_at = ?
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND offset_acked < ?
-	`, OffsetsTableName), offset, now, consumerGroup, topic, partitionKey, offset)
+		WHERE tenant = ? AND topic = ? AND partition_key = ? AND consumer_group = ? AND offset_acked < ?
+	`, OffsetsTableName), offset, now, tenant, topic, partitionKey, consumerGroup, offset)
 
 	if err != nil {
-		return fmt.Errorf("update acked offset topic=%s partition=%s: %w", topic, partitionKey, err)
+		return fmt.Errorf("update acked offset tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	return nil
 }
 
 // GetMinAckedOffset returns the minimum offset_acked across all consumer groups
-// for a topic+partition. Returns (0, false, nil) if no offset rows exist.
-func (s *sqloffsetStore) GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (_ int64, _ bool, retErr error) {
+// for a tenant+topic+partition. Returns (0, false, nil) if no offset rows exist.
+func (s *sqloffsetStore) GetMinAckedOffset(ctx context.Context, tenant string, topic string, partitionKey string) (_ int64, _ bool, retErr error) {
 	op := metrics.Begin(s.scope, "get_min_acked_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
 	var minOffset int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT COALESCE(MIN(offset_acked), 0) FROM %s WHERE topic = ? AND partition_key = ?
-	`, OffsetsTableName), topic, partitionKey).Scan(&minOffset)
+		SELECT COALESCE(MIN(offset_acked), 0) FROM %s WHERE tenant = ? AND topic = ? AND partition_key = ?
+	`, OffsetsTableName), tenant, topic, partitionKey).Scan(&minOffset)
 
 	if err != nil {
-		return 0, false, fmt.Errorf("query min acked offset topic=%s partition=%s: %w", topic, partitionKey, err)
+		return 0, false, fmt.Errorf("query min acked offset tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	if minOffset == 0 {
@@ -131,18 +131,18 @@ func (s *sqloffsetStore) GetMinAckedOffset(ctx context.Context, topic string, pa
 
 // DeleteOffset removes one consumer group's offset row for a partition.
 // Idempotent — see the offsetStore interface doc.
-func (s *sqloffsetStore) DeleteOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) (retErr error) {
+func (s *sqloffsetStore) DeleteOffset(ctx context.Context, tenant string, topic string, partitionKey string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "delete_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
 	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE consumer_group = ? AND topic = ? AND partition_key = ?
-	`, OffsetsTableName), consumerGroup, topic, partitionKey)
+		DELETE FROM %s WHERE tenant = ? AND topic = ? AND partition_key = ? AND consumer_group = ?
+	`, OffsetsTableName), tenant, topic, partitionKey, consumerGroup)
 
 	if err != nil {
-		return fmt.Errorf("delete offset topic=%s partition=%s: %w", topic, partitionKey, err)
+		return fmt.Errorf("delete offset tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	return nil

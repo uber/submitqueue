@@ -55,7 +55,7 @@ func requestWithState(request entity.Request, state entity.RequestState) entity.
 
 // requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
 func requestIDPayload(t *testing.T, id string) []byte {
-	payload, err := entity.RequestID{ID: id}.ToBytes()
+	payload, err := entity.RequestID{ID: id, Queue: "test-queue"}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
@@ -173,11 +173,24 @@ func TestController_Process_Success(t *testing.T) {
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
 	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, request.ID), "test-queue", nil)
+	msg.Tenant = "test-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
+}
+
+func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storagemock.NewMockStorage(ctrl)
+	controller := newTestController(t, ctrl, store, storagemock.NewMockChangeStore(ctrl), nil)
+	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
 }
 
 // TestController_Process_PublishesCheckToRunway verifies the full merge-conflict
@@ -201,6 +214,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 
 	var gotTopic string
 	var gotPayload []byte
+	var gotTenant string
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
@@ -209,6 +223,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 			}
 			gotTopic = topic
 			gotPayload = msg.Payload
+			gotTenant = msg.Tenant
 			return nil
 		},
 	).AnyTimes()
@@ -227,6 +242,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -235,6 +251,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 
 	// Full payload published to runway, keyed by the request id (the correlation id).
 	assert.Equal(t, "merge-conflict-check", gotTopic)
+	assert.Equal(t, request.Queue, gotTenant)
 	got := &runwaymq.MergeRequest{}
 	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
 	assert.Equal(t, request.ID, got.Id)
@@ -286,6 +303,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 	controller := newTestController(t, ctrl, store, cs, nil)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -304,6 +322,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
 	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
+	msg.Tenant = "test-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -329,6 +348,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), fmt.Errorf("publish failed"))
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -507,6 +527,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			controller := newTestController(t, ctrl, store, cs, nil)
 
 			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			msg.Tenant = request.Queue
 			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -547,6 +568,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, store, cs, nil)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -586,6 +608,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 			controller := newTestController(t, ctrl, store, cs, fmt.Errorf("should not publish"))
 
 			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			msg.Tenant = request.Queue
 			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -637,6 +660,7 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -696,6 +720,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -758,6 +783,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg.Tenant = request.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

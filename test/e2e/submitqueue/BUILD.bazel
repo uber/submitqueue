@@ -39,6 +39,7 @@ go_test(
         "//api/runway/messagequeue:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/extension/consumergate:go_default_library",
         "//platform/extension/consumergate/file:go_default_library",

@@ -153,6 +153,7 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 
 	assert.Equal(t, "cancel", publishedTopic)
 	assert.Equal(t, "my-queue/7", publishedMessage.ID)
+	assert.Equal(t, "my-queue", publishedMessage.Tenant)
 	assert.Equal(t, "my-queue/7", publishedMessage.PartitionKey)
 
 	deserialized, err := entity.CancelRequestFromBytes(publishedMessage.Payload)

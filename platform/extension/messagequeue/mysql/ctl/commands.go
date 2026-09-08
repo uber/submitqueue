@@ -111,36 +111,47 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
+func addTenantScopeFlags(cmd *cobra.Command, tenant *string, allTenants *bool) {
+	cmd.Flags().StringVar(tenant, "tenant", "", "Tenant name")
+	cmd.Flags().BoolVar(allTenants, "all-tenants", false, "Query all tenants")
+	cmd.MarkFlagsOneRequired("tenant", "all-tenants")
+	cmd.MarkFlagsMutuallyExclusive("tenant", "all-tenants")
+}
+
 func newListTopicsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	return &cobra.Command{
+	var tenant string
+	var allTenants bool
+	cmd := &cobra.Command{
 		Use:   "list-topics",
 		Short: "List all topics with message counts",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			topics, err := (*store).ListTopics(cmd.Context())
+			topics, err := (*store).ListTopics(cmd.Context(), lib.TenantScope{Tenant: tenant, AllTenants: allTenants})
 			if err != nil {
 				return err
 			}
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, topics)
 			}
-			headers := []string{"TOPIC", "MESSAGES"}
+			headers := []string{"TENANT", "TOPIC", "MESSAGES"}
 			var rows [][]string
 			for _, t := range topics {
-				rows = append(rows, []string{t.Topic, strconv.FormatInt(t.MessageCount, 10)})
+				rows = append(rows, []string{t.Tenant, t.Topic, strconv.FormatInt(t.MessageCount, 10)})
 			}
 			lib.FormatTable(os.Stdout, headers, rows)
 			return nil
 		},
 	}
+	addTenantScopeFlags(cmd, &tenant, &allTenants)
+	return cmd
 }
 
 func newTopicStatsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	var topic, dlqSuffix string
+	var tenant, topic, dlqSuffix string
 	cmd := &cobra.Command{
 		Use:   "topic-stats",
 		Short: "Show detailed statistics for a topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stats, err := (*store).GetTopicStats(cmd.Context(), topic, dlqSuffix)
+			stats, err := (*store).GetTopicStats(cmd.Context(), tenant, topic, dlqSuffix)
 			if err != nil {
 				return err
 			}
@@ -149,6 +160,7 @@ func newTopicStatsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			}
 			headers := []string{"FIELD", "VALUE"}
 			rows := [][]string{
+				{"Tenant", stats.Tenant},
 				{"Topic", stats.Topic},
 				{"Total Messages", strconv.FormatInt(stats.TotalMessages, 10)},
 				{"DLQ Count", strconv.FormatInt(stats.DLQCount, 10)},
@@ -159,20 +171,22 @@ func newTopicStatsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
 	cmd.Flags().StringVar(&dlqSuffix, "dlq-suffix", "_dlq", "DLQ topic suffix")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
 	return cmd
 }
 
 func newListMessagesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	var topic, partition string
+	var tenant, topic, partition string
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "list-messages",
 		Short: "List messages for a topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			messages, err := (*store).ListMessages(cmd.Context(), topic, partition, limit)
+			messages, err := (*store).ListMessages(cmd.Context(), tenant, topic, partition, limit)
 			if err != nil {
 				return err
 			}
@@ -194,31 +208,34 @@ func newListMessagesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
 	cmd.Flags().StringVar(&partition, "partition", "", "Filter by partition key")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum number of messages to show")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
 	return cmd
 }
 
 func newInspectMessageCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	var topic, messageID string
+	var tenant, topic, partition, messageID string
 	cmd := &cobra.Command{
 		Use:   "inspect-message",
 		Short: "Show full message details including payload and metadata",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			detail, found, err := (*store).InspectMessage(cmd.Context(), topic, messageID)
+			detail, found, err := (*store).InspectMessage(cmd.Context(), tenant, topic, partition, messageID)
 			if err != nil {
 				return err
 			}
 			if !found {
-				return fmt.Errorf("message %q not found in topic %q", messageID, topic)
+				return fmt.Errorf("message %q not found in topic %q partition %q", messageID, topic, partition)
 			}
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, detail)
 			}
 			headers := []string{"FIELD", "VALUE"}
 			rows := [][]string{
+				{"Tenant", detail.Tenant},
 				{"Offset", strconv.FormatInt(detail.Offset, 10)},
 				{"ID", detail.ID},
 				{"Topic", detail.Topic},
@@ -244,43 +261,51 @@ func newInspectMessageCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command 
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
+	cmd.Flags().StringVar(&partition, "partition", "", "Partition key (required)")
 	cmd.Flags().StringVar(&messageID, "message-id", "", "Message ID (required)")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
+	cmd.MarkFlagRequired("partition")
 	cmd.MarkFlagRequired("message-id")
 	return cmd
 }
 
 func newDeleteMessageCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command {
-	var topic, messageID string
+	var tenant, topic, partition, messageID string
 	cmd := &cobra.Command{
 		Use:   "delete-message",
 		Short: "Delete a specific message",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := confirmAction(*noInteractive, fmt.Sprintf("Delete message %q from topic %q?", messageID, topic)); err != nil {
+			if err := confirmAction(*noInteractive, fmt.Sprintf("Delete message %q from topic %q partition %q?", messageID, topic, partition)); err != nil {
 				return err
 			}
-			affected, err := (*store).DeleteMessage(cmd.Context(), topic, messageID)
+			affected, err := (*store).DeleteMessage(cmd.Context(), tenant, topic, partition, messageID)
 			if err != nil {
 				return err
 			}
 			if affected == 0 {
-				fmt.Fprintf(os.Stderr, "No message found with ID %q in topic %q\n", messageID, topic)
+				fmt.Fprintf(os.Stderr, "No message found with ID %q in topic %q partition %q\n", messageID, topic, partition)
 				return nil
 			}
-			fmt.Printf("Deleted message %q from topic %q\n", messageID, topic)
+			fmt.Printf("Deleted message %q from topic %q partition %q\n", messageID, topic, partition)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
+	cmd.Flags().StringVar(&partition, "partition", "", "Partition key (required)")
 	cmd.Flags().StringVar(&messageID, "message-id", "", "Message ID (required)")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
+	cmd.MarkFlagRequired("partition")
 	cmd.MarkFlagRequired("message-id")
 	return cmd
 }
 
 func newPurgeTopicCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command {
-	var topic string
+	var tenant, topic string
 	cmd := &cobra.Command{
 		Use:   "purge-topic",
 		Short: "Delete all messages for a topic",
@@ -288,7 +313,7 @@ func newPurgeTopicCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comman
 			if err := confirmAction(*noInteractive, fmt.Sprintf("Purge ALL messages from topic %q?", topic)); err != nil {
 				return err
 			}
-			affected, err := (*store).PurgeTopic(cmd.Context(), topic)
+			affected, err := (*store).PurgeTopic(cmd.Context(), tenant, topic)
 			if err != nil {
 				return err
 			}
@@ -296,20 +321,22 @@ func newPurgeTopicCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comman
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
 	return cmd
 }
 
 func newListDLQCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	var topic, dlqSuffix string
+	var tenant, topic, dlqSuffix string
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "list-dlq",
 		Short: "List dead-letter queue messages for a topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dlqTopic := topic + dlqSuffix
-			messages, err := (*store).ListMessages(cmd.Context(), dlqTopic, "", limit)
+			messages, err := (*store).ListMessages(cmd.Context(), tenant, dlqTopic, "", limit)
 			if err != nil {
 				return err
 			}
@@ -330,36 +357,42 @@ func newListDLQCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Original topic name (required)")
 	cmd.Flags().StringVar(&dlqSuffix, "dlq-suffix", "_dlq", "DLQ topic suffix")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum number of messages to show")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
 	return cmd
 }
 
 func newRequeueDLQCmd(store **lib.AdminStore) *cobra.Command {
-	var topic, messageID, dlqSuffix string
+	var tenant, topic, partition, messageID, dlqSuffix string
 	cmd := &cobra.Command{
 		Use:   "requeue-dlq",
 		Short: "Move a DLQ message back to its original topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := (*store).RequeueDLQ(cmd.Context(), topic, messageID, dlqSuffix); err != nil {
+			if err := (*store).RequeueDLQ(cmd.Context(), tenant, topic, partition, messageID, dlqSuffix); err != nil {
 				return err
 			}
 			fmt.Printf("Requeued message %q from DLQ back to topic %q\n", messageID, topic)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Original topic name (required)")
+	cmd.Flags().StringVar(&partition, "partition", "", "Partition key (required)")
 	cmd.Flags().StringVar(&messageID, "message-id", "", "Message ID (required)")
 	cmd.Flags().StringVar(&dlqSuffix, "dlq-suffix", "_dlq", "DLQ topic suffix")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
+	cmd.MarkFlagRequired("partition")
 	cmd.MarkFlagRequired("message-id")
 	return cmd
 }
 
 func newPurgeDLQCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command {
-	var topic, dlqSuffix string
+	var tenant, topic, dlqSuffix string
 	cmd := &cobra.Command{
 		Use:   "purge-dlq",
 		Short: "Delete all DLQ messages for a topic",
@@ -368,7 +401,7 @@ func newPurgeDLQCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command 
 			if err := confirmAction(*noInteractive, fmt.Sprintf("Purge ALL messages from DLQ topic %q?", dlqTopic)); err != nil {
 				return err
 			}
-			affected, err := (*store).PurgeTopic(cmd.Context(), dlqTopic)
+			affected, err := (*store).PurgeTopic(cmd.Context(), tenant, dlqTopic)
 			if err != nil {
 				return err
 			}
@@ -376,29 +409,33 @@ func newPurgeDLQCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command 
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Original topic name (required)")
 	cmd.Flags().StringVar(&dlqSuffix, "dlq-suffix", "_dlq", "DLQ topic suffix")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
 	return cmd
 }
 
 func newListOffsetsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	var consumerGroup string
+	var tenant, consumerGroup string
+	var allTenants bool
 	cmd := &cobra.Command{
 		Use:   "list-offsets",
 		Short: "Show consumer group offsets",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			offsets, err := (*store).ListOffsets(cmd.Context(), consumerGroup)
+			offsets, err := (*store).ListOffsets(cmd.Context(), lib.TenantScope{Tenant: tenant, AllTenants: allTenants}, consumerGroup)
 			if err != nil {
 				return err
 			}
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, offsets)
 			}
-			headers := []string{"CONSUMER_GROUP", "TOPIC", "PARTITION", "OFFSET_ACKED", "UPDATED_AT"}
+			headers := []string{"TENANT", "CONSUMER_GROUP", "TOPIC", "PARTITION", "OFFSET_ACKED", "UPDATED_AT"}
 			var rows [][]string
 			for _, o := range offsets {
 				rows = append(rows, []string{
+					o.Tenant,
 					o.ConsumerGroup,
 					o.Topic,
 					o.PartitionKey,
@@ -410,12 +447,13 @@ func newListOffsetsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	addTenantScopeFlags(cmd, &tenant, &allTenants)
 	cmd.Flags().StringVar(&consumerGroup, "consumer-group", "", "Filter by consumer group")
 	return cmd
 }
 
 func newResetOffsetCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command {
-	var consumerGroup, topic, partition string
+	var tenant, consumerGroup, topic, partition string
 	var offset int64
 	cmd := &cobra.Command{
 		Use:   "reset-offset",
@@ -424,7 +462,7 @@ func newResetOffsetCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comma
 			if err := confirmAction(*noInteractive, fmt.Sprintf("Reset offset to %d for consumer-group=%q topic=%q partition=%q?", offset, consumerGroup, topic, partition)); err != nil {
 				return err
 			}
-			affected, err := (*store).ResetOffset(cmd.Context(), consumerGroup, topic, partition, offset)
+			affected, err := (*store).ResetOffset(cmd.Context(), tenant, consumerGroup, topic, partition, offset)
 			if err != nil {
 				return err
 			}
@@ -436,10 +474,12 @@ func newResetOffsetCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comma
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&consumerGroup, "consumer-group", "", "Consumer group name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
 	cmd.Flags().StringVar(&partition, "partition", "", "Partition key (required)")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "New offset value (default 0)")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("consumer-group")
 	cmd.MarkFlagRequired("topic")
 	cmd.MarkFlagRequired("partition")
@@ -447,21 +487,24 @@ func newResetOffsetCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comma
 }
 
 func newListLeasesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	return &cobra.Command{
+	var tenant string
+	var allTenants bool
+	cmd := &cobra.Command{
 		Use:   "list-leases",
 		Short: "Show all active partition leases",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			leases, err := (*store).ListLeases(cmd.Context())
+			leases, err := (*store).ListLeases(cmd.Context(), lib.TenantScope{Tenant: tenant, AllTenants: allTenants})
 			if err != nil {
 				return err
 			}
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, leases)
 			}
-			headers := []string{"CONSUMER_GROUP", "TOPIC", "PARTITION", "LEASED_BY", "LEASED_AT", "RENEWED_AT"}
+			headers := []string{"TENANT", "CONSUMER_GROUP", "TOPIC", "PARTITION", "LEASED_BY", "LEASED_AT", "RENEWED_AT"}
 			var rows [][]string
 			for _, l := range leases {
 				rows = append(rows, []string{
+					l.Tenant,
 					l.ConsumerGroup,
 					l.Topic,
 					l.PartitionKey,
@@ -474,15 +517,17 @@ func newListLeasesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	addTenantScopeFlags(cmd, &tenant, &allTenants)
+	return cmd
 }
 
 func newConsumerLagCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
-	var topic string
+	var tenant, topic string
 	cmd := &cobra.Command{
 		Use:   "consumer-lag",
 		Short: "Show per-partition consumer lag for a topic",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lags, err := (*store).ConsumerLag(cmd.Context(), topic)
+			lags, err := (*store).ConsumerLag(cmd.Context(), tenant, topic)
 			if err != nil {
 				return err
 			}
@@ -505,18 +550,22 @@ func newConsumerLagCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("topic")
 	return cmd
 }
 
 func newStaleLeasesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
+	var tenant string
+	var allTenants bool
 	var thresholdMs int64
 	cmd := &cobra.Command{
 		Use:   "stale-leases",
 		Short: "Show partition leases not renewed within a threshold",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			leases, err := (*store).StaleLeases(cmd.Context(), thresholdMs)
+			leases, err := (*store).StaleLeases(cmd.Context(), lib.TenantScope{Tenant: tenant, AllTenants: allTenants}, thresholdMs)
 			if err != nil {
 				return err
 			}
@@ -527,10 +576,11 @@ func newStaleLeasesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, leases)
 			}
-			headers := []string{"CONSUMER_GROUP", "TOPIC", "PARTITION", "LEASED_BY", "LEASED_AT", "RENEWED_AT"}
+			headers := []string{"TENANT", "CONSUMER_GROUP", "TOPIC", "PARTITION", "LEASED_BY", "LEASED_AT", "RENEWED_AT"}
 			var rows [][]string
 			for _, l := range leases {
 				rows = append(rows, []string{
+					l.Tenant,
 					l.ConsumerGroup,
 					l.Topic,
 					l.PartitionKey,
@@ -543,12 +593,13 @@ func newStaleLeasesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			return nil
 		},
 	}
+	addTenantScopeFlags(cmd, &tenant, &allTenants)
 	cmd.Flags().Int64Var(&thresholdMs, "threshold", 60000, "Staleness threshold in milliseconds (default 60s)")
 	return cmd
 }
 
 func newReleaseLeaseCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Command {
-	var consumerGroup, topic, partition string
+	var tenant, consumerGroup, topic, partition string
 	cmd := &cobra.Command{
 		Use:   "release-lease",
 		Short: "Force-release a partition lease",
@@ -556,7 +607,7 @@ func newReleaseLeaseCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comm
 			if err := confirmAction(*noInteractive, fmt.Sprintf("Release lease for consumer-group=%q topic=%q partition=%q?", consumerGroup, topic, partition)); err != nil {
 				return err
 			}
-			affected, err := (*store).ReleaseLease(cmd.Context(), consumerGroup, topic, partition)
+			affected, err := (*store).ReleaseLease(cmd.Context(), tenant, consumerGroup, topic, partition)
 			if err != nil {
 				return err
 			}
@@ -568,9 +619,11 @@ func newReleaseLeaseCmd(store **lib.AdminStore, noInteractive *bool) *cobra.Comm
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant name (required)")
 	cmd.Flags().StringVar(&consumerGroup, "consumer-group", "", "Consumer group name (required)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Topic name (required)")
 	cmd.Flags().StringVar(&partition, "partition", "", "Partition key (required)")
+	cmd.MarkFlagRequired("tenant")
 	cmd.MarkFlagRequired("consumer-group")
 	cmd.MarkFlagRequired("topic")
 	cmd.MarkFlagRequired("partition")

@@ -4,7 +4,9 @@ go_library(
     name = "go_default_library",
     srcs = [
         "context.go",
+        "identity.go",
         "message.go",
+        "partition.go",
     ],
     importpath = "github.com/uber/submitqueue/platform/base/messagequeue",
     visibility = ["//visibility:public"],
@@ -14,8 +16,12 @@ go_test(
     name = "go_default_test",
     srcs = [
         "context_test.go",
+        "identity_test.go",
         "message_test.go",
     ],
     embed = [":go_default_library"],
-    deps = ["@com_github_stretchr_testify//assert:go_default_library"],
+    deps = [
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
 )

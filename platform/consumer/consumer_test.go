@@ -41,6 +41,7 @@ import (
 const (
 	testTopicKeyStart    TopicKey = "start"
 	testTopicKeyValidate TopicKey = "validate"
+	testTenant                    = "test-tenant"
 )
 
 // testController is a configurable Controller used by consumer tests.
@@ -108,6 +109,9 @@ func newRegistry(t *testing.T, q extqueue.Queue, topicKey TopicKey, consumerGrou
 // that closes when Ack or Nack is called.
 func setupDelivery(del *queuemock.MockDelivery, msg entityqueue.Message, ackErr, nackErr error) chan struct{} {
 	done := make(chan struct{})
+	if msg.Tenant == "" {
+		msg.Tenant = testTenant
+	}
 	del.EXPECT().Message().Return(msg).AnyTimes()
 	del.EXPECT().Attempt().Return(1).AnyTimes()
 	del.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
@@ -311,6 +315,7 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	msg := entityqueue.NewMessage("test-msg-1", []byte("payload"), "partition1", map[string]string{
 		entityqueue.MetadataKeyQueueName: "monorepo/main",
 	})
+	msg.Tenant = "monorepo/main"
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	done := setupDelivery(mockDel, msg, nil, nil)
 
@@ -323,6 +328,89 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
+}
+
+func TestConsumer_ProcessDelivery_RejectsConflictingTenantMetadata(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	deliveryChan := make(chan extqueue.Delivery, 1)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	c := New(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		newRegistry(t, mockQ, testTopicKeyStart, "test-group"),
+		errs.NewClassifierProcessor(),
+		consumergatenoop.New(),
+	)
+	handler := &testController{}
+	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
+		func(context.Context, Delivery) error {
+			assert.Fail(t, "controller must not receive inconsistent delivery identity")
+			return nil
+		},
+	)
+	require.NoError(t, c.Register(handler))
+	require.NoError(t, c.Start(context.Background()))
+
+	msg := entityqueue.NewMessage("mismatch", []byte("payload"), "partition1", map[string]string{
+		entityqueue.MetadataKeyQueueName: "tenant-b",
+	})
+	msg.Tenant = "tenant-a"
+	rejected := make(chan struct{})
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, failure.Failure) error {
+		close(rejected)
+		return nil
+	})
+
+	deliveryChan <- delivery
+	<-rejected
+	require.NoError(t, c.Stop(30000))
+}
+
+func TestConsumer_ProcessDelivery_RejectsEmptyTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	deliveryChan := make(chan extqueue.Delivery, 1)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	c := New(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		newRegistry(t, mockQ, testTopicKeyStart, "test-group"),
+		errs.NewClassifierProcessor(),
+		consumergatenoop.New(),
+	)
+	handler := &testController{}
+	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
+		func(context.Context, Delivery) error {
+			assert.Fail(t, "controller must not receive a delivery without a tenant")
+			return nil
+		},
+	)
+	require.NoError(t, c.Register(handler))
+	require.NoError(t, c.Start(context.Background()))
+
+	msg := entityqueue.NewMessage("missing-tenant", []byte("payload"), "partition1", map[string]string{
+		entityqueue.MetadataKeyQueueName: testTenant,
+	})
+	rejected := make(chan struct{})
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, failure.Failure) error {
+		close(rejected)
+		return nil
+	})
+
+	deliveryChan <- delivery
+	<-rejected
+	require.NoError(t, c.Stop(30000))
 }
 
 func TestConsumer_ProcessDelivery_Error(t *testing.T) {
@@ -451,6 +539,7 @@ func TestConsumer_ProcessDelivery_Hold(t *testing.T) {
 			require.NoError(t, c.Start(ctx))
 
 			msg := entityqueue.NewMessage("held-msg", []byte("payload"), "partition1", nil)
+			msg.Tenant = testTenant
 			done := make(chan struct{})
 			var gotDelayMs int64
 			mockDel := queuemock.NewMockDelivery(ctrl)
@@ -518,6 +607,7 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	require.NoError(t, err)
 
 	msg := entityqueue.NewMessage("poison-msg", []byte("bad"), "partition1", nil)
+	msg.Tenant = testTenant
 	done := make(chan struct{})
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	mockDel.EXPECT().Message().Return(msg).AnyTimes()
@@ -592,6 +682,7 @@ func TestConsumer_ProcessDelivery_FailureFromControllerError(t *testing.T) {
 			require.NoError(t, c.Start(ctx))
 
 			msg := entityqueue.NewMessage("msg-1", []byte("bad"), "partition1", nil)
+			msg.Tenant = testTenant
 			done := make(chan struct{})
 			var got failure.Failure
 
@@ -1018,6 +1109,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 
 	// Send message to partition A (will block in controller)
 	msgA := entityqueue.NewMessage("msg-a", []byte("payload-a"), "partition-a", nil)
+	msgA.Tenant = testTenant
 	mockDelA := queuemock.NewMockDelivery(ctrl)
 	mockDelA.EXPECT().Message().Return(msgA).AnyTimes()
 	mockDelA.EXPECT().Attempt().Return(1).AnyTimes()
@@ -1034,6 +1126,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 
 	// Send message to partition B (should process despite A being blocked)
 	msgB := entityqueue.NewMessage("msg-b", []byte("payload-b"), "partition-b", nil)
+	msgB.Tenant = testTenant
 	mockDelB := queuemock.NewMockDelivery(ctrl)
 	mockDelB.EXPECT().Message().Return(msgB).AnyTimes()
 	mockDelB.EXPECT().Attempt().Return(1).AnyTimes()
@@ -1050,6 +1143,53 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
+}
+
+func TestConsumer_SamePartitionKeyAcrossTenantsProcessesIndependently(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	deliveryChan := make(chan extqueue.Delivery, 2)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+	c := New(zaptest.NewLogger(t).Sugar(), tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
+
+	tenantABlocked := make(chan struct{})
+	tenantBProcessed := make(chan struct{})
+	handler := &testController{}
+	setupController(handler, "test-handler", testTopicKeyStart, "test-group", func(ctx context.Context, delivery Delivery) error {
+		if delivery.Message().Tenant == "tenant-a" {
+			close(tenantABlocked)
+			<-ctx.Done()
+			return nil
+		}
+		close(tenantBProcessed)
+		return nil
+	})
+	require.NoError(t, c.Register(handler))
+	require.NoError(t, c.Start(context.Background()))
+
+	msgA := entityqueue.NewMessage("msg-a", []byte("a"), "shared", nil)
+	msgA.Tenant = "tenant-a"
+	delA := queuemock.NewMockDelivery(ctrl)
+	delA.EXPECT().Message().Return(msgA).AnyTimes()
+	delA.EXPECT().Attempt().Return(1).AnyTimes()
+	delA.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
+	deliveryChan <- delA
+	<-tenantABlocked
+
+	msgB := entityqueue.NewMessage("msg-b", []byte("b"), "shared", nil)
+	msgB.Tenant = "tenant-b"
+	delB := queuemock.NewMockDelivery(ctrl)
+	delB.EXPECT().Message().Return(msgB).AnyTimes()
+	delB.EXPECT().Attempt().Return(1).AnyTimes()
+	delB.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
+	deliveryChan <- delB
+	<-tenantBProcessed
+
+	require.NoError(t, c.Stop(30000))
 }
 
 // TestConsumer_PartitionOrdering verifies that messages within a single partition
@@ -1100,6 +1240,7 @@ func TestConsumer_PartitionOrdering(t *testing.T) {
 	// Send 3 messages to the same partition
 	for i, id := range []string{"msg-1", "msg-2", "msg-3"} {
 		msg := entityqueue.NewMessage(id, []byte("payload"), "same-partition", nil)
+		msg.Tenant = testTenant
 		mockDel := queuemock.NewMockDelivery(ctrl)
 		mockDel.EXPECT().Message().Return(msg).AnyTimes()
 		mockDel.EXPECT().Attempt().Return(1).AnyTimes()
@@ -1261,11 +1402,11 @@ func (f *fakeGate) setErr(err error) {
 	f.err = err
 }
 
-func (f *fakeGate) isClosed(consumerGroup, partitionKey string) bool {
+func (f *fakeGate) isClosed(consumerGroup string, partition entityqueue.PartitionIdentity) bool {
 	if f.closed[consumergate.Key{ConsumerGroup: consumerGroup}] {
 		return true
 	}
-	return f.closed[consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: partitionKey}]
+	return f.closed[consumergate.Key{ConsumerGroup: consumerGroup, Partition: partition}]
 }
 
 // Enter implements consumergate.Gate. It checks the err field first, then
@@ -1278,7 +1419,7 @@ func (f *fakeGate) Enter(_ context.Context, key consumergate.Key) (consumergate.
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &fakeEntry{gate: f, key: key, blocked: f.isClosed(key.ConsumerGroup, key.PartitionKey)}, nil
+	return &fakeEntry{gate: f, key: key, blocked: f.isClosed(key.ConsumerGroup, key.Partition)}, nil
 }
 
 // fakeEntry is the entry handed out by fakeGate.Enter.
@@ -1295,7 +1436,8 @@ func (e *fakeEntry) Park(_ context.Context, descriptor consumergate.DeliveryDesc
 		ConsumerGroup: e.key.ConsumerGroup,
 		Topic:         descriptor.Topic,
 		MessageID:     descriptor.MessageID,
-		PartitionKey:  e.key.PartitionKey,
+		Tenant:        e.key.Partition.Tenant,
+		PartitionKey:  e.key.Partition.PartitionKey,
 		Payload:       descriptor.Payload,
 		Attempt:       descriptor.Attempt,
 	}
@@ -1338,6 +1480,9 @@ func startGatedConsumer(t *testing.T, ctrl *gomock.Controller, gate consumergate
 // those calls fails the test.
 func gatedDelivery(t *testing.T, ctrl *gomock.Controller, msg entityqueue.Message) (*queuemock.MockDelivery, chan struct{}) {
 	t.Helper()
+	if msg.Tenant == "" {
+		msg.Tenant = testTenant
+	}
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	mockDel.EXPECT().Message().Return(msg).AnyTimes()
 	mockDel.EXPECT().Attempt().Return(1).AnyTimes()
@@ -1422,7 +1567,10 @@ func TestConsumer_Gate_BlockedParksAndPostpones(t *testing.T) {
 func TestConsumer_Gate_PartitionScoped(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gate := newFakeGate()
-	gate.close(consumergate.Key{ConsumerGroup: "test-group", PartitionKey: "gated-partition"})
+	gate.close(consumergate.Key{
+		ConsumerGroup: "test-group",
+		Partition:     entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "gated-partition"},
+	})
 
 	var handled sync.Map
 	c, deliveryChan := startGatedConsumer(t, ctrl, gate, func(_ context.Context, delivery Delivery) error {
@@ -1451,13 +1599,47 @@ func TestConsumer_Gate_PartitionScoped(t *testing.T) {
 	assert.False(t, ok)
 
 	// Open the gate; the redelivery of the gated message processes.
-	gate.open(consumergate.Key{ConsumerGroup: "test-group", PartitionKey: "gated-partition"})
+	gate.open(consumergate.Key{
+		ConsumerGroup: "test-group",
+		Partition:     entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "gated-partition"},
+	})
 	redelivery := queuemock.NewMockDelivery(ctrl)
 	gatedDone := setupDelivery(redelivery, gatedMsg, nil, nil)
 	deliveryChan <- redelivery
 	<-gatedDone
 	_, ok = handled.Load("gated-msg")
 	assert.True(t, ok)
+
+	require.NoError(t, c.Stop(30000))
+}
+
+func TestConsumer_Gate_SamePartitionKeyAcrossTenantsIsIndependent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	gate := newFakeGate()
+	gatedPartition := entityqueue.PartitionIdentity{Tenant: "tenant-a", PartitionKey: "shared"}
+	gate.close(consumergate.Key{ConsumerGroup: "test-group", Partition: gatedPartition})
+
+	handled := make(chan string, 1)
+	c, deliveryChan := startGatedConsumer(t, ctrl, gate, func(_ context.Context, delivery Delivery) error {
+		handled <- delivery.Message().Tenant
+		return nil
+	})
+
+	gatedMsg := entityqueue.NewMessage("gated-msg", []byte("a"), "shared", nil)
+	gatedMsg.Tenant = "tenant-a"
+	gatedDel, postponed := gatedDelivery(t, ctrl, gatedMsg)
+	deliveryChan <- gatedDel
+	parked := <-gate.parked
+	assert.Equal(t, "tenant-a", parked.Tenant)
+	<-postponed
+
+	openMsg := entityqueue.NewMessage("open-msg", []byte("b"), "shared", nil)
+	openMsg.Tenant = "tenant-b"
+	openDel := queuemock.NewMockDelivery(ctrl)
+	openDone := setupDelivery(openDel, openMsg, nil, nil)
+	deliveryChan <- openDel
+	<-openDone
+	assert.Equal(t, "tenant-b", <-handled)
 
 	require.NoError(t, c.Stop(30000))
 }

@@ -17,6 +17,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//platform/base/failure:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",

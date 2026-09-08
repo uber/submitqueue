@@ -57,7 +57,36 @@ func (p *publisher) Publish(ctx context.Context, topic string, message entityque
 		return ErrPublisherClosed
 	}
 
-	if err := p.messageStore.Insert(ctx, topic, []entityqueue.Message{message}); err != nil {
+	if message.Tenant == "" {
+		return fmt.Errorf("publish: message tenant is required")
+	}
+	if err := entityqueue.ValidateTenantMetadata(message); err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+	for _, identifier := range []struct {
+		name  string
+		value string
+	}{
+		{name: "tenant", value: message.Tenant},
+		{name: "topic", value: topic},
+	} {
+		if err := validateASCIIIdentifier(identifier.name, identifier.value); err != nil {
+			return fmt.Errorf("publish: %w", err)
+		}
+	}
+	for _, identifier := range []struct {
+		name  string
+		value string
+	}{
+		{name: "message ID", value: message.ID},
+		{name: "partition key", value: message.PartitionKey},
+	} {
+		if err := validateTextIdentifier(identifier.name, identifier.value); err != nil {
+			return fmt.Errorf("publish: %w", err)
+		}
+	}
+
+	if err := p.messageStore.Insert(ctx, message.Tenant, topic, []entityqueue.Message{message}); err != nil {
 		return fmt.Errorf("publish message store insert error: %w", err)
 	}
 

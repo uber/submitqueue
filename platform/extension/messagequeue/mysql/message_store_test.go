@@ -57,8 +57,8 @@ func TestMessageStore_Insert(t *testing.T) {
 		{
 			name: "successful insert with multiple messages",
 			messages: []entityqueue.Message{
-				{ID: "msg1", Payload: []byte("payload1"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
-				{ID: "msg2", Payload: []byte("payload2"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
+				{Tenant: testTenant, ID: "msg1", Payload: []byte("payload1"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
+				{Tenant: testTenant, ID: "msg2", Payload: []byte("payload2"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
 			},
 			setup: func(mock sqlmock.Sqlmock, messages []entityqueue.Message) {
 				mock.ExpectBegin()
@@ -78,12 +78,27 @@ func TestMessageStore_Insert(t *testing.T) {
 			wantErr:  false,
 		},
 		{
+			name: "conflicting queue metadata is rejected",
+			messages: []entityqueue.Message{{
+				Tenant:       testTenant,
+				ID:           "msg-conflict",
+				PartitionKey: "part1",
+				Metadata:     map[string]string{entityqueue.MetadataKeyQueueName: "other-tenant"},
+			}},
+			setup: func(mock sqlmock.Sqlmock, messages []entityqueue.Message) {
+				mock.ExpectBegin()
+				mock.ExpectPrepare("INSERT INTO queue_messages")
+				mock.ExpectRollback()
+			},
+			wantErr: true,
+		},
+		{
 			// Regression: re-publishing the same (topic, partition_key, id) tuple
 			// must succeed silently. sqlmock returns 0 affected rows to simulate
 			// MySQL's ON DUPLICATE KEY UPDATE swallowing the unique-key collision.
 			name: "duplicate publish is idempotent",
 			messages: []entityqueue.Message{
-				{ID: "msg-dup", Payload: []byte("payload"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
+				{Tenant: testTenant, ID: "msg-dup", Payload: []byte("payload"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
 			},
 			setup: func(mock sqlmock.Sqlmock, messages []entityqueue.Message) {
 				mock.ExpectBegin()
@@ -104,7 +119,7 @@ func TestMessageStore_Insert(t *testing.T) {
 			tt.setup(mock, tt.messages)
 
 			ctx := context.Background()
-			err := store.Insert(ctx, "test_topic", tt.messages)
+			err := store.Insert(ctx, testTenant, "test_topic", tt.messages)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -126,10 +141,10 @@ func TestMessageStore_Delete(t *testing.T) {
 	messageID := "msg1"
 
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(topic, partitionKey, messageID).
+		WithArgs(testTenant, topic, partitionKey, messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.Delete(ctx, topic, partitionKey, messageID)
+	err := store.Delete(ctx, testTenant, topic, partitionKey, messageID)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -145,14 +160,14 @@ func TestMessageStore_FetchByOffset(t *testing.T) {
 	limit := 10
 
 	// Mock query results (no transaction, simple SELECT)
-	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "published_at", "failed_at", "failure_count", "last_error", "original_topic", "failure_detail"}).
-		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), int64(0), 0, "", "", nil)
+	rows := sqlmock.NewRows([]string{"tenant", "offset", "id", "payload", "metadata", "partition_key", "published_at", "failed_at", "failure_count", "last_error", "original_topic", "failure_detail"}).
+		AddRow(testTenant, int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), int64(0), 0, "", "", nil)
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs(topic, partitionKey, currentOffset, limit).
+		WithArgs(testTenant, topic, partitionKey, currentOffset, limit).
 		WillReturnRows(rows)
 
-	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, limit)
+	results, err := store.FetchByOffset(ctx, testTenant, topic, partitionKey, currentOffset, limit)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, "msg1", results[0].ID)
@@ -180,25 +195,25 @@ func TestMessageStore_MoveToDLQ(t *testing.T) {
 		AddRow([]byte("payload1"), []byte(`{"key":"value"}`), "part1", time.Now().UnixMilli(), time.Now().UnixMilli())
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs(topic, partitionKey, messageID).
+		WithArgs(testTenant, topic, partitionKey, messageID).
 		WillReturnRows(rows)
 
 	// Expect insert into queue_messages with DLQ topic. The failure's message
 	// goes to last_error; failure_detail is NULL because this failure names no
 	// subjects — see TestMessageStore_MoveToDLQ_WritesFailureDetail.
 	mock.ExpectExec("INSERT INTO queue_messages").
-		WithArgs(dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), failureCount, lastError, topic, nil).
+		WithArgs(testTenant, dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), failureCount, lastError, topic, nil).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect delete from main table (now includes partition_key in WHERE)
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(topic, partitionKey, messageID).
+		WithArgs(testTenant, topic, partitionKey, messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Expect commit
 	mock.ExpectCommit()
 
-	err := store.MoveToDLQ(ctx, topic, partitionKey, messageID, failureCount, failure.New(lastError), dlqTopicSuffix)
+	err := store.MoveToDLQ(ctx, testTenant, topic, partitionKey, messageID, failureCount, failure.New(lastError), dlqTopicSuffix)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -218,18 +233,18 @@ func TestMessageStore_MoveToDLQ_WritesFailureDetail(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs("test_topic", "part1", "msg1").
+		WithArgs(testTenant, "test_topic", "part1", "msg1").
 		WillReturnRows(sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at"}).
 			AddRow([]byte("payload1"), nil, "part1", int64(1), int64(2)))
 	mock.ExpectExec("INSERT INTO queue_messages").
-		WithArgs("test_topic_dlq", "msg1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 3, "speculator failed", "test_topic", encoded).
+		WithArgs(testTenant, "test_topic_dlq", "msg1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 3, "speculator failed", "test_topic", encoded).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs("test_topic", "part1", "msg1").
+		WithArgs(testTenant, "test_topic", "part1", "msg1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	require.NoError(t, store.MoveToDLQ(context.Background(), "test_topic", "part1", "msg1", 3, f, "_dlq"))
+	require.NoError(t, store.MoveToDLQ(context.Background(), testTenant, "test_topic", "part1", "msg1", 3, f, "_dlq"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -274,7 +289,7 @@ func TestMessageStore_GetOffsetsAbove(t *testing.T) {
 
 			if tt.wantErr {
 				mock.ExpectQuery("SELECT offset FROM queue_messages").
-					WithArgs("test_topic", "part-1", tt.afterOffset, tt.limit).
+					WithArgs(testTenant, "test_topic", "part-1", tt.afterOffset, tt.limit).
 					WillReturnError(fmt.Errorf("db error"))
 			} else {
 				rows := sqlmock.NewRows([]string{"offset"})
@@ -282,11 +297,11 @@ func TestMessageStore_GetOffsetsAbove(t *testing.T) {
 					rows.AddRow(offset)
 				}
 				mock.ExpectQuery("SELECT offset FROM queue_messages").
-					WithArgs("test_topic", "part-1", tt.afterOffset, tt.limit).
+					WithArgs(testTenant, "test_topic", "part-1", tt.afterOffset, tt.limit).
 					WillReturnRows(rows)
 			}
 
-			offsets, err := store.GetOffsetsAbove(context.Background(), "test_topic", "part-1", tt.afterOffset, tt.limit)
+			offsets, err := store.GetOffsetsAbove(context.Background(), testTenant, "test_topic", "part-1", tt.afterOffset, tt.limit)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -333,16 +348,16 @@ func TestMessageStore_GarbageCollect(t *testing.T) {
 			if tt.minAckedOffset > 0 {
 				if tt.deleteErr {
 					mock.ExpectExec("DELETE FROM queue_messages").
-						WithArgs("test_topic", "part-1", tt.minAckedOffset).
+						WithArgs(testTenant, "test_topic", "part-1", tt.minAckedOffset).
 						WillReturnError(fmt.Errorf("db error"))
 				} else {
 					mock.ExpectExec("DELETE FROM queue_messages").
-						WithArgs("test_topic", "part-1", tt.minAckedOffset).
+						WithArgs(testTenant, "test_topic", "part-1", tt.minAckedOffset).
 						WillReturnResult(sqlmock.NewResult(0, tt.wantDeleted))
 				}
 			}
 
-			deleted, err := store.GarbageCollect(context.Background(), "test_topic", "part-1", tt.minAckedOffset)
+			deleted, err := store.GarbageCollect(context.Background(), testTenant, "test_topic", "part-1", tt.minAckedOffset)
 
 			if tt.wantErr {
 				require.Error(t, err)

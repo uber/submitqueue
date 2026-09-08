@@ -90,6 +90,7 @@ func makeDelivery(t *testing.T, ctrl *gomock.Controller, lr entity.LandRequest) 
 	require.NoError(t, err)
 
 	msg := entityqueue.NewMessage(lr.ID, payload, lr.Queue, nil)
+	msg.Tenant = lr.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -118,6 +119,23 @@ func TestController_Process_Success(t *testing.T) {
 	})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
+}
+
+func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
+	request := entity.LandRequest{ID: "test-queue/123", Queue: "test-queue"}
+	payload, err := request.ToBytes()
+	require.NoError(t, err)
+	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	err = controller.Process(context.Background(), delivery)
+
+	require.Error(t, err)
+	assert.False(t, errs.IsRetryable(err))
 }
 
 func TestController_Process_InvalidJSON(t *testing.T) {

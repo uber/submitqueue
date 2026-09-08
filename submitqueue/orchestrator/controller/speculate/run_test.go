@@ -271,6 +271,7 @@ func TestRun_DispatchStampsQueueAndPartitionsByHead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, head, got.ID)
 	assert.Equal(t, "q", got.Queue, "the payload must name the real queue, not the partition key")
+	assert.Equal(t, "q", h.messages[0].Tenant, "the tenant must name the real queue, not the partition key")
 	assert.Equal(t, head, h.messages[0].PartitionKey, "heads dispatch in parallel, so the batch is the partition key")
 }
 

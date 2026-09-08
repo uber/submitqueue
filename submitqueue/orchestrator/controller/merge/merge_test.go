@@ -47,14 +47,15 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
-func batchIDPayload(t *testing.T, id string) []byte {
-	payload, err := entity.BatchID{ID: id}.ToBytes()
+func batchIDPayload(t *testing.T, id, queue string) []byte {
+	payload, err := entity.BatchID{ID: id, Queue: queue}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey string) *consumermock.MockDelivery {
-	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID, partitionKey), partitionKey, nil)
+	msg.Tenant = partitionKey
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -128,6 +129,17 @@ func TestNewController(t *testing.T) {
 	var _ consumer.Controller = c
 }
 
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c := newController(t, storagemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
+	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1", "test-queue"), "test-queue", nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, c.Process(context.Background(), delivery))
+}
+
 func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -164,6 +176,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 
 	var gotTopic string
 	var gotPayload []byte
+	var gotTenant string
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
@@ -172,6 +185,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 			}
 			gotTopic = topic
 			gotPayload = msg.Payload
+			gotTenant = msg.Tenant
 			return nil
 		},
 	).AnyTimes()
@@ -188,6 +202,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 
 	// Full payload published to runway, keyed by the batch id (the correlation id).
 	assert.Equal(t, "runway-merge", gotTopic)
+	assert.Equal(t, batch.Queue, gotTenant)
 	got := &runwaymq.MergeRequest{}
 	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
 	assert.Equal(t, batch.ID, got.Id)

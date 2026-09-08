@@ -45,10 +45,10 @@ func newDeliveryStateStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.Sc
 // Returns the resulting retry_count after the operation.
 //
 // The INSERT and subsequent SELECT are not in a transaction. This is safe because
-// partition leasing guarantees a single writer per (consumer_group, topic, partition_key)
+// partition leasing guarantees a single writer per (tenant, consumer_group, topic, partition_key)
 // — only the lease holder calls MarkDelivered for a given partition, so no concurrent
 // mutation can occur between the two statements.
-func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (_ int, retErr error) {
+func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (_ int, retErr error) {
 	op := metrics.Begin(s.scope, "mark_delivered", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -62,17 +62,17 @@ func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup
 	// postponed reset must come after it. A postponed redelivery is a deliberate
 	// wait, not a failure — it is exempt from the increment and consumes the flag.
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count, postponed)
-		VALUES (?, ?, ?, ?, FALSE, ?, 0, FALSE)
+		INSERT INTO %s (tenant, consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count, postponed)
+		VALUES (?, ?, ?, ?, ?, FALSE, ?, 0, FALSE)
 		ON DUPLICATE KEY UPDATE
 			invisible_until = IF(acked = FALSE, VALUES(invisible_until), invisible_until),
 			retry_count = IF(acked = FALSE AND postponed = FALSE, retry_count + 1, retry_count),
 			postponed = IF(acked = FALSE, FALSE, postponed)
 	`, DeliveryStateTableName),
-		consumerGroup, topic, partitionKey, offset, invisibleUntil)
+		tenant, consumerGroup, topic, partitionKey, offset, invisibleUntil)
 
 	if err != nil {
-		return 0, fmt.Errorf("mark delivered topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return 0, fmt.Errorf("mark delivered tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	// Read retry_count after INSERT/UPDATE to get the current value.
@@ -82,10 +82,10 @@ func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup
 	var retryCount int
 	err = s.db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT retry_count FROM %s
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ?
-	`, DeliveryStateTableName), consumerGroup, topic, partitionKey, offset).Scan(&retryCount)
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ?
+	`, DeliveryStateTableName), tenant, consumerGroup, topic, partitionKey, offset).Scan(&retryCount)
 	if err != nil {
-		return 0, fmt.Errorf("get retry count after mark delivered topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return 0, fmt.Errorf("get retry count after mark delivered tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	return retryCount, nil
@@ -93,7 +93,7 @@ func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup
 
 // ExtendVisibility extends the visibility timeout for an in-flight message
 // without incrementing retry_count. Used by ExtendVisibilityTimeout.
-func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (retErr error) {
+func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "extend_visibility", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -105,17 +105,18 @@ func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGr
 	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s
 		SET invisible_until = ?
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ? AND acked = FALSE
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ? AND acked = FALSE
 	`, DeliveryStateTableName),
-		invisibleUntil, consumerGroup, topic, partitionKey, offset)
+		invisibleUntil, tenant, consumerGroup, topic, partitionKey, offset)
 
 	if err != nil {
-		return fmt.Errorf("extend visibility topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return fmt.Errorf("extend visibility tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	rowsAffected, raErr := result.RowsAffected()
 	if raErr == nil && rowsAffected == 0 {
 		s.logger.Warnw("extend visibility matched no rows, lease may have expired or message already acked",
+			logTenant, tenant,
 			logTopic, topic,
 			logPartitionKey, partitionKey,
 			"offset", offset,
@@ -126,21 +127,21 @@ func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGr
 }
 
 // MarkAcked sets acked = TRUE to indicate this group has processed the message.
-func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (retErr error) {
+func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, offset int64) (retErr error) {
 	op := metrics.Begin(s.scope, "mark_acked", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
 	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
-		VALUES (?, ?, ?, ?, TRUE, 0, 0)
+		INSERT INTO %s (tenant, consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
+		VALUES (?, ?, ?, ?, ?, TRUE, 0, 0)
 		ON DUPLICATE KEY UPDATE acked = TRUE
 	`, DeliveryStateTableName),
-		consumerGroup, topic, partitionKey, offset)
+		tenant, consumerGroup, topic, partitionKey, offset)
 
 	if err != nil {
-		return fmt.Errorf("mark acked topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return fmt.Errorf("mark acked tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	return nil
@@ -148,27 +149,27 @@ func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, to
 
 // MarkNacked makes the message eligible for redelivery after delayMs.
 // retry_count is NOT incremented here — it is incremented by MarkDelivered on redelivery.
-func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
+func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "mark_nacked", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
 	defer func() { op.Complete(retErr) }()
 
 	if delayMs < 0 || delayMs > maxRetryBackoffMs {
-		return fmt.Errorf("mark nacked topic=%s partition=%s offset=%d: retry delay %d is outside [0, %d]", topic, partitionKey, offset, delayMs, maxRetryBackoffMs)
+		return fmt.Errorf("mark nacked tenant=%s topic=%s partition=%s offset=%d: retry delay %d is outside [0, %d]", tenant, topic, partitionKey, offset, delayMs, maxRetryBackoffMs)
 	}
 	invisibleUntil := time.Now().UnixMilli() + delayMs
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
-		VALUES (?, ?, ?, ?, FALSE, ?, 0)
+		INSERT INTO %s (tenant, consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
+		VALUES (?, ?, ?, ?, ?, FALSE, ?, 0)
 		ON DUPLICATE KEY UPDATE
 			invisible_until = IF(acked = FALSE, VALUES(invisible_until), invisible_until)
 	`, DeliveryStateTableName),
-		consumerGroup, topic, partitionKey, offset, invisibleUntil)
+		tenant, consumerGroup, topic, partitionKey, offset, invisibleUntil)
 
 	if err != nil {
-		return fmt.Errorf("mark nacked topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return fmt.Errorf("mark nacked tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	return nil
@@ -180,7 +181,7 @@ func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, t
 // MarkDelivered from the retry_count increment. The reset restarts failure
 // accounting — a completed delivery that chose to wait has demonstrated the
 // message is processable.
-func (s *sqldeliveryStateStore) MarkPostponed(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
+func (s *sqldeliveryStateStore) MarkPostponed(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "mark_postponed", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -190,17 +191,17 @@ func (s *sqldeliveryStateStore) MarkPostponed(ctx context.Context, consumerGroup
 	invisibleUntil := now + delayMs
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count, postponed)
-		VALUES (?, ?, ?, ?, FALSE, ?, 0, TRUE)
+		INSERT INTO %s (tenant, consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count, postponed)
+		VALUES (?, ?, ?, ?, ?, FALSE, ?, 0, TRUE)
 		ON DUPLICATE KEY UPDATE
 			invisible_until = IF(acked = FALSE, VALUES(invisible_until), invisible_until),
 			retry_count = IF(acked = FALSE, 0, retry_count),
 			postponed = IF(acked = FALSE, TRUE, postponed)
 	`, DeliveryStateTableName),
-		consumerGroup, topic, partitionKey, offset, invisibleUntil)
+		tenant, consumerGroup, topic, partitionKey, offset, invisibleUntil)
 
 	if err != nil {
-		return fmt.Errorf("mark postponed topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return fmt.Errorf("mark postponed tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	return nil
@@ -208,7 +209,7 @@ func (s *sqldeliveryStateStore) MarkPostponed(ctx context.Context, consumerGroup
 
 // GetDeliveryState returns the full delivery state for a message offset.
 // Returns (state, found, error). found=false means no row (never delivered).
-func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (_ DeliveryState, _ bool, retErr error) {
+func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, offset int64) (_ DeliveryState, _ bool, retErr error) {
 	op := metrics.Begin(s.scope, "get_delivery_state", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -217,14 +218,14 @@ func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGr
 	var state DeliveryState
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT acked, invisible_until, retry_count, postponed FROM %s
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ?
-	`, DeliveryStateTableName), consumerGroup, topic, partitionKey, offset).Scan(&state.Acked, &state.InvisibleUntil, &state.RetryCount, &state.Postponed)
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ?
+	`, DeliveryStateTableName), tenant, consumerGroup, topic, partitionKey, offset).Scan(&state.Acked, &state.InvisibleUntil, &state.RetryCount, &state.Postponed)
 
 	if err == sql.ErrNoRows {
 		return DeliveryState{}, false, nil
 	}
 	if err != nil {
-		return DeliveryState{}, false, fmt.Errorf("get delivery state topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+		return DeliveryState{}, false, fmt.Errorf("get delivery state tenant=%s topic=%s partition=%s offset=%d: %w", tenant, topic, partitionKey, offset, err)
 	}
 
 	return state, true, nil
@@ -234,7 +235,7 @@ func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGr
 // delivery state rows that are behind it.
 // offsets are the actual message offsets above the current watermark (from messageStore).
 // Returns the new watermark (highest contiguous acked offset from currentWatermark).
-func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGroup, topic, partitionKey string, currentWatermark int64, offsets []int64) (_ int64, retErr error) {
+func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGroup, tenant, topic, partitionKey string, currentWatermark int64, offsets []int64) (_ int64, retErr error) {
 	op := metrics.Begin(s.scope, "advance_watermark", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
@@ -246,8 +247,8 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 
 	// Batch-fetch delivery state for the provided offsets.
 	placeholders := make([]byte, 0, len(offsets)*2-1)
-	args := make([]interface{}, 0, 3+len(offsets))
-	args = append(args, consumerGroup, topic, partitionKey)
+	args := make([]interface{}, 0, 4+len(offsets))
+	args = append(args, tenant, consumerGroup, topic, partitionKey)
 	for i, offset := range offsets {
 		if i > 0 {
 			placeholders = append(placeholders, ',')
@@ -258,11 +259,11 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT message_offset, acked FROM %s
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ?
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ?
 		AND message_offset IN (%s)
 	`, DeliveryStateTableName, string(placeholders)), args...)
 	if err != nil {
-		return currentWatermark, fmt.Errorf("query delivery state for watermark topic=%s partition=%s: %w", topic, partitionKey, err)
+		return currentWatermark, fmt.Errorf("query delivery state for watermark tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 	defer rows.Close()
 
@@ -272,12 +273,12 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 		var offset int64
 		var acked bool
 		if err := rows.Scan(&offset, &acked); err != nil {
-			return currentWatermark, fmt.Errorf("scan delivery state topic=%s partition=%s: %w", topic, partitionKey, err)
+			return currentWatermark, fmt.Errorf("scan delivery state tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 		}
 		ackedMap[offset] = acked
 	}
 	if err := rows.Err(); err != nil {
-		return currentWatermark, fmt.Errorf("delivery state iteration topic=%s partition=%s: %w", topic, partitionKey, err)
+		return currentWatermark, fmt.Errorf("delivery state iteration tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	// Walk message offsets in order. Advance while contiguous acked.
@@ -299,12 +300,13 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 	if newWatermark > currentWatermark {
 		_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 			DELETE FROM %s
-			WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset <= ?
-		`, DeliveryStateTableName), consumerGroup, topic, partitionKey, newWatermark)
+			WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset <= ?
+		`, DeliveryStateTableName), tenant, consumerGroup, topic, partitionKey, newWatermark)
 		if err != nil {
 			metrics.NamedCounter(s.scope, "advance_watermark", "cleanup_errors", 1,
 				metrics.NewTag("topic", topic))
 			s.logger.Warnw("failed to clean up delivery state behind watermark, will retry on next advance",
+				logTenant, tenant,
 				logTopic, topic,
 				logPartitionKey, partitionKey,
 				"watermark", newWatermark,

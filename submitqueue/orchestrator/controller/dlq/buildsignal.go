@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -77,6 +78,10 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to decode build id from dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, buildID.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		return nil
 	}
 	if buildID.ID == "" {
 		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)

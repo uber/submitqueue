@@ -40,8 +40,8 @@ import (
 )
 
 // requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
-func requestIDPayload(t *testing.T, id string) []byte {
-	payload, err := entity.RequestID{ID: id}.ToBytes()
+func requestIDPayload(t *testing.T, id, queue string) []byte {
+	payload, err := entity.RequestID{ID: id, Queue: queue}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
@@ -127,13 +127,16 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 func newDelivery(t *testing.T, ctrl *gomock.Controller, request entity.Request, payloadQueue string) *consumermock.MockDelivery {
 	t.Helper()
 
-	payload := requestIDPayload(t, request.ID)
+	payload := requestIDPayload(t, request.ID, request.Queue)
+	tenant := request.Queue
 	if payloadQueue != "" {
 		bytes, err := entity.RequestID{ID: request.ID, Queue: payloadQueue}.ToBytes()
 		require.NoError(t, err)
 		payload = bytes
+		tenant = payloadQueue
 	}
 	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg.Tenant = tenant
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -157,6 +160,19 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, testRequest(), "")))
+}
+
+func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), storagemock.NewMockStorage(ctrl), nil)
+	request := testRequest()
+	payload := requestIDPayload(t, request.ID, request.Queue)
+	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
 }
 
 // A payload whose queue disagrees with the request's authoritative queue is

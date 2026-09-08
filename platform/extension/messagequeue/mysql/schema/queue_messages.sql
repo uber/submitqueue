@@ -1,21 +1,23 @@
 -- MESSAGES TABLE (Immutable Log)
--- Single table for all topics. Partition key determines distribution across workers.
+-- Single table for all topics. tenant is the Vitess vindex; partition_key orders work within a tenant.
 -- Messages are append-only; per-consumer-group delivery tracking is in queue_delivery_state.
--- Example: topic="merge_queue", partition_key="uber/cadence"
+-- Example: tenant="monorepo/main", topic="merge_queue", partition_key="uber/cadence"
 
 CREATE TABLE IF NOT EXISTS queue_messages (
-    -- Auto-incrementing global offset for ordering
-    offset BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    -- tenant is the shard isolation identity (SubmitQueue maps queueName here at wiring)
+    tenant VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
 
-    -- Topic identifies the queue type
-    topic VARCHAR(255) NOT NULL,
+    -- Topic identifies the pipeline stage
+    topic VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
 
-    -- Partition key for distributing work across workers
-    -- Example: repo ID, user ID, tenant ID
-    partition_key VARCHAR(255) NOT NULL,
+    -- Partition key for distributing work across workers within a tenant
+    partition_key VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+
+    -- Auto-incrementing offset for ordering within (tenant, topic, partition_key)
+    offset BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
     -- Message identification
-    id VARCHAR(255) NOT NULL,
+    id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
 
     -- Message data
     payload BLOB NOT NULL,
@@ -27,26 +29,16 @@ CREATE TABLE IF NOT EXISTS queue_messages (
 
     -- DLQ-specific fields (0/"" for normal messages, populated for DLQ messages)
     failed_at BIGINT UNSIGNED NOT NULL,
-    -- failure_count stores how many times the message failed on the ORIGINAL topic before moving to DLQ
     failure_count INT UNSIGNED NOT NULL,
     last_error TEXT NOT NULL,
-    original_topic VARCHAR(255) NOT NULL,
-    -- failure_detail holds the structured half of the failure: which entities it
-    -- was about, plus free-form context. last_error keeps the human-readable
-    -- message, so this column never has to be decoded to read one, and a plain
-    -- SELECT last_error stays useful.
-    --
-    -- NULL rather than an empty-string sentinel like its neighbours: a JSON
-    -- column rejects '' as invalid, and NULL is the honest reading of a failure
-    -- that recorded no structure — including every row written before this
-    -- column existed, and the retry-limit backstop, which has none to record.
+    original_topic VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     failure_detail JSON,
 
-    -- Supports: SELECT ... WHERE topic=? AND partition_key=? AND offset > ? ORDER BY offset
-    -- Used by subscribers to poll for messages within their assigned partition
-    INDEX idx_topic_partition_offset (topic, partition_key, offset),
+    PRIMARY KEY (tenant, topic, partition_key, offset),
 
     -- Supports: INSERT ... ON DUPLICATE KEY to enforce idempotent publishes
-    -- Also enables efficient lookups for message updates/deletes by ID
-    UNIQUE KEY idx_topic_partition_id (topic, partition_key, id)
+    UNIQUE KEY idx_tenant_topic_partition_id (tenant, topic, partition_key, id),
+
+    -- InnoDB requires AUTO_INCREMENT column to be leftmost on some index
+    KEY idx_offset (offset)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

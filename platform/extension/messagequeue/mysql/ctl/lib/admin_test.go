@@ -30,15 +30,17 @@ func TestListTopics(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"topic", "count"}).
-		AddRow("orders", 10).
-		AddRow("payments", 5)
-	mock.ExpectQuery("SELECT topic, COUNT\\(\\*\\) FROM queue_messages GROUP BY topic ORDER BY topic").
+	rows := sqlmock.NewRows([]string{"tenant", "topic", "count"}).
+		AddRow("acme", "orders", 10).
+		AddRow("acme", "payments", 5)
+	mock.ExpectQuery("SELECT tenant, topic, COUNT\\(\\*\\) FROM queue_messages WHERE tenant = \\? GROUP BY tenant, topic ORDER BY tenant, topic").
+		WithArgs("acme").
 		WillReturnRows(rows)
 
-	topics, err := store.ListTopics(context.Background())
+	topics, err := store.ListTopics(context.Background(), TenantScope{Tenant: "acme"})
 	require.NoError(t, err)
 	assert.Len(t, topics, 2)
+	assert.Equal(t, "acme", topics[0].Tenant)
 	assert.Equal(t, "orders", topics[0].Topic)
 	assert.Equal(t, int64(10), topics[0].MessageCount)
 	assert.Equal(t, "payments", topics[1].Topic)
@@ -53,11 +55,11 @@ func TestListTopicsEmpty(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"topic", "count"})
-	mock.ExpectQuery("SELECT topic, COUNT\\(\\*\\) FROM queue_messages GROUP BY topic ORDER BY topic").
+	rows := sqlmock.NewRows([]string{"tenant", "topic", "count"})
+	mock.ExpectQuery("SELECT tenant, topic, COUNT\\(\\*\\) FROM queue_messages GROUP BY tenant, topic ORDER BY tenant, topic").
 		WillReturnRows(rows)
 
-	topics, err := store.ListTopics(context.Background())
+	topics, err := store.ListTopics(context.Background(), TenantScope{AllTenants: true})
 	require.NoError(t, err)
 	assert.Empty(t, topics)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -71,27 +73,28 @@ func TestGetTopicStats(t *testing.T) {
 	store := NewAdminStore(db)
 
 	// Total messages
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM queue_messages WHERE topic = \\?").
-		WithArgs("orders").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM queue_messages WHERE tenant = \\? AND topic = \\?").
+		WithArgs("acme", "orders").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(100))
 
 	// DLQ count
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM queue_messages WHERE topic = \\?").
-		WithArgs("orders_dlq").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM queue_messages WHERE tenant = \\? AND topic = \\?").
+		WithArgs("acme", "orders_dlq").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 
 	// Distinct partitions
-	mock.ExpectQuery("SELECT COUNT\\(DISTINCT partition_key\\) FROM queue_messages WHERE topic = \\?").
-		WithArgs("orders").
+	mock.ExpectQuery("SELECT COUNT\\(DISTINCT partition_key\\) FROM queue_messages WHERE tenant = \\? AND topic = \\?").
+		WithArgs("acme", "orders").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
 
 	// Consumer groups
-	mock.ExpectQuery("SELECT COUNT\\(DISTINCT consumer_group\\) FROM queue_offsets WHERE topic = \\?").
-		WithArgs("orders").
+	mock.ExpectQuery("SELECT COUNT\\(DISTINCT consumer_group\\) FROM queue_offsets WHERE tenant = \\? AND topic = \\?").
+		WithArgs("acme", "orders").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-	stats, err := store.GetTopicStats(context.Background(), "orders", "_dlq")
+	stats, err := store.GetTopicStats(context.Background(), "acme", "orders", "_dlq")
 	require.NoError(t, err)
+	assert.Equal(t, "acme", stats.Tenant)
 	assert.Equal(t, "orders", stats.Topic)
 	assert.Equal(t, int64(100), stats.TotalMessages)
 	assert.Equal(t, int64(3), stats.DLQCount)
@@ -107,17 +110,18 @@ func TestListMessages(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at"}).
-		AddRow(1, "msg-1", "orders", "repo-1", 1000, 1000).
-		AddRow(2, "msg-2", "orders", "repo-1", 2000, 2000)
-	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? ORDER BY `offset` LIMIT \\?").
-		WithArgs("orders", 50).
+	rows := sqlmock.NewRows([]string{"tenant", "offset", "id", "topic", "partition_key", "created_at", "published_at"}).
+		AddRow("acme", 1, "msg-1", "orders", "repo-1", 1000, 1000).
+		AddRow("acme", 2, "msg-2", "orders", "repo-1", 2000, 2000)
+	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE tenant = \\? AND topic = \\? ORDER BY `offset` LIMIT \\?").
+		WithArgs("acme", "orders", 50).
 		WillReturnRows(rows)
 
-	messages, err := store.ListMessages(context.Background(), "orders", "", 50)
+	messages, err := store.ListMessages(context.Background(), "acme", "orders", "", 50)
 	require.NoError(t, err)
 	assert.Len(t, messages, 2)
 	assert.Equal(t, "msg-1", messages[0].ID)
+	assert.Equal(t, "acme", messages[0].Tenant)
 	assert.Equal(t, int64(1), messages[0].Offset)
 	assert.Equal(t, "msg-2", messages[1].ID)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -130,13 +134,13 @@ func TestListMessagesWithPartition(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at"}).
-		AddRow(1, "msg-1", "orders", "repo-1", 1000, 1000)
-	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND partition_key = \\? ORDER BY `offset` LIMIT \\?").
-		WithArgs("orders", "repo-1", 10).
+	rows := sqlmock.NewRows([]string{"tenant", "offset", "id", "topic", "partition_key", "created_at", "published_at"}).
+		AddRow("acme", 1, "msg-1", "orders", "repo-1", 1000, 1000)
+	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE tenant = \\? AND topic = \\? AND partition_key = \\? ORDER BY `offset` LIMIT \\?").
+		WithArgs("acme", "orders", "repo-1", 10).
 		WillReturnRows(rows)
 
-	messages, err := store.ListMessages(context.Background(), "orders", "repo-1", 10)
+	messages, err := store.ListMessages(context.Background(), "acme", "orders", "repo-1", 10)
 	require.NoError(t, err)
 	assert.Len(t, messages, 1)
 	assert.Equal(t, "repo-1", messages[0].PartitionKey)
@@ -150,16 +154,17 @@ func TestInspectMessage(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"}).
-		AddRow(1, "msg-1", "orders", "repo-1", 1000, 1000, []byte("hello"), []byte(`{"key":"val"}`), 0, 0, "", "")
-	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND id = \\?").
-		WithArgs("orders", "msg-1").
+	rows := sqlmock.NewRows([]string{"tenant", "offset", "id", "topic", "partition_key", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"}).
+		AddRow("acme", 1, "msg-1", "orders", "repo-1", 1000, 1000, []byte("hello"), []byte(`{"key":"val"}`), 0, 0, "", "")
+	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE tenant = \\? AND topic = \\? AND partition_key = \\? AND id = \\?").
+		WithArgs("acme", "orders", "repo-1", "msg-1").
 		WillReturnRows(rows)
 
-	detail, found, err := store.InspectMessage(context.Background(), "orders", "msg-1")
+	detail, found, err := store.InspectMessage(context.Background(), "acme", "orders", "repo-1", "msg-1")
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "msg-1", detail.ID)
+	assert.Equal(t, "acme", detail.Tenant)
 	assert.Equal(t, []byte("hello"), detail.Payload)
 	assert.Equal(t, "val", detail.Metadata["key"])
 	assert.Equal(t, int64(0), detail.FailedAt)
@@ -173,12 +178,12 @@ func TestInspectMessageNotFound(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"})
-	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND id = \\?").
-		WithArgs("orders", "missing").
+	rows := sqlmock.NewRows([]string{"tenant", "offset", "id", "topic", "partition_key", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"})
+	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE tenant = \\? AND topic = \\? AND partition_key = \\? AND id = \\?").
+		WithArgs("acme", "orders", "repo-1", "missing").
 		WillReturnRows(rows)
 
-	_, found, err := store.InspectMessage(context.Background(), "orders", "missing")
+	_, found, err := store.InspectMessage(context.Background(), "acme", "orders", "repo-1", "missing")
 	require.NoError(t, err)
 	assert.False(t, found)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -191,11 +196,11 @@ func TestDeleteMessage(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	mock.ExpectExec("DELETE FROM queue_messages WHERE topic = \\? AND id = \\?").
-		WithArgs("orders", "msg-1").
+	mock.ExpectExec("DELETE FROM queue_messages WHERE tenant = \\? AND topic = \\? AND partition_key = \\? AND id = \\?").
+		WithArgs("acme", "orders", "repo-1", "msg-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	affected, err := store.DeleteMessage(context.Background(), "orders", "msg-1")
+	affected, err := store.DeleteMessage(context.Background(), "acme", "orders", "repo-1", "msg-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -208,11 +213,11 @@ func TestPurgeTopic(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	mock.ExpectExec("DELETE FROM queue_messages WHERE topic = \\?").
-		WithArgs("orders").
+	mock.ExpectExec("DELETE FROM queue_messages WHERE tenant = \\? AND topic = \\?").
+		WithArgs("acme", "orders").
 		WillReturnResult(sqlmock.NewResult(0, 42))
 
-	affected, err := store.PurgeTopic(context.Background(), "orders")
+	affected, err := store.PurgeTopic(context.Background(), "acme", "orders")
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), affected)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -226,19 +231,19 @@ func TestRequeueDLQ(t *testing.T) {
 	store := NewAdminStore(db)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND id = \\?").
-		WithArgs("orders_dlq", "msg-1").
-		WillReturnRows(sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at"}).
-			AddRow([]byte("data"), []byte(`{}`), "repo-1", 1000, 1000))
+	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE tenant = \\? AND topic = \\? AND partition_key = \\? AND id = \\?").
+		WithArgs("acme", "orders_dlq", "repo-1", "msg-1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload", "metadata", "created_at", "published_at"}).
+			AddRow([]byte("data"), []byte(`{}`), 1000, 1000))
 	mock.ExpectExec("INSERT INTO queue_messages").
-		WithArgs("orders", "repo-1", "msg-1", []byte("data"), []byte(`{}`), int64(1000), sqlmock.AnyArg()).
+		WithArgs("acme", "orders", "repo-1", "msg-1", []byte("data"), []byte(`{}`), int64(1000), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("DELETE FROM queue_messages WHERE topic = \\? AND id = \\?").
-		WithArgs("orders_dlq", "msg-1").
+	mock.ExpectExec("DELETE FROM queue_messages WHERE tenant = \\? AND topic = \\? AND partition_key = \\? AND id = \\?").
+		WithArgs("acme", "orders_dlq", "repo-1", "msg-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	err = store.RequeueDLQ(context.Background(), "orders", "msg-1", "_dlq")
+	err = store.RequeueDLQ(context.Background(), "acme", "orders", "repo-1", "msg-1", "_dlq")
 	require.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
@@ -250,14 +255,15 @@ func TestListOffsets(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "offset_acked", "updated_at"}).
-		AddRow("group-1", "orders", "repo-1", 100, 5000)
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "offset_acked", "updated_at"}).
+		AddRow("acme", "group-1", "orders", "repo-1", 100, 5000)
 	mock.ExpectQuery("SELECT .+ FROM queue_offsets ORDER BY").
 		WillReturnRows(rows)
 
-	offsets, err := store.ListOffsets(context.Background(), "")
+	offsets, err := store.ListOffsets(context.Background(), TenantScope{AllTenants: true}, "")
 	require.NoError(t, err)
 	assert.Len(t, offsets, 1)
+	assert.Equal(t, "acme", offsets[0].Tenant)
 	assert.Equal(t, "group-1", offsets[0].ConsumerGroup)
 	assert.Equal(t, int64(100), offsets[0].OffsetAcked)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -270,13 +276,13 @@ func TestListOffsetsFiltered(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "offset_acked", "updated_at"}).
-		AddRow("group-1", "orders", "repo-1", 100, 5000)
-	mock.ExpectQuery("SELECT .+ FROM queue_offsets WHERE consumer_group = \\?").
-		WithArgs("group-1").
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "offset_acked", "updated_at"}).
+		AddRow("acme", "group-1", "orders", "repo-1", 100, 5000)
+	mock.ExpectQuery("SELECT .+ FROM queue_offsets WHERE tenant = \\? AND consumer_group = \\?").
+		WithArgs("acme", "group-1").
 		WillReturnRows(rows)
 
-	offsets, err := store.ListOffsets(context.Background(), "group-1")
+	offsets, err := store.ListOffsets(context.Background(), TenantScope{Tenant: "acme"}, "group-1")
 	require.NoError(t, err)
 	assert.Len(t, offsets, 1)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -290,10 +296,10 @@ func TestResetOffset(t *testing.T) {
 	store := NewAdminStore(db)
 
 	mock.ExpectExec("UPDATE queue_offsets SET offset_acked = \\?, updated_at = \\?").
-		WithArgs(int64(0), sqlmock.AnyArg(), "group-1", "orders", "repo-1").
+		WithArgs(int64(0), sqlmock.AnyArg(), "acme", "orders", "repo-1", "group-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	affected, err := store.ResetOffset(context.Background(), "group-1", "orders", "repo-1", 0)
+	affected, err := store.ResetOffset(context.Background(), "acme", "group-1", "orders", "repo-1", 0)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -306,14 +312,16 @@ func TestListLeases(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "leased_by", "leased_at", "lease_renewed_at"}).
-		AddRow("group-1", "orders", "repo-1", "worker-1", 1000, 2000)
-	mock.ExpectQuery("SELECT .+ FROM queue_partition_leases ORDER BY").
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "leased_by", "leased_at", "lease_renewed_at"}).
+		AddRow("acme", "group-1", "orders", "repo-1", "worker-1", 1000, 2000)
+	mock.ExpectQuery("SELECT .+ FROM queue_partition_leases WHERE tenant = \\? ORDER BY").
+		WithArgs("acme").
 		WillReturnRows(rows)
 
-	leases, err := store.ListLeases(context.Background())
+	leases, err := store.ListLeases(context.Background(), TenantScope{Tenant: "acme"})
 	require.NoError(t, err)
 	assert.Len(t, leases, 1)
+	assert.Equal(t, "acme", leases[0].Tenant)
 	assert.Equal(t, "worker-1", leases[0].LeasedBy)
 	assert.Equal(t, int64(1000), leases[0].LeasedAt)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -326,11 +334,11 @@ func TestReleaseLease(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	mock.ExpectExec("DELETE FROM queue_partition_leases WHERE consumer_group = \\? AND topic = \\? AND partition_key = \\?").
-		WithArgs("group-1", "orders", "repo-1").
+	mock.ExpectExec("DELETE FROM queue_partition_leases WHERE tenant = \\? AND consumer_group = \\? AND topic = \\? AND partition_key = \\?").
+		WithArgs("acme", "group-1", "orders", "repo-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	affected, err := store.ReleaseLease(context.Background(), "group-1", "orders", "repo-1")
+	affected, err := store.ReleaseLease(context.Background(), "acme", "group-1", "orders", "repo-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -349,16 +357,17 @@ func TestConsumerLag(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "offset_acked", "latest_offset"}).
-		AddRow("group-1", "orders", "repo-1", 50, 100).
-		AddRow("group-1", "orders", "repo-2", 75, 75)
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "offset_acked", "latest_offset"}).
+		AddRow("acme", "group-1", "orders", "repo-1", 50, 100).
+		AddRow("acme", "group-1", "orders", "repo-2", 75, 75)
 	mock.ExpectQuery("SELECT .+ FROM queue_offsets .+ LEFT JOIN").
-		WithArgs("orders", "orders").
+		WithArgs("acme", "orders", "acme", "orders").
 		WillReturnRows(rows)
 
-	lags, err := store.ConsumerLag(context.Background(), "orders")
+	lags, err := store.ConsumerLag(context.Background(), "acme", "orders")
 	require.NoError(t, err)
 	assert.Len(t, lags, 2)
+	assert.Equal(t, "acme", lags[0].Tenant)
 	assert.Equal(t, int64(50), lags[0].Lag)
 	assert.Equal(t, int64(100), lags[0].LatestOffset)
 	assert.Equal(t, int64(50), lags[0].AckedOffset)
@@ -374,13 +383,13 @@ func TestConsumerLagNoMessages(t *testing.T) {
 	store := NewAdminStore(db)
 
 	// Consumer has offset but no messages remain (all acked and deleted)
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "offset_acked", "latest_offset"}).
-		AddRow("group-1", "orders", "repo-1", 100, 0)
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "offset_acked", "latest_offset"}).
+		AddRow("acme", "group-1", "orders", "repo-1", 100, 0)
 	mock.ExpectQuery("SELECT .+ FROM queue_offsets .+ LEFT JOIN").
-		WithArgs("orders", "orders").
+		WithArgs("acme", "orders", "acme", "orders").
 		WillReturnRows(rows)
 
-	lags, err := store.ConsumerLag(context.Background(), "orders")
+	lags, err := store.ConsumerLag(context.Background(), "acme", "orders")
 	require.NoError(t, err)
 	assert.Len(t, lags, 1)
 	assert.Equal(t, int64(0), lags[0].Lag) // clamped to 0, not negative
@@ -394,15 +403,16 @@ func TestStaleLeases(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "leased_by", "leased_at", "lease_renewed_at"}).
-		AddRow("group-1", "orders", "repo-1", "worker-1", 1000, 2000)
-	mock.ExpectQuery("SELECT .+ FROM queue_partition_leases WHERE lease_renewed_at < \\?").
-		WithArgs(sqlmock.AnyArg()).
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "leased_by", "leased_at", "lease_renewed_at"}).
+		AddRow("acme", "group-1", "orders", "repo-1", "worker-1", 1000, 2000)
+	mock.ExpectQuery("SELECT .+ FROM queue_partition_leases WHERE tenant = \\? AND lease_renewed_at < \\?").
+		WithArgs("acme", sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
-	leases, err := store.StaleLeases(context.Background(), 60000)
+	leases, err := store.StaleLeases(context.Background(), TenantScope{Tenant: "acme"}, 60000)
 	require.NoError(t, err)
 	assert.Len(t, leases, 1)
+	assert.Equal(t, "acme", leases[0].Tenant)
 	assert.Equal(t, "worker-1", leases[0].LeasedBy)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
@@ -414,13 +424,63 @@ func TestStaleLeasesEmpty(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"consumer_group", "topic", "partition_key", "leased_by", "leased_at", "lease_renewed_at"})
+	rows := sqlmock.NewRows([]string{"tenant", "consumer_group", "topic", "partition_key", "leased_by", "leased_at", "lease_renewed_at"})
 	mock.ExpectQuery("SELECT .+ FROM queue_partition_leases WHERE lease_renewed_at < \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
-	leases, err := store.StaleLeases(context.Background(), 60000)
+	leases, err := store.StaleLeases(context.Background(), TenantScope{AllTenants: true}, 60000)
 	require.NoError(t, err)
 	assert.Empty(t, leases)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTenantScopeRequired(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewAdminStore(db)
+	tests := []struct {
+		name  string
+		scope TenantScope
+		call  func(TenantScope) error
+	}{
+		{
+			name: "list topics without scope",
+			call: func(scope TenantScope) error {
+				_, err := store.ListTopics(context.Background(), scope)
+				return err
+			},
+		},
+		{
+			name:  "list offsets with conflicting scope",
+			scope: TenantScope{Tenant: "acme", AllTenants: true},
+			call: func(scope TenantScope) error {
+				_, err := store.ListOffsets(context.Background(), scope, "")
+				return err
+			},
+		},
+		{
+			name: "list leases without scope",
+			call: func(scope TenantScope) error {
+				_, err := store.ListLeases(context.Background(), scope)
+				return err
+			},
+		},
+		{
+			name:  "stale leases with conflicting scope",
+			scope: TenantScope{Tenant: "acme", AllTenants: true},
+			call: func(scope TenantScope) error {
+				_, err := store.StaleLeases(context.Background(), scope, 60000)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Error(t, tt.call(tt.scope))
+		})
+	}
 }

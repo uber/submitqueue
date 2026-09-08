@@ -25,6 +25,7 @@ import (
 
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	platformhook "github.com/uber/submitqueue/platform/hook"
@@ -97,6 +98,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize process request: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, pr.GetQueueName()); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 	store, err := c.stores.For(storage.Config{QueueName: pr.GetQueueName()})
 	if err != nil {
@@ -512,7 +516,12 @@ func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
 		return fmt.Errorf("failed to serialize build request: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuild, publish.IntentID(id), payload, id); err != nil {
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuild, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(id),
+		Payload:      payload,
+		PartitionKey: id,
+	}); err != nil {
 		return fmt.Errorf("failed to publish build request: %w", err)
 	}
 	return nil
@@ -527,7 +536,7 @@ func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
 // Partitioning by request id matches the process topic's own, carrying
 // per-request ordering across the seam.
 func (c *Controller) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
-	if err := platformhook.Publish(ctx, c.registry, event, request.ID); err != nil {
+	if err := platformhook.Publish(ctx, c.registry, request.Queue, event, request.ID); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
 	}

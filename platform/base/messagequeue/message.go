@@ -43,10 +43,14 @@ type Message struct {
 	// Use for trace IDs, request IDs, and cross-service metadata.
 	Metadata map[string]string
 
-	// PartitionKey determines which partition/shard this message goes to.
-	// Messages with the same PartitionKey are guaranteed ordered delivery.
+	// PartitionKey determines the ordering partition within Tenant.
+	// Messages with the same Tenant and PartitionKey are delivered in order.
 	// Optional - if empty, backend may use round-robin distribution.
 	PartitionKey string
+
+	// Tenant is the shard isolation identity persisted by the backend.
+	// Domains map their queue name onto this field at publish time.
+	Tenant string
 
 	// PublishedAt is when the message was published (Unix milliseconds).
 	PublishedAt int64
@@ -79,6 +83,7 @@ func (m Message) Copy() Message {
 		Payload:      payloadCopy,
 		Metadata:     maps.Clone(m.Metadata),
 		PartitionKey: m.PartitionKey,
+		Tenant:       m.Tenant,
 		PublishedAt:  m.PublishedAt,
 	}
 }

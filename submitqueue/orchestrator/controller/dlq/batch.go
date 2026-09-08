@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -85,6 +86,10 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to decode batch id from dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		return nil
 	}
 	if bid.ID == "" {
 		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)

@@ -55,15 +55,21 @@ func TestMessage(t *testing.T) {
 			return nil
 		})
 
-	err := Message(context.Background(), registry, testKey, "msg-1", []byte("payload"), "partition-1")
+	err := Message(context.Background(), registry, testKey, MessageParams{
+		Tenant:       "tenant-1",
+		ID:           "msg-1",
+		Payload:      []byte("payload"),
+		PartitionKey: "partition-1",
+	})
 	require.NoError(t, err)
+	assert.Equal(t, "tenant-1", published.Tenant)
 	assert.Equal(t, "msg-1", published.ID)
 	assert.Equal(t, []byte("payload"), published.Payload)
 	assert.Equal(t, "partition-1", published.PartitionKey)
-	assert.Empty(t, published.Metadata)
+	assert.Equal(t, "tenant-1", published.Metadata[entityqueue.MetadataKeyQueueName])
 }
 
-func TestMessage_PropagatesQueueNameFromContext(t *testing.T) {
+func TestMessage_PropagatesTenantAsQueueName(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, publisher := newTestRegistry(t, ctrl)
 
@@ -75,12 +81,17 @@ func TestMessage_PropagatesQueueNameFromContext(t *testing.T) {
 			return nil
 		})
 
-	ctx := entityqueue.WithQueueName(context.Background(), "monorepo/main")
-	require.NoError(t, Message(ctx, registry, testKey, "msg-1", []byte("payload"), "partition-1"))
+	require.NoError(t, Message(context.Background(), registry, testKey, MessageParams{
+		Tenant:       "monorepo/main",
+		ID:           "msg-1",
+		Payload:      []byte("payload"),
+		PartitionKey: "partition-1",
+	}))
 	assert.Equal(t, "monorepo/main", published.Metadata[entityqueue.MetadataKeyQueueName])
+	assert.Equal(t, "monorepo/main", published.Tenant)
 }
 
-func TestMessageWithMetadata_MergesContextWithoutMutatingInput(t *testing.T) {
+func TestMessage_MergesMetadataWithoutMutatingInput(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, publisher := newTestRegistry(t, ctrl)
 
@@ -93,38 +104,58 @@ func TestMessageWithMetadata_MergesContextWithoutMutatingInput(t *testing.T) {
 		})
 
 	metadata := map[string]string{"failure_reason": "build failed"}
-	ctx := entityqueue.WithQueueName(context.Background(), "monorepo/main")
-	require.NoError(t, MessageWithMetadata(ctx, registry, testKey, "msg-1", []byte("payload"), "partition-1", metadata))
+	require.NoError(t, Message(context.Background(), registry, testKey, MessageParams{
+		Tenant:       "monorepo/main",
+		ID:           "msg-1",
+		Payload:      []byte("payload"),
+		PartitionKey: "partition-1",
+		Metadata:     metadata,
+	}))
 	assert.Equal(t, map[string]string{
 		"failure_reason":                 "build failed",
 		entityqueue.MetadataKeyQueueName: "monorepo/main",
 	}, published.Metadata)
+	assert.Equal(t, "monorepo/main", published.Tenant)
 	assert.Equal(t, map[string]string{"failure_reason": "build failed"}, metadata)
 }
 
-func TestMessageWithMetadata_ExplicitQueueNameWins(t *testing.T) {
+func TestMessage_RejectsQueueNameDifferentFromTenant(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	registry, publisher := newTestRegistry(t, ctrl)
+	registry, _ := newTestRegistry(t, ctrl)
 
-	var published entityqueue.Message
-	publisher.EXPECT().
-		Publish(gomock.Any(), "test-topic", gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
-			published = msg
-			return nil
-		})
-
-	ctx := entityqueue.WithQueueName(context.Background(), "inbound")
 	metadata := map[string]string{entityqueue.MetadataKeyQueueName: "outbound"}
-	require.NoError(t, MessageWithMetadata(ctx, registry, testKey, "msg-1", []byte("payload"), "partition-1", metadata))
-	assert.Equal(t, "outbound", published.Metadata[entityqueue.MetadataKeyQueueName])
+	err := Message(context.Background(), registry, testKey, MessageParams{
+		Tenant:       "inbound",
+		ID:           "msg-1",
+		Payload:      []byte("payload"),
+		PartitionKey: "partition-1",
+		Metadata:     metadata,
+	})
+	require.Error(t, err)
 }
 
 func TestMessage_UnregisteredKey(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, _ := newTestRegistry(t, ctrl)
 
-	err := Message(context.Background(), registry, "unregistered-key", "msg-1", []byte("payload"), "partition-1")
+	err := Message(context.Background(), registry, "unregistered-key", MessageParams{
+		Tenant:       "tenant-1",
+		ID:           "msg-1",
+		Payload:      []byte("payload"),
+		PartitionKey: "partition-1",
+	})
+	require.Error(t, err)
+}
+
+func TestMessage_RequiresTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	registry, _ := newTestRegistry(t, ctrl)
+
+	err := Message(context.Background(), registry, testKey, MessageParams{
+		ID:           "msg-1",
+		Payload:      []byte("payload"),
+		PartitionKey: "partition-1",
+	})
 	require.Error(t, err)
 }
 

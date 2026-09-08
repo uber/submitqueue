@@ -459,6 +459,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	// Verify message was published to the topic registered under TopicKeyStart
 	assert.Equal(t, "start", publishedTopic)
 	assert.Equal(t, "test-queue/123", publishedMessage.ID)
+	assert.Equal(t, "test-queue", publishedMessage.Tenant)
 	assert.Equal(t, "test-queue", publishedMessage.PartitionKey)
 
 	// Verify payload can be deserialized

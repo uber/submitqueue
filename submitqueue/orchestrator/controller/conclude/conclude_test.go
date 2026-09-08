@@ -48,7 +48,7 @@ func requestWithState(request entity.Request, state entity.RequestState) entity.
 
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
 func batchIDPayload(t *testing.T, id string) []byte {
-	payload, err := entity.BatchID{ID: id}.ToBytes()
+	payload, err := entity.BatchID{ID: id, Queue: "test-queue"}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
@@ -96,6 +96,17 @@ func TestNewController(t *testing.T) {
 	assert.Equal(t, "conclude", controller.Name())
 }
 
+func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller, _ := newTestController(t, ctrl, nil, false)
+	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
+}
+
 func TestController_Process(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -126,12 +137,12 @@ func TestController_Process(t *testing.T) {
 
 				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 				request1 := entity.Request{
-					ID: "test-queue/1", Version: 2, State: entity.RequestStateProcessing,
+					ID: "test-queue/1", Queue: "test-queue", Version: 2, State: entity.RequestStateProcessing,
 				}
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(request1, nil)
 				mockRequestStore.EXPECT().Update(gomock.Any(), requestWithState(request1, entity.RequestStateLanded), int32(2), int32(3)).Return(nil)
 				request2 := entity.Request{
-					ID: "test-queue/2", Version: 3, State: entity.RequestStateProcessing,
+					ID: "test-queue/2", Queue: "test-queue", Version: 3, State: entity.RequestStateProcessing,
 				}
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/2").Return(request2, nil)
 				mockRequestStore.EXPECT().Update(gomock.Any(), requestWithState(request2, entity.RequestStateLanded), int32(3), int32(4)).Return(nil)
@@ -164,7 +175,7 @@ func TestController_Process(t *testing.T) {
 
 				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 				request := entity.Request{
-					ID: "test-queue/5", Version: 1, State: entity.RequestStateProcessing,
+					ID: "test-queue/5", Queue: "test-queue", Version: 1, State: entity.RequestStateProcessing,
 				}
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/5").Return(request, nil)
 				mockRequestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -197,7 +208,7 @@ func TestController_Process(t *testing.T) {
 
 				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 				request := entity.Request{
-					ID: "test-queue/10", Version: 4, State: entity.RequestStateProcessing,
+					ID: "test-queue/10", Queue: "test-queue", Version: 4, State: entity.RequestStateProcessing,
 				}
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/10").Return(request, nil)
 				mockRequestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateCancelled), int32(4), int32(5)).Return(nil)
@@ -232,7 +243,7 @@ func TestController_Process(t *testing.T) {
 				// must NOT be called — gomock will fail the test if it is.
 				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/20").Return(entity.Request{
-					ID: "test-queue/20", Version: 7, State: entity.RequestStateLanded,
+					ID: "test-queue/20", Queue: "test-queue", Version: 7, State: entity.RequestStateLanded,
 				}, nil)
 
 				mockStorage := storagemock.NewMockStorage(ctrl)
@@ -266,7 +277,7 @@ func TestController_Process(t *testing.T) {
 				// and must not attempt UpdateState.
 				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/30").Return(entity.Request{
-					ID: "test-queue/30", Version: 5, State: entity.RequestStateCancelled,
+					ID: "test-queue/30", Queue: "test-queue", Version: 5, State: entity.RequestStateCancelled,
 				}, nil)
 
 				mockStorage := storagemock.NewMockStorage(ctrl)
@@ -385,7 +396,7 @@ func TestController_Process(t *testing.T) {
 
 				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 				request := entity.Request{
-					ID: "test-queue/1", Version: 2, State: entity.RequestStateProcessing,
+					ID: "test-queue/1", Queue: "test-queue", Version: 2, State: entity.RequestStateProcessing,
 				}
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(request, nil)
 				mockRequestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateLanded), int32(2), int32(3)).Return(storage.ErrVersionMismatch)
@@ -434,6 +445,7 @@ func TestController_Process(t *testing.T) {
 			controller, _ := newTestController(t, ctrl, mockStorage, tt.expectLogPublish)
 
 			msg := entityqueue.NewMessage(tt.batch.ID, batchIDPayload(t, tt.batch.ID), tt.batch.Queue, nil)
+			msg.Tenant = tt.batch.Queue
 			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -491,6 +503,7 @@ func TestController_Process_FailedBatchCarriesReasonToRequestLog(t *testing.T) {
 	)
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, map[string]string{topickey.MetadataKeyFailureReason: reason})
+	msg.Tenant = batch.Queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -513,6 +526,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	controller, _ := newTestController(t, ctrl, mockStorage, false)
 
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	msg.Tenant = "test-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

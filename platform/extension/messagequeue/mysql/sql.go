@@ -57,10 +57,19 @@ type Params struct {
 	// OnSignal receives typed subscriber lifecycle signals (HookSignal).
 	// Nil in production; used by integration tests for event-driven waits.
 	OnSignal chan HookSignal
+
+	// Tenants is the configured shard isolation list. Empty permits publishing
+	// but causes Subscribe to return ErrInvalidConfig.
+	Tenants []string
 }
 
 // NewQueue creates a new SQL-based queue
 func NewQueue(params Params) (extqueue.Queue, error) {
+	tenants, err := normalizeTenants(params.Tenants)
+	if err != nil {
+		return nil, fmt.Errorf("invalid queue tenants: %w", err)
+	}
+
 	// Test connection
 	if err := params.DB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
@@ -102,6 +111,7 @@ func NewQueue(params Params) (extqueue.Queue, error) {
 		leaseStore,
 		heartbeatStore,
 		deliveryStateStore,
+		tenants,
 	)
 	subscriber.OnSignal = params.OnSignal
 

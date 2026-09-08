@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/failure"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -98,6 +99,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
@@ -235,7 +239,13 @@ func (c *Controller) publishBatchIDWithMetadata(ctx context.Context, key consume
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-	return publish.MessageWithMetadata(ctx, c.registry, key, msgID, payload, partitionKey, metadata)
+	return publish.Message(ctx, c.registry, key, publish.MessageParams{
+		Tenant:       queue,
+		ID:           msgID,
+		Payload:      payload,
+		PartitionKey: partitionKey,
+		Metadata:     metadata,
+	})
 }
 
 // attributed records what a failure was about and counts it by subject type.

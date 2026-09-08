@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -65,10 +66,15 @@ func NewDLQBuildController(
 
 // Process drives the request named by a dead-lettered BuildRequest to failed.
 func (c *buildController) Process(ctx context.Context, delivery consumer.Delivery) error {
+	msg := delivery.Message()
 	buildRequest := &stovepipemq.BuildRequest{}
-	if err := stovepipemq.Unmarshal(delivery.Message().Payload, buildRequest); err != nil {
+	if err := stovepipemq.Unmarshal(msg.Payload, buildRequest); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildOpName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, buildRequest.GetQueueName()); err != nil {
+		metrics.NamedCounter(c.metricsScope, _buildOpName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
+		return nil
 	}
 	if buildRequest.Id == "" {
 		metrics.NamedCounter(c.metricsScope, _buildOpName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)

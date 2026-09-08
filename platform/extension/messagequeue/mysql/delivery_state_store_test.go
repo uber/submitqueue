@@ -75,25 +75,25 @@ func TestDeliveryStateStore_MarkDelivered(t *testing.T) {
 
 			if tt.execErr {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
 					WillReturnError(assert.AnError)
 			} else {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 
 				if tt.queryErr {
 					mock.ExpectQuery("SELECT retry_count FROM queue_delivery_state").
-						WithArgs("group-1", "orders", "part-1", int64(5)).
+						WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 						WillReturnError(assert.AnError)
 				} else {
 					mock.ExpectQuery("SELECT retry_count FROM queue_delivery_state").
-						WithArgs("group-1", "orders", "part-1", int64(5)).
+						WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 						WillReturnRows(sqlmock.NewRows([]string{"retry_count"}).AddRow(tt.wantRetryCount))
 				}
 			}
 
-			retryCount, err := store.MarkDelivered(context.Background(), "group-1", "orders", "part-1", 5, 30000)
+			retryCount, err := store.MarkDelivered(context.Background(), "group-1", testTenant, "orders", "part-1", 5, 30000)
 
 			if tt.execErr || tt.queryErr {
 				require.Error(t, err)
@@ -128,15 +128,15 @@ func TestDeliveryStateStore_ExtendVisibility(t *testing.T) {
 
 			if tt.wantErr {
 				mock.ExpectExec("UPDATE queue_delivery_state").
-					WithArgs(sqlmock.AnyArg(), "group-1", "orders", "part-1", int64(5)).
+					WithArgs(sqlmock.AnyArg(), testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnError(assert.AnError)
 			} else {
 				mock.ExpectExec("UPDATE queue_delivery_state").
-					WithArgs(sqlmock.AnyArg(), "group-1", "orders", "part-1", int64(5)).
+					WithArgs(sqlmock.AnyArg(), testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			}
 
-			err := store.ExtendVisibility(context.Background(), "group-1", "orders", "part-1", 5, 60000)
+			err := store.ExtendVisibility(context.Background(), "group-1", testTenant, "orders", "part-1", 5, 60000)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -170,15 +170,15 @@ func TestDeliveryStateStore_MarkAcked(t *testing.T) {
 
 			if tt.wantErr {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5)).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnError(assert.AnError)
 			} else {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5)).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			}
 
-			err := store.MarkAcked(context.Background(), "group-1", "orders", "part-1", 5)
+			err := store.MarkAcked(context.Background(), "group-1", testTenant, "orders", "part-1", 5)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -214,15 +214,15 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 
 			if tt.wantErr {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), invisibleUntil).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5), invisibleUntil).
 					WillReturnError(assert.AnError)
 			} else {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), invisibleUntil).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5), invisibleUntil).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			}
 
-			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, retryDelayMs)
+			err := store.MarkNacked(context.Background(), "group-1", testTenant, "orders", "part-1", 5, retryDelayMs)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -248,7 +248,7 @@ func TestDeliveryStateStore_MarkNackedRejectsInvalidDelay(t *testing.T) {
 			store, db, mock := newTestDeliveryStateStoreWithMock(t)
 			defer db.Close()
 
-			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, tt.delayMs)
+			err := store.MarkNacked(context.Background(), "group-1", testTenant, "orders", "part-1", 5, tt.delayMs)
 			require.ErrorContains(t, err, "is outside")
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
@@ -277,15 +277,15 @@ func TestDeliveryStateStore_MarkPostponed(t *testing.T) {
 
 			if tt.wantErr {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
 					WillReturnError(assert.AnError)
 			} else {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			}
 
-			err := store.MarkPostponed(context.Background(), "group-1", "orders", "part-1", 5, 5000)
+			err := store.MarkPostponed(context.Background(), "group-1", testTenant, "orders", "part-1", 5, 5000)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -355,20 +355,20 @@ func TestDeliveryStateStore_GetDeliveryState(t *testing.T) {
 
 			if tt.wantErr {
 				mock.ExpectQuery("SELECT acked, invisible_until, retry_count, postponed FROM queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5)).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnError(assert.AnError)
 			} else if tt.noRows {
 				mock.ExpectQuery("SELECT acked, invisible_until, retry_count, postponed FROM queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5)).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnRows(sqlmock.NewRows([]string{"acked", "invisible_until", "retry_count", "postponed"}))
 			} else {
 				mock.ExpectQuery("SELECT acked, invisible_until, retry_count, postponed FROM queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5)).
+					WithArgs(testTenant, "group-1", "orders", "part-1", int64(5)).
 					WillReturnRows(sqlmock.NewRows([]string{"acked", "invisible_until", "retry_count", "postponed"}).
 						AddRow(tt.acked, tt.invisibleUntil, tt.retryCount, tt.postponed))
 			}
 
-			state, found, err := store.GetDeliveryState(context.Background(), "group-1", "orders", "part-1", 5)
+			state, found, err := store.GetDeliveryState(context.Background(), "group-1", testTenant, "orders", "part-1", 5)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -495,8 +495,8 @@ func TestDeliveryStateStore_AdvanceWatermark(t *testing.T) {
 
 			// Delivery state query is only issued if there are offsets
 			if len(tt.offsets) > 0 {
-				dsArgs := make([]driver.Value, 0, 3+len(tt.offsets))
-				dsArgs = append(dsArgs, "group-1", "orders", "part-1")
+				dsArgs := make([]driver.Value, 0, 4+len(tt.offsets))
+				dsArgs = append(dsArgs, testTenant, "group-1", "orders", "part-1")
 				for _, offset := range tt.offsets {
 					dsArgs = append(dsArgs, offset)
 				}
@@ -518,11 +518,11 @@ func TestDeliveryStateStore_AdvanceWatermark(t *testing.T) {
 
 			if tt.expectCleanup {
 				mock.ExpectExec("DELETE FROM queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", tt.expectWatermark).
+					WithArgs(testTenant, "group-1", "orders", "part-1", tt.expectWatermark).
 					WillReturnResult(sqlmock.NewResult(0, tt.expectWatermark-tt.currentWatermark))
 			}
 
-			watermark, err := store.AdvanceWatermark(context.Background(), "group-1", "orders", "part-1", tt.currentWatermark, tt.offsets)
+			watermark, err := store.AdvanceWatermark(context.Background(), "group-1", testTenant, "orders", "part-1", tt.currentWatermark, tt.offsets)
 
 			if tt.dsQueryErr {
 				require.Error(t, err)

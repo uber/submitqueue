@@ -47,7 +47,7 @@ func TestCheck(t *testing.T) {
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 			wantTables:     1,
 			wantViolations: 1,
-			wantProblem:    `leads its PRIMARY KEY with "request_id", not the queue column`,
+			wantProblem:    `leads its PRIMARY KEY with "request_id", not a shard column`,
 		},
 		{
 			name: "queue present but not leading is rejected",
@@ -87,7 +87,7 @@ func TestCheck(t *testing.T) {
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 			wantTables:     1,
 			wantViolations: 1,
-			wantProblem:    `has index "idx_status" leading with "status", which spans queues`,
+			wantProblem:    `has index "idx_status" leading with "status", which spans shards`,
 		},
 		{
 			name: "a queue-leading secondary index passes",
@@ -99,6 +99,40 @@ func TestCheck(t *testing.T) {
 				"    INDEX idx_queue_status (queue, status)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 			wantTables: 1,
+		},
+		{
+			name: "queue_messages offset index passes",
+			schema: "CREATE TABLE IF NOT EXISTS queue_messages (\n" +
+				"    tenant VARCHAR(191) NOT NULL,\n" +
+				"    offset BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,\n" +
+				"    PRIMARY KEY (tenant, offset),\n" +
+				"    KEY idx_offset (offset)\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+			wantTables: 1,
+		},
+		{
+			name: "offset index on another table is rejected",
+			schema: "CREATE TABLE IF NOT EXISTS queue_offsets (\n" +
+				"    tenant VARCHAR(191) NOT NULL,\n" +
+				"    offset BIGINT UNSIGNED NOT NULL,\n" +
+				"    PRIMARY KEY (tenant, offset),\n" +
+				"    KEY idx_offset (offset)\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+			wantTables:     1,
+			wantViolations: 1,
+			wantProblem:    `has index "idx_offset" leading with "offset", which spans shards`,
+		},
+		{
+			name: "differently named queue_messages offset index is rejected",
+			schema: "CREATE TABLE IF NOT EXISTS queue_messages (\n" +
+				"    tenant VARCHAR(191) NOT NULL,\n" +
+				"    offset BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,\n" +
+				"    PRIMARY KEY (tenant, offset),\n" +
+				"    KEY idx_unscoped_offset (offset)\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+			wantTables:     1,
+			wantViolations: 1,
+			wantProblem:    `has index "idx_unscoped_offset" leading with "offset", which spans shards`,
 		},
 		{
 			name: "a table with no primary key is rejected",
@@ -118,7 +152,7 @@ func TestCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tables, violations := check("test.sql", tt.schema)
+			tables, violations := check("test.sql", tt.schema, map[string]bool{"queue": true, "name": true, "tenant": true})
 			assert.Equal(t, tt.wantTables, tables)
 			require.Len(t, violations, tt.wantViolations)
 			if tt.wantProblem != "" {

@@ -48,7 +48,7 @@ func TestSubscriberHeartbeatStore_Heartbeat(t *testing.T) {
 			name: "successfully send heartbeat",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue_subscriber_heartbeats").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantErr: false,
@@ -57,7 +57,7 @@ func TestSubscriberHeartbeatStore_Heartbeat(t *testing.T) {
 			name: "update existing heartbeat",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue_subscriber_heartbeats").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(0, 2)) // ON DUPLICATE KEY UPDATE returns 2 for update
 			},
 			wantErr: false,
@@ -66,7 +66,7 @@ func TestSubscriberHeartbeatStore_Heartbeat(t *testing.T) {
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue_subscriber_heartbeats").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantErr: true,
@@ -81,7 +81,7 @@ func TestSubscriberHeartbeatStore_Heartbeat(t *testing.T) {
 			ctx := context.Background()
 			tt.setup(mock)
 
-			err := store.Heartbeat(ctx, "test_topic", testSubscriberName, testConsumerGroup)
+			err := store.Heartbeat(ctx, testTenant, "test_topic", testSubscriberName, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -105,7 +105,7 @@ func TestSubscriberHeartbeatStore_ActiveSubscribers(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"subscriber_name"}).
 					AddRow("sub-1").AddRow("sub-2").AddRow("sub-3")
 				mock.ExpectQuery("SELECT subscriber_name").
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnRows(rows)
 			},
 			wantNames: []string{"sub-1", "sub-2", "sub-3"},
@@ -116,7 +116,7 @@ func TestSubscriberHeartbeatStore_ActiveSubscribers(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				rows := sqlmock.NewRows([]string{"subscriber_name"})
 				mock.ExpectQuery("SELECT subscriber_name").
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnRows(rows)
 			},
 			wantNames: nil,
@@ -126,7 +126,7 @@ func TestSubscriberHeartbeatStore_ActiveSubscribers(t *testing.T) {
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT subscriber_name").
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantNames: nil,
@@ -142,7 +142,7 @@ func TestSubscriberHeartbeatStore_ActiveSubscribers(t *testing.T) {
 			ctx := context.Background()
 			tt.setup(mock)
 
-			names, err := store.ActiveSubscribers(ctx, "test_topic", testConsumerGroup, testLeaseDurationMs)
+			names, err := store.ActiveSubscribers(ctx, testTenant, "test_topic", testConsumerGroup, testLeaseDurationMs)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -163,10 +163,10 @@ func TestSubscriberHeartbeatStore_ActiveSubscribers_ExcludesDeregistered(t *test
 	// Verify the query filters by deregistered_at = 0
 	rows := sqlmock.NewRows([]string{"subscriber_name"}).AddRow("sub-1").AddRow("sub-2")
 	mock.ExpectQuery(`SELECT subscriber_name FROM queue_subscriber_heartbeats.*deregistered_at = 0`).
-		WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+		WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
-	names, err := store.ActiveSubscribers(ctx, "test_topic", testConsumerGroup, testLeaseDurationMs)
+	names, err := store.ActiveSubscribers(ctx, testTenant, "test_topic", testConsumerGroup, testLeaseDurationMs)
 	require.NoError(t, err)
 	require.Equal(t, []string{"sub-1", "sub-2"}, names)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -181,10 +181,10 @@ func TestSubscriberHeartbeatStore_Deregister_HardDelete(t *testing.T) {
 	// Verify deregister deletes the row outright — subscriber names are
 	// unique per process, so soft-deleted rows would accumulate forever.
 	mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
-		WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
+		WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.Deregister(ctx, "test_topic", testSubscriberName, testConsumerGroup)
+	err := store.Deregister(ctx, testTenant, "test_topic", testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -199,7 +199,7 @@ func TestSubscriberHeartbeatStore_PurgeStale(t *testing.T) {
 			name: "deletes rows older than threshold",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(0, 3))
 			},
 		},
@@ -207,7 +207,7 @@ func TestSubscriberHeartbeatStore_PurgeStale(t *testing.T) {
 			name: "no stale rows is a no-op",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 		},
@@ -215,7 +215,7 @@ func TestSubscriberHeartbeatStore_PurgeStale(t *testing.T) {
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantErr: true,
@@ -229,7 +229,7 @@ func TestSubscriberHeartbeatStore_PurgeStale(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.PurgeStale(context.Background(), "test_topic", testConsumerGroup, 300_000)
+			err := store.PurgeStale(context.Background(), testTenant, "test_topic", testConsumerGroup, 300_000)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -248,26 +248,26 @@ func TestSubscriberHeartbeatStore_ReRegistration(t *testing.T) {
 
 	// Step 1: Initial heartbeat registers the subscriber
 	mock.ExpectExec("INSERT INTO queue_subscriber_heartbeats").
-		WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
+		WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Step 2: Deregister deletes the subscriber's row
 	mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
-		WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
+		WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Step 3: Heartbeat again re-registers with a fresh insert
 	mock.ExpectExec("INSERT INTO queue_subscriber_heartbeats").
-		WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
+		WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err := store.Heartbeat(ctx, "test_topic", testSubscriberName, testConsumerGroup)
+	err := store.Heartbeat(ctx, testTenant, "test_topic", testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 
-	err = store.Deregister(ctx, "test_topic", testSubscriberName, testConsumerGroup)
+	err = store.Deregister(ctx, testTenant, "test_topic", testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 
-	err = store.Heartbeat(ctx, "test_topic", testSubscriberName, testConsumerGroup)
+	err = store.Heartbeat(ctx, testTenant, "test_topic", testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -283,7 +283,7 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 			name: "successfully deregister",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -292,7 +292,7 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 			name: "idempotent - already deregistered",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr: false,
@@ -301,7 +301,7 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", testSubscriberName).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantErr: true,
@@ -316,7 +316,7 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 			ctx := context.Background()
 			tt.setup(mock)
 
-			err := store.Deregister(ctx, "test_topic", testSubscriberName, testConsumerGroup)
+			err := store.Deregister(ctx, testTenant, "test_topic", testSubscriberName, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

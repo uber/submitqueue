@@ -34,16 +34,20 @@ package consumergate
 
 //go:generate mockgen -source=consumergate.go -destination=mock/consumergate_mock.go -package=mock
 
-import "context"
+import (
+	"context"
+
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+)
 
 // Key identifies a gate: a consumer group, optionally narrowed to one partition.
 type Key struct {
 	// ConsumerGroup is the gated controller's consumer group — its stable runtime name.
 	ConsumerGroup string
 
-	// PartitionKey optionally narrows the gate to a single partition.
-	// Empty gates every partition of the consumer group.
-	PartitionKey string
+	// Partition optionally narrows the gate to a tenant-scoped partition.
+	// The zero value gates every partition of the consumer group.
+	Partition entityqueue.PartitionIdentity
 }
 
 // Metadata records why a gate was closed, for the operator who finds it later.
@@ -88,6 +92,9 @@ type Parked struct {
 
 	// MessageID is the queue message ID of the delivery.
 	MessageID string
+
+	// Tenant is the shard isolation identity.
+	Tenant string
 
 	// PartitionKey is the partition the delivery belongs to.
 	PartitionKey string

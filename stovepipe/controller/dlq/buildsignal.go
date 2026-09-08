@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -100,6 +101,10 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		// the rollout finishes, and acking here would skip the slot release
 		// without saying so.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, sig.GetQueueName()); err != nil {
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
+		return nil
 	}
 	if sig.Id == "" {
 		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)

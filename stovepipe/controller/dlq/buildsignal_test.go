@@ -90,6 +90,7 @@ func TestBuildSignalProcess(t *testing.T) {
 	tests := []struct {
 		name       string
 		payload    []byte
+		tenant     string
 		setup      func(m buildSignalDLQMocks)
 		wantErr    bool
 		wantMetric string
@@ -169,6 +170,13 @@ func TestBuildSignalProcess(t *testing.T) {
 			wantErr:    true,
 			wantMetric: "test.buildsignal_dlq_controller.buildsignal_dlq.empty_id_errors+queue=monorepo/main",
 		},
+		{
+			name:       "payload queue mismatch is acked",
+			tenant:     "monorepo/release",
+			setup:      func(buildSignalDLQMocks) {},
+			wantErr:    false,
+			wantMetric: "test.buildsignal_dlq_controller.buildsignal_dlq.queue_identity_errors+queue=monorepo/main",
+		},
 	}
 
 	for _, tt := range tests {
@@ -182,7 +190,7 @@ func TestBuildSignalProcess(t *testing.T) {
 				payload = buildSignalPayload(t, testBuildID)
 			}
 
-			err := c.Process(queueContext(), delivery(t, ctrl, payload))
+			err := c.Process(queueContext(), delivery(t, ctrl, payload, tt.tenant))
 			if tt.wantMetric != "" {
 				counter, ok := m.metricsScope.Snapshot().Counters()[tt.wantMetric]
 				require.True(t, ok)

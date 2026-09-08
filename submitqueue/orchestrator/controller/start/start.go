@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
@@ -80,6 +81,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize land request: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, landRequest.Queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: landRequest.Queue})
@@ -149,7 +153,12 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, key, publish.IntentID(requestID), payload, queue); err != nil {
+	if err := publish.Message(ctx, c.registry, key, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(requestID),
+		Payload:      payload,
+		PartitionKey: queue,
+	}); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

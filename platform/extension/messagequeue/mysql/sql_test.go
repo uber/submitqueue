@@ -108,6 +108,53 @@ func TestNewQueue(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, q)
 	})
+	t.Run("normalizes and copies tenants", func(t *testing.T) {
+		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectPing()
+		tenants := []string{" tenant-a ", "", "tenant-b", "tenant-a"}
+		q, err := NewQueue(Params{
+			DB:           db,
+			Logger:       zaptest.NewLogger(t),
+			MetricsScope: tally.NewTestScope("test", nil),
+			Tenants:      tenants,
+		})
+		require.NoError(t, err)
+		tenants[0] = "mutated"
+
+		impl := q.(*queueImpl)
+		sub := impl.subscriber.(*subscriber)
+		assert.Equal(t, []string{"tenant-a", "tenant-b"}, sub.tenants)
+		assert.NoError(t, q.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	t.Run("rejects invalid tenants before opening the queue", func(t *testing.T) {
+		for _, tt := range []struct {
+			name   string
+			tenant string
+		}{
+			{name: "non-ASCII", tenant: "tenant-é"},
+			{name: "NUL", tenant: "tenant-\x00a"},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+				require.NoError(t, err)
+				mock.ExpectClose()
+
+				q, err := NewQueue(Params{
+					DB:           db,
+					Logger:       zaptest.NewLogger(t),
+					MetricsScope: tally.NewTestScope("test", nil),
+					Tenants:      []string{tt.tenant},
+				})
+				require.Error(t, err)
+				assert.Nil(t, q)
+				require.NoError(t, db.Close())
+			})
+		}
+	})
 }
 
 func TestQueue_Publisher(t *testing.T) {

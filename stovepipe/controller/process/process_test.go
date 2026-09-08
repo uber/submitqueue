@@ -117,7 +117,9 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	d := consumermock.NewMockDelivery(ctrl)
-	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
+	msg := entityqueue.NewMessage(testID, payload, testQueue, nil)
+	msg.Tenant = testQueue
+	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
 }
@@ -127,6 +129,20 @@ func processPayload(t *testing.T, id string) []byte {
 	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id, QueueName: testQueue})
 	require.NoError(t, err)
 	return b
+}
+
+func TestProcessRejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+	msg := entityqueue.NewMessage(testID, processPayload(t, testID), testQueue, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	err := c.Process(queueContext(testQueue), d)
+
+	require.Error(t, err)
+	assert.False(t, errs.IsRetryable(err))
 }
 
 func acceptedRequest(id string) entity.Request {
@@ -217,6 +233,7 @@ func expectStartValidationAnnounce(t *testing.T, m processMocks, id string) *gom
 		Publish(gomock.Any(), "stovepipe-hook", gomock.AssignableToTypeOf(entityqueue.Message{})).
 		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 			assert.Equal(t, id, msg.PartitionKey)
+			assert.Equal(t, testQueue, msg.Tenant)
 			event := &basehook.HookEvent{}
 			require.NoError(t, basehook.Unmarshal(msg.Payload, event))
 			assert.Equal(t, string(hookevent.TypeValidationRepositoryStarted), event.GetType())
@@ -236,6 +253,7 @@ func expectBuildPublish(t *testing.T, m processMocks, id string) *gomock.Call {
 		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 			assert.Equal(t, id, msg.ID)
 			assert.Equal(t, id, msg.PartitionKey)
+			assert.Equal(t, testQueue, msg.Tenant)
 			assert.Equal(t, testQueue, msg.Metadata[entityqueue.MetadataKeyQueueName])
 			buildReq := &stovepipemq.BuildRequest{}
 			require.NoError(t, stovepipemq.Unmarshal(msg.Payload, buildReq))

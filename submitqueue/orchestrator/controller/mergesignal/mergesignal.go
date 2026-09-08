@@ -28,6 +28,7 @@ import (
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
@@ -89,6 +90,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize merge result: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})
@@ -207,7 +211,13 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msgID, 
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	if err := publish.MessageWithMetadata(ctx, c.registry, key, msgID, payload, queue, metadata); err != nil {
+	if err := publish.Message(ctx, c.registry, key, publish.MessageParams{
+		Tenant:       queue,
+		ID:           msgID,
+		Payload:      payload,
+		PartitionKey: queue,
+		Metadata:     metadata,
+	}); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

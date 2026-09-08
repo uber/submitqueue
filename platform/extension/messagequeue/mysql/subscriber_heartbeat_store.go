@@ -44,27 +44,27 @@ func newSubscriberHeartbeatStore(db *sql.DB, logger *zap.SugaredLogger, scope ta
 }
 
 // Heartbeat registers or renews a subscriber's heartbeat.
-func (s *sqlSubscriberHeartbeatStore) Heartbeat(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
+func (s *sqlSubscriberHeartbeatStore) Heartbeat(ctx context.Context, tenant string, topic string, subscriberName string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "heartbeat", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	now := s.nowFunc().UnixMilli()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (consumer_group, topic, subscriber_name, heartbeat_at, deregistered_at)
-		VALUES (?, ?, ?, ?, 0)
+		INSERT INTO %s (tenant, consumer_group, topic, subscriber_name, heartbeat_at, deregistered_at)
+		VALUES (?, ?, ?, ?, ?, 0)
 		ON DUPLICATE KEY UPDATE heartbeat_at = VALUES(heartbeat_at), deregistered_at = 0
-	`, SubscriberHeartbeatsTableName), consumerGroup, topic, subscriberName, now)
+	`, SubscriberHeartbeatsTableName), tenant, consumerGroup, topic, subscriberName, now)
 
 	if err != nil {
-		return fmt.Errorf("failed to send heartbeat: %w", err)
+		return fmt.Errorf("failed to send heartbeat tenant=%s topic=%s: %w", tenant, topic, err)
 	}
 
 	return nil
 }
 
 // ActiveSubscribers returns the names of subscribers with a heartbeat newer than the stale threshold.
-func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) (_ []string, retErr error) {
+func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, tenant string, topic string, consumerGroup string, staleDurationMs int64) (_ []string, retErr error) {
 	op := metrics.Begin(s.scope, "active_subscribers", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
@@ -72,10 +72,10 @@ func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, top
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT subscriber_name FROM %s
-		WHERE consumer_group = ? AND topic = ? AND heartbeat_at >= ? AND deregistered_at = 0
-	`, SubscriberHeartbeatsTableName), consumerGroup, topic, staleThreshold)
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND heartbeat_at >= ? AND deregistered_at = 0
+	`, SubscriberHeartbeatsTableName), tenant, consumerGroup, topic, staleThreshold)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query active subscribers: %w", err)
+		return nil, fmt.Errorf("failed to query active subscribers tenant=%s topic=%s: %w", tenant, topic, err)
 	}
 	defer rows.Close()
 
@@ -83,16 +83,17 @@ func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, top
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("failed to scan subscriber name: %w", err)
+			return nil, fmt.Errorf("failed to scan subscriber name tenant=%s topic=%s: %w", tenant, topic, err)
 		}
 		names = append(names, name)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("row iteration error: %w", err)
+		return nil, fmt.Errorf("row iteration error tenant=%s topic=%s: %w", tenant, topic, err)
 	}
 
 	s.logger.Debugw("found active subscribers",
+		logTenant, tenant,
 		logTopic, topic,
 		"count", len(names),
 		"subscribers", names,
@@ -103,20 +104,21 @@ func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, top
 
 // Deregister removes a subscriber's heartbeat row (hard delete — see the
 // subscriberHeartbeatStore interface doc). Idempotent: no-op if already gone.
-func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
+func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, tenant string, topic string, subscriberName string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "deregister", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s
-		WHERE consumer_group = ? AND topic = ? AND subscriber_name = ?
-	`, SubscriberHeartbeatsTableName), consumerGroup, topic, subscriberName)
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND subscriber_name = ?
+	`, SubscriberHeartbeatsTableName), tenant, consumerGroup, topic, subscriberName)
 
 	if err != nil {
-		return fmt.Errorf("failed to deregister subscriber: %w", err)
+		return fmt.Errorf("failed to deregister subscriber tenant=%s topic=%s: %w", tenant, topic, err)
 	}
 
 	s.logger.Debugw("deregistered subscriber",
+		logTenant, tenant,
 		logTopic, topic,
 		"subscriber_name", subscriberName,
 	)
@@ -126,7 +128,7 @@ func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, topic stri
 
 // PurgeStale deletes heartbeat rows older than olderThanMs for the topic and
 // consumer group. See the subscriberHeartbeatStore interface doc.
-func (s *sqlSubscriberHeartbeatStore) PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) (retErr error) {
+func (s *sqlSubscriberHeartbeatStore) PurgeStale(ctx context.Context, tenant string, topic string, consumerGroup string, olderThanMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "purge_stale", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
@@ -134,11 +136,11 @@ func (s *sqlSubscriberHeartbeatStore) PurgeStale(ctx context.Context, topic stri
 
 	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s
-		WHERE consumer_group = ? AND topic = ? AND heartbeat_at < ?
-	`, SubscriberHeartbeatsTableName), consumerGroup, topic, threshold)
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND heartbeat_at < ?
+	`, SubscriberHeartbeatsTableName), tenant, consumerGroup, topic, threshold)
 
 	if err != nil {
-		return fmt.Errorf("failed to purge stale heartbeats: %w", err)
+		return fmt.Errorf("failed to purge stale heartbeats tenant=%s topic=%s: %w", tenant, topic, err)
 	}
 
 	// RowsAffected error is swallowed because the DELETE itself succeeded;
@@ -146,6 +148,7 @@ func (s *sqlSubscriberHeartbeatStore) PurgeStale(ctx context.Context, topic stri
 	if deleted, err := result.RowsAffected(); err == nil && deleted > 0 {
 		metrics.NamedCounter(s.scope, "purge_stale", "rows_deleted", deleted, metrics.NewTag("topic", topic))
 		s.logger.Debugw("purged stale heartbeats",
+			logTenant, tenant,
 			logTopic, topic,
 			"deleted", deleted,
 		)

@@ -25,6 +25,7 @@ import (
 	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
@@ -96,6 +97,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, rid.Queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
@@ -321,7 +325,12 @@ func (c *Controller) publishMergeCheck(ctx context.Context, req *runwaymq.MergeR
 		return fmt.Errorf("failed to serialize merge conflict check request: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, c.runwayTopicKey, publish.IntentID(req.GetId()), payload, req.GetQueueName()); err != nil {
+	if err := publish.Message(ctx, c.registry, c.runwayTopicKey, publish.MessageParams{
+		Tenant:       req.GetQueueName(),
+		ID:           publish.IntentID(req.GetId()),
+		Payload:      payload,
+		PartitionKey: req.GetQueueName(),
+	}); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

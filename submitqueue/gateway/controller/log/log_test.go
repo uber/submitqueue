@@ -103,6 +103,9 @@ func TestController_Process(t *testing.T) {
 			}
 			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, tt.setupStore(ctrl), topickey.TopicKeyLog, "gateway-log")
 			msg := entityqueue.NewMessage("test-queue/1", payload, "test-queue", nil)
+			if tt.logEntry != nil {
+				msg.Tenant = tt.logEntry.Queue
+			}
 			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -115,6 +118,20 @@ func TestController_Process(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logEntry := newRequestLog("test-queue/1", entity.RequestStatusStarted, 1, "", nil)
+	payload, err := logEntry.ToBytes()
+	require.NoError(t, err)
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, newUnusedMaterializer(ctrl), topickey.TopicKeyLog, "gateway-log")
+	msg := entityqueue.NewMessage(logEntry.RequestID, payload, logEntry.Queue, nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
 }
 
 func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr, queueErr error) *requestcore.Materializer {
