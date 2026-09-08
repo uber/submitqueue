@@ -19,10 +19,22 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestValidateConfiguredQueueTenants(t *testing.T) {
+	require.NoError(t, validateConfiguredQueueTenants(
+		[]string{"queue-a", "queue-b"},
+		[]string{"queue-b", "queue-a"},
+	))
+	require.Error(t, validateConfiguredQueueTenants(
+		[]string{"queue-a"},
+		[]string{"queue-a", "queue-b"},
+	))
+}
 
 func TestGatewayStatusError(t *testing.T) {
 	tests := []struct {

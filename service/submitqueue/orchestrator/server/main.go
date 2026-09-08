@@ -42,6 +42,7 @@ import (
 	hooknoop "github.com/uber/submitqueue/platform/extension/hook/noop"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/pipeline"
+	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
@@ -156,12 +157,28 @@ func run() error {
 	}
 	defer queueDB.Close()
 
-	// Initialize queue
+	// Build per-queue extension profiles (host-private). Each queue resolves
+	// to its own set of extension implementations (conflict analyzer, …),
+	// falling back to a baseline profile for queues without an explicit entry.
+	storageFty := storageFactory{backend: store}
+	profilesCfg, err := loadProfilesConfigFromEnv(logger)
+	if err != nil {
+		return fmt.Errorf("failed to load extension profiles: %w", err)
+	}
+	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
+	if err != nil {
+		return fmt.Errorf("failed to configure queue subscribers: %w", err)
+	}
+	if err := validateProfileQueueTenants(tenants, profilesCfg); err != nil {
+		return fmt.Errorf("failed to validate queue tenants: %w", err)
+	}
+
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
 		LogLevel:     os.Getenv("QUEUE_LOG_LEVEL"),
 		MetricsScope: scope.SubScope("queue"),
+		Tenants:      tenants,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create queue: %w", err)
@@ -176,14 +193,6 @@ func run() error {
 		subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
 	}
 
-	// Build per-queue extension profiles (host-private). Each queue resolves
-	// to its own set of extension implementations (conflict analyzer, …),
-	// falling back to a baseline profile for queues without an explicit entry.
-	storageFty := storageFactory{backend: store}
-	profilesCfg, err := loadProfilesConfigFromEnv(logger)
-	if err != nil {
-		return fmt.Errorf("failed to load extension profiles: %w", err)
-	}
 	profiles, err := newProfiles(ctx, logger, scope, changeset.New(storageFty), storageFty, profilesCfg)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
@@ -305,6 +314,14 @@ func run() error {
 
 	// Return the error to be surfaced as a desired exit code by the main function
 	return err
+}
+
+func validateProfileQueueTenants(tenants []string, cfg profilesConfig) error {
+	profileQueueNames := make([]string, 0, len(cfg.Queues))
+	for _, queue := range cfg.Queues {
+		profileQueueNames = append(profileQueueNames, queue.Name)
+	}
+	return servicemq.ValidateTenantSubset("MQ_TENANTS", tenants, "extension profiles", profileQueueNames)
 }
 
 // newConsumerGate enables the file-backed consumer gate only when

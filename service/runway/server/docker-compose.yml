@@ -53,6 +53,7 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
+      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-runway/merge,e2e-runway/check,e2e-runway/failed,e2e-runway/dlq,e2e-runway/undecodable}
       - HOSTNAME=runway-dev
     depends_on:
       mysql-queue:

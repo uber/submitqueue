@@ -53,12 +53,21 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap/zaptest"
 )
+
+var runwayTestTenants = []string{
+	"e2e-runway/merge",
+	"e2e-runway/check",
+	"e2e-runway/failed",
+	"e2e-runway/dlq",
+	"e2e-runway/undecodable",
+}
 
 type RunwayE2ESuite struct {
 	suite.Suite
@@ -114,6 +123,7 @@ func (s *RunwayE2ESuite) SetupSuite() {
 		DB:           s.queueDB,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
+		Tenants:      runwayTestTenants,
 	})
 	require.NoError(t, err, "failed to create queue client")
 	t.Cleanup(func() { s.queue.Close() })
@@ -278,5 +288,25 @@ func (s *RunwayE2ESuite) TestUndecodablePayload_DropsWithoutSignalling() {
 	arrived := s.mergeSignal.newSince(mark)
 	require.Len(t, arrived, 1,
 		"the undecodable payload must not signal; only the sentinel should have arrived")
+	assert.Equal(t, sentinel.GetId(), arrived[0].result.GetId())
+}
+
+func (s *RunwayE2ESuite) TestTenantPayloadMismatch_DropsWithoutSignalling() {
+	t := s.T()
+	const tenant = "e2e-runway/undecodable"
+
+	mark := s.mergeSignal.mark()
+	mismatched := s.mergeRequest("e2e-runway/merge", step("candidate", baseURI))
+	payload, err := runwaymq.Marshal(mismatched)
+	require.NoError(t, err)
+	s.publishRaw(topicMerge, mismatched.GetId(), tenant, payload)
+
+	sentinel := s.mergeRequest(tenant, step("candidate", baseURI))
+	s.publish(topicMerge, sentinel)
+	observed := s.mergeSignal.await(t, s.ctx, sentinel.GetId())
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, observed.result.GetOutcome())
+
+	arrived := s.mergeSignal.newSince(mark)
+	require.Len(t, arrived, 1)
 	assert.Equal(t, sentinel.GetId(), arrived[0].result.GetId())
 }

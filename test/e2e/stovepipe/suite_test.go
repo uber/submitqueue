@@ -159,6 +159,12 @@ func (s *StovepipeE2ESuite) TestIngest_Idempotent() {
 	assert.Equal(s.T(), id, id2, "re-ingest of the same head should dedup to the same id")
 }
 
+func (s *StovepipeE2ESuite) TestIngest_RejectsUnconfiguredTenant() {
+	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: "monorepo/unconfigured"})
+	require.Error(s.T(), err)
+	assert.Nil(s.T(), resp)
+}
+
 // TestIngest_SlowBuild_PollsToCompletion drives a build that is not terminal on its
 // first poll, which is the only path that exercises buildsignal's poll loop.
 //

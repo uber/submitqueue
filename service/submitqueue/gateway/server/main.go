@@ -40,6 +40,7 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -241,12 +242,38 @@ func run() error {
 	}
 	defer queueDB.Close()
 
-	// Initialize queue
+	// Load queue configurations from YAML. Path is required so the gateway
+	// can reject requests for unknown queues at the edge.
+	queueConfigPath := os.Getenv("QUEUE_CONFIG_PATH")
+	if queueConfigPath == "" {
+		return fmt.Errorf("QUEUE_CONFIG_PATH environment variable is required")
+	}
+	queueConfigs, err := yamlqueueconfig.NewStore(queueConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to load queue configs: %w", err)
+	}
+	configuredQueues, err := queueConfigs.List(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list queue configs: %w", err)
+	}
+	configuredQueueNames := make([]string, 0, len(configuredQueues))
+	for _, q := range configuredQueues {
+		configuredQueueNames = append(configuredQueueNames, q.Name)
+	}
+	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
+	if err != nil {
+		return fmt.Errorf("failed to configure queue subscribers: %w", err)
+	}
+	if err := validateConfiguredQueueTenants(tenants, configuredQueueNames); err != nil {
+		return fmt.Errorf("failed to validate queue tenants: %w", err)
+	}
+
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
 		LogLevel:     os.Getenv("QUEUE_LOG_LEVEL"),
 		MetricsScope: scope.SubScope("queue"),
+		Tenants:      tenants,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create queue: %w", err)
@@ -313,16 +340,6 @@ func run() error {
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
-	}
-	// Load queue configurations from YAML. Path is required so the gateway
-	// can reject requests for unknown queues at the edge.
-	queueConfigPath := os.Getenv("QUEUE_CONFIG_PATH")
-	if queueConfigPath == "" {
-		return fmt.Errorf("QUEUE_CONFIG_PATH environment variable is required")
-	}
-	queueConfigs, err := yamlqueueconfig.NewStore(queueConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to load queue configs: %w", err)
 	}
 
 	// Create controllers and wrap them for gRPC. Every store is queue-scoped and
@@ -439,6 +456,10 @@ func run() error {
 	}
 
 	return err
+}
+
+func validateConfiguredQueueTenants(tenants, configuredQueueNames []string) error {
+	return servicemq.ValidateTenantSetsEqual("MQ_TENANTS", tenants, "QUEUE_CONFIG_PATH", configuredQueueNames)
 }
 
 // newConsumerGate enables the file-backed consumer gate only when

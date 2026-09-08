@@ -38,6 +38,7 @@ import (
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
@@ -264,6 +265,8 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 // entry to storage, observable through the request-summary RPC.
 func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	t := s.T()
+	const sqid = "log-consumer-test/1"
+	const logQueue = "log-consumer-test"
 
 	// Build a publisher against the shared queue database. NewQueue only wires up
 	// stores; nothing consumes until a subscriber is started, so this publish-only
@@ -272,6 +275,7 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 		DB:           s.queueDB,
 		Logger:       zap.NewNop(),
 		MetricsScope: tally.NoopScope,
+		Tenants:      []string{logQueue},
 	})
 	require.NoError(t, err, "failed to create queue publisher")
 	defer queue.Close()
@@ -281,8 +285,6 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	})
 	require.NoError(t, err, "failed to create topic registry")
 
-	const sqid = "log-consumer-test/1"
-	const logQueue = "log-consumer-test"
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)
 	logQueueStore, err := store.For(logQueue)
@@ -293,7 +295,7 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	}
 	require.NoError(t, logQueueStore.GetRequestSummaryStore().Create(s.ctx, summary))
 	logEntry := entity.NewRequestStatusLog(logQueue, sqid, entity.RequestStatusStarted, 1, "", nil)
-	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid, ""),
+	require.NoError(t, corerequest.PublishLog(entityqueue.WithQueueName(s.ctx, logQueue), registry, logEntry, sqid, ""),
 		"failed to publish request log to log topic")
 
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
