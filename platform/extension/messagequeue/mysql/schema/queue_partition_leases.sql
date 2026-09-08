@@ -1,6 +1,8 @@
 -- PARTITION LEASES TABLE
 -- Tracks which worker has leased which partition for exclusive processing.
 -- Workers must renew leases to maintain ownership; stale leases can be stolen.
+-- tenant/topic/consumer_group/leased_by: VARCHAR(255) ascii/ascii_bin (255 bytes, byte-wise compare).
+-- partition_key: VARCHAR(255) utf8mb4/utf8mb4_bin (255 Unicode chars). See queue_messages.sql.
 
 CREATE TABLE IF NOT EXISTS queue_partition_leases (
     -- tenant is the shard isolation identity

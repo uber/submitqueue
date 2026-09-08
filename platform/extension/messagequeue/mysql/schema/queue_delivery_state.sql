@@ -1,6 +1,8 @@
 -- DELIVERY STATE TABLE
 -- Per-consumer-group delivery tracking for messages in the immutable log.
 -- Tracks visibility, ack state, and retry count independently per consumer group.
+-- tenant/topic/consumer_group: VARCHAR(255) ascii/ascii_bin (255 bytes, byte-wise compare).
+-- partition_key: VARCHAR(255) utf8mb4/utf8mb4_bin (255 Unicode chars). See queue_messages.sql.
 --
 -- State encoding:
 --   acked = TRUE                          → processed, never redeliver

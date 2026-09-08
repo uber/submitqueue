@@ -1,6 +1,8 @@
 -- CONSUMER OFFSETS TABLE
 -- Tracks consumption progress per consumer group + tenant + topic + partition.
 -- Each partition has independent offset tracking for crash recovery.
+-- tenant/topic/consumer_group: VARCHAR(255) ascii/ascii_bin (255 bytes, byte-wise compare).
+-- partition_key: VARCHAR(255) utf8mb4/utf8mb4_bin (255 Unicode chars). See queue_messages.sql.
 
 CREATE TABLE IF NOT EXISTS queue_offsets (
     -- tenant is the shard isolation identity

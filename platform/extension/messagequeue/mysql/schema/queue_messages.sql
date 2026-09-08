@@ -1,7 +1,14 @@
 -- MESSAGES TABLE (Immutable Log)
--- Single table for all topics. tenant is the Vitess vindex; partition_key orders work within a tenant.
+-- Single table for all topics. tenant is the shard key; partition_key orders work within a tenant.
 -- Messages are append-only; per-consumer-group delivery tracking is in queue_delivery_state.
 -- Example: tenant="monorepo/main", topic="merge_queue", partition_key="uber/cadence"
+--
+-- Identifier encodings (InnoDB max key 3072 bytes; utf8mb4 counted at 4 bytes/char):
+--   ascii COLLATE ascii_bin: bytes 0x00-0x7F, VARCHAR(255)=255 bytes, byte-wise compare (case-sensitive).
+--     tenant, topic, original_topic (and consumer_group / subscriber_name / leased_by on other tables).
+--   utf8mb4 COLLATE utf8mb4_bin: Unicode, VARCHAR(255)=255 chars (<=1020 bytes), code-point compare.
+--     partition_key, id (caller-chosen; may be non-ASCII).
+--   NOT NULL rejects SQL NULL; the Go backend also rejects empty operational IDs and non-ASCII tenants.
 
 CREATE TABLE IF NOT EXISTS queue_messages (
     -- tenant is the shard isolation identity (SubmitQueue maps queueName here at wiring)

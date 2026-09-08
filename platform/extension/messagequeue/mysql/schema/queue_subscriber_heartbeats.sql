@@ -1,6 +1,8 @@
 -- SUBSCRIBER HEARTBEATS TABLE
 -- Tracks active subscribers for fair partition leasing per tenant.
 -- Each subscriber registers itself with periodic heartbeat renewal.
+-- tenant/topic/consumer_group/subscriber_name: VARCHAR(255) ascii/ascii_bin (255 bytes, byte-wise compare).
+-- See queue_messages.sql for the ascii vs utf8mb4 identifier encodings.
 
 CREATE TABLE IF NOT EXISTS queue_subscriber_heartbeats (
     -- tenant is the shard isolation identity
