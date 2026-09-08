@@ -80,7 +80,7 @@ const (
 	factorCancelling = "cancelling"
 )
 
-// neutralFactor leaves the scorer's price untouched: odds multiplied by one.
+// neutralFactor leaves the scorer's price untouched.
 const neutralFactor = 1.0
 
 // defaultBuildBudget is how many builds a queue may have occupying CI at once
@@ -262,11 +262,9 @@ type speculatorConfig struct {
 // own, so it is not named again here.
 type predictorConfig struct {
 	Type string `yaml:"type"`
-	// Factors multiply the odds of the scorer's price, one per piece of
-	// evidence, keyed by evidence name. An omitted factor is neutral, so an
-	// omitted block ranks on the scorer's price alone. Values are hand-set
-	// placeholders, not measured: they are uncalibrated until the fitting work
-	// in doc/rfc/submitqueue/outcome-predictor.md lands.
+	// Factors revise the scorer's price, one per piece of evidence and keyed by
+	// evidence name. An omitted factor is neutral, so an omitted block ranks on
+	// the scorer's price alone.
 	Factors map[string]float64 `yaml:"factors"`
 }
 
@@ -614,8 +612,8 @@ func (p *predictorConfig) normalizeAndValidate(where string) error {
 		default:
 			return fmt.Errorf("%s: unknown predictor factor %q", where, name)
 		}
-		// Zero would pin every batch carrying the evidence to a probability of
-		// zero, and a negative multiplier on odds means nothing at all.
+		// Zero would permanently pin matching batches to 0; negatives cannot
+		// represent either direction in the factor contract.
 		if factor <= 0 {
 			return fmt.Errorf("%s: predictor factor %q is %v, must be positive", where, name, factor)
 		}
