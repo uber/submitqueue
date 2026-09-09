@@ -20,7 +20,6 @@ package build
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
@@ -145,8 +144,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
-	if err := c.createOrVerifyBuildForRequest(ctx, store, build); err != nil {
-		return err
+	if err := store.GetBuildStore().Create(ctx, build); err != nil {
+		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
 	if err := c.persistBuildTriggeredLog(ctx, store, request, build.ID); err != nil {
 		return err
@@ -162,30 +161,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"queue", request.Queue,
 		"base_uri", baseURI,
 	)
-	return nil
-}
-
-func (c *Controller) createOrVerifyBuildForRequest(ctx context.Context, store storage.Storage, build entity.Build) error {
-	buildStore := store.GetBuildStore()
-	err := buildStore.Create(ctx, build)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, storage.ErrAlreadyExists) {
-		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
-	}
-
-	// ErrAlreadyExists can mean an earlier delivery already stored this Request's Build,
-	// or another Request received the same runner-assigned build ID first. Only the first
-	// case is a safe retry; continuing after a collision would make BuildSignal update the
-	// wrong Request.
-	stored, err := buildStore.Get(ctx, build.ID)
-	if err != nil {
-		return fmt.Errorf("failed to load existing build %s: %w", build.ID, err)
-	}
-	if stored.RequestID != build.RequestID {
-		return fmt.Errorf("build %s belongs to request %s, not %s", build.ID, stored.RequestID, build.RequestID)
-	}
 	return nil
 }
 

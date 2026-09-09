@@ -307,32 +307,14 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "existing build for this request repairs the event and publication",
-			setup: func(m buildMocks) {
-				req := processingRequest(entity.BuildStrategyFull, "")
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
-				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
-				createCall := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
-				getCall := m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).
-					Return(entity.Build{ID: testBuildID, RequestID: testID, Status: entity.BuildStatusAccepted, Version: 1}, nil).
-					After(createCall)
-				logCall := expectBuildTriggered(m).After(getCall)
-				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil).After(logCall)
-			},
-		},
-		{
-			name:    "existing build for another request is rejected",
+			name:    "duplicate runner build id is rejected",
 			wantErr: true,
 			setup: func(m buildMocks) {
 				req := processingRequest(entity.BuildStrategyFull, "")
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
-				createCall := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).
-					Return(entity.Build{ID: testBuildID, RequestID: "request/monorepo/main/8", Status: entity.BuildStatusAccepted, Version: 1}, nil).
-					After(createCall)
+				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 			},
 		},
 		{
