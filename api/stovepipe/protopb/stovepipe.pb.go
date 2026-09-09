@@ -375,7 +375,7 @@ type HistoryEvent struct {
 	//	*HistoryEvent_Event
 	Occurrence isHistoryEvent_Occurrence `protobuf_oneof:"occurrence"`
 	// Stable domain reason for a terminal request outcome. Empty otherwise.
-	OutcomeReason string `protobuf:"bytes,7,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
+	OutcomeReason string `protobuf:"bytes,5,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -649,7 +649,7 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\ftimestamp_ms\x18\x02 \x01(\x03R\vtimestampMs\x12%\n" +
 	"\rrequest_state\x18\x03 \x01(\tH\x00R\frequestState\x12\x16\n" +
 	"\x05event\x18\x04 \x01(\tH\x00R\x05event\x12%\n" +
-	"\x0eoutcome_reason\x18\a \x01(\tR\routcomeReasonB\f\n" +
+	"\x0eoutcome_reason\x18\x05 \x01(\tR\routcomeReasonB\f\n" +
 	"\n" +
 	"occurrence\"q\n" +
 	"\x0eRequestHistory\x12\x1d\n" +

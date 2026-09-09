@@ -84,7 +84,7 @@ message HistoryEvent {
         string event = 4;
     }
     // Stable domain reason for a terminal request outcome. Empty otherwise.
-    string outcome_reason = 7;
+    string outcome_reason = 5;
 }
 
 // RequestHistory identifies one request and contains its ordered events.
