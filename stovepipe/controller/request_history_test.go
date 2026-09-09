@@ -102,6 +102,11 @@ func TestGetRequestHistoryByID(t *testing.T) {
 			}
 			assert.Equal(t, tt.wantNotFound, IsRequestHistoryNotFound(err))
 			assert.Equal(t, tt.wantUser, errs.IsUserError(err))
+			if tt.wantNotFound {
+				var notFound *RequestHistoryByIDNotFoundError
+				require.ErrorAs(t, err, &notFound)
+				assert.Equal(t, requestID, notFound.RequestID)
+			}
 			if tt.wantCause != nil {
 				assert.ErrorIs(t, err, tt.wantCause)
 			}
@@ -165,7 +170,7 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 		{name: "storage factory failure", req: entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri}, factoryErr: backendErr, wantCause: backendErr},
 		{name: "URI mapping not found", req: entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri}, mappingErr: fmt.Errorf("lookup: %w", storage.ErrNotFound), wantNotFound: true},
 		{name: "URI store failure", req: entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri}, mappingErr: backendErr, wantCause: backendErr},
-		{name: "mapped history not found", req: entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri}, mappedID: requestID, listErr: fmt.Errorf("query: %w", storage.ErrNotFound), wantNotFound: true},
+		{name: "mapped history absence is internal", req: entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri}, mappedID: requestID, listErr: fmt.Errorf("query: %w", storage.ErrNotFound), wantCause: storage.ErrNotFound},
 		{name: "log store failure", req: entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri}, mappedID: requestID, listErr: backendErr, wantCause: backendErr},
 	}
 
@@ -210,9 +215,8 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 				require.Error(t, err)
 			}
 			if tt.wantNotFound {
-				var notFound *RequestHistoryNotFoundError
+				var notFound *RequestHistoryByURINotFoundError
 				require.ErrorAs(t, err, &notFound)
-				assert.Empty(t, notFound.RequestID)
 				assert.Equal(t, uri, notFound.URI)
 			}
 
@@ -236,22 +240,36 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 	}
 }
 
-func TestRequestHistoryNotFoundError(t *testing.T) {
+func TestRequestHistoryNotFoundErrors(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want RequestHistoryNotFoundError
+		name   string
+		err    error
+		assert func(*testing.T, error)
 	}{
-		{name: "request ID", err: fmt.Errorf("lookup failed: %w", &RequestHistoryNotFoundError{RequestID: "request/queue/1"}), want: RequestHistoryNotFoundError{RequestID: "request/queue/1"}},
-		{name: "URI", err: fmt.Errorf("lookup failed: %w", &RequestHistoryNotFoundError{URI: "git://repo/commit/1"}), want: RequestHistoryNotFoundError{URI: "git://repo/commit/1"}},
+		{
+			name: "request ID",
+			err:  fmt.Errorf("lookup failed: %w", &RequestHistoryByIDNotFoundError{RequestID: "request/queue/1"}),
+			assert: func(t *testing.T, err error) {
+				var notFound *RequestHistoryByIDNotFoundError
+				require.ErrorAs(t, err, &notFound)
+				assert.Equal(t, "request/queue/1", notFound.RequestID)
+			},
+		},
+		{
+			name: "URI",
+			err:  fmt.Errorf("lookup failed: %w", &RequestHistoryByURINotFoundError{URI: "git://repo/commit/1"}),
+			assert: func(t *testing.T, err error) {
+				var notFound *RequestHistoryByURINotFoundError
+				require.ErrorAs(t, err, &notFound)
+				assert.Equal(t, "git://repo/commit/1", notFound.URI)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.True(t, IsRequestHistoryNotFound(tt.err))
-			var notFound *RequestHistoryNotFoundError
-			require.ErrorAs(t, tt.err, &notFound)
-			assert.Equal(t, tt.want, *notFound)
+			tt.assert(t, tt.err)
 		})
 	}
 	assert.False(t, IsRequestHistoryNotFound(errors.New("other")))

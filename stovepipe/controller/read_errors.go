@@ -41,22 +41,34 @@ func validateHistoryIdentifier(name, value string) error {
 	return nil
 }
 
-// RequestHistoryNotFoundError indicates that no retained history exists for a selector.
-type RequestHistoryNotFoundError struct {
+// RequestHistoryByIDNotFoundError indicates that no retained history exists for a request ID.
+type RequestHistoryByIDNotFoundError struct {
+	// RequestID is the selected request identifier.
 	RequestID string
-	URI       string
 }
 
 // Error implements error.
-func (e *RequestHistoryNotFoundError) Error() string {
-	if e.RequestID == "" {
-		return fmt.Sprintf("request history not found for URI %q", e.URI)
-	}
+func (e *RequestHistoryByIDNotFoundError) Error() string {
 	return fmt.Sprintf("request history not found for request ID %q", e.RequestID)
+}
+
+// RequestHistoryByURINotFoundError indicates that no retained history exists for a URI.
+type RequestHistoryByURINotFoundError struct {
+	// URI is the selected commit URI.
+	URI string
+}
+
+// Error implements error.
+func (e *RequestHistoryByURINotFoundError) Error() string {
+	return fmt.Sprintf("request history not found for URI %q", e.URI)
 }
 
 // IsRequestHistoryNotFound reports whether err contains a retained-history absence.
 func IsRequestHistoryNotFound(err error) bool {
-	var target *RequestHistoryNotFoundError
-	return errors.As(err, &target)
+	var byID *RequestHistoryByIDNotFoundError
+	if errors.As(err, &byID) {
+		return true
+	}
+	var byURI *RequestHistoryByURINotFoundError
+	return errors.As(err, &byURI)
 }

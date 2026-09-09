@@ -79,8 +79,11 @@ func (c *requestHistoryController) readHistoryByID(ctx context.Context, req enti
 		return nil, fmt.Errorf("GetRequestHistoryByID failed to resolve storage for queue %q: %w", req.Queue, err)
 	}
 
-	logs, err := loadRequestLogs(ctx, stores.GetRequestLogStore(), req.ID, &RequestHistoryNotFoundError{RequestID: req.ID})
+	logs, err := stores.GetRequestLogStore().List(ctx, req.ID)
 	if err != nil {
+		if storage.IsNotFound(err) {
+			return nil, errs.NewUserError(&RequestHistoryByIDNotFoundError{RequestID: req.ID})
+		}
 		return nil, fmt.Errorf("GetRequestHistoryByID failed to list request logs request_id=%s: %w", req.ID, err)
 	}
 
@@ -107,10 +110,10 @@ func (c *requestHistoryController) GetRequestHistoryByURI(ctx context.Context, r
 
 func (c *requestHistoryController) readHistoryByURI(ctx context.Context, req entity.GetRequestHistoryByURIRequest) (entity.RequestHistory, error) {
 	if err := validateHistoryIdentifier("queue", req.Queue); err != nil {
-		return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI invalid queue: %w", err)
+		return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI invalid queue=%q: %w", req.Queue, err)
 	}
 	if err := validateHistoryIdentifier("URI", req.URI); err != nil {
-		return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI invalid request: %w", err)
+		return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI invalid uri=%q queue=%q: %w", req.URI, req.Queue, err)
 	}
 
 	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
@@ -121,23 +124,18 @@ func (c *requestHistoryController) readHistoryByURI(ctx context.Context, req ent
 	requestID, err := stores.GetRequestURIStore().GetIDByURI(ctx, req.URI)
 	if err != nil {
 		if storage.IsNotFound(err) {
-			return entity.RequestHistory{}, errs.NewUserError(&RequestHistoryNotFoundError{URI: req.URI})
+			return entity.RequestHistory{}, errs.NewUserError(&RequestHistoryByURINotFoundError{URI: req.URI})
 		}
 		return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI failed to resolve request URI %s: %w", req.URI, err)
 	}
 
-	logs, err := loadRequestLogs(ctx, stores.GetRequestLogStore(), requestID, &RequestHistoryNotFoundError{URI: req.URI})
+	logs, err := stores.GetRequestLogStore().List(ctx, requestID)
 	if err != nil {
+		if storage.IsNotFound(err) {
+			return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI found URI mapping without retained request logs uri=%q request_id=%q: %w", req.URI, requestID, err)
+		}
 		return entity.RequestHistory{}, fmt.Errorf("GetRequestHistoryByURI failed to list request logs uri=%s request_id=%s: %w", req.URI, requestID, err)
 	}
 
 	return entity.RequestHistory{RequestID: requestID, Events: logs}, nil
-}
-
-func loadRequestLogs(ctx context.Context, store storage.RequestLogStore, requestID string, notFound *RequestHistoryNotFoundError) ([]entity.RequestLog, error) {
-	logs, err := store.List(ctx, requestID)
-	if storage.IsNotFound(err) {
-		return nil, errs.NewUserError(notFound)
-	}
-	return logs, err
 }
