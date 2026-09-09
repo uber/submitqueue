@@ -67,10 +67,10 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 
 func (c *requestHistoryController) readHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) ([]entity.RequestLog, error) {
 	if err := validateHistoryIdentifier("queue", req.Queue); err != nil {
-		return nil, fmt.Errorf("GetRequestHistoryByID invalid queue: %w", err)
+		return nil, fmt.Errorf("GetRequestHistoryByID invalid queue=%q: %w", req.Queue, err)
 	}
 	if err := validateHistoryIdentifier("request ID", req.ID); err != nil {
-		return nil, fmt.Errorf("GetRequestHistoryByID invalid request: %w", err)
+		return nil, fmt.Errorf("GetRequestHistoryByID invalid request_id=%q queue=%q: %w", req.ID, req.Queue, err)
 	}
 
 	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
