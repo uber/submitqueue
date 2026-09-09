@@ -143,7 +143,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err != nil {
 			return err
 		}
-		if err := c.persistValidationFactRecorded(ctx, store, request, fact); err != nil {
+		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
 			return err
 		}
 		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
@@ -172,7 +172,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 }
 
-func (c *Controller) persistValidationFactRecorded(
+func (c *Controller) persistValidationFactRecordedLog(
 	ctx context.Context,
 	store storage.Storage,
 	request entity.Request,

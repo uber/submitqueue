@@ -170,7 +170,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	if effective.IsTerminal() {
-		if err := c.persistBuildFinished(ctx, store, request, build.ID); err != nil {
+		if err := c.persistBuildFinishedLog(ctx, store, request, build.ID); err != nil {
 			return err
 		}
 		if err := c.finishRequest(ctx, store, &request, effective); err != nil {
@@ -204,7 +204,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil
 }
 
-func (c *Controller) persistBuildFinished(ctx context.Context, store storage.Storage, request entity.Request, buildID string) error {
+func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.Storage, request entity.Request, buildID string) error {
 	log := requestlog.NewRequestEventLog(
 		request,
 		entity.RequestEventBuildFinished,

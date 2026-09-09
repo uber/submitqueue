@@ -145,10 +145,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
-	if err := c.persistBuild(ctx, store, build); err != nil {
+	if err := c.createOrVerifyBuildForRequest(ctx, store, build); err != nil {
 		return err
 	}
-	if err := c.persistBuildTriggered(ctx, store, request, build.ID); err != nil {
+	if err := c.persistBuildTriggeredLog(ctx, store, request, build.ID); err != nil {
 		return err
 	}
 
@@ -165,14 +165,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil
 }
 
-func (c *Controller) persistBuild(ctx context.Context, store storage.Storage, build entity.Build) error {
+func (c *Controller) createOrVerifyBuildForRequest(ctx context.Context, store storage.Storage, build entity.Build) error {
 	buildStore := store.GetBuildStore()
-	if err := buildStore.Create(ctx, build); err == nil {
+	err := buildStore.Create(ctx, build)
+	if err == nil {
 		return nil
-	} else if !errors.Is(err, storage.ErrAlreadyExists) {
+	}
+	if !errors.Is(err, storage.ErrAlreadyExists) {
 		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
 
+	// ErrAlreadyExists can mean an earlier delivery already stored this Request's Build,
+	// or another Request received the same runner-assigned build ID first. Only the first
+	// case is a safe retry; continuing after a collision would make BuildSignal update the
+	// wrong Request.
 	stored, err := buildStore.Get(ctx, build.ID)
 	if err != nil {
 		return fmt.Errorf("failed to load existing build %s: %w", build.ID, err)
@@ -183,7 +189,7 @@ func (c *Controller) persistBuild(ctx context.Context, store storage.Storage, bu
 	return nil
 }
 
-func (c *Controller) persistBuildTriggered(ctx context.Context, store storage.Storage, request entity.Request, buildID string) error {
+func (c *Controller) persistBuildTriggeredLog(ctx context.Context, store storage.Storage, request entity.Request, buildID string) error {
 	log := requestlog.NewRequestEventLog(
 		request,
 		entity.RequestEventBuildTriggered,
