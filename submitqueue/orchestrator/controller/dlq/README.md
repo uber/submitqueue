@@ -12,7 +12,7 @@ This package contains the controllers that drain each primary pipeline topic's `
 
 ## Convergence guarantee
 
-DLQ consumers are wired with `errs.AlwaysRetryableProcessor` and a very high `Retry.MaxAttempts` (currently 1000). Together with `DLQ.Enabled = false` on the DLQ subscription itself, this means any non-nil error returned from a DLQ controller — including a plain unclassified infra error — is forced retryable and redelivered rather than silently dropped. The combination is "always retryable + bounded-but-effectively-infinite attempts" and is the property the package relies on for convergence.
+DLQ consumers are wired with `errs.AlwaysRetryableProcessor`, unlimited attempts (`Retry.MaxAttempts = 0`), and `DLQ.Enabled = false` on the DLQ subscription itself. Any non-nil error returned from a DLQ controller — including a plain unclassified infra error — is therefore forced retryable and redelivered rather than silently dropped. This is the convergence guarantee the package relies on.
 
 The recognised error condition is handled explicitly in `dlq.go`:
 
