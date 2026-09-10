@@ -32,3 +32,6 @@ queues:
   # second request lands as a batch depending on the first. e2e uses that to
   # exercise speculation across an unresolved dependency.
   - name: e2e-respeculate-queue
+  # Exercises path-overlap conflict analysis in the built-in orchestrator
+  # profile.
+  - name: file-overlap-queue

@@ -52,6 +52,7 @@ import (
 	"github.com/uber/submitqueue/runway/extension/merger/fake"
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
+	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -140,11 +141,17 @@ func run() error {
 	}
 	defer queueDB.Close()
 
+	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
+	if err != nil {
+		return fmt.Errorf("failed to configure queue subscribers: %w", err)
+	}
+
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
 		LogLevel:     os.Getenv("QUEUE_LOG_LEVEL"),
 		MetricsScope: scope.SubScope("queue"),
+		Tenants:      tenants,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create queue: %w", err)
@@ -170,7 +177,7 @@ func run() error {
 
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry, newPrimaryErrorProcessor(), gate)
 
-	mergerFactory, err := newMergerFactory(ctx, logger, scope.SubScope("merger"))
+	mergerFactory, err := newMergerFactory(ctx, logger, scope.SubScope("merger"), tenants)
 	if err != nil {
 		return fmt.Errorf("failed to create merger factory: %w", err)
 	}
@@ -327,7 +334,7 @@ func newPrimaryErrorProcessor() errs.ErrorProcessor {
 // The fake is reachable only through MERGER, never through the configuration
 // file: an implementation whose outcomes are steered by markers in a change URI
 // has no business being selectable by a production config.
-func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
+func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope, tenants []string) (merger.Factory, error) {
 	startup, err := resolveMergerStartupConfig(logger)
 	if err != nil {
 		return nil, err
@@ -339,12 +346,15 @@ func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope
 		// demand without a git checkout. Never production.
 		logger.Info("MERGER=fake; using marker-driven fake merger for every queue")
 		return &fakeMergerFactory{seq: new(atomic.Uint64)}, nil
-	case "noop":
+	case mergerTypeNoop:
 		logger.Info("MERGER=noop; using noop merger for every queue")
 		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
 	}
 
 	cfg := startup.targets
+	if err := validateMergeQueueTenants(tenants, cfg); err != nil {
+		return nil, fmt.Errorf("failed to validate queue tenants: %w", err)
+	}
 
 	// The git runtime is resolved only when something actually needs it, so a
 	// deployment running nothing but the noop merger does not require git to be
@@ -418,6 +428,14 @@ func resolveMergerStartupConfig(logger *zap.Logger) (mergerStartupConfig, error)
 		return mergerStartupConfig{}, errExplicitGitConfigurationRequired
 	}
 	return mergerStartupConfig{selection: selection, targets: cfg}, nil
+}
+
+func validateMergeQueueTenants(tenants []string, cfg mergeConfig) error {
+	mergeQueueNames := make([]string, 0, len(cfg.Queues))
+	for _, queue := range cfg.Queues {
+		mergeQueueNames = append(mergeQueueNames, queue.Name)
+	}
+	return servicemq.ValidateTenantSubset("MQ_TENANTS", tenants, "merge config", mergeQueueNames)
 }
 
 // loadMergeConfigFromEnv reads the merge configuration file when one is

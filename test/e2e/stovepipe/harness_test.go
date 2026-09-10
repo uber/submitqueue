@@ -85,11 +85,11 @@ func (s *StovepipeE2ESuite) uriMapping(queue string) string {
 }
 
 // publishedMessageCount returns the number of process messages published for the
-// given request id (0 or 1).
-func (s *StovepipeE2ESuite) publishedMessageCount(id string) int {
+// given tenant and request id (0 or 1).
+func (s *StovepipeE2ESuite) publishedMessageCount(tenant, id string) int {
 	t := s.T()
 	var count int
-	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", id).Scan(&count),
+	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND id = ?", tenant, id).Scan(&count),
 		"failed to count queue messages for %s", id)
 	return count
 }
@@ -107,10 +107,10 @@ func (s *StovepipeE2ESuite) awaitProcessed(queue string) {
 	const query = `
 			SELECT offset_acked
 			FROM queue_offsets
-			WHERE consumer_group = ? AND topic = ? AND partition_key = ?`
+			WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ?`
 	pollUntil(processPollInterval, func() bool {
 		var ackedOffset int64
-		err := s.queueDB.QueryRow(query, processConsumerGroup, processTopic, queue).Scan(&ackedOffset)
+		err := s.queueDB.QueryRow(query, queue, processConsumerGroup, processTopic, queue).Scan(&ackedOffset)
 		if err != nil {
 			// sql.ErrNoRows means the partition offset is not initialized yet.
 			s.log.Logf("acked offset for queue %s not ready yet: %v", queue, err)
@@ -128,7 +128,7 @@ func (s *StovepipeE2ESuite) assertIngestPersisted(queue, id string) {
 	t := s.T()
 	assert.Equal(t, 1, s.requestRowCount(id), "request row should be persisted for %s", id)
 	assert.Equal(t, id, s.uriMapping(queue), "URI mapping should point at the minted request id")
-	assert.Equal(t, 1, s.publishedMessageCount(id), "should have published one process message for %s", id)
+	assert.Equal(t, 1, s.publishedMessageCount(queue, id), "should have published one process message for %s", id)
 }
 
 // awaitRequestState blocks until the request row reaches want. buildsignal projects

@@ -33,6 +33,7 @@ go_library(
         "//platform/githubactions:go_default_library",
         "//platform/http:go_default_library",
         "//platform/pipeline:go_default_library",
+        "//service/messagequeue:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",

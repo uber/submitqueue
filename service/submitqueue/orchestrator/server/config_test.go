@@ -37,6 +37,12 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 )
 
+func TestValidateProfileQueueTenants(t *testing.T) {
+	cfg := profilesConfig{Queues: []namedQueueProfileConfig{{Name: "queue-a"}}}
+	require.NoError(t, validateProfileQueueTenants([]string{"queue-a", "queue-b"}, cfg))
+	require.Error(t, validateProfileQueueTenants([]string{"queue-b"}, cfg))
+}
+
 func writeProfiles(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "profiles.yaml")

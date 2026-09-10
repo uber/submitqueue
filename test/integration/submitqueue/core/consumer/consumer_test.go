@@ -54,6 +54,8 @@ const testTimeout = 10 * time.Second
 // stopTimeoutMs is the timeout in milliseconds for consumer.Stop().
 const stopTimeoutMs = 10000
 
+const testTenant = "test-queue"
+
 type ConsumerIntegrationSuite struct {
 	suite.Suite
 	ctx   context.Context
@@ -110,9 +112,16 @@ func (s *ConsumerIntegrationSuite) newQueue(t *testing.T) extqueue.Queue {
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
+		Tenants:      []string{testTenant},
 	})
 	require.NoError(t, err)
 	return q
+}
+
+func newTestMessage(id string, payload []byte, partitionKey string, metadata map[string]string) entityqueue.Message {
+	msg := entityqueue.NewMessage(id, payload, partitionKey, metadata)
+	msg.Tenant = testTenant
+	return msg
 }
 
 // newConsumer creates a consumer with a TopicRegistry wired to the given queue and topic.
@@ -197,7 +206,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {
 	require.NoError(t, c.Start(s.ctx))
 
 	// Publish to partition-a, wait for it to start blocking
-	msgA := entityqueue.NewMessage("iso-a", []byte("data-a"), "partition-a", nil)
+	msgA := newTestMessage("iso-a", []byte("data-a"), "partition-a", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topicName, msgA))
 
 	select {
@@ -208,7 +217,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {
 	}
 
 	// Now publish to partition-b — should be processed even though partition-a is blocked
-	msgB := entityqueue.NewMessage("iso-b", []byte("data-b"), "partition-b", nil)
+	msgB := newTestMessage("iso-b", []byte("data-b"), "partition-b", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topicName, msgB))
 
 	select {
@@ -243,7 +252,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerPartitionOrdering() {
 	for i := range numMessages {
 		msgID := fmt.Sprintf("order-%03d", i)
 		publishedIDs[i] = msgID
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), "single-partition", nil)
+		msg := newTestMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), "single-partition", nil)
 		require.NoError(t, publisher.Publish(s.ctx, topicName, msg))
 	}
 	s.log.Logf("Published %d messages to single-partition", numMessages)
@@ -316,7 +325,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerMultiPartitionThroughput() {
 	numPartitions := 3
 	for i := range numPartitions {
 		partition := fmt.Sprintf("tp-partition-%d", i)
-		msg := entityqueue.NewMessage(fmt.Sprintf("tp-msg-%d", i), []byte("data"), partition, nil)
+		msg := newTestMessage(fmt.Sprintf("tp-msg-%d", i), []byte("data"), partition, nil)
 		require.NoError(t, publisher.Publish(s.ctx, topicName, msg))
 	}
 	s.log.Logf("Published 1 message to each of %d partitions", numPartitions)

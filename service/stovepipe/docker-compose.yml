@@ -70,6 +70,7 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
+      - MQ_TENANTS=${MQ_TENANTS:-monorepo/main,monorepo/release,monorepo/slow?buildrunner-fake=build-slow}
       - HOSTNAME=stovepipe-dev
     depends_on:
       mysql-app:

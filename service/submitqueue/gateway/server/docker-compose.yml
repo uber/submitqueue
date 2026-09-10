@@ -65,6 +65,7 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
+      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue}
       # Path to YAML queue configuration baked into the image
       - QUEUE_CONFIG_PATH=/app/queues.yaml
       # Stable subscriber name for the request-log consumer

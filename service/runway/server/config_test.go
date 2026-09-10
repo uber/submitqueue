@@ -28,6 +28,12 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 )
 
+func TestValidateMergeQueueTenants(t *testing.T) {
+	cfg := mergeConfig{Queues: []namedQueueMergeConfig{{Name: "queue-a"}}}
+	require.NoError(t, validateMergeQueueTenants([]string{"queue-a", "queue-b"}, cfg))
+	require.Error(t, validateMergeQueueTenants([]string{"queue-b"}, cfg))
+}
+
 // writeConfig writes a merge config file and returns its path.
 func writeConfig(t *testing.T, contents string) string {
 	t.Helper()

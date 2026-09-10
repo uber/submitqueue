@@ -38,6 +38,7 @@ go_library(
         "//runway/extension/merger/fake:go_default_library",
         "//runway/extension/merger/git:go_default_library",
         "//runway/extension/merger/noop:go_default_library",
+        "//service/messagequeue:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
         "@in_gopkg_yaml_v3//:go_default_library",

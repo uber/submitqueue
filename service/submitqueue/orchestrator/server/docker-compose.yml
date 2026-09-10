@@ -65,6 +65,7 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
+      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-conflict-error-queue,file-overlap-queue}
       - HOSTNAME=orchestrator-dev
     depends_on:
       mysql-app:
