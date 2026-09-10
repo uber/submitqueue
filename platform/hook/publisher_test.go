@@ -31,6 +31,7 @@ import (
 const (
 	testEventID      = "stovepipe/validation.repository.recorded/request/7/0"
 	testPartitionKey = "request/7"
+	testTenant       = "monorepo/main"
 )
 
 func testEvent() *basehook.HookEvent {
@@ -69,12 +70,14 @@ func TestPublish(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, published := registryWithHookTopic(t, ctrl, nil)
 
-	require.NoError(t, Publish(context.Background(), registry, testEvent(), testPartitionKey))
+	require.NoError(t, Publish(context.Background(), registry, testTenant, testEvent(), testPartitionKey))
 
 	// The event id is the message id, so a redelivery republishing the same
 	// event dedups into the original message.
 	assert.Equal(t, testEventID, published.ID)
 	assert.Equal(t, testPartitionKey, published.PartitionKey)
+	assert.Equal(t, testTenant, published.Tenant)
+	assert.Equal(t, testTenant, published.Metadata[entityqueue.MetadataKeyQueueName])
 
 	decoded := &basehook.HookEvent{}
 	require.NoError(t, basehook.Unmarshal(published.Payload, decoded))
@@ -105,7 +108,7 @@ func TestPublish_RejectsMalformedEvent(t *testing.T) {
 			require.NoError(t, err)
 
 			// No Publish expectation: a malformed event must not reach the queue.
-			require.Error(t, Publish(context.Background(), registry, tt.event, testPartitionKey))
+			require.Error(t, Publish(context.Background(), registry, testTenant, tt.event, testPartitionKey))
 		})
 	}
 }
@@ -114,12 +117,12 @@ func TestPublish_PropagatesPublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, _ := registryWithHookTopic(t, ctrl, errors.New("boom"))
 
-	require.Error(t, Publish(context.Background(), registry, testEvent(), testPartitionKey))
+	require.Error(t, Publish(context.Background(), registry, testTenant, testEvent(), testPartitionKey))
 }
 
 func TestPublish_FailsWhenHookTopicIsUnregistered(t *testing.T) {
 	registry, err := consumer.NewTopicRegistry(nil)
 	require.NoError(t, err)
 
-	require.Error(t, Publish(context.Background(), registry, testEvent(), testPartitionKey))
+	require.Error(t, Publish(context.Background(), registry, testTenant, testEvent(), testPartitionKey))
 }

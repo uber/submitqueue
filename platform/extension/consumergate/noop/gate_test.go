@@ -20,12 +20,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 )
 
 func TestGate_EnterNeverBlocks(t *testing.T) {
 	g := New()
-	entry, err := g.Enter(context.Background(), consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	entry, err := g.Enter(context.Background(), consumergate.Key{
+		ConsumerGroup: "group",
+		Partition:     entityqueue.PartitionIdentity{PartitionKey: "part"},
+	})
 	require.NoError(t, err)
 	assert.False(t, entry.Blocked())
 

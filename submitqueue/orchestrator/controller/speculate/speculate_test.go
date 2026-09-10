@@ -84,7 +84,7 @@ func (h *procHarness) listsInFlight(batches ...entity.Batch) {
 
 func batchIDPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	payload, err := entity.BatchID{ID: id}.ToBytes()
+	payload, err := entity.BatchID{ID: id, Queue: "test-queue"}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
@@ -173,6 +173,7 @@ func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *pr
 func (h *procHarness) process(t *testing.T, ctrl *gomock.Controller, batchID string) error {
 	t.Helper()
 	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), "test-queue", nil)
+	msg.Tenant = "test-queue"
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -188,6 +189,17 @@ func TestNewController(t *testing.T) {
 	assert.Equal(t, "speculate", h.controller.Name())
 
 	var _ consumer.Controller = h.controller
+}
+
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newProcHarness(t, ctrl, nil)
+	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, h.controller.Process(context.Background(), d))
 }
 
 // A Created batch is admitted so the Speculator can act on it, and must not

@@ -137,6 +137,7 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, id, queue string) *consu
 	t.Helper()
 
 	msg := entityqueue.NewMessage(id, batchIDPayload(t, id, queue), queue, nil)
+	msg.Tenant = queue
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -174,6 +175,17 @@ func TestNewController(t *testing.T) {
 	assert.Equal(t, "dependency-analysis", controller.Name())
 
 	var _ consumer.Controller = controller
+}
+
+func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller := newTestController(t, ctrl, storagemock.NewMockStorage(ctrl), nil, nil)
+	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1", "test-queue"), "test-queue", nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
 }
 
 // The whole point of the stage: resolve what the batch must serialize behind,

@@ -127,7 +127,7 @@ func TestDLQSpeculateController_Process_Attribution(t *testing.T) {
 			batchStore.EXPECT().Get(gomock.Any(), tt.wantFailedBatch).Return(blamed, nil)
 			batchStore.EXPECT().Update(gomock.Any(), batchWithState(blamed, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
 
-			request := entity.Request{ID: "q/1", Version: 1, State: entity.RequestStateProcessing}
+			request := entity.Request{ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateProcessing}
 			requestStore := storagemock.NewMockRequestStore(ctrl)
 			requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 			requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -270,13 +270,24 @@ func TestDLQSpeculateController_Process_MalformedPayloadFails(t *testing.T) {
 	require.Error(t, c.Process(context.Background(), delivery))
 }
 
+func TestDLQSpeculateController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storagemock.NewMockStorage(ctrl)
+	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
+
+	payload, err := entity.BatchID{ID: "q/batch/named", Queue: "q"}.ToBytes()
+	require.NoError(t, err)
+
+	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
+}
+
 func TestDLQSpeculateController_Process_EmptyIDFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 
-	payload, err := entity.BatchID{ID: ""}.ToBytes()
+	payload, err := entity.BatchID{ID: "", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)

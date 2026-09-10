@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
@@ -89,6 +90,10 @@ func (c *speculateController) Process(ctx context.Context, delivery consumer.Del
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to decode batch id from dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		return nil
 	}
 	if bid.ID == "" {
 		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)
@@ -203,7 +208,12 @@ func (c *speculateController) retrigger(ctx context.Context, store storage.Stora
 	// A distinct message ID every time: the queue deduplicates on
 	// (topic, partition, ID) against rows it has not collected yet, so reusing
 	// the batch ID would make this wake-up a silent no-op.
-	if err := publish.Message(ctx, c.registry, topickey.TopicKeySpeculate, publish.UniqueID(next), payload, queue); err != nil {
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeySpeculate, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.UniqueID(next),
+		Payload:      payload,
+		PartitionKey: queue,
+	}); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to re-trigger speculation for queue %s: %w", queue, err)
 	}

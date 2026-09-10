@@ -5,4 +5,5 @@ go_library(
     srcs = ["consumergate.go"],
     importpath = "github.com/uber/submitqueue/platform/extension/consumergate",
     visibility = ["//visibility:public"],
+    deps = ["//platform/base/messagequeue:go_default_library"],
 )

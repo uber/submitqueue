@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -73,6 +74,10 @@ func (c *mergeConflictSignalController) Process(ctx context.Context, delivery co
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to decode merge conflict check result from dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		return nil
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})

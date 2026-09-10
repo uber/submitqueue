@@ -58,7 +58,7 @@ func (f staticBuildRunnerFactory) For(buildrunner.Config) (buildrunner.BuildRunn
 
 func batchIDPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	payload, err := entity.BatchID{ID: id}.ToBytes()
+	payload, err := entity.BatchID{ID: id, Queue: "test-queue"}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
@@ -154,10 +154,22 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, batch entity.Batch
 func processAttempt(t *testing.T, ctrl *gomock.Controller, c *Controller, attempt int) error {
 	t.Helper()
 	msg := entityqueue.NewMessage("msg-1", batchIDPayload(t, headID), "test-queue", nil)
+	msg.Tenant = "test-queue"
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(attempt).AnyTimes()
 	return c.Process(context.Background(), d)
+}
+
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newTestController(t, ctrl, headBatch(entity.BatchStateCreated))
+	msg := entityqueue.NewMessage("msg-1", batchIDPayload(t, headID), "test-queue", nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, c.Process(context.Background(), d))
 }
 
 // process delivers the head's batch ID as a first delivery.
@@ -175,6 +187,7 @@ func expectSignal(t *testing.T, deps *testDeps, buildID string) {
 			got, err := entity.BuildIDFromBytes(msg.Payload)
 			require.NoError(t, err)
 			assert.Equal(t, buildID, got.ID)
+			assert.Equal(t, "test-queue", msg.Tenant)
 			assert.Equal(t, buildID, msg.PartitionKey,
 				"polls partition per build so one slow build cannot block a head's others")
 			return nil

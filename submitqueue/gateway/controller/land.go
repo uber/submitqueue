@@ -212,8 +212,12 @@ func (c *landController) publishToQueue(ctx context.Context, landRequest entity.
 	//   retry of this same publish dedups instead of enqueuing it twice
 	// - Payload: serialized LandRequest entity
 	// - Partition key: landRequest.Queue (ensures ordering per queue)
-	if err := publish.Message(ctx, c.registry, topickey.TopicKeyStart,
-		publish.IntentID(landRequest.ID), payload, landRequest.Queue); err != nil {
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyStart, publish.MessageParams{
+		Tenant:       landRequest.Queue,
+		ID:           publish.IntentID(landRequest.ID),
+		Payload:      payload,
+		PartitionKey: landRequest.Queue,
+	}); err != nil {
 		return fmt.Errorf("failed to publish land request message: %w", err)
 	}
 

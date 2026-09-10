@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -90,6 +91,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize build request: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, br.GetQueueName()); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 	store, err := c.stores.For(storage.Config{QueueName: br.GetQueueName()})
 	if err != nil {
@@ -193,7 +197,12 @@ func (c *Controller) publishBuildSignal(ctx context.Context, buildID, queue stri
 		return fmt.Errorf("failed to serialize build signal: %w", err)
 	}
 
-	return publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuildSignal, publish.IntentID(buildID), payload, buildID)
+	return publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuildSignal, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(buildID),
+		Payload:      payload,
+		PartitionKey: buildID,
+	})
 }
 
 // Name returns the controller name for logging and metrics.

@@ -115,10 +115,25 @@ func TestProcessTagsMetricsWithQueue(t *testing.T) {
 	assert.EqualValues(t, 1, counter.Value())
 }
 
+func TestProcessRejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+	msg := entityqueue.NewMessage(testBuildID, buildSignalPayload(t, testID), testQueue, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	err := c.Process(queueContext(), d)
+	require.Error(t, err)
+	assert.False(t, errs.IsRetryable(err))
+}
+
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	d := consumermock.NewMockDelivery(ctrl)
-	d.EXPECT().Message().Return(entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)).AnyTimes()
+	msg := entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)
+	msg.Tenant = testQueue
+	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
 }
@@ -555,6 +570,7 @@ func TestPublishRecordCarriesRequestID(t *testing.T) {
 	assert.Equal(t, testID, payload.Id)
 	assert.Equal(t, testID, got.ID)
 	assert.Equal(t, testID, got.PartitionKey)
+	assert.Equal(t, "monorepo/main", got.Tenant)
 	assert.Equal(t, "monorepo/main", got.Metadata[entityqueue.MetadataKeyQueueName])
 }
 

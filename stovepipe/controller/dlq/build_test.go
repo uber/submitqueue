@@ -58,6 +58,7 @@ func TestBuildProcess(t *testing.T) {
 	tests := []struct {
 		name       string
 		payload    []byte
+		tenant     string
 		setup      func(m dlqMocks)
 		wantErr    bool
 		wantMetric string
@@ -82,6 +83,12 @@ func TestBuildProcess(t *testing.T) {
 			wantErr:    true,
 			wantMetric: "test.build_dlq_controller.build_dlq.empty_id_errors+queue=monorepo/main",
 		},
+		{
+			name:       "payload queue mismatch is acked",
+			tenant:     "monorepo/release",
+			wantErr:    false,
+			wantMetric: "test.build_dlq_controller.build_dlq.queue_identity_errors+queue=monorepo/main",
+		},
 	}
 
 	for _, tt := range tests {
@@ -96,7 +103,7 @@ func TestBuildProcess(t *testing.T) {
 			if payload == nil {
 				payload = buildPayload(t, testID)
 			}
-			err := controller.Process(queueContext(), delivery(t, ctrl, payload))
+			err := controller.Process(queueContext(), delivery(t, ctrl, payload, tt.tenant))
 			if tt.wantMetric != "" {
 				counter, ok := mocks.metricsScope.Snapshot().Counters()[tt.wantMetric]
 				require.True(t, ok)

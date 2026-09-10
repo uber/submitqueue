@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
@@ -118,6 +119,10 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		// message to its own DLQ if one is configured; otherwise the message is
 		// acked and dropped after the error is logged.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, rid.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		return nil
 	}
 	if rid.ID == "" {
 		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)

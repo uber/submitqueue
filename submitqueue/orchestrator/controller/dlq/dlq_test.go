@@ -82,7 +82,7 @@ func TestFailRequest_TerminalStates(t *testing.T) {
 
 			requestStore := storagemock.NewMockRequestStore(ctrl)
 			requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
-				ID: "q/1", Version: 5, State: tt.state,
+				ID: "q/1", Queue: "q", Version: 5, State: tt.state,
 			}, nil)
 
 			store := storagemock.NewMockStorage(ctrl)
@@ -114,7 +114,7 @@ func TestFailRequest_CancellingTransitionsToError(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 7, State: entity.RequestStateCancelling,
+		ID: "q/1", Queue: "q", Version: 7, State: entity.RequestStateCancelling,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(7), int32(8)).Return(nil)
@@ -139,7 +139,7 @@ func TestFailRequest_TransitionsToError(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 3, State: entity.RequestStateValidated,
+		ID: "q/1", Queue: "q", Version: 3, State: entity.RequestStateValidated,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(3), int32(4)).Return(nil)
@@ -167,7 +167,7 @@ func TestFailRequest_LogPublishErrorPropagates(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 3, State: entity.RequestStateValidated,
+		ID: "q/1", Queue: "q", Version: 3, State: entity.RequestStateValidated,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(3), int32(4)).Return(nil)
@@ -228,12 +228,12 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request1 := entity.Request{
-		ID: "q/1", Version: 2, State: entity.RequestStateProcessing,
+		ID: "q/1", Queue: "q", Version: 2, State: entity.RequestStateProcessing,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request1, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request1, entity.RequestStateError), int32(2), int32(3)).Return(nil)
 	request2 := entity.Request{
-		ID: "q/2", Version: 1, State: entity.RequestStateProcessing,
+		ID: "q/2", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/2").Return(request2, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request2, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -263,7 +263,7 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 2, State: entity.RequestStateProcessing,
+		ID: "q/1", Queue: "q", Version: 2, State: entity.RequestStateProcessing,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(2), int32(3)).Return(nil)
@@ -319,7 +319,7 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 3, State: entity.RequestStateCancelling,
+		ID: "q/1", Queue: "q", Version: 3, State: entity.RequestStateCancelling,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(3), int32(4)).Return(nil)

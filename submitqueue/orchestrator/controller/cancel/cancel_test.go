@@ -61,7 +61,7 @@ func requestWithState(request entity.Request, state entity.RequestState) entity.
 
 // cancelPayload serializes a CancelRequest to JSON bytes for test message payloads.
 func cancelPayload(t *testing.T, id, reason string) []byte {
-	payload, err := entity.CancelRequest{ID: id, Reason: reason}.ToBytes()
+	payload, err := entity.CancelRequest{ID: id, Queue: "q", Reason: reason}.ToBytes()
 	require.NoError(t, err)
 	return payload
 }
@@ -91,6 +91,7 @@ func newController(t *testing.T, store storage.Storage, registry consumer.TopicR
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) consumer.Delivery {
 	msg := entityqueue.NewMessage("cancel-msg", payload, partitionKey, nil)
+	msg.Tenant = "q"
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -134,6 +135,17 @@ func TestNewController(t *testing.T) {
 	assert.Equal(t, "cancel", controller.Name())
 
 	var _ consumer.Controller = controller
+}
+
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller := newController(t, storagemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
+	msg := entityqueue.NewMessage("cancel-msg", cancelPayload(t, "q/1", ""), "q", nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), d))
 }
 
 func TestProcess_AlreadyTerminal_NoOp(t *testing.T) {

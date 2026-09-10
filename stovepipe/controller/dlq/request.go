@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -88,6 +89,10 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		// instead would skip reconciliation silently and leave the referenced request
 		// non-terminal.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, pr.GetQueueName()); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
+		return nil
 	}
 	if pr.Id == "" {
 		metrics.NamedCounter(c.metricsScope, _opName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)

@@ -128,10 +128,12 @@ func TestPublishLog_MessageIDScopedByStatus(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	var ids []string
+	var tenants []string
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
 			ids = append(ids, msg.ID)
+			tenants = append(tenants, msg.Tenant)
 			return nil
 		},
 	).AnyTimes()
@@ -161,6 +163,7 @@ func TestPublishLog_MessageIDScopedByStatus(t *testing.T) {
 		"req/1/cancelled",
 		"req/1/started",
 	}, ids)
+	require.Equal(t, []string{"req", "req", "req", "req"}, tenants)
 }
 
 // TestPublishLog_MessageIDScopedByOccurrence locks in the recurring half of the

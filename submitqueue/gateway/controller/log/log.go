@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
@@ -75,6 +76,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize request log: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, logEntry.Queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	c.logger.Debugw("received request log entry",

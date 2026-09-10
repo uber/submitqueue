@@ -35,6 +35,7 @@ import (
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	queuemysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
@@ -286,6 +287,7 @@ func (s *E2EIntegrationSuite) redeliverBatchMessage(req request) {
 		DB:           s.queueDB,
 		Logger:       zap.NewNop(),
 		MetricsScope: tally.NoopScope,
+		Tenants:      []string{req.queue},
 	})
 	require.NoError(t, err, "failed to open the queue for a manual publish")
 	defer func() { require.NoError(t, queue.Close()) }()
@@ -298,8 +300,12 @@ func (s *E2EIntegrationSuite) redeliverBatchMessage(req request) {
 	payload, err := entity.RequestID{ID: req.sqid, Queue: req.queue}.ToBytes()
 	require.NoError(t, err)
 
-	require.NoError(t, publish.Message(s.ctx, registry, topickey.TopicKeyBatch,
-		publish.UniqueID(req.sqid), payload, req.queue), "failed to redeliver the batch message")
+	require.NoError(t, publish.Message(entityqueue.WithQueueName(s.ctx, req.queue), registry, topickey.TopicKeyBatch, publish.MessageParams{
+		Tenant:       req.queue,
+		ID:           publish.UniqueID(req.sqid),
+		Payload:      payload,
+		PartitionKey: req.queue,
+	}), "failed to redeliver the batch message")
 	s.log.Logf("Redelivered the batch message for %s", req.sqid)
 }
 
@@ -376,9 +382,15 @@ func (s *E2EIntegrationSuite) strandInCreated(queue, batchID string) {
 // partition (the queue name for pipeline topics). The gate must be closed
 // before the message that must be caught is published — that makes the stop
 // exact by construction rather than a timing race.
-func (s *E2EIntegrationSuite) closeGate(consumerGroup, partitionKey, reason string) {
+func (s *E2EIntegrationSuite) closeGate(tenant, consumerGroup, partitionKey, reason string) {
 	t := s.T()
-	key := consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: partitionKey}
+	key := consumergate.Key{
+		ConsumerGroup: consumerGroup,
+		Partition: entityqueue.PartitionIdentity{
+			Tenant:       tenant,
+			PartitionKey: partitionKey,
+		},
+	}
 	require.NoError(t, s.gate.Close(s.ctx, key, consumergate.Metadata{
 		Reason:      reason,
 		CreatedBy:   "e2e-suite",
@@ -390,9 +402,15 @@ func (s *E2EIntegrationSuite) closeGate(consumerGroup, partitionKey, reason stri
 // openGate opens the consumer gate for the consumer group and partition.
 // Opening an already-open gate is a no-op, so it is safe to call from a defer
 // after an explicit open.
-func (s *E2EIntegrationSuite) openGate(consumerGroup, partitionKey string) {
+func (s *E2EIntegrationSuite) openGate(tenant, consumerGroup, partitionKey string) {
 	t := s.T()
-	key := consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: partitionKey}
+	key := consumergate.Key{
+		ConsumerGroup: consumerGroup,
+		Partition: entityqueue.PartitionIdentity{
+			Tenant:       tenant,
+			PartitionKey: partitionKey,
+		},
+	}
 	require.NoError(t, s.gate.Open(s.ctx, key), "failed to open gate %+v", key)
 	s.log.Logf("Opened consumer gate %s (partition %q)", consumerGroup, partitionKey)
 }

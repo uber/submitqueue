@@ -124,7 +124,7 @@ func TestTerminateRequest(t *testing.T) {
 		"already in target terminal state republishes log": {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
-				already := entity.Request{ID: requestID, State: entity.RequestStateError, Version: 5}
+				already := entity.Request{ID: requestID, Queue: "q", State: entity.RequestStateError, Version: 5}
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(already, nil)
 			},
 			wantResult: TerminationResult{
@@ -140,7 +140,7 @@ func TestTerminateRequest(t *testing.T) {
 		"already in target terminal state returns republish error": {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
-				already := entity.Request{ID: requestID, State: entity.RequestStateError, Version: 5}
+				already := entity.Request{ID: requestID, Queue: "q", State: entity.RequestStateError, Version: 5}
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(already, nil)
 			},
 			publishErr: fmt.Errorf("connection refused"),
@@ -150,7 +150,7 @@ func TestTerminateRequest(t *testing.T) {
 		"diverged terminal state is left untouched": {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
-				landed := entity.Request{ID: requestID, State: entity.RequestStateLanded, Version: 7}
+				landed := entity.Request{ID: requestID, Queue: "q", State: entity.RequestStateLanded, Version: 7}
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(landed, nil)
 			},
 			wantResult: TerminationResult{

@@ -43,6 +43,7 @@ const (
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	msg := entityqueue.NewMessage(testID, payload, testPartitionKey, nil)
+	msg.Tenant = testQueue
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -118,11 +119,13 @@ func TestProcess_Success(t *testing.T) {
 
 	var gotTopic string
 	var gotPayload []byte
+	var gotTenant string
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			gotTopic = topic
 			gotPayload = msg.Payload
+			gotTenant = msg.Tenant
 			return nil
 		},
 	)
@@ -145,10 +148,25 @@ func TestProcess_Success(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), delivery))
 
 	assert.Equal(t, "merge-conflict-check-signal", gotTopic)
+	assert.Equal(t, testQueue, gotTenant)
 	result := &runwaymq.MergeResult{}
 	require.NoError(t, runwaymq.Unmarshal(gotPayload, result))
 	assert.Equal(t, testID, result.Id)
 	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, result.Outcome)
+}
+
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	factory := mergermock.NewMockFactory(ctrl)
+	registry, _ := newRegistry(t, ctrl, nil)
+	controller := newController(t, factory, registry)
+	request := &runwaymq.MergeRequest{Id: testID, QueueName: testQueue}
+	msg := entityqueue.NewMessage(testID, requestPayload(t, request), testPartitionKey, nil)
+	msg.Tenant = "other-queue"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
 }
 
 func TestProcess_MergeConflict(t *testing.T) {

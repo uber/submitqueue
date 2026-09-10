@@ -6,6 +6,7 @@ go_library(
         "constants.go",
         "delivery_state_store.go",
         "errors.go",
+        "identifier.go",
         "message_store.go",
         "mock_stores.go",
         "offset_store.go",

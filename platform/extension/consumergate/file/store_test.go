@@ -22,8 +22,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 )
+
+func partitionIdentity(tenant, partitionKey string) entityqueue.PartitionIdentity {
+	return entityqueue.PartitionIdentity{Tenant: tenant, PartitionKey: partitionKey}
+}
 
 func TestIsGated(t *testing.T) {
 	ctx := context.Background()
@@ -32,55 +37,69 @@ func TestIsGated(t *testing.T) {
 		name      string
 		close     []consumergate.Key
 		group     string
-		partition string
+		partition entityqueue.PartitionIdentity
 		want      bool
 	}{
 		{
 			name:      "no gates",
 			group:     "orchestrator-batch",
-			partition: "queue-a",
+			partition: partitionIdentity("", "queue-a"),
 			want:      false,
 		},
 		{
 			name:      "all-partitions gate matches any partition",
 			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch"}},
 			group:     "orchestrator-batch",
-			partition: "queue-a",
+			partition: partitionIdentity("", "queue-a"),
 			want:      true,
 		},
 		{
 			name:      "all-partitions gate matches empty partition",
 			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch"}},
 			group:     "orchestrator-batch",
-			partition: "",
+			partition: entityqueue.PartitionIdentity{},
 			want:      true,
 		},
 		{
 			name:      "partition gate matches its partition",
-			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", PartitionKey: "queue-a"}},
+			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", Partition: partitionIdentity("", "queue-a")}},
 			group:     "orchestrator-batch",
-			partition: "queue-a",
+			partition: partitionIdentity("", "queue-a"),
 			want:      true,
 		},
 		{
 			name:      "partition gate leaves other partitions open",
-			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", PartitionKey: "queue-a"}},
+			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", Partition: partitionIdentity("", "queue-a")}},
 			group:     "orchestrator-batch",
-			partition: "queue-b",
+			partition: partitionIdentity("", "queue-b"),
 			want:      false,
 		},
 		{
 			name:      "gate on one group leaves other groups open",
 			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch"}},
 			group:     "runway-merge",
-			partition: "queue-a",
+			partition: partitionIdentity("", "queue-a"),
 			want:      false,
 		},
 		{
 			name:      "partition key with slash is encoded and matched",
-			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", PartitionKey: "queue/1"}},
+			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", Partition: partitionIdentity("", "queue/1")}},
 			group:     "orchestrator-batch",
-			partition: "queue/1",
+			partition: partitionIdentity("", "queue/1"),
+			want:      true,
+		},
+		{
+			name:      "partition gate leaves same key in another tenant open",
+			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", Partition: partitionIdentity("tenant-a", "shared")}},
+			group:     "orchestrator-batch",
+			partition: partitionIdentity("tenant-b", "shared"),
+			want:      false,
+		},
+		{
+			name:      "partition gate matches tenant and partition",
+			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch", Partition: partitionIdentity("tenant-a", "shared")}},
+			group:     "orchestrator-batch",
+			partition: partitionIdentity("tenant-a", "shared"),
 			want:      true,
 		},
 	}
@@ -101,15 +120,15 @@ func TestIsGated(t *testing.T) {
 func TestOpenClosesGate(t *testing.T) {
 	ctx := context.Background()
 	store := New(t.TempDir())
-	key := consumergate.Key{ConsumerGroup: "orchestrator-batch", PartitionKey: "queue-a"}
+	key := consumergate.Key{ConsumerGroup: "orchestrator-batch", Partition: partitionIdentity("", "queue-a")}
 
 	require.NoError(t, store.Close(ctx, key, consumergate.Metadata{Reason: "pause", CreatedBy: "unit", CreatedAtMs: 1}))
-	gated, err := store.isGated(key.ConsumerGroup, key.PartitionKey)
+	gated, err := store.isGated(key.ConsumerGroup, key.Partition)
 	require.NoError(t, err)
 	require.True(t, gated)
 
 	require.NoError(t, store.Open(ctx, key))
-	gated, err = store.isGated(key.ConsumerGroup, key.PartitionKey)
+	gated, err = store.isGated(key.ConsumerGroup, key.Partition)
 	require.NoError(t, err)
 	assert.False(t, gated)
 
@@ -131,6 +150,7 @@ func TestParkedRecordLifecycle(t *testing.T) {
 		ConsumerGroup: "runway-mergeconflictcheck",
 		Topic:         "merge-conflict-check",
 		MessageID:     "e2e-queue/42",
+		Tenant:        "e2e-queue",
 		PartitionKey:  "e2e-queue",
 		Payload:       []byte(`{"id":"e2e-queue/42"}`),
 		Attempt:       1,
@@ -151,13 +171,46 @@ func TestParkedRecordLifecycle(t *testing.T) {
 	require.Len(t, records, 1)
 	assert.Equal(t, 2, records[0].Attempt)
 
-	require.NoError(t, store.removeParked(parked.ConsumerGroup, parked.Topic, parked.MessageID))
+	partition := partitionIdentity(parked.Tenant, parked.PartitionKey)
+	require.NoError(t, store.removeParked(parked.ConsumerGroup, parked.Topic, partition, parked.MessageID))
 	records, err = store.ListParked(ctx, parked.ConsumerGroup)
 	require.NoError(t, err)
 	assert.Empty(t, records)
 
 	// Removing an already-absent record is a no-op.
-	require.NoError(t, store.removeParked(parked.ConsumerGroup, parked.Topic, parked.MessageID))
+	require.NoError(t, store.removeParked(parked.ConsumerGroup, parked.Topic, partition, parked.MessageID))
+}
+
+func TestParkedRecordsWithSameMessageIDAcrossTenantsAreIndependent(t *testing.T) {
+	ctx := context.Background()
+	store := New(t.TempDir())
+	base := consumergate.Parked{
+		ConsumerGroup: "group",
+		Topic:         "topic",
+		MessageID:     "shared-id",
+		PartitionKey:  "shared",
+		ParkedAtMs:    1,
+	}
+	tenantA := base
+	tenantA.Tenant = "tenant-a"
+	tenantB := base
+	tenantB.Tenant = "tenant-b"
+
+	require.NoError(t, store.recordParked(tenantA))
+	require.NoError(t, store.recordParked(tenantB))
+	records, err := store.ListParked(ctx, base.ConsumerGroup)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []consumergate.Parked{tenantA, tenantB}, records)
+
+	require.NoError(t, store.removeParked(
+		base.ConsumerGroup,
+		base.Topic,
+		partitionIdentity(tenantA.Tenant, tenantA.PartitionKey),
+		base.MessageID,
+	))
+	records, err = store.ListParked(ctx, base.ConsumerGroup)
+	require.NoError(t, err)
+	assert.Equal(t, []consumergate.Parked{tenantB}, records)
 }
 
 func TestListParkedEmpty(t *testing.T) {
@@ -176,13 +229,14 @@ func TestListParkedSkipsTempFiles(t *testing.T) {
 		ConsumerGroup: "group",
 		Topic:         "topic",
 		MessageID:     "id",
+		Tenant:        "tenant",
 		PartitionKey:  "part",
 		ParkedAtMs:    1,
 	}
 	require.NoError(t, store.recordParked(parked))
 
 	// Simulate an in-flight temp file awaiting rename alongside the record.
-	tmpPath := filepath.Join(dir, "parked", "group", "topic", "id.json.tmp123")
+	tmpPath := filepath.Join(dir, "parked", "group", "topic", "t-tenant", "p-part", "id.json.tmp123")
 	require.NoError(t, os.WriteFile(tmpPath, []byte("partial"), 0o644))
 
 	records, err := store.ListParked(ctx, "group")
@@ -192,7 +246,7 @@ func TestListParkedSkipsTempFiles(t *testing.T) {
 
 func TestMissingDirIsNotGated(t *testing.T) {
 	store := New(filepath.Join(t.TempDir(), "does-not-exist"))
-	gated, err := store.isGated("group", "part")
+	gated, err := store.isGated("group", partitionIdentity("", "part"))
 	require.NoError(t, err)
 	assert.False(t, gated)
 }
@@ -208,7 +262,7 @@ func TestEnter_OpenGateUnblocked(t *testing.T) {
 		Attempt:   1,
 	}
 
-	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", Partition: partitionIdentity("", "part")})
 	require.NoError(t, err)
 	assert.False(t, entry.Blocked())
 
@@ -234,7 +288,7 @@ func TestEnter_ClosedGateParkAndRelease(t *testing.T) {
 		Attempt:   1,
 	}
 
-	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", Partition: partitionIdentity("", "part")})
 	require.NoError(t, err)
 	require.True(t, entry.Blocked())
 
@@ -262,7 +316,7 @@ func TestEnter_ClosedGateParkAndRelease(t *testing.T) {
 
 	// Open the gate; the next Enter is unblocked and Unpark removes the record.
 	require.NoError(t, store.Open(ctx, key))
-	entry, err = store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	entry, err = store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", Partition: partitionIdentity("", "part")})
 	require.NoError(t, err)
 	require.False(t, entry.Blocked())
 	require.NoError(t, entry.Unpark(ctx, descriptor))
@@ -278,6 +332,6 @@ func TestEnter_MediumError(t *testing.T) {
 	require.NoError(t, os.WriteFile(dir, []byte("x"), 0o644))
 
 	store := New(dir)
-	_, err := store.Enter(context.Background(), consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	_, err := store.Enter(context.Background(), consumergate.Key{ConsumerGroup: "group", Partition: partitionIdentity("", "part")})
 	require.Error(t, err)
 }

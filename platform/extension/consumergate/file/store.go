@@ -16,9 +16,9 @@
 // shared directory. Presence of a gate file means the gate is closed; deleting
 // the file opens it. Layout under the configured root:
 //
-//	gates/{consumer_group}/all                        gates every partition
-//	gates/{consumer_group}/p-{urlenc(partition)}      gates one partition
-//	parked/{consumer_group}/{topic}/{urlenc(id)}.json one parked delivery record
+//	gates/{consumer_group}/all                                      gates every partition
+//	gates/{consumer_group}/partitions/t-{tenant}/p-{partition}      gates one partition
+//	parked/{consumer_group}/{topic}/t-{tenant}/p-{partition}/{urlenc(id)}.json
 //
 // Consumer groups and topics are filesystem-safe by the repo's naming rules;
 // partition keys and message IDs may contain "/" (request IDs like "queue/1"),
@@ -51,6 +51,7 @@ import (
 	"strings"
 	"time"
 
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 )
 
@@ -75,25 +76,39 @@ func New(dir string) *Store {
 // gatePath returns the gate file path for a key: the "all" marker when the key
 // has no partition, or the partition-scoped "p-..." marker otherwise.
 func (s *Store) gatePath(key consumergate.Key) string {
-	name := "all"
-	if key.PartitionKey != "" {
-		name = "p-" + url.QueryEscape(key.PartitionKey)
+	if key.Partition == (entityqueue.PartitionIdentity{}) {
+		return filepath.Join(s.dir, "gates", key.ConsumerGroup, "all")
 	}
-	return filepath.Join(s.dir, "gates", key.ConsumerGroup, name)
+	return filepath.Join(
+		s.dir,
+		"gates",
+		key.ConsumerGroup,
+		"partitions",
+		"t-"+url.QueryEscape(key.Partition.Tenant),
+		"p-"+url.QueryEscape(key.Partition.PartitionKey),
+	)
 }
 
 // parkedPath returns the parked-record file path for one delivery.
-func (s *Store) parkedPath(consumerGroup, topic, messageID string) string {
-	return filepath.Join(s.dir, "parked", consumerGroup, topic, url.QueryEscape(messageID)+".json")
+func (s *Store) parkedPath(consumerGroup, topic string, partition entityqueue.PartitionIdentity, messageID string) string {
+	return filepath.Join(
+		s.dir,
+		"parked",
+		consumerGroup,
+		topic,
+		"t-"+url.QueryEscape(partition.Tenant),
+		"p-"+url.QueryEscape(partition.PartitionKey),
+		url.QueryEscape(messageID)+".json",
+	)
 }
 
 // isGated reports whether deliveries for the consumer group and partition are
 // currently gated, either by an all-partitions gate or by a gate scoped to
 // exactly this partition.
-func (s *Store) isGated(consumerGroup, partitionKey string) (bool, error) {
+func (s *Store) isGated(consumerGroup string, partition entityqueue.PartitionIdentity) (bool, error) {
 	paths := []string{s.gatePath(consumergate.Key{ConsumerGroup: consumerGroup})}
-	if partitionKey != "" {
-		paths = append(paths, s.gatePath(consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: partitionKey}))
+	if partition != (entityqueue.PartitionIdentity{}) {
+		paths = append(paths, s.gatePath(consumergate.Key{ConsumerGroup: consumerGroup, Partition: partition}))
 	}
 	for _, p := range paths {
 		switch _, err := os.Stat(p); {
@@ -111,7 +126,7 @@ func (s *Store) isGated(consumerGroup, partitionKey string) (bool, error) {
 // Enter implements consumergate.Gate. It returns an unblocked Entry when the
 // gate identified by key is open, and a blocked Entry when it is closed.
 func (s *Store) Enter(_ context.Context, key consumergate.Key) (consumergate.Entry, error) {
-	gated, err := s.isGated(key.ConsumerGroup, key.PartitionKey)
+	gated, err := s.isGated(key.ConsumerGroup, key.Partition)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +155,8 @@ func (e entry) Park(_ context.Context, descriptor consumergate.DeliveryDescripto
 		ConsumerGroup: e.key.ConsumerGroup,
 		Topic:         descriptor.Topic,
 		MessageID:     descriptor.MessageID,
-		PartitionKey:  e.key.PartitionKey,
+		Tenant:        e.key.Partition.Tenant,
+		PartitionKey:  e.key.Partition.PartitionKey,
 		Payload:       descriptor.Payload,
 		Attempt:       descriptor.Attempt,
 		ParkedAtMs:    time.Now().UnixMilli(),
@@ -150,13 +166,14 @@ func (e entry) Park(_ context.Context, descriptor consumergate.DeliveryDescripto
 // Unpark implements consumergate.Entry. Removing an absent record is a no-op,
 // so callers may invoke it unconditionally on the admit path.
 func (e entry) Unpark(_ context.Context, descriptor consumergate.DeliveryDescriptor) error {
-	return e.store.removeParked(e.key.ConsumerGroup, descriptor.Topic, descriptor.MessageID)
+	return e.store.removeParked(e.key.ConsumerGroup, descriptor.Topic, e.key.Partition, descriptor.MessageID)
 }
 
 // recordParked writes a parked-delivery record. Re-recording the same delivery
 // (e.g. after a redelivery) overwrites the previous record.
 func (s *Store) recordParked(parked consumergate.Parked) error {
-	path := s.parkedPath(parked.ConsumerGroup, parked.Topic, parked.MessageID)
+	partition := entityqueue.PartitionIdentity{Tenant: parked.Tenant, PartitionKey: parked.PartitionKey}
+	path := s.parkedPath(parked.ConsumerGroup, parked.Topic, partition, parked.MessageID)
 	if err := writeJSON(path, parkedRecord(parked)); err != nil {
 		return fmt.Errorf("failed to write parked record %s: %w", path, err)
 	}
@@ -165,8 +182,8 @@ func (s *Store) recordParked(parked consumergate.Parked) error {
 
 // removeParked removes a parked-delivery record. Removing an already-absent
 // record is a no-op.
-func (s *Store) removeParked(consumerGroup, topic, messageID string) error {
-	path := s.parkedPath(consumerGroup, topic, messageID)
+func (s *Store) removeParked(consumerGroup, topic string, partition entityqueue.PartitionIdentity, messageID string) error {
+	path := s.parkedPath(consumerGroup, topic, partition, messageID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove parked record %s: %w", path, err)
 	}
@@ -217,21 +234,39 @@ func (s *Store) ListParked(_ context.Context, consumerGroup string) ([]consumerg
 			continue
 		}
 		topicDir := filepath.Join(groupDir, topic.Name())
-		entries, err := os.ReadDir(topicDir)
+		tenantDirs, err := os.ReadDir(topicDir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read parked dir %s: %w", topicDir, err)
 		}
-		for _, entry := range entries {
-			// Skip anything that is not a finished record (e.g. temp files
-			// awaiting rename).
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		for _, tenantDir := range tenantDirs {
+			if !tenantDir.IsDir() {
 				continue
 			}
-			rec, err := readParked(filepath.Join(topicDir, entry.Name()))
+			tenantPath := filepath.Join(topicDir, tenantDir.Name())
+			partitionDirs, err := os.ReadDir(tenantPath)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to read parked dir %s: %w", tenantPath, err)
 			}
-			out = append(out, consumergate.Parked(rec))
+			for _, partitionDir := range partitionDirs {
+				if !partitionDir.IsDir() {
+					continue
+				}
+				partitionPath := filepath.Join(tenantPath, partitionDir.Name())
+				entries, err := os.ReadDir(partitionPath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read parked dir %s: %w", partitionPath, err)
+				}
+				for _, entry := range entries {
+					if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+						continue
+					}
+					rec, err := readParked(filepath.Join(partitionPath, entry.Name()))
+					if err != nil {
+						return nil, err
+					}
+					out = append(out, consumergate.Parked(rec))
+				}
+			}
 		}
 	}
 	return out, nil
@@ -256,6 +291,8 @@ type parkedRecord struct {
 	Topic string `json:"topic"`
 	// MessageID is the queue message ID of the parked delivery.
 	MessageID string `json:"message_id"`
+	// Tenant is the shard isolation identity.
+	Tenant string `json:"tenant"`
 	// PartitionKey is the partition the delivery belongs to.
 	PartitionKey string `json:"partition_key"`
 	// Payload is the message payload (base64 in the JSON encoding).

@@ -38,6 +38,7 @@ import (
 
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -116,6 +117,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize record: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, rec.GetQueueName()); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 	store, err := c.stores.For(storage.Config{QueueName: rec.GetQueueName()})
 	if err != nil {
@@ -520,7 +524,7 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 // Partitioning by request id matches the record topic's own, carrying
 // per-request ordering across the seam.
 func (c *Controller) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
-	if err := platformhook.Publish(ctx, c.registry, event, request.ID); err != nil {
+	if err := platformhook.Publish(ctx, c.registry, request.Queue, event, request.ID); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
 	}

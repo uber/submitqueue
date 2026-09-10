@@ -89,10 +89,16 @@ func expectFailureLog(m dlqMocks, reason entity.RequestOutcomeReason, version in
 	).Return(nil)
 }
 
-func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
+func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte, tenants ...string) consumer.Delivery {
 	t.Helper()
+	tenant := testQueue
+	if len(tenants) > 0 && tenants[0] != "" {
+		tenant = tenants[0]
+	}
+	msg := entityqueue.NewMessage(testID, payload, testQueue, nil)
+	msg.Tenant = tenant
 	d := consumermock.NewMockDelivery(ctrl)
-	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
+	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(4).AnyTimes()
 	d.EXPECT().Metadata().Return(map[string]string{
 		"dlq.original_topic": "process",
@@ -122,6 +128,7 @@ func TestProcess(t *testing.T) {
 	tests := []struct {
 		name       string
 		payload    []byte
+		tenant     string
 		setup      func(m dlqMocks)
 		wantErr    bool
 		wantMetric string
@@ -248,6 +255,13 @@ func TestProcess(t *testing.T) {
 			wantErr:    true,
 			wantMetric: "test.process_dlq_controller.process_dlq.empty_id_errors+queue=monorepo/main",
 		},
+		{
+			name:       "payload queue mismatch is acked",
+			tenant:     "monorepo/release",
+			setup:      func(m dlqMocks) {},
+			wantErr:    false,
+			wantMetric: "test.process_dlq_controller.process_dlq.queue_identity_errors+queue=monorepo/main",
+		},
 	}
 
 	for _, tt := range tests {
@@ -261,7 +275,7 @@ func TestProcess(t *testing.T) {
 				payload = processPayload(t, testID)
 			}
 
-			err := c.Process(queueContext(), delivery(t, ctrl, payload))
+			err := c.Process(queueContext(), delivery(t, ctrl, payload, tt.tenant))
 			if tt.wantMetric != "" {
 				counter, ok := m.metricsScope.Snapshot().Counters()[tt.wantMetric]
 				require.True(t, ok)

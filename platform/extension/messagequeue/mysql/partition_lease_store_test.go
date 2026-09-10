@@ -51,11 +51,11 @@ func TestPartitionLeaseStore_TryAcquireLease(t *testing.T) {
 			name: "successfully acquire lease",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", "part1", testSubscriberName, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				rows := sqlmock.NewRows([]string{"leased_by"}).AddRow(testSubscriberName)
 				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", "part1").
+					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1").
 					WillReturnRows(rows)
 			},
 			acquired: true,
@@ -68,7 +68,7 @@ func TestPartitionLeaseStore_TryAcquireLease(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				rows := sqlmock.NewRows([]string{"leased_by"}).AddRow("other-worker")
 				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", "part1").
+					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1").
 					WillReturnRows(rows)
 			},
 			acquired: false,
@@ -87,7 +87,7 @@ func TestPartitionLeaseStore_TryAcquireLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			acquired, err := store.TryAcquireLease(ctx, topic, partitionKey, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
+			acquired, err := store.TryAcquireLease(ctx, testTenant, topic, partitionKey, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -109,7 +109,7 @@ func TestPartitionLeaseStore_RenewLease(t *testing.T) {
 			name: "successfully renew lease",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue_partition_leases").
-					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", "part1", testSubscriberName).
+					WithArgs(sqlmock.AnyArg(), testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -118,7 +118,7 @@ func TestPartitionLeaseStore_RenewLease(t *testing.T) {
 			name: "lease not owned",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue_partition_leases").
-					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", "part1", testSubscriberName).
+					WithArgs(sqlmock.AnyArg(), testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr: true,
@@ -136,7 +136,7 @@ func TestPartitionLeaseStore_RenewLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.RenewLease(ctx, topic, partitionKey, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
+			err := store.RenewLease(ctx, testTenant, topic, partitionKey, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -157,7 +157,7 @@ func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 			name: "successfully release lease",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", "part1", testSubscriberName).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -166,7 +166,7 @@ func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 			name: "idempotent - already released",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", "part1", testSubscriberName).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr: false,
@@ -184,7 +184,7 @@ func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.ReleaseLease(ctx, topic, partitionKey, testSubscriberName, testConsumerGroup)
+			err := store.ReleaseLease(ctx, testTenant, topic, partitionKey, testSubscriberName, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -208,10 +208,10 @@ func TestPartitionLeaseStore_GetLeasedPartitions(t *testing.T) {
 		AddRow("part3")
 
 	mock.ExpectQuery("SELECT partition_key FROM queue_partition_leases").
-		WithArgs(testConsumerGroup, topic, testSubscriberName).
+		WithArgs(testTenant, testConsumerGroup, topic, testSubscriberName).
 		WillReturnRows(rows)
 
-	partitions, err := store.GetLeasedPartitions(ctx, topic, testSubscriberName, testConsumerGroup)
+	partitions, err := store.GetLeasedPartitions(ctx, testTenant, topic, testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 	require.Len(t, partitions, 3)
 	require.Equal(t, []string{"part1", "part2", "part3"}, partitions)
@@ -231,7 +231,7 @@ func TestPartitionLeaseStore_GetAllLeases(t *testing.T) {
 					AddRow("part1", testSubscriberName, int64(1000)).
 					AddRow("part2", "other-worker", int64(2000))
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(rows)
 			},
 			want: []leaseInfo{
@@ -243,7 +243,7 @@ func TestPartitionLeaseStore_GetAllLeases(t *testing.T) {
 			name: "no leases returns empty",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows([]string{"partition_key", "leased_by", "lease_renewed_at"}))
 			},
 			want: nil,
@@ -257,7 +257,7 @@ func TestPartitionLeaseStore_GetAllLeases(t *testing.T) {
 
 			tt.setup(mock)
 
-			leases, err := store.GetAllLeases(context.Background(), "test_topic", testConsumerGroup)
+			leases, err := store.GetAllLeases(context.Background(), testTenant, "test_topic", testConsumerGroup)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, leases)
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -277,7 +277,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			rows.AddRow(pk)
 		}
 		mock.ExpectQuery("SELECT DISTINCT partition_key FROM queue_messages").
-			WithArgs("test_topic").
+			WithArgs(testTenant, "test_topic").
 			WillReturnRows(rows)
 	}
 
@@ -302,7 +302,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1", "part2")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns).
 						AddRow("part2", "other-worker", freshMs))
 				// Only unleased part1 is attempted; part2's fresh lease is
@@ -317,7 +317,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns).
 						AddRow("part1", "other-worker", staleMs))
 				expectAcquire(mock, testSubscriberName)
@@ -330,7 +330,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1", "part2")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns).
 						AddRow("part1", testSubscriberName, freshMs))
 				// Only part2 is attempted; renewal of part1 is the lease
@@ -345,7 +345,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1", "part2", "part3")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns))
 				// part1 and part2 acquired; part3 never attempted at the cap.
 				expectAcquire(mock, testSubscriberName)
@@ -359,7 +359,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1", "part2", "part3")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns).
 						AddRow("existing1", testSubscriberName, freshMs).
 						AddRow("existing2", testSubscriberName, freshMs))
@@ -374,7 +374,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1", "part2")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns).
 						AddRow("existing1", testSubscriberName, freshMs).
 						AddRow("existing2", testSubscriberName, freshMs))
@@ -388,7 +388,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				expectDiscover(mock, "part1")
 				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic").
+					WithArgs(testTenant, testConsumerGroup, "test_topic").
 					WillReturnRows(sqlmock.NewRows(leaseColumns))
 				// Attempted while unleased, but another subscriber won the
 				// atomic acquire between the read and the write.
@@ -405,7 +405,7 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 
 			tt.setup(mock)
 
-			acquired, discoveredPartitions, err := store.DiscoverAndAcquirePartitions(context.Background(), "test_topic", testSubscriberName, testConsumerGroup, testLeaseDurationMs, tt.maxPartitions)
+			acquired, discoveredPartitions, err := store.DiscoverAndAcquirePartitions(context.Background(), testTenant, "test_topic", testSubscriberName, testConsumerGroup, testLeaseDurationMs, tt.maxPartitions)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantAcquired, acquired)
 			require.NotNil(t, discoveredPartitions)
@@ -424,7 +424,7 @@ func TestPartitionLeaseStore_PurgeStale(t *testing.T) {
 			name: "deletes rows older than threshold",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(0, 2))
 			},
 		},
@@ -432,7 +432,7 @@ func TestPartitionLeaseStore_PurgeStale(t *testing.T) {
 			name: "no stale rows is a no-op",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 		},
@@ -440,7 +440,7 @@ func TestPartitionLeaseStore_PurgeStale(t *testing.T) {
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WithArgs(testTenant, testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantErr: true,
@@ -454,7 +454,7 @@ func TestPartitionLeaseStore_PurgeStale(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.PurgeStale(context.Background(), "test_topic", testConsumerGroup, 300_000)
+			err := store.PurgeStale(context.Background(), testTenant, "test_topic", testConsumerGroup, 300_000)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

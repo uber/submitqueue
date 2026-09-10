@@ -48,12 +48,16 @@ func requestWithState(request entity.Request, state entity.RequestState) entity.
 }
 
 func resultPayload(t *testing.T, res runwaymq.MergeResult) []byte {
+	if res.QueueName == "" {
+		res.QueueName = testQueue
+	}
 	payload, err := runwaymq.Marshal(&res)
 	require.NoError(t, err)
 	return payload
 }
 
 func newDelivery(ctrl *gomock.Controller, msg entityqueue.Message) *consumermock.MockDelivery {
+	msg.Tenant = testQueue
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -64,6 +68,20 @@ const (
 	testRequestID = "test-queue/1"
 	testQueue     = "test-queue"
 )
+
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storagemock.NewMockStorage(ctrl)
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
+	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), d))
+}
 
 func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)

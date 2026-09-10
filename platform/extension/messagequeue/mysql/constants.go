@@ -18,6 +18,7 @@ package mysql
 
 const (
 	// Common log field names (used extensively across all stores)
+	logTenant       = "tenant"
 	logTopic        = "topic"
 	logPartitionKey = "partition_key"
 	logMessageID    = "message_id"

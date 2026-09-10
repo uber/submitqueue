@@ -37,6 +37,7 @@ func newTestLogRegistry(
 		func(_ context.Context, _ string, message entityqueue.Message) error {
 			logEntry, err := entity.RequestLogFromBytes(message.Payload)
 			require.NoError(t, err)
+			require.Equal(t, logEntry.Queue, message.Tenant)
 			return publishFn(logEntry)
 		},
 	).Times(publishCount)

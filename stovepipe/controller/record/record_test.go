@@ -82,6 +82,7 @@ type recordMocks struct {
 // plumbing carrying it. Setting err makes the publish fail.
 type hookRecorder struct {
 	events []*basehook.HookEvent
+	tenant string
 	err    error
 }
 
@@ -175,6 +176,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 				return err
 			}
 			m.hooks.events = append(m.hooks.events, event)
+			m.hooks.tenant = msg.Tenant
 			return nil
 		}).AnyTimes()
 
@@ -211,7 +213,9 @@ func TestControllerIdentity(t *testing.T) {
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	d := consumermock.NewMockDelivery(ctrl)
-	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testID, nil)).AnyTimes()
+	msg := entityqueue.NewMessage(testID, payload, testID, nil)
+	msg.Tenant = testQueue
+	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
 }
@@ -303,6 +307,7 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
 
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+			assert.Equal(t, testQueue, m.hooks.tenant)
 			assert.Equal(t, tt.wantURI, written.LastGreenURI)
 			assert.Equal(t, testID, written.LastGreenRequestID)
 
@@ -1044,6 +1049,17 @@ func TestProcess_MalformedPayloadFails(t *testing.T) {
 	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, []byte("not-protojson"))))
 }
 
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+	msg := entityqueue.NewMessage(testID, recordPayload(t, testID), testID, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, c.Process(queueContext(), d))
+}
+
 func TestProcess_QueueMismatchFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
@@ -1055,6 +1071,10 @@ func TestProcess_QueueMismatchFails(t *testing.T) {
 
 	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: testID, QueueName: "monorepo/other"})
 	require.NoError(t, err)
+	msg := entityqueue.NewMessage(testID, payload, testID, nil)
+	msg.Tenant = "monorepo/other"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
 
-	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, payload)))
+	require.Error(t, c.Process(queueContext(), d))
 }

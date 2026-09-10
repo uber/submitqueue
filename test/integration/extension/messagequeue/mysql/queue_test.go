@@ -38,6 +38,8 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
+const testTenant = "test-tenant"
+
 type SQLQueueIntegrationSuite struct {
 	suite.Suite
 	ctx   context.Context
@@ -48,6 +50,25 @@ type SQLQueueIntegrationSuite struct {
 
 func TestSQLQueueIntegration(t *testing.T) {
 	suite.Run(t, new(SQLQueueIntegrationSuite))
+}
+
+func (s *SQLQueueIntegrationSuite) testQueueParams(t *testing.T, extra func(*queueMySQL.Params)) queueMySQL.Params {
+	p := queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+		Tenants:      []string{testTenant},
+	}
+	if extra != nil {
+		extra(&p)
+	}
+	return p
+}
+
+func testMessage(id string, payload []byte, partitionKey string, metadata map[string]string) entityqueue.Message {
+	msg := entityqueue.NewMessage(id, payload, partitionKey, metadata)
+	msg.Tenant = testTenant
+	return msg
 }
 
 func (s *SQLQueueIntegrationSuite) SetupSuite() {
@@ -97,6 +118,64 @@ func (s *SQLQueueIntegrationSuite) SetupSuite() {
 func (s *SQLQueueIntegrationSuite) TearDownSuite() {
 	s.log.Logf("Tearing down SQL Queue integration test suite")
 	// Cleanup handled automatically by testutil.ComposeStack
+}
+
+func (s *SQLQueueIntegrationSuite) TestIndexedIdentifiersFitInnoDBKeyLimit() {
+	var asciiIdentifiers int
+	err := s.db.QueryRowContext(s.ctx, `
+		SELECT COUNT(DISTINCT s.TABLE_NAME, s.COLUMN_NAME)
+		FROM information_schema.STATISTICS AS s
+		JOIN information_schema.COLUMNS AS c
+		  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
+		 AND c.TABLE_NAME = s.TABLE_NAME
+		 AND c.COLUMN_NAME = s.COLUMN_NAME
+		WHERE s.TABLE_SCHEMA = DATABASE()
+		  AND c.DATA_TYPE = 'varchar'
+		  AND c.CHARACTER_MAXIMUM_LENGTH = 255
+		  AND c.CHARACTER_SET_NAME = 'ascii'
+		  AND c.COLLATION_NAME = 'ascii_bin'
+	`).Scan(&asciiIdentifiers)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), 15, asciiIdentifiers)
+
+	var utf8Identifiers int
+	err = s.db.QueryRowContext(s.ctx, `
+		SELECT COUNT(DISTINCT s.TABLE_NAME, s.COLUMN_NAME)
+		FROM information_schema.STATISTICS AS s
+		JOIN information_schema.COLUMNS AS c
+		  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
+		 AND c.TABLE_NAME = s.TABLE_NAME
+		 AND c.COLUMN_NAME = s.COLUMN_NAME
+		WHERE s.TABLE_SCHEMA = DATABASE()
+		  AND c.DATA_TYPE = 'varchar'
+		  AND c.CHARACTER_MAXIMUM_LENGTH = 255
+		  AND c.CHARACTER_SET_NAME = 'utf8mb4'
+		  AND c.COLLATION_NAME = 'utf8mb4_bin'
+	`).Scan(&utf8Identifiers)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), 5, utf8Identifiers)
+}
+
+func (s *SQLQueueIntegrationSuite) TestOffsetsPrimaryKeyOrder() {
+	rows, err := s.db.QueryContext(s.ctx, `
+		SELECT COLUMN_NAME
+		FROM information_schema.KEY_COLUMN_USAGE
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME = 'queue_offsets'
+		  AND CONSTRAINT_NAME = 'PRIMARY'
+		ORDER BY ORDINAL_POSITION
+	`)
+	require.NoError(s.T(), err)
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var column string
+		require.NoError(s.T(), rows.Scan(&column))
+		columns = append(columns, column)
+	}
+	require.NoError(s.T(), rows.Err())
+	assert.Equal(s.T(), []string{"tenant", "topic", "partition_key", "consumer_group"}, columns)
 }
 
 // testSubConfig returns a SubscriptionConfig with short lease/visibility
@@ -322,7 +401,7 @@ func waitForLag(
 	t.Helper()
 
 	for {
-		lags, err := admin.ConsumerLag(ctx, topic)
+		lags, err := admin.ConsumerLag(ctx, testTenant, topic)
 		require.NoError(t, err)
 
 		var actual int64 = -1
@@ -345,11 +424,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	t := s.T()
 
 	// Create queue
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -365,13 +440,13 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	require.NoError(t, err)
 
 	// Publish messages with various metadata scenarios
-	msg1 := entityqueue.NewMessage("msg-1", []byte("hello"), "partition-1", map[string]string{
+	msg1 := testMessage("msg-1", []byte("hello"), "partition-1", map[string]string{
 		"key1":     "value1",
 		"key2":     "value2",
 		"trace_id": "abc123",
 	})
 
-	msg2 := entityqueue.NewMessage("msg-2", []byte("world"), "partition-1", nil)
+	msg2 := testMessage("msg-2", []byte("world"), "partition-1", nil)
 
 	err = publisher.Publish(s.ctx, topic, msg1)
 	require.NoError(t, err)
@@ -416,11 +491,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
 	t := s.T()
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -437,8 +508,8 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
 	require.NoError(t, err)
 
 	// Publish 1 message to partition-a and 1 to partition-b
-	msgA := entityqueue.NewMessage("iso-msg-a", []byte("data-a"), "partition-a", nil)
-	msgB := entityqueue.NewMessage("iso-msg-b", []byte("data-b"), "partition-b", nil)
+	msgA := testMessage("iso-msg-a", []byte("data-a"), "partition-a", nil)
+	msgB := testMessage("iso-msg-b", []byte("data-b"), "partition-b", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topic, msgA))
 	require.NoError(t, publisher.Publish(s.ctx, topic, msgB))
 	t.Logf("Published 1 message to partition-a and 1 to partition-b")
@@ -472,11 +543,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
 func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
 	t := s.T()
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -492,7 +559,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
 	for i := 0; i < numMessages; i++ {
 		msgID := fmt.Sprintf("order-msg-%03d", i)
 		publishedIDs[i] = msgID
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), partitionKey, nil)
+		msg := testMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), partitionKey, nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages to partition %s", numMessages, partitionKey)
@@ -525,11 +592,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
 func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 	t := s.T()
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -549,8 +612,8 @@ func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 	expectedCount := len(partitions) * 2 // 2 messages per partition
 
 	for _, partition := range partitions {
-		msg1 := entityqueue.NewMessage(partition+"-msg-1", []byte("data-1"), partition, nil)
-		msg2 := entityqueue.NewMessage(partition+"-msg-2", []byte("data-2"), partition, nil)
+		msg1 := testMessage(partition+"-msg-1", []byte("data-1"), partition, nil)
+		msg2 := testMessage(partition+"-msg-2", []byte("data-2"), partition, nil)
 
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg1))
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg2))
@@ -572,12 +635,9 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -594,7 +654,7 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	require.NoError(t, err)
 
 	// Publish a message
-	msg := entityqueue.NewMessage("retry-msg", []byte("test"), "retry-partition", nil)
+	msg := testMessage("retry-msg", []byte("test"), "retry-partition", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 
 	t.Logf("Published message, expecting visibility timeout retry")
@@ -629,7 +689,7 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	t.Logf("Test 2: Visibility timeout retry")
 
 	// Publish another message
-	msg2 := entityqueue.NewMessage("retry-msg-2", []byte("test2"), "retry-partition", nil)
+	msg2 := testMessage("retry-msg-2", []byte("test2"), "retry-partition", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg2))
 
 	// Receive first time
@@ -654,12 +714,9 @@ func (s *SQLQueueIntegrationSuite) TestNackBackoff() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -673,7 +730,7 @@ func (s *SQLQueueIntegrationSuite) TestNackBackoff() {
 	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, "nack_backoff_topic", subConfig)
 	require.NoError(t, err)
 	require.NoError(t, q.Publisher().Publish(s.ctx, "nack_backoff_topic",
-		entityqueue.NewMessage("retry-msg", []byte("test"), "retry-partition", nil)))
+		testMessage("retry-msg", []byte("test"), "retry-partition", nil)))
 
 	firstDelivery := receive(t, deliveryChan)
 	assert.Equal(t, 1, firstDelivery.Attempt())
@@ -689,12 +746,9 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -710,7 +764,7 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	require.NoError(t, err)
 
 	// Publish same message twice
-	msg := entityqueue.NewMessage("same-id", []byte("duplicate"), "same-partition", nil)
+	msg := testMessage("same-id", []byte("duplicate"), "same-partition", nil)
 
 	err1 := publisher.Publish(s.ctx, topic, msg)
 	require.NoError(t, err1)
@@ -746,12 +800,9 @@ func (s *SQLQueueIntegrationSuite) TestDedupOutlivesConsumption() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -766,7 +817,7 @@ func (s *SQLQueueIntegrationSuite) TestDedupOutlivesConsumption() {
 	// The first publish for an entity: delivered, acked, and now awaiting
 	// collection rather than gone.
 	require.NoError(t, publisher.Publish(s.ctx, topic,
-		entityqueue.NewMessage("batch-1", []byte("announced"), "queue-1", nil)))
+		testMessage("batch-1", []byte("announced"), "queue-1", nil)))
 	first := receive(t, deliveryChan)
 	require.Equal(t, "batch-1", first.Message().ID)
 	require.NoError(t, first.Ack(s.ctx))
@@ -774,12 +825,12 @@ func (s *SQLQueueIntegrationSuite) TestDedupOutlivesConsumption() {
 	// A later, unrelated event about the same entity, published under the same
 	// ID. It reports success and is never delivered.
 	require.NoError(t, publisher.Publish(s.ctx, topic,
-		entityqueue.NewMessage("batch-1", []byte("woken"), "queue-1", nil)))
+		testMessage("batch-1", []byte("woken"), "queue-1", nil)))
 	assertNoDelivery(t, deliveryChan, signalCh, queueMySQL.SignalDeliveryCheck, 3)
 
 	// Naming the cause is what gets it through.
 	require.NoError(t, publisher.Publish(s.ctx, topic,
-		entityqueue.NewMessage("batch-1/merged", []byte("woken"), "queue-1", nil)))
+		testMessage("batch-1/merged", []byte("woken"), "queue-1", nil)))
 	second := receive(t, deliveryChan)
 	assert.Equal(t, "batch-1/merged", second.Message().ID)
 	assert.Equal(t, []byte("woken"), second.Message().Payload)
@@ -789,11 +840,7 @@ func (s *SQLQueueIntegrationSuite) TestDedupOutlivesConsumption() {
 func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 	t := s.T()
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -817,7 +864,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 	for i := 0; i < numPublishers; i++ {
 		go func(publisherID int) {
 			for j := 0; j < messagesPerPublisher; j++ {
-				msg := entityqueue.NewMessage(
+				msg := testMessage(
 					t.Name()+"-"+string(rune(publisherID))+"-"+string(rune(j)),
 					[]byte("concurrent"),
 					"concurrent-partition",
@@ -846,11 +893,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	t := s.T()
 
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 
 	publisher := q1.Publisher()
@@ -866,7 +909,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	require.NoError(t, err)
 
 	// Publish message
-	msg := entityqueue.NewMessage("crash-msg", []byte("test-crash"), "crash-partition", nil)
+	msg := testMessage("crash-msg", []byte("test-crash"), "crash-partition", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 
 	// Worker 1 receives but doesn't ack (simulating crash)
@@ -880,11 +923,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 
 	// Start worker 2 with same consumer group — it will poll and find the
 	// message after lease + visibility timeout expire in the DB
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -912,19 +951,11 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	topic := "multi_group_topic"
 
 	// Create two different consumer groups
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q1.Close()
 
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -949,7 +980,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	for i := 0; i < numMessages; i++ {
 		msgID := fmt.Sprintf("msg-%d", i)
 		messageIDs[i] = msgID
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), "partition-1", nil)
+		msg := testMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), "partition-1", nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages to topic", numMessages)
@@ -993,19 +1024,11 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	consumerGroup := "shared-group"
 
 	// Create two workers in same consumer group
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q1.Close()
 
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -1032,7 +1055,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 		messageIDs[i] = msgID
 		// Use different partition keys to allow distribution
 		partitionKey := fmt.Sprintf("partition-%d", i%3)
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), partitionKey, nil)
+		msg := testMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), partitionKey, nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages to topic across multiple partitions", numMessages)
@@ -1067,11 +1090,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	totalMessages := numSubscribers * messagesPerSubscriber
 
 	// Create publisher
-	pubQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	pubQueue, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQueue.Close()
 
@@ -1082,11 +1101,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	var deliveryChans []<-chan extqueue.Delivery
 
 	for i := 0; i < numSubscribers; i++ {
-		q, err := queueMySQL.NewQueue(queueMySQL.Params{
-			DB:           s.db,
-			Logger:       zaptest.NewLogger(t),
-			MetricsScope: tally.NoopScope,
-		})
+		q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 		require.NoError(t, err)
 		queues = append(queues, q)
 
@@ -1111,7 +1126,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	for i := 0; i < totalMessages; i++ {
 		msgID := fmt.Sprintf("concurrent-msg-%d", i)
 		partitionKey := fmt.Sprintf("partition-%d", i%5)
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), partitionKey, nil)
+		msg := testMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), partitionKey, nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages", totalMessages)
@@ -1140,12 +1155,9 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	topic := "dlq_topic"
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1162,7 +1174,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	require.NoError(t, err)
 
 	// Publish a message that will fail
-	msg := entityqueue.NewMessage("poison-msg", []byte("poison"), "partition-1", nil)
+	msg := testMessage("poison-msg", []byte("poison"), "partition-1", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 
 	t.Logf("Published poison message, will nack repeatedly")
@@ -1243,11 +1255,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 	topic := "ordering_topic"
 	partitionKey := "ordered-partition"
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1266,7 +1274,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 	for i := 0; i < numMessages; i++ {
 		msgID := fmt.Sprintf("msg-%03d", i)
 		messageIDs[i] = msgID
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("order-%d", i)), partitionKey, nil)
+		msg := testMessage(msgID, []byte(fmt.Sprintf("order-%d", i)), partitionKey, nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages to same partition: %s", numMessages, partitionKey)
@@ -1295,11 +1303,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 
 	topic := "late_subscriber_topic"
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1311,7 +1315,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 	for i := 0; i < numMessages; i++ {
 		msgID := fmt.Sprintf("early-msg-%d", i)
 		messageIDs[i] = msgID
-		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), "partition-1", nil)
+		msg := testMessage(msgID, []byte(fmt.Sprintf("data-%d", i)), "partition-1", nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages BEFORE subscribing", numMessages)
@@ -1348,12 +1352,9 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 	topic := "empty_topic"
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1374,7 +1375,7 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 
 	// Now publish a message
 	publisher := q.Publisher()
-	msg := entityqueue.NewMessage("late-msg", []byte("data"), "partition-1", nil)
+	msg := testMessage("late-msg", []byte("data"), "partition-1", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	t.Logf("Published message to previously-empty topic")
 
@@ -1391,11 +1392,7 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 
 	topic := "shutdown_topic"
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 
 	publisher := q.Publisher()
@@ -1409,7 +1406,7 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 	// Publish messages
 	numMessages := 5
 	for i := 0; i < numMessages; i++ {
-		msg := entityqueue.NewMessage(fmt.Sprintf("msg-%d", i), []byte("data"), "partition-1", nil)
+		msg := testMessage(fmt.Sprintf("msg-%d", i), []byte("data"), "partition-1", nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 	t.Logf("Published %d messages", numMessages)
@@ -1438,11 +1435,7 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 	// Start new subscriber to verify all messages are redelivered.
 	// Messages become visible after visibility timeout expires in DB.
 	t.Logf("Starting new subscriber to verify message recovery...")
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -1479,20 +1472,18 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ListTopicsAfterPublish() {
 	t := s.T()
 
 	topic := "admin_list_topics_test"
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
 	// Publish messages
 	publisher := q.Publisher()
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-1", []byte("a"), "p1", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-2", []byte("b"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-1", []byte("a"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-2", []byte("b"), "p1", nil)))
 
 	// Verify via AdminStore
 	admin := queueAdmin.NewAdminStore(s.db)
-	topics, err := admin.ListTopics(s.ctx)
+	topics, err := admin.ListTopics(s.ctx, queueAdmin.TenantScope{Tenant: testTenant})
 	require.NoError(t, err)
 
 	found := false
@@ -1509,19 +1500,17 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_TopicStatsAfterPublish() {
 	t := s.T()
 
 	topic := "admin_stats_test"
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
 	publisher := q.Publisher()
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("s1", []byte("x"), "p1", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("s2", []byte("y"), "p2", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("s3", []byte("z"), "p2", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("s1", []byte("x"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("s2", []byte("y"), "p2", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("s3", []byte("z"), "p2", nil)))
 
 	admin := queueAdmin.NewAdminStore(s.db)
-	stats, err := admin.GetTopicStats(s.ctx, topic, "_dlq")
+	stats, err := admin.GetTopicStats(s.ctx, testTenant, topic, "_dlq")
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(3), stats.TotalMessages)
@@ -1535,18 +1524,17 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_InspectMessage() {
 	t := s.T()
 
 	topic := "admin_inspect_test"
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
 	metadata := map[string]string{"env": "test", "trace": "abc"}
 	publisher := q.Publisher()
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("inspect-1", []byte("payload-data"), "p1", metadata)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("inspect-1", []byte("payload-data"), "p1", metadata)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("inspect-1", []byte("other-partition"), "p2", nil)))
 
 	admin := queueAdmin.NewAdminStore(s.db)
-	detail, found, err := admin.InspectMessage(s.ctx, topic, "inspect-1")
+	detail, found, err := admin.InspectMessage(s.ctx, testTenant, topic, "p1", "inspect-1")
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "inspect-1", detail.ID)
@@ -1556,6 +1544,11 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_InspectMessage() {
 	assert.Equal(t, "test", detail.Metadata["env"])
 	assert.Equal(t, "abc", detail.Metadata["trace"])
 
+	otherDetail, found, err := admin.InspectMessage(s.ctx, testTenant, topic, "p2", "inspect-1")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, []byte("other-partition"), otherDetail.Payload)
+
 	t.Logf("Inspect message verified: id=%s payload=%s metadata=%v", detail.ID, string(detail.Payload), detail.Metadata)
 }
 
@@ -1563,36 +1556,39 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_DeleteAndPurge() {
 	t := s.T()
 
 	topic := "admin_delete_test"
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
 	publisher := q.Publisher()
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("del-1", []byte("a"), "p1", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("del-2", []byte("b"), "p1", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("del-3", []byte("c"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("del-1", []byte("a"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("del-1", []byte("other"), "p2", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("del-2", []byte("b"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("del-3", []byte("c"), "p1", nil)))
 
 	admin := queueAdmin.NewAdminStore(s.db)
 
 	// Delete single message
-	affected, err := admin.DeleteMessage(s.ctx, topic, "del-1")
+	affected, err := admin.DeleteMessage(s.ctx, testTenant, topic, "p1", "del-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 
 	// Verify it's gone
-	_, found, err := admin.InspectMessage(s.ctx, topic, "del-1")
+	_, found, err := admin.InspectMessage(s.ctx, testTenant, topic, "p1", "del-1")
 	require.NoError(t, err)
 	assert.False(t, found)
 
-	// Purge remaining
-	affected, err = admin.PurgeTopic(s.ctx, topic)
+	_, found, err = admin.InspectMessage(s.ctx, testTenant, topic, "p2", "del-1")
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), affected)
+	assert.True(t, found)
+
+	// Purge remaining
+	affected, err = admin.PurgeTopic(s.ctx, testTenant, topic)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), affected)
 
 	// Verify topic is empty
-	msgs, err := admin.ListMessages(s.ctx, topic, "", 50)
+	msgs, err := admin.ListMessages(s.ctx, testTenant, topic, "", 50)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 }
@@ -1603,9 +1599,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 	topic := "admin_lag_test"
 	consumerGroup := "lag-consumer"
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1614,7 +1608,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 
 	// Publish 5 messages to same partition
 	for i := 0; i < 5; i++ {
-		msg := entityqueue.NewMessage(fmt.Sprintf("lag-%d", i), []byte("data"), "lag-partition", nil)
+		msg := testMessage(fmt.Sprintf("lag-%d", i), []byte("data"), "lag-partition", nil)
 		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 	}
 
@@ -1631,7 +1625,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 
 	// Check consumer lag — should show lag > 0
 	admin := queueAdmin.NewAdminStore(s.db)
-	lags, err := admin.ConsumerLag(s.ctx, topic)
+	lags, err := admin.ConsumerLag(s.ctx, testTenant, topic)
 	require.NoError(t, err)
 	require.NotEmpty(t, lags)
 
@@ -1654,12 +1648,9 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	consumerGroup := "lease-consumer"
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1667,7 +1658,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	subscriber := q.Subscriber()
 
 	// Publish and subscribe to create leases and offsets
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("lo-1", []byte("a"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("lo-1", []byte("a"), "p1", nil)))
 
 	subConfig := extqueue.DefaultSubscriptionConfig("admin-worker-1", consumerGroup)
 	subConfig.PartitionDiscoveryIntervalMs = 100
@@ -1688,7 +1679,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	for !offsetAdvanced {
 		_, ok := <-signalCh
 		require.True(t, ok, "signal channel closed before offset advanced")
-		offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
+		offsets, err := admin.ListOffsets(s.ctx, queueAdmin.TenantScope{Tenant: testTenant}, consumerGroup)
 		require.NoError(t, err)
 		for _, o := range offsets {
 			if o.Topic == topic && o.OffsetAcked > 0 {
@@ -1698,7 +1689,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	}
 
 	// Verify leases are visible
-	leases, err := admin.ListLeases(s.ctx)
+	leases, err := admin.ListLeases(s.ctx, queueAdmin.TenantScope{Tenant: testTenant})
 	require.NoError(t, err)
 
 	var leaseFound bool
@@ -1714,7 +1705,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	assert.True(t, leaseFound, "should find lease for consumer group %q", consumerGroup)
 
 	// Verify offsets are visible
-	offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
+	offsets, err := admin.ListOffsets(s.ctx, queueAdmin.TenantScope{Tenant: testTenant}, consumerGroup)
 	require.NoError(t, err)
 
 	var offsetFound bool
@@ -1734,9 +1725,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	topic := "admin_reset_test"
 	consumerGroup := "reset-consumer"
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -1744,7 +1733,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	subscriber := q.Subscriber()
 
 	// Publish, subscribe, ack — creates offsets and leases
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("r1", []byte("a"), "rp1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("r1", []byte("a"), "rp1", nil)))
 
 	subConfig := extqueue.DefaultSubscriptionConfig("reset-worker", consumerGroup)
 	subConfig.PartitionDiscoveryIntervalMs = 100
@@ -1758,12 +1747,12 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	admin := queueAdmin.NewAdminStore(s.db)
 
 	// Reset offset to 0
-	affected, err := admin.ResetOffset(s.ctx, consumerGroup, topic, "rp1", 0)
+	affected, err := admin.ResetOffset(s.ctx, testTenant, consumerGroup, topic, "rp1", 0)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 
 	// Verify offset was reset
-	offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
+	offsets, err := admin.ListOffsets(s.ctx, queueAdmin.TenantScope{Tenant: testTenant}, consumerGroup)
 	require.NoError(t, err)
 	for _, o := range offsets {
 		if o.Topic == topic && o.PartitionKey == "rp1" {
@@ -1772,12 +1761,12 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	}
 
 	// Release the lease
-	affected, err = admin.ReleaseLease(s.ctx, consumerGroup, topic, "rp1")
+	affected, err = admin.ReleaseLease(s.ctx, testTenant, consumerGroup, topic, "rp1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 
 	// Verify lease is gone
-	leases, err := admin.ListLeases(s.ctx)
+	leases, err := admin.ListLeases(s.ctx, queueAdmin.TenantScope{Tenant: testTenant})
 	require.NoError(t, err)
 	for _, l := range leases {
 		if l.ConsumerGroup == consumerGroup && l.Topic == topic && l.PartitionKey == "rp1" {
@@ -1795,8 +1784,8 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 // consumer group.
 func getPartitionLeases(db *sql.DB, topic, consumerGroup string) (map[string][]string, error) {
 	rows, err := db.Query(
-		"SELECT leased_by, partition_key FROM queue_partition_leases WHERE topic = ? AND consumer_group = ? ORDER BY leased_by, partition_key",
-		topic, consumerGroup,
+		"SELECT leased_by, partition_key FROM queue_partition_leases WHERE tenant = ? AND topic = ? AND consumer_group = ? ORDER BY leased_by, partition_key",
+		testTenant, topic, consumerGroup,
 	)
 	if err != nil {
 		return nil, err
@@ -1824,22 +1813,19 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
 	signalCh := make(chan queueMySQL.HookSignal, 100)
 
 	// Publish one message per partition so they are discoverable.
-	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	pubQ, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQ.Close()
 
 	for i, pk := range partitions {
-		msg := entityqueue.NewMessage(fmt.Sprintf("rb-even-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("rb-even-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
 	}
 
 	// S1: subscribe, should acquire all 4 partitions (only subscriber).
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q1.Close()
 
@@ -1852,10 +1838,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
 	}, "S1 should acquire all 4 partitions")
 
 	// S2: subscribe. After rebalancing, each should own 2.
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -1880,29 +1865,25 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
 	signalCh := make(chan queueMySQL.HookSignal, 100)
 
 	// Publish messages.
-	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	pubQ, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQ.Close()
 
 	for i, pk := range partitions {
-		msg := entityqueue.NewMessage(fmt.Sprintf("rb-leave-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("rb-leave-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
 	}
 
 	// S1 + S2 start, wait for 2+2 split.
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q1.Close()
 
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	// no defer close — we close explicitly below
 
@@ -1930,8 +1911,8 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
 	var s2Rows int
 	require.NoError(t, s.db.QueryRowContext(s.ctx, `
 		SELECT COUNT(*) FROM queue_subscriber_heartbeats
-		WHERE consumer_group = ? AND topic = ? AND subscriber_name = ?
-	`, consumerGroup, topic, "s2").Scan(&s2Rows))
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND subscriber_name = ?
+	`, testTenant, consumerGroup, topic, "s2").Scan(&s2Rows))
 	assert.Equal(t, 0, s2Rows, "closed subscriber's heartbeat row must be deleted")
 
 	t.Logf("Subscriber leave verified: S1 owns all 4 partitions after S2 departed")
@@ -1946,28 +1927,24 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OddPartitions() {
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
 
-	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	pubQ, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQ.Close()
 
 	for i, pk := range partitions {
-		msg := entityqueue.NewMessage(fmt.Sprintf("rb-odd-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("rb-odd-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
 	}
 
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q1.Close()
 
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -2003,14 +1980,12 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoOrphans() {
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
 
-	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	pubQ, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQ.Close()
 
 	for i, pk := range partitions {
-		msg := entityqueue.NewMessage(fmt.Sprintf("rb-orphan-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("rb-orphan-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2018,10 +1993,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoOrphans() {
 	queues := make([]extqueue.Queue, 3)
 	subNames := []string{"s1", "s2", "s3"}
 	for i, name := range subNames {
-		q, err := queueMySQL.NewQueue(queueMySQL.Params{
-			DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-			OnSignal: signalCh,
-		})
+		q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+			p.OnSignal = signalCh
+		}))
 		require.NoError(t, err)
 		queues[i] = q
 		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig(name, consumerGroup))
@@ -2063,14 +2037,12 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
 
-	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	pubQ, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQ.Close()
 
 	for i, pk := range partitions {
-		msg := entityqueue.NewMessage(fmt.Sprintf("rb-excess-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("rb-excess-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2078,10 +2050,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions()
 	subNames := []string{"s1", "s2", "s3", "s4"}
 	var queues []extqueue.Queue
 	for _, name := range subNames {
-		q, err := queueMySQL.NewQueue(queueMySQL.Params{
-			DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-			OnSignal: signalCh,
-		})
+		q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+			p.OnSignal = signalCh
+		}))
 		require.NoError(t, err)
 		queues = append(queues, q)
 		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig(name, consumerGroup))
@@ -2123,26 +2094,23 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoStarvation_UnevenSplit() {
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
 
-	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	pubQ, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer pubQ.Close()
 
 	const partitionCount = 12
 	for i := 0; i < partitionCount; i++ {
 		pk := fmt.Sprintf("pk-%02d", i)
-		msg := entityqueue.NewMessage(fmt.Sprintf("rb-starve-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("rb-starve-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
 	}
 
 	subNames := []string{"s1", "s2", "s3", "s4", "s5"}
 	var queues []extqueue.Queue
 	for _, name := range subNames {
-		q, err := queueMySQL.NewQueue(queueMySQL.Params{
-			DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-			OnSignal: signalCh,
-		})
+		q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+			p.OnSignal = signalCh
+		}))
 		require.NoError(t, err)
 		queues = append(queues, q)
 		// Nothing is acked in this test; a high retry budget keeps the
@@ -2194,14 +2162,12 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
 	consumerGroup := "rebalance-sweep-cg"
 	partitions := []string{"pk-a", "pk-b", "pk-c"}
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
 	for i, pk := range partitions {
-		msg := entityqueue.NewMessage(fmt.Sprintf("sweep-%d", i), []byte("x"), pk, nil)
+		msg := testMessage(fmt.Sprintf("sweep-%d", i), []byte("x"), pk, nil)
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2212,10 +2178,10 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
 	futureMs := time.Now().Add(10 * time.Minute).UnixMilli()
 	for i := 0; i < 2; i++ {
 		_, err := s.db.ExecContext(s.ctx, `
-			INSERT INTO queue_subscriber_heartbeats (consumer_group, topic, subscriber_name, heartbeat_at, deregistered_at)
-			VALUES (?, ?, ?, ?, 0)
+			INSERT INTO queue_subscriber_heartbeats (tenant, consumer_group, topic, subscriber_name, heartbeat_at, deregistered_at)
+			VALUES (?, ?, ?, ?, ?, 0)
 			ON DUPLICATE KEY UPDATE heartbeat_at = VALUES(heartbeat_at), deregistered_at = 0
-		`, consumerGroup, topic, fmt.Sprintf("phantom-%d", i), futureMs)
+		`, testTenant, consumerGroup, topic, fmt.Sprintf("phantom-%d", i), futureMs)
 		require.NoError(t, err)
 	}
 
@@ -2252,10 +2218,9 @@ func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
 	partition := "pk-idle"
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2267,7 +2232,7 @@ func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
 	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, cfg)
 	require.NoError(t, err)
 
-	msg := entityqueue.NewMessage("idle-1", []byte("x"), partition, nil)
+	msg := testMessage("idle-1", []byte("x"), partition, nil)
 	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 
 	delivery := receive(t, deliveryChan)
@@ -2279,8 +2244,8 @@ func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
 	rowCount := func(table string) int {
 		var n int
 		require.NoError(t, s.db.QueryRowContext(s.ctx,
-			"SELECT COUNT(*) FROM "+table+" WHERE consumer_group = ? AND topic = ?",
-			consumerGroup, topic).Scan(&n))
+			"SELECT COUNT(*) FROM "+table+" WHERE tenant = ? AND consumer_group = ? AND topic = ?",
+			testTenant, consumerGroup, topic).Scan(&n))
 		return n
 	}
 	waitForCondition(t, signalCh, func() bool {
@@ -2289,7 +2254,7 @@ func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
 
 	// Resurrection: a new message re-creates the partition through normal
 	// discovery and is delivered like any other.
-	msg2 := entityqueue.NewMessage("idle-2", []byte("y"), partition, nil)
+	msg2 := testMessage("idle-2", []byte("y"), partition, nil)
 	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg2))
 
 	delivery2 := receive(t, deliveryChan)
@@ -2311,10 +2276,9 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 	consumerGroup := "gc-busy-cg"
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-		OnSignal: signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2323,7 +2287,7 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 	const initialBatch = 200
 	for i := 0; i < initialBatch; i++ {
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic,
-			entityqueue.NewMessage(fmt.Sprintf("gc-%d", i), []byte("x"), partition, nil)))
+			testMessage(fmt.Sprintf("gc-%d", i), []byte("x"), partition, nil)))
 	}
 
 	// Fast poll so the 100-tick GC cadence elapses quickly; at the 100ms
@@ -2336,8 +2300,8 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 	countMessages := func() int {
 		var n int
 		require.NoError(t, s.db.QueryRowContext(s.ctx,
-			"SELECT COUNT(*) FROM queue_messages WHERE topic = ? AND partition_key = ?",
-			topic, partition).Scan(&n))
+			"SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND topic = ? AND partition_key = ?",
+			testTenant, topic, partition).Scan(&n))
 		return n
 	}
 
@@ -2354,7 +2318,7 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 	const continuousTrafficIterations = 150
 	for i := 0; i < continuousTrafficIterations; i++ {
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic,
-			entityqueue.NewMessage(fmt.Sprintf("gc-busy-%d", i), []byte("y"), partition, nil)))
+			testMessage(fmt.Sprintf("gc-busy-%d", i), []byte("y"), partition, nil)))
 		delivery := receive(t, deliveryChan)
 		require.NoError(t, delivery.Ack(s.ctx))
 		// Drain signals so the worker's blocking send cannot stall the traffic loop.
@@ -2372,9 +2336,7 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 func (s *SQLQueueIntegrationSuite) TestInFlightMessageDoesNotBlockOtherMessages() {
 	t := s.T()
 
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2392,7 +2354,7 @@ func (s *SQLQueueIntegrationSuite) TestInFlightMessageDoesNotBlockOtherMessages(
 
 	// Publish the first message alone and receive it, leaving it in flight
 	// (un-finalized, invisible) at the lowest offset of the partition.
-	msg1 := entityqueue.NewMessage("msg-1", []byte("payload-1"), partition, nil)
+	msg1 := testMessage("msg-1", []byte("payload-1"), partition, nil)
 	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg1))
 	d1 := receive(t, deliveryCh)
 	assert.Equal(t, "msg-1", d1.Message().ID)
@@ -2401,7 +2363,7 @@ func (s *SQLQueueIntegrationSuite) TestInFlightMessageDoesNotBlockOtherMessages(
 	// Later offsets must still be deliverable despite the invisible msg-1 —
 	// the opposite of a postponed message, which is a barrier.
 	for i := 2; i <= 3; i++ {
-		msg := entityqueue.NewMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
+		msg := testMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2427,12 +2389,9 @@ func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2452,7 +2411,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
 	// barrier must be in place before the later messages exist — deliveries
 	// already fetched into the in-memory buffer are past the barrier by
 	// design (it acts at the fetch layer).
-	msg1 := entityqueue.NewMessage("msg-1", []byte("payload-1"), partition, nil)
+	msg1 := testMessage("msg-1", []byte("payload-1"), partition, nil)
 	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg1))
 
 	d1 := receive(t, deliveryCh)
@@ -2463,7 +2422,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
 
 	// Publish two more messages behind the postponed one
 	for i := 2; i <= 3; i++ {
-		msg := entityqueue.NewMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
+		msg := testMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2497,12 +2456,9 @@ func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2515,7 +2471,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
 	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
-	msg := entityqueue.NewMessage("wait-then-poison", []byte("payload"), "partition-1", nil)
+	msg := testMessage("wait-then-poison", []byte("payload"), "partition-1", nil)
 	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 
 	// First delivery: postpone briefly — a deliberate wait, not a failure
@@ -2557,12 +2513,9 @@ func (s *SQLQueueIntegrationSuite) TestBatchSizeOneStrictSerialization() {
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2579,7 +2532,7 @@ func (s *SQLQueueIntegrationSuite) TestBatchSizeOneStrictSerialization() {
 
 	// Publish 5 messages
 	for i := 1; i <= 5; i++ {
-		msg := entityqueue.NewMessage(fmt.Sprintf("serial-%d", i), []byte(strconv.Itoa(i)), partition, nil)
+		msg := testMessage(fmt.Sprintf("serial-%d", i), []byte(strconv.Itoa(i)), partition, nil)
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2605,12 +2558,9 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 	t := s.T()
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2632,7 +2582,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 
 	// Publish 2 messages
 	for i := 1; i <= 2; i++ {
-		msg := entityqueue.NewMessage(fmt.Sprintf("shared-%d", i), []byte(strconv.Itoa(i)), partition, nil)
+		msg := testMessage(fmt.Sprintf("shared-%d", i), []byte(strconv.Itoa(i)), partition, nil)
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 	}
 
@@ -2680,19 +2630,15 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 
 	topic := "crash_reject_topic"
 
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 
 	publisher := q1.Publisher()
 
 	// Publish 3 messages to the same partition
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-A", []byte("A"), "same-part", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-B", []byte("B"), "same-part", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-C", []byte("C"), "same-part", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-A", []byte("A"), "same-part", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-B", []byte("B"), "same-part", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-C", []byte("C"), "same-part", nil)))
 
 	// Subscribe with short timeouts for fast test
 	subConfig := testSubConfig("worker-1", "crash-reject-cg")
@@ -2726,12 +2672,9 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	// Start worker-2 with same consumer group — it polls and finds msg-C
 	// after lease + visibility expire in the DB
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -2768,7 +2711,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	// Wait for the poll loop so advanceWatermark has run after all acks.
 	waitForSignal(t, signalCh, queueMySQL.SignalDeliveryCheck)
 	admin := queueAdmin.NewAdminStore(s.db)
-	lags, err := admin.ConsumerLag(s.ctx, topic)
+	lags, err := admin.ConsumerLag(s.ctx, testTenant, topic)
 	require.NoError(t, err)
 	for _, lag := range lags {
 		if lag.ConsumerGroup == "crash-reject-cg" {
@@ -2788,19 +2731,15 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 
 	topic := "crash_retry_limit_topic"
 
-	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q1, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 
 	publisher := q1.Publisher()
 
 	// Publish 3 messages to the same partition
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-A", []byte("A"), "same-part", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-B", []byte("B"), "same-part", nil)))
-	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("msg-C", []byte("C"), "same-part", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-A", []byte("A"), "same-part", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-B", []byte("B"), "same-part", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, testMessage("msg-C", []byte("C"), "same-part", nil)))
 
 	// MaxAttempts=2: msg-B needs nack → redeliver → retry_count=2 → auto-DLQ.
 	// Use standard visibility (2s) instead of 30s — event-driven waits make
@@ -2851,11 +2790,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 
 	// Start worker-2 with same consumer group — it polls and finds messages
 	// after lease + visibility expire in the DB
-	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
+	q2, err := queueMySQL.NewQueue(s.testQueueParams(t, nil))
 	require.NoError(t, err)
 	defer q2.Close()
 
@@ -2892,12 +2827,9 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 	topic := "watermark_contiguous_topic"
 
 	signalCh := make(chan queueMySQL.HookSignal, 100)
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-		OnSignal:     signalCh,
-	})
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) {
+		p.OnSignal = signalCh
+	}))
 	require.NoError(t, err)
 	defer q.Close()
 
@@ -2905,7 +2837,7 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 
 	// Publish 5 messages to the same partition
 	for i := 1; i <= 5; i++ {
-		msg := entityqueue.NewMessage(
+		msg := testMessage(
 			fmt.Sprintf("wm-msg-%d", i),
 			[]byte(fmt.Sprintf("payload-%d", i)),
 			"wm-part",

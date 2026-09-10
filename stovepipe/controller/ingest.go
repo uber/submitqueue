@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -46,13 +45,14 @@ const counterDomainRequest = "request"
 // the request ID onto the process stage. Ingestion is idempotent: a re-reported head resolves to
 // the already-minted request and republishes it only while it remains accepted.
 type IngestController struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	counters      counter.Factory
-	sourceControl sourcecontrol.Factory
-	stores        storage.Factory
-	materializer  requestlog.Materializer
-	registry      consumer.TopicRegistry
+	logger           *zap.SugaredLogger
+	metricsScope     tally.Scope
+	counters         counter.Factory
+	sourceControl    sourcecontrol.Factory
+	stores           storage.Factory
+	materializer     requestlog.Materializer
+	registry         consumer.TopicRegistry
+	configuredQueues map[string]struct{}
 }
 
 // NewIngestController creates a new instance of the stovepipe ingest controller. It publishes
@@ -65,15 +65,21 @@ func NewIngestController(
 	stores storage.Factory,
 	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
+	configuredQueues []string,
 ) *IngestController {
+	queueNames := make(map[string]struct{}, len(configuredQueues))
+	for _, queue := range configuredQueues {
+		queueNames[queue] = struct{}{}
+	}
 	return &IngestController{
-		logger:        logger,
-		metricsScope:  scope.SubScope("ingest_controller"),
-		counters:      counters,
-		sourceControl: sourceControl,
-		stores:        stores,
-		materializer:  materializer,
-		registry:      registry,
+		logger:           logger,
+		metricsScope:     scope.SubScope("ingest_controller"),
+		counters:         counters,
+		sourceControl:    sourceControl,
+		stores:           stores,
+		materializer:     materializer,
+		registry:         registry,
+		configuredQueues: queueNames,
 	}
 }
 
@@ -96,6 +102,9 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 		return entity.IngestResult{}, fmt.Errorf("requires the request to have a queue name specified: %w", ErrInvalidRequest)
 	}
 	queue := req.Queue
+	if _, ok := c.configuredQueues[queue]; !ok {
+		return entity.IngestResult{}, fmt.Errorf("queue %q is not configured: %w", queue, ErrInvalidRequest)
+	}
 
 	store, err := c.stores.For(storage.Config{QueueName: queue})
 	if err != nil {
@@ -302,8 +311,12 @@ func (c *IngestController) publishProcess(ctx context.Context, id, queue string)
 		return fmt.Errorf("failed to serialize process request: %w", err)
 	}
 
-	ctx = entityqueue.WithQueueName(ctx, queue)
-	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyProcess, publish.IntentID(id), payload, queue); err != nil {
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyProcess, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(id),
+		Payload:      payload,
+		PartitionKey: queue,
+	}); err != nil {
 		return fmt.Errorf("failed to publish process request: %w", err)
 	}
 	return nil

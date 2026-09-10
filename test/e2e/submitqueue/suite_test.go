@@ -325,10 +325,10 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesMergingDependency() {
 	const gateGroup = "runway-merge"
 	gateTopic := runwaymq.TopicKeyMerge.String()
 
-	s.closeGate(gateGroup, queue, "e2e: hold the lead merge so the dependent finishes building first")
+	s.closeGate(queue, gateGroup, queue, "e2e: hold the lead merge so the dependent finishes building first")
 	// Reopen even if an assertion below fails, so teardown does not stop the
 	// stack with a delivery still parked. Opening twice is a no-op.
-	defer s.openGate(gateGroup, queue)
+	defer s.openGate(queue, gateGroup, queue)
 
 	lead := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/1/abcdef0123456789abcdef0123456789abcdef01")
 	s.log.Logf("Landed lead request %s; awaiting its merge to park", lead.sqid)
@@ -360,7 +360,7 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesMergingDependency() {
 
 	// Start: the lead merges, and its fan-out is now the only thing that can
 	// move the dependent.
-	s.openGate(gateGroup, queue)
+	s.openGate(queue, gateGroup, queue)
 	s.awaitUnparked(gateGroup, gateTopic, leadBatch)
 
 	s.awaitStatus(lead, entity.RequestStatusLanded)
@@ -380,8 +380,8 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 
 	lead := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	heldBatch := s.awaitBatchID(lead)
-	s.closeGate(gateGroup, heldBatch, "e2e: hold the leader's build so the follower can fully cover it")
-	defer s.openGate(gateGroup, heldBatch)
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the leader's build so the follower can fully cover it")
+	defer s.openGate(queue, gateGroup, heldBatch)
 	s.awaitBatchState(queue, heldBatch, entity.BatchStateSpeculating)
 
 	follower := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
@@ -395,7 +395,7 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 	assert.Equal(t, entity.RequestStatusSpeculating, s.mustStatus(lead),
 		"the follower must land while its dependency is still held")
 
-	s.openGate(gateGroup, heldBatch)
+	s.openGate(queue, gateGroup, heldBatch)
 	s.awaitStatus(lead, entity.RequestStatusLanded)
 
 	s.assertStatusesInOrder(follower,
@@ -426,8 +426,8 @@ func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplet
 
 	follower := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/2/dddddddddddddddddddddddddddddddddddddddd")
 	heldBatch := s.awaitBatchID(follower)
-	s.closeGate(gateGroup, heldBatch, "e2e: hold the follower's builds so only the seeded path exists")
-	defer s.openGate(gateGroup, heldBatch)
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the follower's builds so only the seeded path exists")
+	defer s.openGate(queue, gateGroup, heldBatch)
 
 	// Strand the follower in Created, then seed exactly one passed path: the
 	// guess that the lead succeeds. Its builds are parked, so nothing can add
@@ -461,7 +461,7 @@ func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplet
 	// Let the queue finish. The follower's own speculative builds were parked
 	// on the held partition; releasing it lets any surviving work drain. How
 	// the queue ultimately converges is exercised by the other tests.
-	s.openGate(gateGroup, heldBatch)
+	s.openGate(queue, gateGroup, heldBatch)
 	s.awaitStatus(trigger, entity.RequestStatusLanded)
 }
 
@@ -557,8 +557,8 @@ func (s *E2EIntegrationSuite) TestLand_DependentBatch_BypassesAnUnresolvedDepend
 	const gateGroup = "orchestrator"
 	leaderBatch := queue + "/batch/1"
 
-	s.closeGate(gateGroup, leaderBatch, "e2e: hold the leader's build so its dependent speculates first")
-	defer s.openGate(gateGroup, leaderBatch)
+	s.closeGate(queue, gateGroup, leaderBatch, "e2e: hold the leader's build so its dependent speculates first")
+	defer s.openGate(queue, gateGroup, leaderBatch)
 
 	leader := s.land(queue, "github://github.example.com/uber/e2e-respeculate/pull/1/1111111111111111111111111111111111111111?sq-fake=build-fail")
 	follower := s.land(queue, "github://github.example.com/uber/e2e-respeculate/pull/2/2222222222222222222222222222222222222222")
@@ -572,7 +572,7 @@ func (s *E2EIntegrationSuite) TestLand_DependentBatch_BypassesAnUnresolvedDepend
 
 	// Release the leader only after the follower has landed. Its later failure is
 	// one of the outcomes the follower already validated.
-	s.openGate(gateGroup, leaderBatch)
+	s.openGate(queue, gateGroup, leaderBatch)
 	assert.Equal(s.T(), entity.RequestStatusError, s.awaitTerminal(leader),
 		"the leader's build carries a failure marker, so it must not land")
 
@@ -632,10 +632,10 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	const gateGroup = "runway-mergeconflictcheck"
 	gateTopic := runwaymq.TopicKeyMergeConflictCheck.String()
 
-	s.closeGate(gateGroup, queue, "e2e: hold merge-conflict check to catch cancel pre-batch")
+	s.closeGate(queue, gateGroup, queue, "e2e: hold merge-conflict check to catch cancel pre-batch")
 	// Reopen even if an assertion below fails, so teardown does not stop the
 	// stack with a delivery still parked. Opening twice is a no-op.
-	defer s.openGate(gateGroup, queue)
+	defer s.openGate(queue, gateGroup, queue)
 
 	req := s.land(queue, "github://github.example.com/uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
 	s.log.Logf("Land (cancel path) succeeded: sqid=%s; awaiting parked check", req.sqid)
@@ -661,7 +661,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 		"operating store should show request %s terminal cancelled while its check is parked", req.sqid)
 
 	// Start the controller again and prove the parked delivery cleared the gate.
-	s.openGate(gateGroup, queue)
+	s.openGate(queue, gateGroup, queue)
 	s.awaitUnparked(gateGroup, gateTopic, req.sqid)
 
 	// Sentinel on the same queue: its landing proves the stale signal ahead of
@@ -697,10 +697,10 @@ func (s *E2EIntegrationSuite) TestBatchRedelivery_DoesNotEnrolTheRequestTwice() 
 	// the build topic partitions by batch ID.
 	const heldBatch = queue + "/batch/1"
 
-	s.closeGate(gateGroup, heldBatch, "e2e: hold the build so the request stays in flight for the redelivery")
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the request stays in flight for the redelivery")
 	// Reopen even if an assertion below fails, so teardown does not stop the
 	// stack with a delivery still parked. Opening twice is a no-op.
-	defer s.openGate(gateGroup, heldBatch)
+	defer s.openGate(queue, gateGroup, heldBatch)
 
 	req := s.land(queue, "github://github.example.com/uber/e2e-redelivery/pull/1/abcdef0123456789abcdef0123456789abcdef01")
 	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
@@ -715,7 +715,7 @@ func (s *E2EIntegrationSuite) TestBatchRedelivery_DoesNotEnrolTheRequestTwice() 
 	assert.Equal(t, []string{heldBatch}, s.batchIDsFor(req),
 		"the redelivery must resume the existing batch, not mint another")
 
-	s.openGate(gateGroup, heldBatch)
+	s.openGate(queue, gateGroup, heldBatch)
 	s.awaitStatus(req, entity.RequestStatusLanded)
 	s.awaitStatus(settle, entity.RequestStatusLanded)
 }
@@ -739,8 +739,8 @@ func (s *E2EIntegrationSuite) TestStrandedBatch_IsAdmittedByALaterRun() {
 	const gateGroup = "orchestrator"
 	const heldBatch = queue + "/batch/1"
 
-	s.closeGate(gateGroup, heldBatch, "e2e: hold the build so the batch can be stranded while still in flight")
-	defer s.openGate(gateGroup, heldBatch)
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the batch can be stranded while still in flight")
+	defer s.openGate(queue, gateGroup, heldBatch)
 
 	req := s.land(queue, "github://github.example.com/uber/e2e-strand/pull/1/abcdef0123456789abcdef0123456789abcdef01")
 	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
@@ -757,7 +757,7 @@ func (s *E2EIntegrationSuite) TestStrandedBatch_IsAdmittedByALaterRun() {
 
 	s.awaitBatchState(queue, heldBatch, entity.BatchStateSpeculating)
 
-	s.openGate(gateGroup, heldBatch)
+	s.openGate(queue, gateGroup, heldBatch)
 	s.awaitStatus(req, entity.RequestStatusLanded)
 	s.awaitStatus(trigger, entity.RequestStatusLanded)
 }

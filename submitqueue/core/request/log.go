@@ -52,8 +52,12 @@ func PublishLog(ctx context.Context, registry consumer.TopicRegistry, logEntry e
 		cause = append(cause, occurrence)
 	}
 
-	if err := publish.Message(ctx, registry, topickey.TopicKeyLog,
-		publish.IntentID(logEntry.RequestID, cause...), payload, partitionKey); err != nil {
+	if err := publish.Message(ctx, registry, topickey.TopicKeyLog, publish.MessageParams{
+		Tenant:       logEntry.Queue,
+		ID:           publish.IntentID(logEntry.RequestID, cause...),
+		Payload:      payload,
+		PartitionKey: partitionKey,
+	}); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

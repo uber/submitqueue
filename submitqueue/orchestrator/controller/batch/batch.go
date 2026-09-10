@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -86,6 +87,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, rid.Queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
@@ -211,8 +215,12 @@ func (c *Controller) publishToDependencyAnalysis(ctx context.Context, batch enti
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, topickey.TopicKeyDependencyAnalysis,
-		publish.IntentID(batch.ID), payload, batch.Queue); err != nil {
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyDependencyAnalysis, publish.MessageParams{
+		Tenant:       batch.Queue,
+		ID:           publish.IntentID(batch.ID),
+		Payload:      payload,
+		PartitionKey: batch.Queue,
+	}); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

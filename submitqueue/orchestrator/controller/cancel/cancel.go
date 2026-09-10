@@ -55,6 +55,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
@@ -109,6 +110,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize cancel request: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, cancelReq.Queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: cancelReq.Queue})
@@ -350,7 +354,12 @@ func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, 
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-	return publish.Message(ctx, c.registry, key, publish.UniqueID(batchID), payload, queue)
+	return publish.Message(ctx, c.registry, key, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.UniqueID(batchID),
+		Payload:      payload,
+		PartitionKey: queue,
+	})
 }
 
 // Name returns the controller name for logging and metrics.

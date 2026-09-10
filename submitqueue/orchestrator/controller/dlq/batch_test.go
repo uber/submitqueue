@@ -53,7 +53,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Version: 1, State: entity.RequestStateProcessing,
+		ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
 	}
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
@@ -69,11 +69,22 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
-	payload, err := entity.BatchID{ID: "q/batch/9"}.ToBytes()
+	payload, err := entity.BatchID{ID: "q/batch/9", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
 	require.NoError(t, c.Process(context.Background(), delivery))
+}
+
+func TestDLQBatchController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storagemock.NewMockStorage(ctrl)
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+
+	payload, err := entity.BatchID{ID: "q/batch/9", Queue: "q"}.ToBytes()
+	require.NoError(t, err)
+
+	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
 }
 
 func TestDLQBatchController_Process_MalformedPayloadFails(t *testing.T) {
@@ -95,7 +106,7 @@ func TestDLQBatchController_Process_EmptyIDFails(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
-	payload, err := entity.BatchID{ID: ""}.ToBytes()
+	payload, err := entity.BatchID{ID: "", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)

@@ -138,6 +138,19 @@ func TestProcessTagsDeserializeErrorsFromContext(t *testing.T) {
 	assert.EqualValues(t, 1, counter.Value())
 }
 
+func TestProcessRejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+	msg := entityqueue.NewMessage(testID, buildPayload(t, testID), testQueue, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	err := c.Process(queueContext(), d)
+	require.Error(t, err)
+	assert.False(t, errs.IsRetryable(err))
+}
+
 func TestPublishBuildSignalCarriesQueueMetadata(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
@@ -151,13 +164,16 @@ func TestPublishBuildSignalCarriesQueueMetadata(t *testing.T) {
 
 	require.NoError(t, c.publishBuildSignal(queueContext(), testBuildID, testQueue))
 	assert.Equal(t, testBuildID, got.PartitionKey)
+	assert.Equal(t, testQueue, got.Tenant)
 	assert.Equal(t, testQueue, got.Metadata[entityqueue.MetadataKeyQueueName])
 }
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
 	t.Helper()
 	d := consumermock.NewMockDelivery(ctrl)
-	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testID, nil)).AnyTimes()
+	msg := entityqueue.NewMessage(testID, payload, testID, nil)
+	msg.Tenant = testQueue
+	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
 }

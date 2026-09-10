@@ -166,9 +166,10 @@ func (h *testHarness) wanted() {
 // is returned so tests can expect a Hold for the next poll.
 func delivery(t *testing.T, ctrl *gomock.Controller) *consumermock.MockDelivery {
 	t.Helper()
-	payload, err := entity.BuildID{ID: testBuildID}.ToBytes()
+	payload, err := entity.BuildID{ID: testBuildID, Queue: "test-queue"}.ToBytes()
 	require.NoError(t, err)
 	msg := entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)
+	msg.Tenant = "test-queue"
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -197,6 +198,19 @@ func TestController_Identity(t *testing.T) {
 	var _ consumer.Controller = h.controller
 }
 
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
+	payload, err := entity.BuildID{ID: testBuildID, Queue: "test-queue"}.ToBytes()
+	require.NoError(t, err)
+	msg := entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, h.controller.Process(context.Background(), d))
+}
+
 // The poll loop records status on the build and wakes the run. It must never
 // write the path set — that is the speculate run's state, and it is read here
 // only as the kill list.
@@ -216,7 +230,7 @@ func TestProcess_RecordsStatusAndNeverWritesThePathSet(t *testing.T) {
 			h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
 
 			h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusRunning), nil)
-			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(tt.status, nil, nil)
+			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID, Queue: "test-queue"}).Return(tt.status, nil, nil)
 			h.builds.EXPECT().Update(gomock.Any(), testBuild(tt.status)).Return(nil)
 
 			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
@@ -253,6 +267,7 @@ func TestProcess_SpeculateWakeUpIsNamedForTheObservedStatus(t *testing.T) {
 		h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
 			func(_ context.Context, _ string, msg entityqueue.Message) error {
 				id = msg.ID
+				assert.Equal(t, "test-queue", msg.Tenant)
 				return nil
 			},
 		)
@@ -384,7 +399,7 @@ func TestProcess_StopsUnwantedBuilds(t *testing.T) {
 
 			h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusRunning), nil)
 			h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(entity.BuildStatusRunning, nil, nil)
-			h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(nil)
+			h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: testBuildID, Queue: "test-queue"}).Return(nil)
 
 			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
 			d := delivery(t, ctrl)
@@ -497,7 +512,7 @@ func TestProcess_CancelFailureDoesNotFailThePoll(t *testing.T) {
 
 	h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusRunning), nil)
 	h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(entity.BuildStatusRunning, nil, nil)
-	h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: testBuildID}).
+	h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: testBuildID, Queue: "test-queue"}).
 		Return(errors.New("runner unavailable"))
 
 	h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
@@ -539,7 +554,7 @@ func TestProcess_HaltedBatchStillRuns(t *testing.T) {
 
 		h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusRunning), nil)
 		h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(entity.BuildStatusRunning, nil, nil)
-		h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(nil)
+		h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: testBuildID, Queue: "test-queue"}).Return(nil)
 		h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
 		d := delivery(t, ctrl)
 		d.EXPECT().Hold(PollDelayRunningMs)

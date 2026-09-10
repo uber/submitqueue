@@ -61,12 +61,16 @@ const (
 )
 
 func resultPayload(t *testing.T, res runwaymq.MergeResult) []byte {
+	if res.QueueName == "" {
+		res.QueueName = testQueue
+	}
 	payload, err := runwaymq.Marshal(&res)
 	require.NoError(t, err)
 	return payload
 }
 
 func newDelivery(ctrl *gomock.Controller, msg entityqueue.Message) *consumermock.MockDelivery {
+	msg.Tenant = testQueue
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -78,7 +82,8 @@ func newDelivery(ctrl *gomock.Controller, msg entityqueue.Message) *consumermock
 func recordingRegistry(t *testing.T, ctrl *gomock.Controller, got *[]string) consumer.TopicRegistry {
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, _ entityqueue.Message) error {
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			assert.Equal(t, testQueue, msg.Tenant)
 			*got = append(*got, topic)
 			return nil
 		},
@@ -115,6 +120,18 @@ func TestNewController(t *testing.T) {
 	assert.Equal(t, "orchestrator-mergesignal", c.ConsumerGroup())
 	assert.Equal(t, "mergesignal", c.Name())
 	var _ consumer.Controller = c
+}
+
+func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c := newController(t, storagemock.NewMockStorage(ctrl), recordingRegistry(t, ctrl, new([]string)))
+	res := runwaymq.MergeResult{Id: testBatchID, Outcome: runwaypb.Outcome_SUCCEEDED}
+	msg := entityqueue.NewMessage(testBatchID, resultPayload(t, res), testQueue, nil)
+	msg.Tenant = "other-queue"
+	d := consumermock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+
+	require.Error(t, c.Process(context.Background(), d))
 }
 
 func TestProcess_MergedAdvancesBatch(t *testing.T) {

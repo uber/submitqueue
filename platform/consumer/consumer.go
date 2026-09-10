@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
@@ -282,10 +283,10 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topic
 		"topic_key", topicKey,
 	)
 
-	// partitionChs maps partition keys to per-partition delivery channels.
+	// partitionChs maps tenant-scoped partitions to delivery channels.
 	// Each channel is created lazily on the first message for that partition
 	// and is never removed — partitions are stable for the lifetime of a subscription.
-	partitionChs := make(map[string]chan extqueue.Delivery)
+	partitionChs := make(map[entityqueue.PartitionIdentity]chan extqueue.Delivery)
 	var wg sync.WaitGroup
 
 	for {
@@ -307,15 +308,18 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topic
 				m.shutdownPartitions(partitionChs, &wg)
 				return
 			}
+			if m.rejectDeliveryWithInvalidTenant(ctx, controller, delivery) {
+				continue
+			}
 
 			// Route delivery to its partition's channel, creating the channel
 			// and spawning a processPartition goroutine if this is the first
 			// message for that partition.
-			partitionKey := delivery.Message().PartitionKey
-			ch, exists := partitionChs[partitionKey]
+			partition := delivery.Message().PartitionIdentity()
+			ch, exists := partitionChs[partition]
 			if !exists {
 				ch = make(chan extqueue.Delivery, batchSize)
-				partitionChs[partitionKey] = ch
+				partitionChs[partition] = ch
 				wg.Add(1)
 				go func(pCh <-chan extqueue.Delivery) {
 					defer wg.Done()
@@ -336,9 +340,32 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topic
 	}
 }
 
+func (m *consumer) rejectDeliveryWithInvalidTenant(ctx context.Context, controller Controller, delivery extqueue.Delivery) bool {
+	msg := delivery.Message()
+	if err := entityqueue.ValidateTenantMetadata(msg); err != nil {
+		m.logger.Errorw("rejecting message with inconsistent queue identity",
+			"controller", controller.Name(),
+			"topic_key", controller.TopicKey(),
+			"message_id", msg.ID,
+			"tenant", msg.Tenant,
+			"error", err,
+		)
+		if rejectErr := delivery.Reject(ctx, failure.New(err.Error())); rejectErr != nil {
+			m.logger.Errorw("failed to reject message with inconsistent queue identity",
+				"controller", controller.Name(),
+				"topic_key", controller.TopicKey(),
+				"message_id", msg.ID,
+				"error", rejectErr,
+			)
+		}
+		return true
+	}
+	return false
+}
+
 // shutdownPartitions closes all partition channels to signal processPartition
 // goroutines to exit, then waits for them to finish draining.
-func (m *consumer) shutdownPartitions(partitionChs map[string]chan extqueue.Delivery, wg *sync.WaitGroup) {
+func (m *consumer) shutdownPartitions(partitionChs map[entityqueue.PartitionIdentity]chan extqueue.Delivery, wg *sync.WaitGroup) {
 	for _, ch := range partitionChs {
 		close(ch)
 	}
@@ -373,11 +400,9 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	const opName = "process"
 
 	msg := delivery.Message()
-	queueName := msg.Metadata[entityqueue.MetadataKeyQueueName]
+	queueName := msg.Tenant
 	ctx = entityqueue.WithQueueName(ctx, queueName)
-	if queueName != "" {
-		ctx = metrics.WithContextTags(ctx, metrics.NewTag("queue", queueName))
-	}
+	ctx = metrics.WithContextTags(ctx, metrics.NewTag("queue", queueName))
 
 	// Consumer gate: a delivery whose gate is closed is recorded as parked and
 	// postponed (barrier + re-check on redelivery); a false return also covers
@@ -575,7 +600,10 @@ func (m *consumer) checkGate(ctx context.Context, controller Controller, deliver
 	consumerGroup := controller.ConsumerGroup()
 	topic := controller.TopicKey().String()
 
-	entry, err := m.gate.Enter(ctx, consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: msg.PartitionKey})
+	entry, err := m.gate.Enter(ctx, consumergate.Key{
+		ConsumerGroup: consumerGroup,
+		Partition:     msg.PartitionIdentity(),
+	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			// Shutting down: leave the delivery in flight; visibility lapses
@@ -708,10 +736,11 @@ func (m *consumer) unsubscribeAll(timeoutMs int64) error {
 	var timedOutControllers []string
 	for topicKey, sub := range m.subscriptions {
 		start := time.Now()
+		timer := time.NewTimer(remaining)
 		select {
 		case <-sub.done:
-			// Controller stopped gracefully
-		case <-time.After(remaining):
+			timer.Stop()
+		case <-timer.C:
 			m.logger.Errorw("timeout waiting for controller to stop",
 				"controller", sub.controller.Name(),
 				"topic_key", topicKey,

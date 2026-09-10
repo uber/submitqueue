@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/stovepipe/controller/dlq",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/metrics:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",

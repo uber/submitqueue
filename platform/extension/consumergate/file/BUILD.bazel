@@ -5,7 +5,10 @@ go_library(
     srcs = ["store.go"],
     importpath = "github.com/uber/submitqueue/platform/extension/consumergate/file",
     visibility = ["//visibility:public"],
-    deps = ["//platform/extension/consumergate:go_default_library"],
+    deps = [
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/extension/consumergate:go_default_library",
+    ],
 )
 
 go_test(
@@ -13,6 +16,7 @@ go_test(
     srcs = ["store_test.go"],
     embed = [":go_default_library"],
     deps = [
+        "//platform/base/messagequeue:go_default_library",
         "//platform/extension/consumergate:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
