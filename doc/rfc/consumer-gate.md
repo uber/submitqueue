@@ -40,12 +40,12 @@ Keeping the contract separate from any backend is what lets the storage medium b
 The first implementation stores gate state as plain files under a configured directory. Presence of a gate file means the gate is closed; deleting the file opens it. Parked deliveries are recorded as JSON files. The layout:
 
 ```
-{dir}/gates/{consumer_group}/all                       # gates every partition of the controller
-{dir}/gates/{consumer_group}/p-{urlenc(partition)}     # gates one partition
-{dir}/parked/{consumer_group}/{topic}/{urlenc(id)}.json  # one parked delivery record
+{dir}/gates/{consumer_group}/all                                                    # gates every partition of the controller
+{dir}/gates/{consumer_group}/partitions/t-{urlenc(tenant)}/p-{urlenc(partition)}    # gates one tenant-scoped partition
+{dir}/parked/{consumer_group}/{topic}/t-{urlenc(tenant)}/p-{urlenc(partition)}/{urlenc(id)}.json
 ```
 
-Consumer groups and topics are already filesystem-safe by the repo's naming rules; partition keys and message IDs may contain `/` (request IDs like `queue/1`), so they are URL-encoded in file names. Gate files contain human-readable JSON metadata — `reason`, `created_by`, `created_at_ms` — so an operator finding a paused controller can tell why. Parked records carry the payload, attempt, and `parked_at_ms` while a delivery is blocked; each re-check of a still-closed gate refreshes the record, and the admit path removes it once the gate opens, so payloads are not retained after release. All writes go through temp-file-plus-rename so readers never see partial JSON.
+Consumer groups and topics are already filesystem-safe by the repo's naming rules; tenant, partition keys, and message IDs are URL-encoded in path components. Gate files contain human-readable JSON metadata — `reason`, `created_by`, `created_at_ms` — so an operator finding a paused controller can tell why. Parked records carry the payload, attempt, and `parked_at_ms` while a delivery is blocked; each re-check of a still-closed gate refreshes the record, and the admit path removes it once the gate opens, so payloads are not retained after release. All writes go through temp-file-plus-rename so readers never see partial JSON.
 
 Files are the simplest medium for the E2E and single-host scope:
 
