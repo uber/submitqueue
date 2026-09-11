@@ -11,6 +11,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Consumer Hold](consumer-hold.md) - Fourth delivery outcome letting a controller postpone its delivery: the message becomes a partition barrier that pauses consumption for a chosen delay, redelivers in order, and does not count as a failure toward dead-lettering
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
 - [Hooks Framework](hook-framework.md) - Fire-and-forget side effects off pipeline lifecycle events: one shared `HookEvent` contract (`api/base/hook/`) published to a durable per-domain hook topic, dispatched by a per-domain stage to a pluggable hook extension (`platform/extension/hook/`) for integrations like warehouse export and code-review notifications
+- [Web/UI Design](web.md) - Operator UI as a Go `templ`+HTMX library (`submitqueue/web`) with example and go-code hosts; Next.js BFF documented as the alternative if the UX outgrows pages and fragments
 
 ## SubmitQueue
 
