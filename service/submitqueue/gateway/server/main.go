@@ -241,6 +241,9 @@ func run() error {
 		return fmt.Errorf("failed to open queue database: %w", err)
 	}
 	defer queueDB.Close()
+	if err := servicemq.ConfigureQueueMySQLConnectionPool(queueDB, os.Getenv("QUEUE_MYSQL_MAX_OPEN_CONNECTIONS")); err != nil {
+		return fmt.Errorf("failed to configure queue database pool: %w", err)
+	}
 
 	// Load queue configurations from YAML. Path is required so the gateway
 	// can reject requests for unknown queues at the edge.

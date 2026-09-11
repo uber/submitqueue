@@ -67,16 +67,9 @@ func TestGatewayIntegration(t *testing.T) {
 	suite.Run(t, new(GatewayIntegrationSuite))
 }
 
-// The log consumer runs inside the gateway-service container, so this suite can
-// only observe persistence black-box through the request-summary RPC — there is no
-// in-process channel/HookSignal to wait on across the container boundary. A
-// bounded poll is therefore the deterministic-enough analog: persistTimeout is a
-// safety net (a failure here means something is genuinely stuck, not a timing
-// race), and persistPollInterval bounds how often we re-query.
-const (
-	persistTimeout      = 30 * time.Second
-	persistPollInterval = 500 * time.Millisecond
-)
+// The container boundary leaves the request-summary RPC as the only signal that
+// the gateway consumer persisted a log entry.
+const persistPollInterval = 500 * time.Millisecond
 
 func (s *GatewayIntegrationSuite) SetupSuite() {
 	t := s.T()
@@ -163,7 +156,7 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 
 	// Verify message published to queue
 	var msgCount int
-	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", resp.Sqid).Scan(&msgCount)
+	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND id = ?", req.Queue, resp.Sqid).Scan(&msgCount)
 	require.NoError(t, err, "failed to query queue messages")
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
 }
@@ -265,8 +258,8 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 // entry to storage, observable through the request-summary RPC.
 func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	t := s.T()
-	const sqid = "log-consumer-test/1"
-	const logQueue = "log-consumer-test"
+	const sqid = "test-queue/log-consumer-test"
+	const logQueue = "test-queue"
 
 	// Build a publisher against the shared queue database. NewQueue only wires up
 	// stores; nothing consumes until a subscriber is started, so this publish-only
@@ -300,14 +293,15 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
 
-	require.Eventually(t, func() bool {
-		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid, Queue: "log-consumer-test"})
-		if statusErr != nil {
-			return false
+	ticker := time.NewTicker(persistPollInterval)
+	defer ticker.Stop()
+	for {
+		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid, Queue: logQueue})
+		if statusErr == nil && resp.Request != nil && resp.Request.Status == string(entity.RequestStatusStarted) {
+			break
 		}
-		return resp.Request != nil && resp.Request.Status == string(entity.RequestStatusStarted)
-	}, persistTimeout, persistPollInterval,
-		"gateway log consumer should persist the published request log for sqid=%s", sqid)
+		<-ticker.C
+	}
 
 	s.log.Logf("Request log consumer test passed: entry persisted and readable via GetRequestSummaryByID")
 }

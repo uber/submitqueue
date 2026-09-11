@@ -17,3 +17,7 @@ runs:
       env:
         TARGET: ${{ inputs.target }}
       run: ./tool/bazel test "$TARGET" --test_output=streamed
+
+    - name: Upload Bazel failure logs
+      if: ${{ failure() }}
+      uses: ./.github/actions/upload-testlogs
