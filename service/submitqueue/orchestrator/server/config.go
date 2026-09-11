@@ -616,6 +616,9 @@ func validateFactors(where string, factors map[string]float64) error {
 }
 
 func (s *scorerConfig) normalizeContent(where string) error {
+	if len(s.Factors) > 0 || s.Base != nil {
+		return fmt.Errorf("%s: factors and base belong on the ranking scorer, not under base", where)
+	}
 	if s.Type == "" {
 		s.Type = scorerTypeHeuristic
 	}

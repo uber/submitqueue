@@ -667,6 +667,10 @@ func TestLoadProfilesConfig_RejectsBadScorers(t *testing.T) {
 		{name: "unknown combine", contents: "defaults:\n  scorer:\n    base:\n      type: composite\n      combine: median\n      components: {a: {type: heuristic}}\n"},
 		{name: "score out of range", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      buckets: [{min: 0, max: 10, score: 2.0}]\n"},
 		{name: "inverted bucket", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      buckets: [{min: 10, max: 1, score: 0.5}]\n"},
+		{name: "factors under heuristic base", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      factors: {pathPassed: 10}\n"},
+		{name: "nested base under heuristic", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      base: {type: heuristic}\n"},
+		{name: "factors on a composite component", contents: "defaults:\n  scorer:\n    base:\n      type: composite\n      components:\n        a:\n          type: heuristic\n          factors: {pathPassed: 10}\n"},
+		{name: "factors under queue overlay base", contents: "defaults: {}\nqueues:\n  - name: q\n    scorer:\n      base:\n        type: heuristic\n        factors: {pathPassed: 10}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
