@@ -330,8 +330,12 @@ func (b *profileBuilder) newScorerFactory(cfg scorerConfig, where string) (score
 	if cfg.Base == nil {
 		return nil, fmt.Errorf("%s: evidence scorer needs a base", where)
 	}
-	if _, err := b.buildScorer(scorer.Config{}, *cfg.Base, where, "scorer.base"); err != nil {
+	base, err := b.buildScorer(scorer.Config{}, *cfg.Base, where, "scorer.base")
+	if err != nil {
 		return nil, err
+	}
+	if _, err := evidence.New(scorer.Config{}, base, factorsFrom(cfg), b.scope.SubScope("scorer")); err != nil {
+		return nil, fmt.Errorf("%s: %w", where, err)
 	}
 	return scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
 		base, err := b.buildScorer(c, *cfg.Base, where, "scorer.base")

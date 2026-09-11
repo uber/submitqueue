@@ -659,6 +659,10 @@ func TestLoadProfilesConfig_RejectsBadScorers(t *testing.T) {
 	}{
 		{name: "unknown scorer type", contents: "defaults:\n  scorer: {type: vibes}\n"},
 		{name: "top-level heuristic", contents: "defaults:\n  scorer: {type: heuristic}\n"},
+		{name: "top-level buckets without type", contents: "defaults:\n  scorer:\n    buckets: [{min: 0, max: 10, score: 0.9}]\n"},
+		{name: "buckets next to evidence", contents: "defaults:\n  scorer:\n    type: evidence\n    buckets: [{min: 0, max: 10, score: 0.9}]\n"},
+		{name: "top-level combine", contents: "defaults:\n  scorer:\n    combine: avg\n"},
+		{name: "queue overlay buckets without type", contents: "defaults: {}\nqueues:\n  - name: q\n    scorer:\n      buckets: [{min: 0, max: 10, score: 0.9}]\n"},
 		{name: "composite with no components", contents: "defaults:\n  scorer:\n    base: {type: composite}\n"},
 		{name: "unknown combine", contents: "defaults:\n  scorer:\n    base:\n      type: composite\n      combine: median\n      components: {a: {type: heuristic}}\n"},
 		{name: "score out of range", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      buckets: [{min: 0, max: 10, score: 2.0}]\n"},
@@ -733,4 +737,29 @@ func TestLoadProfilesConfig_QueueScorerFactorsOverlayDefaults(t *testing.T) {
 
 	defaults := factorsFrom(cfg.Defaults.Scorer)
 	assert.Equal(t, 10.0, defaults.PathPassed)
+}
+
+func TestLoadProfilesConfig_QueueScorerBaseReplacesDefaultBase(t *testing.T) {
+	cfg, err := loadProfilesConfig(writeProfiles(t, ""+
+		"defaults:\n"+
+		"  scorer:\n"+
+		"    factors: {pathPassed: 10}\n"+
+		"    base:\n"+
+		"      type: heuristic\n"+
+		"      buckets: [{min: 0, max: 1000, score: 0.4}]\n"+
+		"queues:\n"+
+		"  - name: q\n"+
+		"    scorer:\n"+
+		"      base:\n"+
+		"        type: heuristic\n"+
+		"        buckets: [{min: 0, max: 1000, score: 0.9}]\n"))
+	require.NoError(t, err)
+
+	resolved := cfg.resolve(cfg.Queues[0]).Scorer
+	require.NotNil(t, resolved.Base)
+	assert.Equal(t, 0.9, resolved.Base.Buckets[0].Score)
+	assert.Equal(t, 10.0, factorsFrom(resolved).PathPassed)
+
+	require.NotNil(t, cfg.Defaults.Scorer.Base)
+	assert.Equal(t, 0.4, cfg.Defaults.Scorer.Base.Buckets[0].Score)
 }
