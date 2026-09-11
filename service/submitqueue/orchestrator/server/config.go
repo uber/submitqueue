@@ -16,6 +16,8 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"math"
 	"os"
 	"time"
 
@@ -67,6 +69,22 @@ const (
 // Ways a composite scorer combines its components.
 const combineAvg = "avg"
 
+// Predictor types selectable from configuration.
+const predictorTypeEvidence = "evidence"
+
+// Evidence an evidence predictor prices, as named in configuration. The set is
+// closed: a factor under any other name would be applied to nothing and never
+// noticed.
+const (
+	factorPathPassed = "pathPassed"
+	factorPathFailed = "pathFailed"
+	factorMerging    = "merging"
+	factorCancelling = "cancelling"
+)
+
+// neutralFactor leaves the scorer's price untouched.
+const neutralFactor = 1.0
+
 // defaultBuildBudget is how many builds a queue may have occupying CI at once
 // when it states no budget of its own. Four is enough for speculation to be
 // visible — a queue that can only build one path never speculates — while
@@ -110,6 +128,7 @@ type namedQueueProfileConfig struct {
 	Analyzer       *analyzerConfig       `yaml:"analyzer"`
 	Scorer         *scorerConfig         `yaml:"scorer"`
 	Speculator     *speculatorConfig     `yaml:"speculator"`
+	Predictor      *predictorConfig      `yaml:"predictor"`
 }
 
 // queueProfileConfig is the full set of extensions a queue resolves to.
@@ -119,6 +138,7 @@ type queueProfileConfig struct {
 	Analyzer       analyzerConfig       `yaml:"analyzer"`
 	Scorer         scorerConfig         `yaml:"scorer"`
 	Speculator     speculatorConfig     `yaml:"speculator"`
+	Predictor      predictorConfig      `yaml:"predictor"`
 }
 
 // changeProviderConfig selects how change metadata is fetched. The github and
@@ -230,13 +250,25 @@ type bucketConfig struct {
 }
 
 // speculatorConfig tunes how much CI a queue's speculation may occupy. It has no
-// `type`: there is one speculator, composed from the queue's scorer, and what
+// `type`: there is one speculator, composed from the queue's predictor, and what
 // varies between queues is what it is allowed to spend.
 type speculatorConfig struct {
 	// BuildBudget caps how many builds this queue may have occupying CI at once,
 	// counted across every in-flight batch rather than per batch. Absent or 0
 	// takes defaultBuildBudget; must not be negative.
 	BuildBudget int `yaml:"buildBudget"`
+}
+
+// predictorConfig tunes how a queue turns its scorer's price into the
+// probability the generator ranks on. The scorer being revised is the queue's
+// own, so it is not named again here.
+type predictorConfig struct {
+	Type string `yaml:"type"`
+	// Factors revise the scorer's price, one per piece of evidence and keyed by
+	// evidence name. An omitted key keeps the inherited value, or 1 if neither
+	// defaults nor the queue named it. An omitted predictor block inherits the
+	// whole default, so every factor stays 1 until someone sets one.
+	Factors map[string]float64 `yaml:"factors"`
 }
 
 // loadProfilesConfig reads and validates the profiles configuration at path.
@@ -300,6 +332,11 @@ func (c *profilesConfig) normalizeAndValidate() error {
 				return err
 			}
 		}
+		if q.Predictor != nil {
+			if err := q.Predictor.normalizeAndValidate(where); err != nil {
+				return err
+			}
+		}
 	}
 	return c.validateGitRepoPaths()
 }
@@ -358,7 +395,29 @@ func (c profilesConfig) resolve(q namedQueueProfileConfig) queueProfileConfig {
 	if q.Speculator != nil {
 		profile.Speculator = *q.Speculator
 	}
+	if q.Predictor != nil {
+		profile.Predictor = overlayPredictor(profile.Predictor, *q.Predictor)
+	}
 	return profile
+}
+
+// overlayPredictor keeps default factors the queue did not name. A present
+// predictor block is otherwise a normal extension override: type replaces when
+// set, and named factor keys win.
+func overlayPredictor(base, override predictorConfig) predictorConfig {
+	if override.Type != "" {
+		base.Type = override.Type
+	}
+	if len(override.Factors) == 0 {
+		return base
+	}
+	merged := maps.Clone(base.Factors)
+	if merged == nil {
+		merged = make(map[string]float64, len(override.Factors))
+	}
+	maps.Copy(merged, override.Factors)
+	base.Factors = merged
+	return base
 }
 
 func (p *queueProfileConfig) normalizeAndValidate(where string) error {
@@ -374,7 +433,10 @@ func (p *queueProfileConfig) normalizeAndValidate(where string) error {
 	if err := p.Scorer.normalizeAndValidate(where); err != nil {
 		return err
 	}
-	return p.Speculator.normalizeAndValidate(where)
+	if err := p.Speculator.normalizeAndValidate(where); err != nil {
+		return err
+	}
+	return p.Predictor.normalizeAndValidate(where)
 }
 
 func (c *changeProviderConfig) normalizeAndValidate(where string) error {
@@ -552,6 +614,31 @@ func (s *scorerConfig) normalizeAndValidate(where string) error {
 		}
 	default:
 		return fmt.Errorf("%s: unknown scorer type %q", where, s.Type)
+	}
+	return nil
+}
+
+// normalizeAndValidate applies defaults and rejects a predictor that could not
+// be built. An empty block is an evidence predictor with every factor neutral,
+// which prices a batch at exactly its scorer's price.
+func (p *predictorConfig) normalizeAndValidate(where string) error {
+	if p.Type == "" {
+		p.Type = predictorTypeEvidence
+	}
+	if p.Type != predictorTypeEvidence {
+		return fmt.Errorf("%s: unknown predictor type %q", where, p.Type)
+	}
+	for name, factor := range p.Factors {
+		switch name {
+		case factorPathPassed, factorPathFailed, factorMerging, factorCancelling:
+		default:
+			return fmt.Errorf("%s: unknown predictor factor %q", where, name)
+		}
+		// Zero would permanently pin matching batches to 0; negatives cannot
+		// represent either direction in the factor contract.
+		if !(factor > 0) || math.IsInf(factor, 0) {
+			return fmt.Errorf("%s: predictor factor %q is %v, must be finite and positive", where, name, factor)
+		}
 	}
 	return nil
 }
