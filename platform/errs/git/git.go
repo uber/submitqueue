@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package git provides an errs.Classifier for failures from Git processes.
+// Package git classifies failures reported by Git commands.
 //
 // Git has no typed status to read: it reports almost everything as a non-zero
 // exit and a line of prose, so a connection reset and a deleted branch both
@@ -47,7 +47,6 @@ import (
 	"strings"
 
 	"github.com/uber/submitqueue/platform/errs"
-	gitexec "github.com/uber/submitqueue/platform/git/exec"
 )
 
 // Classifier recognises Git process failures, reporting a known transient
@@ -62,6 +61,25 @@ import (
 var Classifier errs.Classifier = classifier{}
 
 type classifier struct{}
+
+// CommandFailure is the Git failure information needed by Classifier.
+//
+// Git does not expose a structured failure protocol: unrelated failures
+// collapse to generic non-zero exit statuses, leaving the command and its text
+// output as the only useful classification signals.
+//
+// Execution backends may satisfy this contract with their native error type;
+// they do not need to reconstruct an error from another Git implementation.
+type CommandFailure interface {
+	error
+	// Operation returns the Git subcommand that failed, such as fetch, commit,
+	// or push. It excludes the Git executable and later arguments.
+	Operation() string
+	// Diagnostic returns the complete failure output reported by Git. It must
+	// retain all stderr or stdout lines because a classifying fragment may
+	// appear after introductory advice or hints.
+	Diagnostic() string
+}
 
 // remoteOperations are the Git subcommands that exchange data with the
 // configured remote. They attribute their failures to that remote, and they
@@ -106,21 +124,13 @@ var transientCheckoutFragments = []string{
 	"resource temporarily unavailable",
 }
 
-// Classify inspects a single node. Per the errs.Classifier contract, this must
-// not call errors.Is / errors.As — the classifier-processor owns the chain
-// walk.
-func (classifier) Classify(err error) errs.Verdict {
-	commandErr, ok := err.(*gitexec.CommandError)
-	if !ok {
-		// The only Unknown this classifier returns, and it means "not my
-		// node" rather than "no opinion on this failure". Returning a verdict
-		// here would claim every error the walk passes — a MySQL driver error
-		// among them — before its own classifier were asked.
-		return errs.Unknown
-	}
-
-	diagnostic := strings.ToLower(commandErr.Diagnostic())
-	remote := remoteOperations[commandErr.Operation()]
+// ClassifyCommand classifies a Git subcommand and its rendered diagnostic.
+//
+// It is the shared policy for local processes, remote Git execution services,
+// and any other backend that can report those two values.
+func ClassifyCommand(operation, diagnostic string) errs.Verdict {
+	diagnostic = strings.ToLower(diagnostic)
+	remote := remoteOperations[operation]
 
 	transient := containsAny(diagnostic, transientCheckoutFragments) ||
 		(remote && containsAny(diagnostic, transientTransportFragments))
@@ -135,6 +145,17 @@ func (classifier) Classify(err error) errs.Verdict {
 	default:
 		return errs.Infra
 	}
+}
+
+// Classify inspects a single node. Per the errs.Classifier contract, this must
+// not call errors.Is / errors.As — the classifier-processor owns the chain
+// walk.
+func (classifier) Classify(err error) errs.Verdict {
+	commandFailure, ok := err.(CommandFailure)
+	if !ok {
+		return errs.Unknown
+	}
+	return ClassifyCommand(commandFailure.Operation(), commandFailure.Diagnostic())
 }
 
 func containsAny(diagnostic string, fragments []string) bool {
