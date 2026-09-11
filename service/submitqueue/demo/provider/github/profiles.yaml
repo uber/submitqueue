@@ -12,12 +12,15 @@ defaults:
   analyzer: {type: all}
   # Same example factors as ../fake/profiles.yaml — see that file for why they
   # are written out rather than left at the neutral default of 1.
-  predictor:
+  scorer:
+    type: evidence
     factors:
       pathPassed: 10
       pathFailed: 0.3
       merging: 12
       cancelling: 0.1
+    base:
+      type: heuristic
 
 queues:
   - name: demo-queue

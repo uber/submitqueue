@@ -23,14 +23,17 @@ defaults:
   # of the outcomes it is waiting on. Four is the built-in default.
   speculator: {buildBudget: 4}
   # Example evidence factors from the outcome-predictor RFC. Omitted keys would
-  # stay at 1 and ranking would stay on the scorer alone; writing them out makes
+  # stay at 1 and ranking would stay on the base price; writing them out makes
   # the demo show how path results and batch state revise that price.
-  predictor:
+  scorer:
+    type: evidence
     factors:
       pathPassed: 10
       pathFailed: 0.3
       merging: 12
       cancelling: 0.1
+    base:
+      type: heuristic
 
 queues:
   # The queue `make demo-requests` and `make land` use by default.
