@@ -33,11 +33,11 @@ import (
 // snap.speculating holding the heads still open to new work.
 //
 // Everything here is a fact, not a choice: a path a resolved dependency ruled
-// out is dead, a head whose passed builds establish a merge verdict merges,
+// out is dead, a head whose passed builds establish a land verdict lands,
 // and a batch the user cancelled is finished once its last build stops.
 // Finalizing before the Speculator is asked is what keeps its work from
 // being wasted — asked first, it would propose builds for a head that is
-// already merging.
+// already landing.
 //
 // Outcomes cascade, and the head loop runs to a fixed point to collapse a
 // whole cascade into this one run:
@@ -55,7 +55,7 @@ import (
 // Deciding the whole cascade up front and writing afterwards would enact
 // dependents of an outcome whose own write then lost its compare-and-swap —
 // and the loser of that race is not always benign: a cancellation loses
-// precisely to a merge that got there first, which leaves the batch
+// precisely to a land that got there first, which leaves the batch
 // *succeeded*, after its dependents were already failed on the assumption it
 // was cancelled. Committing per generation costs no extra reads — the
 // snapshot is read once, and the writes are ones this run makes anyway.
@@ -95,11 +95,11 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 			}
 
 			bypassed := false
-			if decision == outcomeMerge {
+			if decision == outcomeLand {
 				// The winning path carries the head out of the queue; its
 				// siblings cannot help it any more and are still holding CI
 				// slots the rest of the queue could use.
-				winner, ok := mergeablePath(set, *snap)
+				winner, ok := landablePath(set, *snap)
 				if !ok {
 					winner, bypassed = bypassablePath(batch, set, *snap)
 				}
@@ -159,8 +159,8 @@ func (c *Controller) reportSpeculation(
 ) error {
 	after, hasPassed := livePassedPath(set, snap)
 
-	// A merge is decided on the same live passed path, so an ungated report
-	// would claim a wait on every head that merges straight through.
+	// A land is decided on the same live passed path, so an ungated report
+	// would claim a wait on every head that lands straight through.
 	event, path := entity.RequestEventWaiting, after
 	switch {
 	case hasPassed && decision == outcomeWait:
@@ -195,7 +195,7 @@ func (c *Controller) reportSpeculation(
 // moment it is asked to be — its builds hold their CI slots until they
 // actually stop — so the run marks the paths, the poll loop asks the runner
 // to stop them, and whichever later run sees them stopped finishes the
-// job. That is why cancellation is best effort, and why a merge that wins the
+// job. That is why cancellation is best effort, and why a land that wins the
 // race still prevails.
 func (c *Controller) finalizeCancellations(ctx context.Context, snap *snapshot, nowMs int64) error {
 	// TODO(respeculate-collateral): re-enqueue Land for every request in batch.Contains
@@ -283,9 +283,9 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 // durable — see commitOutcome — because everything concluded about the
 // batches stacked on this one is derived from it.
 //
-// Only a terminal outcome is recorded. Merging is not terminal — a head
+// Only a terminal outcome is recorded. Landing is not terminal — a head
 // stacked on this one assumed it would *succeed*, and it has not yet — so a
-// merge outcome resolves nothing for anybody else.
+// land outcome resolves nothing for anybody else.
 func (c *Controller) recordOutcome(snap *snapshot, batchID string, decision outcome) {
 	state, terminal := decision.terminalState()
 	if !terminal {
@@ -307,8 +307,8 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	var state entity.BatchState
 
 	switch decision {
-	case outcomeMerge:
-		state = entity.BatchStateMerging
+	case outcomeLand:
+		state = entity.BatchStateLanding
 
 	case outcomeFail, outcomeCancel:
 		state, _ = decision.terminalState()
@@ -347,8 +347,8 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	)
 
 	switch decision {
-	case outcomeMerge:
-		if err := c.dispatchMerge(ctx, batch); err != nil {
+	case outcomeLand:
+		if err := c.dispatchLand(ctx, batch); err != nil {
 			return true, err
 		}
 
@@ -362,7 +362,7 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 		}
 		// Named for the run that decided it, so a redelivery re-deriving the
 		// same outcome does not conclude the batch twice, and so it stays
-		// distinct from the conclude mergesignal sends for a merged batch.
+		// distinct from the conclude landsignal sends for a landed batch.
 		// A conclude that goes missing is recovered by fanout, which is
 		// deliberately un-deduplicated.
 		if err := c.publishBatchIDWithMetadata(ctx, topickey.TopicKeyConclude, publish.IntentID(batch.ID, "conclude", "speculate"), batch.ID, batch.Queue, batch.Queue, concludeMeta); err != nil {
@@ -373,11 +373,11 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	return true, nil
 }
 
-// dispatchMerge reports speculation finished and hands the batch to the merge
-// stage. The stable ID means a redelivery or the Merging self-heal dedupes
-// against the request already sent instead of merging twice; the status goes
+// dispatchLand reports speculation finished and hands the batch to the land
+// stage. The stable ID means a redelivery or the Landing self-heal dedupes
+// against the request already sent instead of landing twice; the status goes
 // first so it cannot be timestamped after the landing the dispatch triggers.
-func (c *Controller) dispatchMerge(ctx context.Context, batch entity.Batch) error {
+func (c *Controller) dispatchLand(ctx context.Context, batch entity.Batch) error {
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
 		entity.RequestStatusSpeculated, batch.ID, map[string]string{"batch_id": batch.ID},
 	); err != nil {
@@ -385,9 +385,9 @@ func (c *Controller) dispatchMerge(ctx context.Context, batch entity.Batch) erro
 		return fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err)
 	}
 
-	if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyLand, publish.IntentID(batch.ID, "land-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)
+		return fmt.Errorf("failed to publish batch %s to land: %w", batch.ID, err)
 	}
 	return nil
 }
@@ -399,7 +399,7 @@ func (c *Controller) dispatchMerge(ctx context.Context, batch entity.Batch) erro
 // A batch named by a message is repaired through it: a redelivery re-publishes
 // from one of Process's self-heal branches, and a persistent failure
 // dead-letters by name. A cascade-decided batch has neither, and finalize only
-// walks heads still speculating — so a merged one would never reach Runway,
+// walks heads still speculating — so a batch in Landing would never reach Runway,
 // and a terminal one would leave its requests unreconciled.
 //
 // Distinct per publish: the guarantee being bought is that a message exists at
@@ -456,7 +456,7 @@ func cancelBrokenPathsInSet(set *entity.SpeculationPathSet, snap snapshot, nowMs
 	})
 }
 
-// supersede stops every path other than the winner once the head can merge.
+// supersede stops every path other than the winner once the head can land.
 // Its live siblings cannot help any more but still hold CI slots the rest of
 // the queue could use.
 func supersede(set *entity.SpeculationPathSet, winnerID string, nowMs int64) bool {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mergesignal
+package landsignal
 
 import (
 	"context"
@@ -105,7 +105,7 @@ func newController(t *testing.T, store *storagemock.MockStorage, registry consum
 		staticStorageFactory{store: store},
 		registry,
 		runwaymq.TopicKeyMergeSignal,
-		"orchestrator-mergesignal",
+		"orchestrator-landsignal",
 	)
 }
 
@@ -117,8 +117,8 @@ func TestNewController(t *testing.T) {
 	c := newController(t, store, recordingRegistry(t, ctrl, &got))
 
 	assert.Equal(t, consumer.TopicKey(runwaymq.TopicKeyMergeSignal), c.TopicKey())
-	assert.Equal(t, "orchestrator-mergesignal", c.ConsumerGroup())
-	assert.Equal(t, "mergesignal", c.Name())
+	assert.Equal(t, "orchestrator-landsignal", c.ConsumerGroup())
+	assert.Equal(t, "landsignal", c.Name())
 	var _ consumer.Controller = c
 }
 
@@ -134,7 +134,7 @@ func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	require.Error(t, c.Process(context.Background(), d))
 }
 
-func TestProcess_MergedAdvancesBatch(t *testing.T) {
+func TestProcess_LandedAdvancesBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -143,7 +143,7 @@ func TestProcess_MergedAdvancesBatch(t *testing.T) {
 		Queue:        testQueue,
 		Contains:     []string{"test-queue/1"},
 		Dependencies: []string{"test-queue/batch/0"},
-		State:        entity.BatchStateMerging,
+		State:        entity.BatchStateLanding,
 		Version:      1,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
@@ -169,7 +169,7 @@ func TestProcess_MergedAdvancesBatch(t *testing.T) {
 	assert.ElementsMatch(t, []string{"conclude", "speculate"}, got)
 }
 
-// The fan-out after a merge must not reuse the bare batch ID.
+// The fan-out after a land must not reuse the bare batch ID.
 //
 // The batch's own announcement to speculate uses exactly that ID, and the
 // queue deduplicates on (topic, partition key, message ID) against every row it
@@ -186,7 +186,7 @@ func TestProcess_FanoutDoesNotCollideWithTheBatchAnnouncement(t *testing.T) {
 		Queue:        testQueue,
 		Contains:     []string{"test-queue/1"},
 		Dependencies: []string{"test-queue/batch/0"},
-		State:        entity.BatchStateMerging,
+		State:        entity.BatchStateLanding,
 		Version:      1,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
@@ -222,7 +222,7 @@ func TestProcess_FanoutDoesNotCollideWithTheBatchAnnouncement(t *testing.T) {
 	assert.NotEqual(t, byTopic["speculate"], byTopic["conclude"])
 }
 
-func TestProcess_NotMergedMarksBatchFailed(t *testing.T) {
+func TestProcess_NotLandedMarksBatchFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -231,7 +231,7 @@ func TestProcess_NotMergedMarksBatchFailed(t *testing.T) {
 		Queue:        testQueue,
 		Contains:     []string{"test-queue/1"},
 		Dependencies: []string{"test-queue/batch/0"},
-		State:        entity.BatchStateMerging,
+		State:        entity.BatchStateLanding,
 		Version:      3,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
@@ -261,12 +261,12 @@ func TestProcess_NotMergedMarksBatchFailed(t *testing.T) {
 
 	res := runwaymq.MergeResult{Id: testBatchID, Outcome: runwaypb.Outcome_FAILED, Reason: "conflict in foo.go"}
 	msg := entityqueue.NewMessage(testBatchID, resultPayload(t, res), testQueue, nil)
-	// Not-merged is an expected terminal outcome, so Process acks (no error).
+	// Not-landed is an expected terminal outcome, so Process acks (no error).
 	require.NoError(t, newController(t, store, registry).Process(context.Background(), newDelivery(ctrl, msg)))
 
 	require.Contains(t, byTopic, "conclude")
 	require.Contains(t, byTopic, "speculate")
-	// The merge reason rides the conclude message so conclude can stamp it on
+	// The land failure reason rides the conclude message so conclude can stamp it on
 	// the request's terminal log; the speculate wake-up carries none.
 	assert.Equal(t, "conflict in foo.go", byTopic["conclude"].Metadata[topickey.MetadataKeyFailureReason])
 	assert.Empty(t, byTopic["speculate"].Metadata[topickey.MetadataKeyFailureReason])

@@ -82,9 +82,9 @@ func TestFilterProposals_Rejects(t *testing.T) {
 			want: rejectUnknownHead,
 		},
 		{
-			name:     "head already merging",
+			name:     "head already landing",
 			proposal: entity.Speculation{Path: valid, Action: entity.PathActionBuild},
-			snap:     checkSnapshot(entity.BatchStateMerging),
+			snap:     checkSnapshot(entity.BatchStateLanding),
 			want:     rejectHeadNotSpeculating,
 		},
 		{

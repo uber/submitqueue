@@ -50,7 +50,7 @@
 //
 //   - fake (default): a change is a URI and nothing else. No repository, no
 //     credential, no I/O — the fastest way to put traffic through the queue.
-//   - git: a branch pushed to the sandbox repository the stack merges into.
+//   - git: a branch pushed to the sandbox repository the stack lands into.
 //     Real commits, still no credential.
 //   - github: a real pull request over the REST API, which needs no clone and
 //     no git binary, only GITHUB_TOKEN — the same credential the stack uses.
@@ -130,7 +130,7 @@ func parseFlags() config {
 	flag.BoolVar(&c.tls, "tls", false, "dial the gateway with transport security")
 	flag.StringVar(&c.tokenEnv, "token-env", client.DefaultTokenEnv, "environment variable holding the gateway bearer token")
 	flag.StringVar(&c.queue, "queue", "demo-queue", "queue to land on")
-	flag.StringVar(&c.strategy, "strategy", "SQUASH_REBASE", "merge strategy")
+	flag.StringVar(&c.strategy, "strategy", "SQUASH_REBASE", "land strategy")
 	flag.Parse()
 
 	// Only the GitHub source reads a credential; the other two must not fail,

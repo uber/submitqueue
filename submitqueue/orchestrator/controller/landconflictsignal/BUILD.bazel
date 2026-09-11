@@ -2,8 +2,8 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["mergeconflictsignal.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal",
+    srcs = ["landconflictsignal.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/landconflictsignal",
     visibility = ["//visibility:public"],
     deps = [
         "//api/runway/messagequeue:go_default_library",
@@ -23,7 +23,7 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["mergeconflictsignal_test.go"],
+    srcs = ["landconflictsignal_test.go"],
     embed = [":go_default_library"],
     deps = [
         "//api/runway/messagequeue:go_default_library",

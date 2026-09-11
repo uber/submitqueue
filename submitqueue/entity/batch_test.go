@@ -31,7 +31,7 @@ func TestBatchState_IsTerminal(t *testing.T) {
 		{name: "creating", state: BatchStateCreating, terminal: false},
 		{name: "created", state: BatchStateCreated, terminal: false},
 		{name: "speculating", state: BatchStateSpeculating, terminal: false},
-		{name: "merging", state: BatchStateMerging, terminal: false},
+		{name: "landing", state: BatchStateLanding, terminal: false},
 		{name: "succeeded", state: BatchStateSucceeded, terminal: true},
 		{name: "failed", state: BatchStateFailed, terminal: true},
 		{name: "cancelled", state: BatchStateCancelled, terminal: true},
@@ -52,7 +52,7 @@ func TestIsCancellable(t *testing.T) {
 	assert.True(t, BatchState("future").IsCancellable())
 	assert.False(t, BatchStateUnknown.IsCancellable())
 	assert.False(t, BatchStateCreating.IsCancellable())
-	assert.False(t, BatchStateMerging.IsCancellable())
+	assert.False(t, BatchStateLanding.IsCancellable())
 	assert.False(t, BatchStateSucceeded.IsCancellable())
 	assert.False(t, BatchStateFailed.IsCancellable())
 	assert.False(t, BatchStateCancelled.IsCancellable())

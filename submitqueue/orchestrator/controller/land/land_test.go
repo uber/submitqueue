@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package merge
+package land
 
 import (
 	"context"
@@ -53,6 +53,26 @@ func batchIDPayload(t *testing.T, id, queue string) []byte {
 	return payload
 }
 
+func TestToProtoStrategy(t *testing.T) {
+	tests := []struct {
+		name string
+		in   mergestrategy.MergeStrategy
+		want strategypb.Strategy
+	}{
+		{name: "default", in: mergestrategy.MergeStrategyUnknown, want: strategypb.Strategy_DEFAULT},
+		{name: "rebase", in: mergestrategy.MergeStrategyRebase, want: strategypb.Strategy_REBASE},
+		{name: "squash rebase", in: mergestrategy.MergeStrategySquashRebase, want: strategypb.Strategy_SQUASH_REBASE},
+		{name: "merge", in: mergestrategy.MergeStrategyMerge, want: strategypb.Strategy_MERGE},
+		{name: "promote", in: mergestrategy.MergeStrategyPromote, want: strategypb.Strategy_PROMOTE},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toProtoStrategy(tt.in))
+		})
+	}
+}
+
 func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey string) *consumermock.MockDelivery {
 	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID, partitionKey), partitionKey, nil)
 	msg.Tenant = partitionKey
@@ -69,14 +89,14 @@ func newController(t *testing.T, store *storagemock.MockStorage, registry consum
 		staticStorageFactory{store: store},
 		registry,
 		runwaymq.TopicKeyMerge,
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
+		topickey.TopicKeyLand,
+		"orchestrator-land",
 	)
 }
 
 // publishes records what a controller run published, in order and by topic. The
 // controller writes to two topics now — the request-log fan-out and the runway
-// merge request — so tests need to tell them apart and to see which came first.
+// land request — so tests need to tell them apart and to see which came first.
 type publishes struct {
 	inOrder []string
 	byTopic map[string][]entityqueue.Message
@@ -123,9 +143,9 @@ func TestNewController(t *testing.T) {
 	c := newController(t, store, registry)
 
 	require.NotNil(t, c)
-	assert.Equal(t, topickey.TopicKeyMerge, c.TopicKey())
-	assert.Equal(t, "orchestrator-merge", c.ConsumerGroup())
-	assert.Equal(t, "merge", c.Name())
+	assert.Equal(t, topickey.TopicKeyLand, c.TopicKey())
+	assert.Equal(t, "orchestrator-land", c.ConsumerGroup())
+	assert.Equal(t, "land", c.Name())
 	var _ consumer.Controller = c
 }
 
@@ -160,7 +180,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: []string{req1.ID, req2.ID},
-		State:    entity.BatchStateMerging,
+		State:    entity.BatchStateLanding,
 		Version:  4,
 	}
 
@@ -236,7 +256,7 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 			batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 
 			// No request-store reads and no publish for a halted batch: the
-			// members are told nothing and runway is not asked to merge.
+			// members are told nothing and runway is not asked to land.
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
@@ -251,7 +271,7 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 
 // TestProcess_ReportsLandingBeforeDispatch covers the request-log half of this
 // stage: every member of the batch is told it is landing, and it is told before
-// the merge request goes out. The ordering is what makes a lost log entry
+// the land request goes out. The ordering is what makes a lost log entry
 // recoverable — a failure here nacks with nothing announced to runway, and the
 // redelivery re-publishes under the same occurrence, which the queue dedupes.
 func TestProcess_ReportsLandingBeforeDispatch(t *testing.T) {
@@ -263,7 +283,7 @@ func TestProcess_ReportsLandingBeforeDispatch(t *testing.T) {
 	batch := entity.Batch{
 		ID: batchID, Queue: "test-queue",
 		Contains: []string{req1.ID, req2.ID},
-		State:    entity.BatchStateMerging, Version: 2,
+		State:    entity.BatchStateLanding, Version: 2,
 	}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -313,7 +333,7 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 
 			const batchID = "test-queue/batch/2"
 			req := entity.Request{ID: "test-queue/1", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
-			batch := entity.Batch{ID: batchID, Queue: "test-queue", Contains: []string{req.ID}, State: entity.BatchStateMerging, Version: 1}
+			batch := entity.Batch{ID: batchID, Queue: "test-queue", Contains: []string{req.ID}, State: entity.BatchStateLanding, Version: 1}
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
@@ -330,7 +350,7 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 			require.Error(t, c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue)))
 
 			// A failed log publish must stop the run before runway hears about
-			// the merge, so the redelivery can repair the log entry.
+			// the land, so the redelivery can repair the log entry.
 			if tt.failTopic == "log" {
 				assert.Empty(t, rec.byTopic["runway-merge"])
 			}

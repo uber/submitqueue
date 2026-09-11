@@ -29,27 +29,27 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-func TestDLQMergeSignalController_InterfaceAndAccessors(t *testing.T) {
+func TestDLQLandSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
 
 	assert.Equal(t, "merge-signal_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("merge-signal_dlq"), c.TopicKey())
-	assert.Equal(t, "orchestrator-mergesignal-dlq", c.ConsumerGroup())
+	assert.Equal(t, "orchestrator-landsignal-dlq", c.ConsumerGroup())
 }
 
 // The payload id is the batch id echoed back, so reconciliation fails the batch
 // and fans out to its member requests via failBatch.
-func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
+func TestDLQLandSignalController_Process_ReconcilesBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"},
-		State: entity.BatchStateMerging, Version: 2,
+		State: entity.BatchStateLanding, Version: 2,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
@@ -70,7 +70,7 @@ func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
@@ -79,10 +79,10 @@ func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
 	require.NoError(t, c.Process(context.Background(), delivery))
 }
 
-func TestDLQMergeSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
+func TestDLQLandSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
@@ -90,12 +90,12 @@ func TestDLQMergeSignalController_Process_TenantPayloadQueueMismatchAcks(t *test
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
 }
 
-func TestDLQMergeSignalController_Process_MalformedPayloadFails(t *testing.T) {
+func TestDLQLandSignalController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	require.Error(t, c.Process(context.Background(), delivery))

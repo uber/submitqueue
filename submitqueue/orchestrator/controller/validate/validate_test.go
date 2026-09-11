@@ -48,6 +48,26 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
+func TestToProtoStrategy(t *testing.T) {
+	tests := []struct {
+		name string
+		in   mergestrategy.MergeStrategy
+		want strategypb.Strategy
+	}{
+		{name: "default", in: mergestrategy.MergeStrategyUnknown, want: strategypb.Strategy_DEFAULT},
+		{name: "rebase", in: mergestrategy.MergeStrategyRebase, want: strategypb.Strategy_REBASE},
+		{name: "squash rebase", in: mergestrategy.MergeStrategySquashRebase, want: strategypb.Strategy_SQUASH_REBASE},
+		{name: "merge", in: mergestrategy.MergeStrategyMerge, want: strategypb.Strategy_MERGE},
+		{name: "promote", in: mergestrategy.MergeStrategyPromote, want: strategypb.Strategy_PROMOTE},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toProtoStrategy(tt.in))
+		})
+	}
+}
+
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
 	return request
@@ -193,7 +213,7 @@ func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	require.Error(t, controller.Process(context.Background(), delivery))
 }
 
-// TestController_Process_PublishesCheckToRunway verifies the full merge-conflict
+// TestController_Process_PublishesCheckToRunway verifies the full land-conflict
 // check request is published to runway's merge-conflict-check queue (keyed by
 // the request id, the client-owned correlation id) on the happy path.
 func TestController_Process_PublishesCheckToRunway(t *testing.T) {

@@ -337,7 +337,7 @@ func TestBestFirst_OnlySpeculatingHeadsProduceCandidates(t *testing.T) {
 		{state: entity.BatchStateUnknown},
 		{state: entity.BatchStateCreated},
 		{state: entity.BatchStateSpeculating, want: true},
-		{state: entity.BatchStateMerging},
+		{state: entity.BatchStateLanding},
 		{state: entity.BatchStateSucceeded},
 		{state: entity.BatchStateFailed},
 		{state: entity.BatchStateCancelling},
@@ -417,13 +417,13 @@ func TestBestFirst_NeverScoresAnAbsentDependency(t *testing.T) {
 	assert.InDelta(t, math.Log(defaultProbability), cands[0].RankingScore, 1e-9)
 }
 
-// A merging dependency is still in progress — the merge can fail — so it stays
+// A landing dependency is still in progress — the land can fail — so it stays
 // an open question here like any other. Whether a path betting against it is
 // worth funding is a matter of price, which is the scorer's to say, not a
 // state the search hard-codes.
-func TestBestFirst_MergingDependencyStaysOpen(t *testing.T) {
+func TestBestFirst_LandingDependencyStaysOpen(t *testing.T) {
 	batches := []entity.Batch{
-		{ID: "q/landing", State: entity.BatchStateMerging},
+		{ID: "q/landing", State: entity.BatchStateLanding},
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/landing"}},
 	}
 	sc := newCountingScorer(map[string]float64{"q/landing": 0.9})
@@ -432,8 +432,8 @@ func TestBestFirst_MergingDependencyStaysOpen(t *testing.T) {
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
-	assert.Equal(t, 1, sc.calls["q/landing"], "a merging dependency is priced like any other")
-	require.Len(t, cands, 2, "both sides of a merge that has not landed yet")
+	assert.Equal(t, 1, sc.calls["q/landing"], "a landing dependency is priced like any other")
+	require.Len(t, cands, 2, "both sides of a land that has not completed yet")
 	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[0].Path, "q/landing"))
 	assert.Equal(t, entity.DependencyAssumptionFails, assumptionFor(cands[1].Path, "q/landing"))
 }

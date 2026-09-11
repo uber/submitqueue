@@ -46,7 +46,7 @@ export REPO_ROOT := $(shell pwd)
 # path, so adding a provider is mostly adding a directory — see
 # service/submitqueue/demo/provider/README.md.
 #
-#   fake    a change is a URI; nothing merges anywhere. Needs nothing.
+#   fake    a change is a URI; nothing lands anywhere. Needs nothing.
 #   git     branches in a bare repository on disk; real fetch, cherry-pick, push.
 #   github  real pull requests. Needs a repository and GITHUB_TOKEN.
 PROVIDER ?= fake
@@ -60,7 +60,7 @@ PROVIDER_COMPOSE_FILE_git = service/submitqueue/docker-compose.git.yml
 PROVIDER_COMPOSE_FILE_github = service/submitqueue/docker-compose.provider.yml
 PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
 
-# Where PROVIDER=git keeps the bare repository it merges into. Outside the
+# Where PROVIDER=git keeps the bare repository it lands into. Outside the
 # repository, so a demo leaves nothing in a checkout, and bind-mounted rather
 # than kept in a volume so `git log` on the host can show what landed.
 #
@@ -519,7 +519,7 @@ local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|
 	@echo ""
 	@echo "Gateway gRPC port: $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@if [ "$(PROVIDER)" = "git" ]; then \
-		echo "Merge target:      $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \
+		echo "Land target:       $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \
 	fi
 	@echo ""
 	@echo "Generate traffic with:"
@@ -579,7 +579,7 @@ local-stovepipe-stop: ## Stop the Stovepipe service
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./runway/extension/merger/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions
