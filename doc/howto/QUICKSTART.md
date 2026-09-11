@@ -74,17 +74,20 @@ Every change writes all of its files into one folder under `demo/`, and `FOLDERS
 
 Set it deliberately when you want a run to show one thing. `FOLDERS=1` puts every change in the same place, so the queue serializes the lot and each change speculates on the one before it. A number well above `COUNT` keeps them all apart, so they go out together.
 
-How much speculation that turns into is capped by the queue's **build budget** — how many builds it may have occupying CI at once, counted across every in-flight batch rather than per batch. It defaults to 4 and is set per queue in the provider's `profiles.yaml`. The demo also sets **predictor factors** there so speculation ranking revises the scorer's price when a path passes or fails or a batch is merging or cancelling; omitting that block leaves every factor at `1`, which is a no-op and ranks on the scorer alone.
+How much speculation that turns into is capped by the queue's **build budget** — how many builds it may have occupying CI at once, counted across every in-flight batch rather than per batch. It defaults to 4 and is set per queue in the provider's `profiles.yaml`. The demo also sets **evidence scorer factors** there so speculation ranking revises the base price when a path passes or fails or a batch is merging or cancelling; omitting `factors` leaves every factor at `1`, which is a no-op and ranks on the nested base alone.
 
 ```yaml
 defaults:
   speculator: {buildBudget: 4}
-  predictor:
+  scorer:
+    type: evidence
     factors:
       pathPassed: 10
       pathFailed: 0.3
       merging: 12
       cancelling: 0.1
+    base:
+      type: heuristic
 
 queues:
   - name: demo-queue
