@@ -131,24 +131,6 @@ func TestMessageStore_Insert(t *testing.T) {
 	}
 }
 
-func TestMessageStore_Delete(t *testing.T) {
-	db, mock, store := setupmessageStoreTest(t)
-	defer db.Close()
-
-	ctx := context.Background()
-	topic := "test_topic"
-	partitionKey := "part1"
-	messageID := "msg1"
-
-	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(testTenant, topic, partitionKey, messageID).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err := store.Delete(ctx, testTenant, topic, partitionKey, messageID)
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
 func TestMessageStore_FetchByOffset(t *testing.T) {
 	db, mock, store := setupmessageStoreTest(t)
 	defer db.Close()

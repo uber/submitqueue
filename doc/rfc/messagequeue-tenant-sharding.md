@@ -69,12 +69,12 @@ Today partition discovery runs `SELECT DISTINCT partition_key FROM queue_message
 The subscriber takes an explicit configured tenant list from `MQ_TENANTS`. Consumer processes reject an empty list at startup; Stovepipe also rejects ingest requests for names outside the list. Discovery becomes:
 
 ```sql
-SELECT DISTINCT partition_key FROM queue_messages
-WHERE tenant = ? AND topic = ?
-ORDER BY partition_key
+SELECT DISTINCT tenant, partition_key FROM queue_messages
+WHERE tenant IN (MQ_TENANTS) AND topic = ?
+ORDER BY tenant, partition_key
 ```
 
-Fair-share, orphan sweep, and idle-lease release run per `(tenant, topic)`, not across all tenants on a topic. Discovery and shutdown attempt every configured tenant and aggregate errors so one unavailable shard does not block unrelated tenants.
+vtgate scatters only to shards that own those vindex values. Fair-share, orphan sweep, and idle-lease release still run per `(tenant, topic)` after grouping the result set in Go. One unavailable serving shard fails the tick for every listed tenant; the next interval retries. Poll workers stay scoped to leased `(tenant, partition_key)` rows. Discovery never uses an unscoped `WHERE topic = ?` predicate on Vitess.
 
 ## Publish
 

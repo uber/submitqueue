@@ -67,9 +67,6 @@ type messageStore interface {
 	// Insert inserts messages into the topic table.
 	Insert(ctx context.Context, tenant string, topic string, messages []entityqueue.Message) error
 
-	// Delete deletes a message by tenant, topic, partition key, and ID
-	Delete(ctx context.Context, tenant string, topic string, partitionKey string, messageID string) error
-
 	// FetchByOffset fetches messages with offset > currentOffset for a specific partition.
 	FetchByOffset(ctx context.Context, tenant string, topic string, partitionKey string, currentOffset int64, limit int) ([]messageRow, error)
 
@@ -119,39 +116,45 @@ type partitionLeaseStore interface {
 	// TryAcquireLease attempts to acquire or renew a lease for a partition
 	TryAcquireLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (bool, error)
 
-	// RenewLease renews the lease for a partition owned by this worker
-	RenewLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) error
-
 	// ReleaseLease releases the lease for a partition owned by this worker
 	ReleaseLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string) error
 
-	// GetLeasedPartitions returns all partitions currently leased by this worker
-	GetLeasedPartitions(ctx context.Context, tenant string, topic string, subscriberName string, consumerGroup string) ([]string, error)
+	// GetLeasedPartitionsForTenants returns partitions leased by this worker
+	// across the given tenants, keyed by tenant. Tenants with no leases are absent.
+	GetLeasedPartitionsForTenants(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (map[string][]string, error)
 
-	// GetAllLeases returns the lease row for every partition currently leased
-	// under (tenant, topic, consumerGroup) by any subscriber.
-	GetAllLeases(ctx context.Context, tenant string, topic string, consumerGroup string) ([]leaseInfo, error)
+	// GetAllLeasesForTenants returns every lease row under (topic, consumerGroup)
+	// for the given tenants, keyed by tenant.
+	GetAllLeasesForTenants(ctx context.Context, tenants []string, topic string, consumerGroup string) (map[string][]leaseInfo, error)
 
-	// PurgeStale deletes lease rows not renewed within olderThanMs.
-	PurgeStale(ctx context.Context, tenant string, topic string, consumerGroup string, olderThanMs int64) error
+	// RenewOwnedLeases refreshes lease_renewed_at on every row this subscriber
+	// still holds across tenants. Stolen leases are ignored; discovery drops them.
+	RenewOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) error
 
-	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
-	DiscoverAndAcquirePartitions(ctx context.Context, tenant string, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (acquiredCount int, discoveredPartitions []string, err error)
+	// ReleaseOwnedLeases deletes every lease row this subscriber holds across tenants.
+	ReleaseOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) error
+
+	// PurgeStaleForTenants deletes lease rows not renewed within olderThanMs
+	// across the given tenants.
+	PurgeStaleForTenants(ctx context.Context, tenants []string, topic string, consumerGroup string, olderThanMs int64) error
+
+	// DiscoverPartitions returns distinct partition keys per tenant for topic.
+	DiscoverPartitions(ctx context.Context, tenants []string, topic string) (map[string][]string, error)
 }
 
 // subscriberHeartbeatStore handles subscriber heartbeat operations for fair partition leasing (internal use only)
 type subscriberHeartbeatStore interface {
-	// Heartbeat registers or renews a subscriber's heartbeat
-	Heartbeat(ctx context.Context, tenant string, topic string, subscriberName string, consumerGroup string) error
+	// HeartbeatForTenants registers or renews this subscriber's heartbeat for each tenant.
+	HeartbeatForTenants(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) error
 
-	// ActiveSubscribers returns the names of subscribers with a recent heartbeat.
-	ActiveSubscribers(ctx context.Context, tenant string, topic string, consumerGroup string, staleDurationMs int64) ([]string, error)
+	// ActiveSubscribersForTenants returns recent subscriber names keyed by tenant.
+	ActiveSubscribersForTenants(ctx context.Context, tenants []string, topic string, consumerGroup string, staleDurationMs int64) (map[string][]string, error)
 
-	// Deregister removes a subscriber's heartbeat row.
-	Deregister(ctx context.Context, tenant string, topic string, subscriberName string, consumerGroup string) error
+	// DeregisterForTenants removes this subscriber's heartbeat rows across tenants.
+	DeregisterForTenants(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) error
 
-	// PurgeStale deletes heartbeat rows whose last heartbeat is older than olderThanMs.
-	PurgeStale(ctx context.Context, tenant string, topic string, consumerGroup string, olderThanMs int64) error
+	// PurgeStaleForTenants deletes stale heartbeat rows across the given tenants.
+	PurgeStaleForTenants(ctx context.Context, tenants []string, topic string, consumerGroup string, olderThanMs int64) error
 }
 
 // DeliveryState represents the full per-message delivery tracking state.

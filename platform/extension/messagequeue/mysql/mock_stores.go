@@ -42,20 +42,6 @@ func (m *MockmessageStore) EXPECT() *MockmessageStoreMockRecorder {
 	return m.recorder
 }
 
-// Delete mocks base method.
-func (m *MockmessageStore) Delete(ctx context.Context, tenant, topic, partitionKey, messageID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", ctx, tenant, topic, partitionKey, messageID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Delete indicates an expected call of Delete.
-func (mr *MockmessageStoreMockRecorder) Delete(ctx, tenant, topic, partitionKey, messageID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockmessageStore)(nil).Delete), ctx, tenant, topic, partitionKey, messageID)
-}
-
 // FetchByOffset mocks base method.
 func (m *MockmessageStore) FetchByOffset(ctx context.Context, tenant, topic, partitionKey string, currentOffset int64, limit int) ([]messageRow, error) {
 	m.ctrl.T.Helper()
@@ -250,64 +236,63 @@ func (m *MockpartitionLeaseStore) EXPECT() *MockpartitionLeaseStoreMockRecorder 
 	return m.recorder
 }
 
-// DiscoverAndAcquirePartitions mocks base method.
-func (m *MockpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, tenant, topic, subscriberName, consumerGroup string, leaseDurationMs int64, maxPartitions int) (int, []string, error) {
+// DiscoverPartitions mocks base method.
+func (m *MockpartitionLeaseStore) DiscoverPartitions(ctx context.Context, tenants []string, topic string) (map[string][]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DiscoverAndAcquirePartitions", ctx, tenant, topic, subscriberName, consumerGroup, leaseDurationMs, maxPartitions)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].([]string)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// DiscoverAndAcquirePartitions indicates an expected call of DiscoverAndAcquirePartitions.
-func (mr *MockpartitionLeaseStoreMockRecorder) DiscoverAndAcquirePartitions(ctx, tenant, topic, subscriberName, consumerGroup, leaseDurationMs, maxPartitions any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverAndAcquirePartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).DiscoverAndAcquirePartitions), ctx, tenant, topic, subscriberName, consumerGroup, leaseDurationMs, maxPartitions)
-}
-
-// GetAllLeases mocks base method.
-func (m *MockpartitionLeaseStore) GetAllLeases(ctx context.Context, tenant, topic, consumerGroup string) ([]leaseInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAllLeases", ctx, tenant, topic, consumerGroup)
-	ret0, _ := ret[0].([]leaseInfo)
+	ret := m.ctrl.Call(m, "DiscoverPartitions", ctx, tenants, topic)
+	ret0, _ := ret[0].(map[string][]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetAllLeases indicates an expected call of GetAllLeases.
-func (mr *MockpartitionLeaseStoreMockRecorder) GetAllLeases(ctx, tenant, topic, consumerGroup any) *gomock.Call {
+// DiscoverPartitions indicates an expected call of DiscoverPartitions.
+func (mr *MockpartitionLeaseStoreMockRecorder) DiscoverPartitions(ctx, tenants, topic any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllLeases", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetAllLeases), ctx, tenant, topic, consumerGroup)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverPartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).DiscoverPartitions), ctx, tenants, topic)
 }
 
-// GetLeasedPartitions mocks base method.
-func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, tenant, topic, subscriberName, consumerGroup string) ([]string, error) {
+// GetAllLeasesForTenants mocks base method.
+func (m *MockpartitionLeaseStore) GetAllLeasesForTenants(ctx context.Context, tenants []string, topic, consumerGroup string) (map[string][]leaseInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeasedPartitions", ctx, tenant, topic, subscriberName, consumerGroup)
-	ret0, _ := ret[0].([]string)
+	ret := m.ctrl.Call(m, "GetAllLeasesForTenants", ctx, tenants, topic, consumerGroup)
+	ret0, _ := ret[0].(map[string][]leaseInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetLeasedPartitions indicates an expected call of GetLeasedPartitions.
-func (mr *MockpartitionLeaseStoreMockRecorder) GetLeasedPartitions(ctx, tenant, topic, subscriberName, consumerGroup any) *gomock.Call {
+// GetAllLeasesForTenants indicates an expected call of GetAllLeasesForTenants.
+func (mr *MockpartitionLeaseStoreMockRecorder) GetAllLeasesForTenants(ctx, tenants, topic, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeasedPartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetLeasedPartitions), ctx, tenant, topic, subscriberName, consumerGroup)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllLeasesForTenants", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetAllLeasesForTenants), ctx, tenants, topic, consumerGroup)
 }
 
-// PurgeStale mocks base method.
-func (m *MockpartitionLeaseStore) PurgeStale(ctx context.Context, tenant, topic, consumerGroup string, olderThanMs int64) error {
+// GetLeasedPartitionsForTenants mocks base method.
+func (m *MockpartitionLeaseStore) GetLeasedPartitionsForTenants(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) (map[string][]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PurgeStale", ctx, tenant, topic, consumerGroup, olderThanMs)
+	ret := m.ctrl.Call(m, "GetLeasedPartitionsForTenants", ctx, tenants, topic, subscriberName, consumerGroup)
+	ret0, _ := ret[0].(map[string][]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLeasedPartitionsForTenants indicates an expected call of GetLeasedPartitionsForTenants.
+func (mr *MockpartitionLeaseStoreMockRecorder) GetLeasedPartitionsForTenants(ctx, tenants, topic, subscriberName, consumerGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeasedPartitionsForTenants", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetLeasedPartitionsForTenants), ctx, tenants, topic, subscriberName, consumerGroup)
+}
+
+// PurgeStaleForTenants mocks base method.
+func (m *MockpartitionLeaseStore) PurgeStaleForTenants(ctx context.Context, tenants []string, topic, consumerGroup string, olderThanMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeStaleForTenants", ctx, tenants, topic, consumerGroup, olderThanMs)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// PurgeStale indicates an expected call of PurgeStale.
-func (mr *MockpartitionLeaseStoreMockRecorder) PurgeStale(ctx, tenant, topic, consumerGroup, olderThanMs any) *gomock.Call {
+// PurgeStaleForTenants indicates an expected call of PurgeStaleForTenants.
+func (mr *MockpartitionLeaseStoreMockRecorder) PurgeStaleForTenants(ctx, tenants, topic, consumerGroup, olderThanMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStale", reflect.TypeOf((*MockpartitionLeaseStore)(nil).PurgeStale), ctx, tenant, topic, consumerGroup, olderThanMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStaleForTenants", reflect.TypeOf((*MockpartitionLeaseStore)(nil).PurgeStaleForTenants), ctx, tenants, topic, consumerGroup, olderThanMs)
 }
 
 // ReleaseLease mocks base method.
@@ -324,18 +309,32 @@ func (mr *MockpartitionLeaseStoreMockRecorder) ReleaseLease(ctx, tenant, topic, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).ReleaseLease), ctx, tenant, topic, partitionKey, subscriberName, consumerGroup)
 }
 
-// RenewLease mocks base method.
-func (m *MockpartitionLeaseStore) RenewLease(ctx context.Context, tenant, topic, partitionKey, subscriberName, consumerGroup string, leaseDurationMs int64) error {
+// ReleaseOwnedLeases mocks base method.
+func (m *MockpartitionLeaseStore) ReleaseOwnedLeases(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RenewLease", ctx, tenant, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
+	ret := m.ctrl.Call(m, "ReleaseOwnedLeases", ctx, tenants, topic, subscriberName, consumerGroup)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// RenewLease indicates an expected call of RenewLease.
-func (mr *MockpartitionLeaseStoreMockRecorder) RenewLease(ctx, tenant, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs any) *gomock.Call {
+// ReleaseOwnedLeases indicates an expected call of ReleaseOwnedLeases.
+func (mr *MockpartitionLeaseStoreMockRecorder) ReleaseOwnedLeases(ctx, tenants, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenewLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).RenewLease), ctx, tenant, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseOwnedLeases", reflect.TypeOf((*MockpartitionLeaseStore)(nil).ReleaseOwnedLeases), ctx, tenants, topic, subscriberName, consumerGroup)
+}
+
+// RenewOwnedLeases mocks base method.
+func (m *MockpartitionLeaseStore) RenewOwnedLeases(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenewOwnedLeases", ctx, tenants, topic, subscriberName, consumerGroup)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RenewOwnedLeases indicates an expected call of RenewOwnedLeases.
+func (mr *MockpartitionLeaseStoreMockRecorder) RenewOwnedLeases(ctx, tenants, topic, subscriberName, consumerGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenewOwnedLeases", reflect.TypeOf((*MockpartitionLeaseStore)(nil).RenewOwnedLeases), ctx, tenants, topic, subscriberName, consumerGroup)
 }
 
 // TryAcquireLease mocks base method.
@@ -377,61 +376,61 @@ func (m *MocksubscriberHeartbeatStore) EXPECT() *MocksubscriberHeartbeatStoreMoc
 	return m.recorder
 }
 
-// ActiveSubscribers mocks base method.
-func (m *MocksubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, tenant, topic, consumerGroup string, staleDurationMs int64) ([]string, error) {
+// ActiveSubscribersForTenants mocks base method.
+func (m *MocksubscriberHeartbeatStore) ActiveSubscribersForTenants(ctx context.Context, tenants []string, topic, consumerGroup string, staleDurationMs int64) (map[string][]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ActiveSubscribers", ctx, tenant, topic, consumerGroup, staleDurationMs)
-	ret0, _ := ret[0].([]string)
+	ret := m.ctrl.Call(m, "ActiveSubscribersForTenants", ctx, tenants, topic, consumerGroup, staleDurationMs)
+	ret0, _ := ret[0].(map[string][]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ActiveSubscribers indicates an expected call of ActiveSubscribers.
-func (mr *MocksubscriberHeartbeatStoreMockRecorder) ActiveSubscribers(ctx, tenant, topic, consumerGroup, staleDurationMs any) *gomock.Call {
+// ActiveSubscribersForTenants indicates an expected call of ActiveSubscribersForTenants.
+func (mr *MocksubscriberHeartbeatStoreMockRecorder) ActiveSubscribersForTenants(ctx, tenants, topic, consumerGroup, staleDurationMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveSubscribers", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).ActiveSubscribers), ctx, tenant, topic, consumerGroup, staleDurationMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveSubscribersForTenants", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).ActiveSubscribersForTenants), ctx, tenants, topic, consumerGroup, staleDurationMs)
 }
 
-// Deregister mocks base method.
-func (m *MocksubscriberHeartbeatStore) Deregister(ctx context.Context, tenant, topic, subscriberName, consumerGroup string) error {
+// DeregisterForTenants mocks base method.
+func (m *MocksubscriberHeartbeatStore) DeregisterForTenants(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Deregister", ctx, tenant, topic, subscriberName, consumerGroup)
+	ret := m.ctrl.Call(m, "DeregisterForTenants", ctx, tenants, topic, subscriberName, consumerGroup)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Deregister indicates an expected call of Deregister.
-func (mr *MocksubscriberHeartbeatStoreMockRecorder) Deregister(ctx, tenant, topic, subscriberName, consumerGroup any) *gomock.Call {
+// DeregisterForTenants indicates an expected call of DeregisterForTenants.
+func (mr *MocksubscriberHeartbeatStoreMockRecorder) DeregisterForTenants(ctx, tenants, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deregister", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).Deregister), ctx, tenant, topic, subscriberName, consumerGroup)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeregisterForTenants", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).DeregisterForTenants), ctx, tenants, topic, subscriberName, consumerGroup)
 }
 
-// Heartbeat mocks base method.
-func (m *MocksubscriberHeartbeatStore) Heartbeat(ctx context.Context, tenant, topic, subscriberName, consumerGroup string) error {
+// HeartbeatForTenants mocks base method.
+func (m *MocksubscriberHeartbeatStore) HeartbeatForTenants(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Heartbeat", ctx, tenant, topic, subscriberName, consumerGroup)
+	ret := m.ctrl.Call(m, "HeartbeatForTenants", ctx, tenants, topic, subscriberName, consumerGroup)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Heartbeat indicates an expected call of Heartbeat.
-func (mr *MocksubscriberHeartbeatStoreMockRecorder) Heartbeat(ctx, tenant, topic, subscriberName, consumerGroup any) *gomock.Call {
+// HeartbeatForTenants indicates an expected call of HeartbeatForTenants.
+func (mr *MocksubscriberHeartbeatStoreMockRecorder) HeartbeatForTenants(ctx, tenants, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Heartbeat", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).Heartbeat), ctx, tenant, topic, subscriberName, consumerGroup)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeartbeatForTenants", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).HeartbeatForTenants), ctx, tenants, topic, subscriberName, consumerGroup)
 }
 
-// PurgeStale mocks base method.
-func (m *MocksubscriberHeartbeatStore) PurgeStale(ctx context.Context, tenant, topic, consumerGroup string, olderThanMs int64) error {
+// PurgeStaleForTenants mocks base method.
+func (m *MocksubscriberHeartbeatStore) PurgeStaleForTenants(ctx context.Context, tenants []string, topic, consumerGroup string, olderThanMs int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PurgeStale", ctx, tenant, topic, consumerGroup, olderThanMs)
+	ret := m.ctrl.Call(m, "PurgeStaleForTenants", ctx, tenants, topic, consumerGroup, olderThanMs)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// PurgeStale indicates an expected call of PurgeStale.
-func (mr *MocksubscriberHeartbeatStoreMockRecorder) PurgeStale(ctx, tenant, topic, consumerGroup, olderThanMs any) *gomock.Call {
+// PurgeStaleForTenants indicates an expected call of PurgeStaleForTenants.
+func (mr *MocksubscriberHeartbeatStoreMockRecorder) PurgeStaleForTenants(ctx, tenants, topic, consumerGroup, olderThanMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStale", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).PurgeStale), ctx, tenant, topic, consumerGroup, olderThanMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStaleForTenants", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).PurgeStaleForTenants), ctx, tenants, topic, consumerGroup, olderThanMs)
 }
 
 // MockdeliveryStateStore is a mock of deliveryStateStore interface.
