@@ -38,7 +38,7 @@ type stubScorer struct {
 	scores map[string]float64
 }
 
-func (s stubScorer) Score(_ context.Context, b entity.Batch) (float64, error) {
+func (s stubScorer) Score(_ context.Context, b entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
 	if v, ok := s.scores[b.ID]; ok {
 		return v, nil
 	}
@@ -136,7 +136,7 @@ func newCountingScorer(scores map[string]float64) *countingScorer {
 	return &countingScorer{scores: scores, calls: map[string]int{}}
 }
 
-func (c *countingScorer) Score(_ context.Context, b entity.Batch) (float64, error) {
+func (c *countingScorer) Score(_ context.Context, b entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
 	c.calls[b.ID]++
 	c.total++
 	if v, ok := c.scores[b.ID]; ok {
@@ -148,14 +148,14 @@ func (c *countingScorer) Score(_ context.Context, b entity.Batch) (float64, erro
 // errScorer always fails, to exercise error propagation from scoring.
 type errScorer struct{}
 
-func (errScorer) Score(context.Context, entity.Batch) (float64, error) {
+func (errScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
 	return 0, assert.AnError
 }
 
 // constScorer scores every batch identically, regardless of ID.
 type constScorer struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch) (float64, error) { return c.v, nil }
+func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return c.v, nil }
 
 // wideHead builds one Speculating head over n unresolved dependencies, each at a
 // distinct score so no two combinations tie.
@@ -839,7 +839,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 // own call was cancelled would.
 type cancellingScorer struct{ cancel context.CancelFunc }
 
-func (s cancellingScorer) Score(context.Context, entity.Batch) (float64, error) {
+func (s cancellingScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
 	s.cancel()
 	return 0, context.Canceled
 }

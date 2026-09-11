@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package evidence revises a Scorer's price with factors for observed batch
+// Package evidence revises a base Scorer's price with factors for observed batch
 // progress. See doc/rfc/submitqueue/outcome-predictor.md.
 package evidence
 
@@ -25,11 +25,10 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 )
 
-// Factors revise the scorer's price, one per piece of evidence. A factor of 1
+// Factors revise the base price, one per piece of evidence. A factor of 1
 // leaves the price alone. Named fields make unknown evidence fail to compile.
 type Factors struct {
 	// PathPassed applies once when a build has passed on the batch's
@@ -43,7 +42,7 @@ type Factors struct {
 	Cancelling float64
 }
 
-// AllOnes is the neutral set: the prediction is the scorer's price.
+// AllOnes is the neutral set: Score returns the base price.
 func AllOnes() Factors {
 	return Factors{PathPassed: 1, PathFailed: 1, Merging: 1, Cancelling: 1}
 }
@@ -51,23 +50,23 @@ func AllOnes() Factors {
 // epsilon keeps exact certainty revisable while remaining close to the scorer.
 const epsilon = 1e-6
 
-// evidence is a predictor.Predictor that revises a scorer's price.
+// evidence is a scorer.Scorer that revises a base scorer's price.
 type evidence struct {
-	// cfg is the per-queue identity this predictor was built for.
-	cfg predictor.Config
+	// cfg is the per-queue identity this scorer was built for.
+	cfg scorer.Config
 	// base prices the batch's change; its price is what the factors revise.
 	base scorer.Scorer
-	// factors revise the scorer's price with observed evidence.
+	// factors revise the base price with observed evidence.
 	factors Factors
 	// scope is the tally scope for emitting metrics.
 	scope tally.Scope
 }
 
-// New creates an evidence predictor bound to the queue named in cfg, revising
+// New creates an evidence scorer bound to the queue named in cfg, revising
 // base's price by factors.
 //
 // It rejects a nil base and factors that are non-finite or not positive.
-func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.Scope) (predictor.Predictor, error) {
+func New(cfg scorer.Config, base scorer.Scorer, factors Factors, scope tally.Scope) (scorer.Scorer, error) {
 	if base == nil {
 		return nil, fmt.Errorf("evidence.New: base must not be nil")
 	}
@@ -86,13 +85,13 @@ func New(cfg predictor.Config, base scorer.Scorer, factors Factors, scope tally.
 	return &evidence{cfg: cfg, base: base, factors: factors, scope: scope}, nil
 }
 
-// Predict prices the batch's change, combines its evidence factors, and revises
-// the scorer's price with the result.
-func (r *evidence) Predict(ctx context.Context, batch entity.Batch, paths entity.SpeculationPathSet) (ret predictor.Probability, retErr error) {
-	op := metrics.Begin(r.scope, "predict", metrics.FastLatencyBuckets)
+// Score prices the batch's change, combines its evidence factors, and revises
+// the base price with the result.
+func (r *evidence) Score(ctx context.Context, batch entity.Batch, paths entity.SpeculationPathSet) (ret float64, retErr error) {
+	op := metrics.Begin(r.scope, "score", metrics.FastLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	price, err := r.base.Score(ctx, batch)
+	price, err := r.base.Score(ctx, batch, paths)
 	if err != nil {
 		return 0, err
 	}
@@ -117,18 +116,18 @@ func (r *evidence) Predict(ctx context.Context, batch entity.Batch, paths entity
 		factor *= r.factors.Cancelling
 	}
 	if factor == 1 {
-		return predictor.Probability(price), nil
+		return price, nil
 	}
 	return revise(math.Min(math.Max(price, epsilon), 1-epsilon), factor), nil
 }
 
 // revise applies the combined factor while keeping the result a probability.
-func revise(price, factor float64) predictor.Probability {
+func revise(price, factor float64) float64 {
 	if math.IsInf(factor, 1) {
 		return 1 - epsilon
 	}
 	revised := price * factor / (1 - price + price*factor)
-	return predictor.Probability(math.Min(math.Max(revised, epsilon), 1-epsilon))
+	return math.Min(math.Max(revised, epsilon), 1-epsilon)
 }
 
 // hasPassedAllSucceedPath reports a passed build on the batch's all-succeed

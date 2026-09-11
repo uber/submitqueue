@@ -24,24 +24,23 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 )
 
 // testCfg is the per-queue identity used by every case in this file.
-var testCfg = predictor.Config{QueueName: "test-queue"}
+var testCfg = scorer.Config{QueueName: "test-queue"}
 
 // fixedScorer always returns the same price.
 type fixedScorer struct{ price float64 }
 
-func (f fixedScorer) Score(_ context.Context, _ entity.Batch) (float64, error) {
+func (f fixedScorer) Score(_ context.Context, _ entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
 	return f.price, nil
 }
 
 // errorScorer always fails.
 type errorScorer struct{}
 
-func (errorScorer) Score(_ context.Context, _ entity.Batch) (float64, error) {
+func (errorScorer) Score(_ context.Context, _ entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
 	return 0, fmt.Errorf("scorer failed")
 }
 
@@ -62,26 +61,26 @@ func pathSet(statuses ...entity.SpeculationPathStatus) entity.SpeculationPathSet
 	return set
 }
 
-// predict runs one prediction with all-neutral factors except those overridden.
-func predict(t *testing.T, price float64, factors Factors, batch entity.Batch, paths entity.SpeculationPathSet) float64 {
+// scoreOnce runs one Score with all-neutral factors except those overridden.
+func scoreOnce(t *testing.T, price float64, factors Factors, batch entity.Batch, paths entity.SpeculationPathSet) float64 {
 	t.Helper()
-	p, err := New(testCfg, fixedScorer{price: price}, factors, tally.NoopScope)
+	s, err := New(testCfg, fixedScorer{price: price}, factors, tally.NoopScope)
 	require.NoError(t, err)
-	got, err := p.Predict(context.Background(), batch, paths)
+	got, err := s.Score(context.Background(), batch, paths)
 	require.NoError(t, err)
-	return float64(got)
+	return got
 }
 
-func TestPredict_NeutralFactorsReturnTheScorersPrice(t *testing.T) {
+func TestScore_NeutralFactorsReturnTheScorersPrice(t *testing.T) {
 	for _, price := range []float64{0, 0.01, 0.25, 0.5, 0.6, 0.9, 0.99, 1} {
 		t.Run(fmt.Sprintf("price %v", price), func(t *testing.T) {
-			got := predict(t, price, AllOnes(), entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed, entity.SpeculationPathStatusFailed))
+			got := scoreOnce(t, price, AllOnes(), entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed, entity.SpeculationPathStatusFailed))
 			assert.Equal(t, price, got)
 		})
 	}
 }
 
-func TestPredict_AppliesOneFactorPerEvidence(t *testing.T) {
+func TestScore_AppliesOneFactorPerEvidence(t *testing.T) {
 	// At scorer price 0.5, factor f revises the price to f/(1+f).
 	tests := []struct {
 		name    string
@@ -136,55 +135,55 @@ func TestPredict_AppliesOneFactorPerEvidence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.InDelta(t, tt.want, predict(t, 0.5, tt.factors, tt.batch, tt.paths), 1e-9)
+			assert.InDelta(t, tt.want, scoreOnce(t, 0.5, tt.factors, tt.batch, tt.paths), 1e-9)
 		})
 	}
 }
 
 // A path built without one of its dependencies proves nothing about a candidate
 // that assumes the dependency lands, which is what stacking on this batch means.
-func TestPredict_IgnoresAPassedPathThatAssumesAFailure(t *testing.T) {
+func TestScore_IgnoresAPassedPathThatAssumesAFailure(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusPassed)
 	paths.Paths[0].Path.Dependencies[0].Assumption = entity.DependencyAssumptionFails
 
 	factors := Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1}
-	assert.InDelta(t, 0.5, predict(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
+	assert.InDelta(t, 0.5, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
 // A failed flip-subset must not drag down a green all-succeed build: it was
 // built under different assumptions, the same filter PathPassed uses.
-func TestPredict_IgnoresAFailedPathThatAssumesAFailure(t *testing.T) {
+func TestScore_IgnoresAFailedPathThatAssumesAFailure(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusPassed, entity.SpeculationPathStatusFailed)
 	paths.Paths[1].Path.Dependencies[0].Assumption = entity.DependencyAssumptionFails
 
 	factors := Factors{PathPassed: 9, PathFailed: 0.25, Merging: 1, Cancelling: 1}
-	assert.InDelta(t, 0.9, predict(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
+	assert.InDelta(t, 0.9, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
-func TestPredict_APathWithNoDependenciesCounts(t *testing.T) {
+func TestScore_APathWithNoDependenciesCounts(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusPassed)
 	paths.Paths[0].Path.Dependencies = nil
 
 	factors := Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1}
-	assert.InDelta(t, 0.9, predict(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
+	assert.InDelta(t, 0.9, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
-func TestPredict_AFailedPathWithNoDependenciesCounts(t *testing.T) {
+func TestScore_AFailedPathWithNoDependenciesCounts(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusFailed)
 	paths.Paths[0].Path.Dependencies = nil
 
 	factors := Factors{PathPassed: 1, PathFailed: 0.25, Merging: 1, Cancelling: 1}
-	assert.InDelta(t, 0.2, predict(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
+	assert.InDelta(t, 0.2, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
-func TestPredict_AnEmptyPathSetIsNoEvidence(t *testing.T) {
+func TestScore_AnEmptyPathSetIsNoEvidence(t *testing.T) {
 	factors := Factors{PathPassed: 9, PathFailed: 0.1, Merging: 1, Cancelling: 1}
-	assert.InDelta(t, 0.5, predict(t, 0.5, factors, entity.Batch{}, entity.SpeculationPathSet{}), 1e-9)
+	assert.InDelta(t, 0.5, scoreOnce(t, 0.5, factors, entity.Batch{}, entity.SpeculationPathSet{}), 1e-9)
 }
 
 // A scorer certain either way still has to be movable, or no evidence could ever
 // revise a price the scorer had no business being certain about.
-func TestPredict_CertainPricesStayInRangeAndStillMove(t *testing.T) {
+func TestScore_CertainPricesStayInRangeAndStillMove(t *testing.T) {
 	tests := []struct {
 		name      string
 		price     float64
@@ -199,37 +198,37 @@ func TestPredict_CertainPricesStayInRangeAndStillMove(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			factors := AllOnes()
 			factors.PathPassed = tt.factor
-			got := predict(t, tt.price, factors, entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed))
+			got := scoreOnce(t, tt.price, factors, entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed))
 			assert.Greater(t, got, tt.wantAbove)
 			assert.Less(t, got, tt.wantBelow)
 		})
 	}
 }
 
-func TestPredict_LargeFactorsDoNotProduceCertainty(t *testing.T) {
+func TestScore_LargeFactorsDoNotProduceCertainty(t *testing.T) {
 	factors := AllOnes()
 	factors.PathPassed = math.MaxFloat64
 
-	got := predict(t, 0.5, factors, entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed))
+	got := scoreOnce(t, 0.5, factors, entity.Batch{}, pathSet(entity.SpeculationPathStatusPassed))
 	assert.Greater(t, got, 0.99)
 	assert.Less(t, got, 1.0)
 }
 
-func TestPredict_RejectsAPriceThatIsNotAProbability(t *testing.T) {
+func TestScore_RejectsAPriceThatIsNotAProbability(t *testing.T) {
 	for _, price := range []float64{-0.1, 1.5, math.NaN()} {
 		t.Run(fmt.Sprintf("price %v", price), func(t *testing.T) {
-			p, err := New(testCfg, fixedScorer{price: price}, AllOnes(), tally.NoopScope)
+			s, err := New(testCfg, fixedScorer{price: price}, AllOnes(), tally.NoopScope)
 			require.NoError(t, err)
-			_, err = p.Predict(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
+			_, err = s.Score(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
 			require.Error(t, err)
 		})
 	}
 }
 
-func TestPredict_PropagatesAScorerError(t *testing.T) {
-	p, err := New(testCfg, errorScorer{}, AllOnes(), tally.NoopScope)
+func TestScore_PropagatesAScorerError(t *testing.T) {
+	s, err := New(testCfg, errorScorer{}, AllOnes(), tally.NoopScope)
 	require.NoError(t, err)
-	_, err = p.Predict(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
+	_, err = s.Score(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
 	require.Error(t, err)
 }
 
@@ -254,9 +253,9 @@ func TestNew_RejectsUnusableConstruction(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := New(testCfg, tt.base, tt.factors, tally.NoopScope)
+			s, err := New(testCfg, tt.base, tt.factors, tally.NoopScope)
 			require.Error(t, err)
-			assert.Nil(t, p)
+			assert.Nil(t, s)
 		})
 	}
 }

@@ -47,7 +47,7 @@ func assumptionFor(p entity.SpeculationPath, dep string) entity.DependencyAssump
 // constScorer is a minimal scorer.Scorer that scores every batch identically.
 type constScorer struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch) (float64, error) { return c.v, nil }
+func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return c.v, nil }
 
 func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	batches := []entity.Batch{

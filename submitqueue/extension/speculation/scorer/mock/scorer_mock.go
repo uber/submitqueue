@@ -43,18 +43,18 @@ func (m *MockScorer) EXPECT() *MockScorerMockRecorder {
 }
 
 // Score mocks base method.
-func (m *MockScorer) Score(ctx context.Context, batch entity.Batch) (float64, error) {
+func (m *MockScorer) Score(ctx context.Context, batch entity.Batch, paths entity.SpeculationPathSet) (float64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Score", ctx, batch)
+	ret := m.ctrl.Call(m, "Score", ctx, batch, paths)
 	ret0, _ := ret[0].(float64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Score indicates an expected call of Score.
-func (mr *MockScorerMockRecorder) Score(ctx, batch any) *gomock.Call {
+func (mr *MockScorerMockRecorder) Score(ctx, batch, paths any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Score", reflect.TypeOf((*MockScorer)(nil).Score), ctx, batch)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Score", reflect.TypeOf((*MockScorer)(nil).Score), ctx, batch, paths)
 }
 
 // MockFactory is a mock of Factory interface.

@@ -72,7 +72,7 @@ func New(cfg scorer.Config, resolver changeset.Resolver, buckets []Bucket, value
 // Score resolves the batch's changes, extracts the metric, then returns the probability
 // score for the first bucket whose range [Min, Max] contains the value. Returns an error
 // if no bucket matches.
-func (s *heuristicScorer) Score(ctx context.Context, batch entity.Batch) (ret float64, retErr error) {
+func (s *heuristicScorer) Score(ctx context.Context, batch entity.Batch, _ entity.SpeculationPathSet) (ret float64, retErr error) {
 	op := metrics.Begin(s.scope, "score", metrics.FastLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 	changes, err := s.resolver.DetailedForBatch(ctx, batch)
