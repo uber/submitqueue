@@ -194,6 +194,7 @@ func TestController_Process_AllStrategies(t *testing.T) {
 		{"rebase", mergestrategy.MergeStrategyRebase},
 		{"squash rebase", mergestrategy.MergeStrategySquashRebase},
 		{"merge", mergestrategy.MergeStrategyMerge},
+		{"promote", mergestrategy.MergeStrategyPromote},
 	}
 
 	for _, tt := range tests {

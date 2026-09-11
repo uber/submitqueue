@@ -36,7 +36,7 @@ var errUnknownStrategy = errors.New("unknown land strategy in proto message")
 // ProtoToLandRequest maps the wire LandRequest to the entity.LandRequest the controller operates on.
 // The ID is left empty; the controller assigns it.
 func ProtoToLandRequest(req *pb.LandRequest) (entity.LandRequest, error) {
-	strategy, err := resolveMergeStrategy(req.GetStrategy())
+	strategy, err := resolveLandStrategy(req.GetStrategy())
 	if err != nil {
 		return entity.LandRequest{}, fmt.Errorf("failed to map land strategy: %w", err)
 	}
@@ -47,8 +47,8 @@ func ProtoToLandRequest(req *pb.LandRequest) (entity.LandRequest, error) {
 	}, nil
 }
 
-// resolveMergeStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
-func resolveMergeStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrategy, error) {
+// resolveLandStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
+func resolveLandStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrategy, error) {
 	switch s {
 	case mergestrategypb.Strategy_DEFAULT:
 		// TODO: resolve default strategy based on queue configuration

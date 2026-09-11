@@ -62,7 +62,7 @@ type SubmitQueueGatewayClient interface {
 	// state transition is performed in the background by the orchestrator and may not have completed by the time the
 	// caller receives a response.
 	//
-	// Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
+	// Cancellation is NOT GUARANTEED: a request that has already landed, or that races to completion before the cancel
 	// signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
 	// successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
 	// error) must be checked through the request-summary or request-history APIs.
@@ -185,7 +185,7 @@ type SubmitQueueGatewayServer interface {
 	// state transition is performed in the background by the orchestrator and may not have completed by the time the
 	// caller receives a response.
 	//
-	// Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
+	// Cancellation is NOT GUARANTEED: a request that has already landed, or that races to completion before the cancel
 	// signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
 	// successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
 	// error) must be checked through the request-summary or request-history APIs.

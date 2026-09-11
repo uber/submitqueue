@@ -83,7 +83,7 @@ func TestProtoToLandRequest(t *testing.T) {
 	}
 }
 
-func TestResolveMergeStrategy(t *testing.T) {
+func TestResolveLandStrategy(t *testing.T) {
 	tests := []struct {
 		name   string
 		in     mergestrategypb.Strategy
@@ -100,7 +100,7 @@ func TestResolveMergeStrategy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveMergeStrategy(tt.in)
+			got, err := resolveLandStrategy(tt.in)
 			if tt.errMsg != "" {
 				assert.ErrorContains(t, err, tt.errMsg)
 				return

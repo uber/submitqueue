@@ -29,19 +29,19 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-func TestDLQMergeConflictSignalController_InterfaceAndAccessors(t *testing.T) {
+func TestDLQLandConflictSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQLandConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-landconflictsignal-dlq")
 
 	assert.Equal(t, "merge-conflict-check-signal_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("merge-conflict-check-signal_dlq"), c.TopicKey())
-	assert.Equal(t, "orchestrator-mergeconflictsignal-dlq", c.ConsumerGroup())
+	assert.Equal(t, "orchestrator-landconflictsignal-dlq", c.ConsumerGroup())
 }
 
-func TestDLQMergeConflictSignalController_Process_ReconcilesRequest(t *testing.T) {
+func TestDLQLandConflictSignalController_Process_ReconcilesRequest(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
@@ -59,7 +59,7 @@ func TestDLQMergeConflictSignalController_Process_ReconcilesRequest(t *testing.T
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQLandConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-landconflictsignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
@@ -68,10 +68,10 @@ func TestDLQMergeConflictSignalController_Process_ReconcilesRequest(t *testing.T
 	require.NoError(t, c.Process(context.Background(), delivery))
 }
 
-func TestDLQMergeConflictSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
+func TestDLQLandConflictSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQLandConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-landconflictsignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
@@ -79,12 +79,12 @@ func TestDLQMergeConflictSignalController_Process_TenantPayloadQueueMismatchAcks
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
 }
 
-func TestDLQMergeConflictSignalController_Process_MalformedPayloadFails(t *testing.T) {
+func TestDLQLandConflictSignalController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQLandConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-landconflictsignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	require.Error(t, c.Process(context.Background(), delivery))

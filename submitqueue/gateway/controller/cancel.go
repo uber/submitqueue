@@ -32,7 +32,7 @@ import (
 
 // CancelController handles cancel business logic for the gateway. It validates the request,
 // records a RequestStatusCancelling log entry (intent-only — cancellation is best-effort
-// and may still race a successful merge), publishes a CancelRequest to the cancel topic,
+// and may still race a successful land), publishes a CancelRequest to the cancel topic,
 // and returns a response. The orchestrator-side cancel controller performs the actual
 // state transitions and emits the terminal RequestStatusCancelled log entry.
 type CancelController interface {
@@ -66,7 +66,7 @@ func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, stores st
 // is performed asynchronously by the orchestrator cancel controller. Cancel is idempotent:
 // the orchestrator treats already-terminal requests as a no-op.
 //
-// Cancellation is best-effort: a request that has already merged or that races to
+// Cancellation is best-effort: a request that has already landed or that races to
 // completion before the cancel propagates may still land. The RequestStatusCancelling
 // entry written here records the user's intent; the terminal outcome is reflected by a
 // later RequestStatusCancelled (orchestrator side) or RequestStatusLanded entry.

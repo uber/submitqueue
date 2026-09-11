@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mergeconflictsignal
+package landconflictsignal
 
 import (
 	"context"
@@ -73,7 +73,7 @@ func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
-		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
 	msg.Tenant = "other-queue"
@@ -83,7 +83,7 @@ func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	require.Error(t, controller.Process(context.Background(), d))
 }
 
-func TestProcess_MergeablePublishesToBatch(t *testing.T) {
+func TestProcess_LandablePublishesToBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
@@ -115,7 +115,7 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
-		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
@@ -137,7 +137,7 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	assert.Equal(t, testRequestID, rid.ID)
 }
 
-func TestProcess_NotMergeableMarksRequestError(t *testing.T) {
+func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
@@ -172,11 +172,11 @@ func TestProcess_NotMergeableMarksRequestError(t *testing.T) {
 	require.NoError(t, err)
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
-		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_FAILED, Reason: "conflict in foo.go"}
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
-	// Not-mergeable is an expected terminal outcome, so Process acks (no error).
+	// Not-landable is an expected terminal outcome, so Process acks (no error).
 	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
 
 	// The single publish is the terminal log entry carrying the conflict reason.
@@ -199,7 +199,7 @@ func TestFailRequest_UpdateFailureLeavesRequestUnchanged(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(reqStore)
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
-		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
 
 	err := controller.failRequest(context.Background(), store, request, "conflict")
 	require.Error(t, err)
@@ -227,7 +227,7 @@ func TestProcess_HaltedRequestSkips(t *testing.T) {
 	require.NoError(t, err)
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
-		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)

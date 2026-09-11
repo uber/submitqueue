@@ -27,11 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// mergeSignalController is the DLQ reconciler for the mergesignal topic. Its
-// payload carries a runway MergeResult whose id is the batch id echoed back, so
+// landSignalController is the DLQ reconciler for the landsignal topic. Its
+// payload carries a Runway MergeResult whose id is the batch id echoed back, so
 // reconciliation fails that batch directly via failBatch (which also fans out
 // to the member requests).
-type mergeSignalController struct {
+type landSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
@@ -40,11 +40,11 @@ type mergeSignalController struct {
 	consumerGroup string
 }
 
-// Verify mergeSignalController implements consumer.Controller at compile time.
-var _ consumer.Controller = (*mergeSignalController)(nil)
+// Verify landSignalController implements consumer.Controller at compile time.
+var _ consumer.Controller = (*landSignalController)(nil)
 
-// NewDLQMergeSignalController builds a DLQ controller for the mergesignal topic.
-func NewDLQMergeSignalController(
+// NewDLQLandSignalController builds a DLQ controller for the landsignal topic.
+func NewDLQLandSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
@@ -53,7 +53,7 @@ func NewDLQMergeSignalController(
 	consumerGroup string,
 ) consumer.Controller {
 	name := string(topicKey) + "_controller"
-	return &mergeSignalController{
+	return &landSignalController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
@@ -63,8 +63,8 @@ func NewDLQMergeSignalController(
 	}
 }
 
-// Process reconciles a single DLQ delivery for the mergesignal topic.
-func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
+// Process reconciles a single DLQ delivery for the landsignal topic.
+func (c *landSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
 
 	msg := delivery.Message()
@@ -72,7 +72,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
-		return fmt.Errorf("failed to decode merge result from dlq payload: %w", err)
+		return fmt.Errorf("failed to decode land result from dlq payload: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
@@ -105,16 +105,16 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 }
 
 // Name returns the controller name for logging and metrics.
-func (c *mergeSignalController) Name() string {
+func (c *landSignalController) Name() string {
 	return string(c.topicKey)
 }
 
 // TopicKey returns the topic key this controller subscribes to.
-func (c *mergeSignalController) TopicKey() consumer.TopicKey {
+func (c *landSignalController) TopicKey() consumer.TopicKey {
 	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
-func (c *mergeSignalController) ConsumerGroup() string {
+func (c *landSignalController) ConsumerGroup() string {
 	return c.consumerGroup
 }

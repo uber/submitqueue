@@ -205,7 +205,7 @@ func TestBatchStore_Update(t *testing.T) {
 		Queue:        "monorepo",
 		Contains:     []string{"monorepo/3", "monorepo/4"},
 		Dependencies: []string{"monorepo/batch/1", "monorepo/batch/2"},
-		State:        entity.BatchStateMerging,
+		State:        entity.BatchStateLanding,
 		Version:      oldVersion,
 	}
 	containsJSON, err := json.Marshal(batch.Contains)

@@ -31,15 +31,15 @@ const (
 	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
-	// BatchStateMerging is the state of a batch that is being merged after speculative execution.
-	BatchStateMerging BatchState = "merging"
+	// BatchStateLanding is the state of a batch that is being landed after speculative execution.
+	BatchStateLanding BatchState = "landing"
 	// BatchStateSucceeded is the terminal state of a batch that has been successfully landed.
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.
 	BatchStateFailed BatchState = "failed"
 	// BatchStateCancelling is the non-terminal intent state set when a cancel has been requested but the
 	// batch has not yet been transitioned to BatchStateCancelled. A batch in this state may still reach
-	// BatchStateSucceeded or BatchStateFailed if a concurrent merge wins the race (e.g. the push had
+	// BatchStateSucceeded or BatchStateFailed if a concurrent land wins the race (e.g. the push had
 	// already completed before the cancel CAS observed the batch); those terminal states prevail.
 	// Forward-progress controllers must treat this state as halted (no new work). The speculate
 	// controller owns the transition to the terminal BatchStateCancelled and the downstream fan-out
@@ -67,7 +67,7 @@ func (s BatchState) IsTerminal() bool {
 var nonCancellableBatchStates = map[BatchState]bool{
 	BatchStateUnknown:   true,
 	BatchStateCreating:  true,
-	BatchStateMerging:   true,
+	BatchStateLanding:   true,
 	BatchStateSucceeded: true,
 	BatchStateFailed:    true,
 	BatchStateCancelled: true,
@@ -80,7 +80,7 @@ func (s BatchState) IsCancellable() bool {
 }
 
 // IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
-// Forward-progress controllers (build, buildsignal, speculate, merge) use this to short-circuit
+// Forward-progress controllers (build, buildsignal, speculate, land) use this to short-circuit
 // work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no
 // further pipeline work should start (cancel will write the terminal state and fan out).
 func IsBatchStateHalted(s BatchState) bool {
@@ -94,7 +94,7 @@ func AllBatchStates() []BatchState {
 		BatchStateCreating,
 		BatchStateCreated,
 		BatchStateSpeculating,
-		BatchStateMerging,
+		BatchStateLanding,
 		BatchStateSucceeded,
 		BatchStateFailed,
 		BatchStateCancelling,
@@ -108,7 +108,7 @@ func ActiveBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
 		BatchStateSpeculating,
-		BatchStateMerging,
+		BatchStateLanding,
 		BatchStateCancelling,
 	}
 }
@@ -127,11 +127,11 @@ func DependencyBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
 		BatchStateSpeculating,
-		BatchStateMerging,
+		BatchStateLanding,
 	}
 }
 
-// Batch represents a group of requests to land (merge into target branch of the source control repository).
+// Batch represents a group of requests to land on the source control repository's target branch.
 type Batch struct {
 	// ID is the globally unique identifier for the batch. Format: "<queue>/batch/<counter_value>".
 	ID string

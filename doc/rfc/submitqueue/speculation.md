@@ -1,20 +1,20 @@
 # Speculation
 
-A merge queue that verifies one change at a time is limited by its slowest build. Speculation removes that limit: it builds a batch early, against an assumption about how the conflicting batches ahead of it will resolve, so a valid build is usually ready by the time they do.
+A land queue that verifies one change at a time is limited by its slowest build. Speculation removes that limit: it builds a batch early, against an assumption about how the conflicting batches ahead of it will resolve, so a valid build is usually ready by the time they do.
 
-Work enters SubmitQueue as **batches** — changes verified and merged together. Two batches **conflict** when they touch the same code, which makes the earlier one a **dependency** of the later. A **path** is one set of assumptions about how a batch's dependencies resolve, and the batch it builds is the path's **head**.
+Work enters SubmitQueue as **batches** — changes verified and landed together. Two batches **conflict** when they touch the same code, which makes the earlier one a **dependency** of the later. A **path** is one set of assumptions about how a batch's dependencies resolve, and the batch it builds is the path's **head**.
 
-On every queue update the **speculate controller** reruns from scratch: it reads the current state, applies the incoming signals, asks a pluggable **Speculator** which paths are worth building within the CI budget, and persists only those. Everything else is recomputed next time, never stored. A batch normally merges after its dependencies resolve and a matching build has passed; complete passed coverage of every unresolved outcome lets it bypass those dependencies.
+On every queue update the **speculate controller** reruns from scratch: it reads the current state, applies the incoming signals, asks a pluggable **Speculator** which paths are worth building within the CI budget, and persists only those. Everything else is recomputed next time, never stored. A batch normally lands after its dependencies resolve and a matching build has passed; complete passed coverage of every unresolved outcome lets it bypass those dependencies.
 
 ## The speculation run
 
-The speculate controller runs whenever the queue changes — after a new batch, a completed build, a merge result, or a cancel. Each publishes a **dirty signal** carrying the changed batch ID, partitioned by the queue so a queue's runs happen one at a time. The dirty signal is an internal queue contract — payload in `submitqueue/core/messagequeue`, topic key in `submitqueue/core/topickey`.
+The speculate controller runs whenever the queue changes — after a new batch, a completed build, a land result, or a cancel. Each publishes a **dirty signal** carrying the changed batch ID, partitioned by the queue so a queue's runs happen one at a time. The dirty signal is an internal queue contract — payload in `submitqueue/core/messagequeue`, topic key in `submitqueue/core/topickey`.
 
 ```
  dirty(queue) — "trigger a run" — published after:
    - a new batch
    - a build completes (success/failure/cancellation)
-   - a merge result arrives (success/failure)
+   - a land result arrives (success/failure)
    - a cancel
    │
    │  carries the changed batch ID, partitioned by queue, so a
@@ -31,15 +31,15 @@ The speculate controller runs whenever the queue changes — after a new batch, 
  │          → paths to build, paths to preempt
  │ 4 check  validate that output: drop actions it shouldn't propose
  │          (non-Speculating head, refuted, incoherent, terminal path)
- │ 5 write  record each head's decisions; send build / cancel / merge messages
+ │ 5 write  record each head's decisions; send build / cancel / land messages
  │          (a head whose write loses is re-planned on the next run)
  │
  ├─▶ build / cancel (path ID, attempt) → build (orchestrator/controller/build):
  │      reserve → BuildRunner.Trigger(base, head) → record build ID, mark path building
  │      CI runs → buildsignal marks path passed/failed/cancelled ─▶ dirty(queue)
  │
- └─▶ merge (batch) → Runway performs the merge
-        → mergesignal marks the batch succeeded/failed ─▶ dirty(queue)
+ └─▶ land (batch) → Runway performs the land
+        → landsignal marks the batch succeeded/failed ─▶ dirty(queue)
 ```
 
 ### State reconciliation
@@ -54,8 +54,8 @@ Every write is a compare-and-swap: a writer that loses re-reads on a later run. 
 
 Verdicts are controller-owned facts: the Speculator can neither compute nor veto them.
 
-- **Merge.** Each path carries an assumption about every dependency — *succeeds* (built on top of) or *fails* (built without). Normally, once a path's build has passed and every dependency has finished the way the path assumed — one assumed *succeeds* has merged, one assumed *fails* has failed or been cancelled — the speculate controller moves the head to Merging and hands it to Runway. A dependency that is merely *merging* has not finished, because a merge can fail, so a single matching path still waits for the answer. Complete passed coverage is the exception described in Bypass large diff: it lets a head merge before those answers arrive. If the hand-off is lost, the next run re-sends it. The same run sets the head's remaining in-flight paths *cancelling*: once the head can merge they cannot help, and they hold CI slots until they stop. The mergesignal controller records Runway's terminal result: success marks the head Succeeded, while failure marks it Failed. The result publishes a single dirty signal — no per-dependent fan-out — and the next run refutes paths whose assumption disagrees with the result: *fails* assumptions after success, *succeeds* assumptions after failure. The hand-off is idempotent, so Runway reports success without another merge when the change is already present. A chain ordinarily merges one at a time, but a fully covered head can bypass its unsettled predecessors.
-- **Failure (no viable path).** A batch fails when every possible future has a failed build — no path can pass, so it can never merge.
+- **Land.** Each path carries an assumption about every dependency — *succeeds* (built on top of) or *fails* (built without). Normally, once a path's build has passed and every dependency has finished the way the path assumed — one assumed *succeeds* has landed, one assumed *fails* has failed or been cancelled — the speculate controller moves the head to Landing and hands it to Runway. A dependency that is merely *landing* has not finished, because a land can fail, so a single matching path still waits for the answer. Complete passed coverage is the exception described in Bypass large diff: it lets a head land before those answers arrive. If the hand-off is lost, the next run re-sends it. The same run sets the head's remaining in-flight paths *cancelling*: once the head can land they cannot help, and they hold CI slots until they stop. The landsignal controller records Runway's terminal result: success marks the head Succeeded, while failure marks it Failed. The result publishes a single dirty signal — no per-dependent fan-out — and the next run refutes paths whose assumption disagrees with the result: *fails* assumptions after success, *succeeds* assumptions after failure. The hand-off is idempotent, so Runway reports success without another land when the change is already present. A chain ordinarily lands one at a time, but a fully covered head can bypass its unsettled predecessors.
+- **Failure (no viable path).** A batch fails when every possible future has a failed build — no path can pass, so it can never land.
 - **Cancel.** A cancelled batch is driven terminal: its in-flight paths are set *cancelling*, then the batch is marked Cancelled once they stop (see Cancellation).
 
 ### Conflict relaxation
@@ -64,23 +64,23 @@ Conflict analysis is conservative — it flags any *possible* conflict — so he
 
 **Not implemented.** An earlier design expressed it per path, with a third assumption value — *ignored* — meaning "this path makes no claim about this dependency". Nothing ever produced one, and the value has been removed rather than left as vocabulary the system could not create.
 
-When relaxation is built, it belongs in the **controller**, as a trim of the dependency list before the snapshot is handed over: the Speculator then sees a head whose dependencies are exactly the ones that count, and a path stays a total function over them — one assumption per dependency, each *succeeds* or *fails*, with no third state to reason about. That keeps the decision where the other correctness decisions live, since dropping a dependency is a judgement about what may land untested, not about which candidate is most promising. It also keeps every consumer honest by construction: a merge gate, a refutation check, or a generator cannot forget to special-case a value that does not exist.
+When relaxation is built, it belongs in the **controller**, as a trim of the dependency list before the snapshot is handed over: the Speculator then sees a head whose dependencies are exactly the ones that count, and a path stays a total function over them — one assumption per dependency, each *succeeds* or *fails*, with no third state to reason about. That keeps the decision where the other correctness decisions live, since dropping a dependency is a judgement about what may land untested, not about which candidate is most promising. It also keeps every consumer honest by construction: a land gate, a refutation check, or a generator cannot forget to special-case a value that does not exist.
 
 The open question that design has to answer is what a stored path means once the trim changes between runs — a path built against a trimmed list no longer lines up with a head whose list has grown back, and `isWellFormed` rejects it. The per-path marker made that case self-describing; a trim does not, so the trim has to be either stable for a head's lifetime or recorded alongside the path.
 
-Example of the payoff either way: `H` conflicts with `B1` and weak `B2`. Relax `B2`, and `H` merges once `B1` merges and its build passes — even if `B2` later merges. Without it, `H` waits on both.
+Example of the payoff either way: `H` conflicts with `B1` and weak `B2`. Relax `B2`, and `H` lands once `B1` lands and its build passes — even if `B2` later lands. Without it, `H` waits on both.
 
 ### Bypass large diff
 
-If a batch's passed builds cover *every* way its dependencies could resolve, the outcome is the same either way — so it can merge now, ahead of them. Classic case: a small change stuck behind a slow one is built both with and without it; both pass, and it merges immediately.
+If a batch's passed builds cover *every* way its dependencies could resolve, the outcome is the same either way — so it can land now, ahead of them. Classic case: a small change stuck behind a slow one is built both with and without it; both pass, and it lands immediately.
 
 The controller checks coverage over only the dependencies that have not settled yet. Settled dependencies pin each surviving path to the outcome that actually happened; for every combination of the remaining dependencies, the path set must contain a passed, unbroken path with that combination of assumptions. If any combination is missing, unbuilt, failed, or contradicted by a settled dependency, the head waits normally. The check only observes paths the Speculator already funded — it does not fund the exponential path space itself or alter the queue's build budget.
 
-Coverage makes the bypass sound because whichever way the dependencies later resolve, a passed build already validated the resulting set of changes. The build order and merge order differ: a path assuming dependency `D` succeeds validates `D` then head `H`, while bypass lands `H` before `D`. SubmitQueue treats those orders as content-equivalent. Runway still performs the real merge, so if the reordered changes conflict textually, the older dependency can fail after the newer head has bypassed it; this is an accepted cost of landing the fully covered head early rather than a licence to put unmergeable content on the target.
+Coverage makes the bypass sound because whichever way the dependencies later resolve, a passed build already validated the resulting set of changes. The build order and land order differ: a path assuming dependency `D` succeeds validates `D` then head `H`, while bypass lands `H` before `D`. SubmitQueue treats those orders as content-equivalent. Runway still performs the real land, so if the reordered changes conflict textually, the older dependency can fail after the newer head has bypassed it; this is an accepted cost of landing the fully covered head early rather than a licence to put unlandable content on the target.
 
 ### Cancellation
 
-Cancellation is best-effort: a batch marked *cancelling* may still merge if a merge wins the race, so terminal states prevail. A cancel sets the intent; a later run drives it terminal.
+Cancellation is best-effort: a batch marked *cancelling* may still land if a land wins the race, so terminal states prevail. A cancel sets the intent; a later run drives it terminal.
 
 Two kinds of cancel, split by owner:
 
@@ -93,7 +93,7 @@ Cancelling a path sends a cancel (path ID, attempt) to the build controller, whi
 
 ## Speculator Extension
 
-The one extension. It decides *which paths to build and which running ones to cancel* — nothing else; the controller handles the rest (reconciling facts, cancelling ruled-out paths, verdicts, checking output). A swapped-in Speculator changes which paths run, never whether a batch merges or fails.
+The one extension. It decides *which paths to build and which running ones to cancel* — nothing else; the controller handles the rest (reconciling facts, cancelling ruled-out paths, verdicts, checking output). A swapped-in Speculator changes which paths run, never whether a batch lands or fails.
 
 **The contract** is `Speculate(batches, pathSets) → []Speculation`:
 
@@ -116,6 +116,6 @@ Signatures live in code and are not copied here, so they cannot drift. This sect
 
 **Entities** — [`submitqueue/entity/speculation.go`](../../../submitqueue/entity/speculation.go). A `SpeculationPath` is a head batch plus one `PathDependency` per dependency in queue order, each carrying a `DependencyAssumption`: *succeeds* or *fails*. A `SpeculationPathEntry` is the stored record of one chosen path, keyed by a hash of its content, plus its status and attempt number; it holds no build reference — the execution record has that, keyed by (path ID, attempt) — and no ranking score, which means nothing outside the run that produced it. A `SpeculationPathSet` is one head's chosen paths, live and recently finished, under a single version for compare-and-swap. Every logical path is self-describing, but a store may encode the common head and ordered dependency IDs once per set and keep each path's assumptions positionally — one bit per dependency.
 
-**Speculator** — [`submitqueue/extension/speculation/speculator`](../../../submitqueue/extension/speculation/speculator/README.md). `Speculate` takes one queue snapshot (the batches and their path sets) and returns the build and cancel actions it proposes; a path it wants left alone has no entry. Actions must target Speculating heads. Verdicts stay controller-owned, so there is no merge or fail action.
+**Speculator** — [`submitqueue/extension/speculation/speculator`](../../../submitqueue/extension/speculation/speculator/README.md). `Speculate` takes one queue snapshot (the batches and their path sets) and returns the build and cancel actions it proposes; a path it wants left alone has no entry. Actions must target Speculating heads. Verdicts stay controller-owned, so there is no land or fail action.
 
 **Generator and Allocator** — [`generator`](../../../submitqueue/extension/speculation/generator/README.md) and [`allocator`](../../../submitqueue/extension/speculation/allocator/README.md), the two composition points inside the default Speculator. The Generator opens a pull-based stream of candidate paths over the batches; the Allocator spends the build budget over that stream, reconciling it against the path sets. Both abort on a cancelled context.

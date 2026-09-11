@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package mergesignal consumes merge results from runway's merge-signal queue,
+// Package landsignal consumes merge results from Runway's merge-signal queue,
 // correlates them to the batch by the echoed id, and transitions the batch to a
-// terminal state — Succeeded when runway merged the batch, Failed when it could
-// not — then fans the batch out to conclude (so member requests pick up the
-// outcome) and speculate (so dependents can re-plan). Like mergeconflictsignal
-// it is purely result-driven — runway pushes the result, so there is no poll
+// terminal state — Succeeded when Runway's merge completed the land, Failed
+// when it could not — then fans the batch out to conclude (so member requests pick up the
+// outcome) and speculate (so dependents can re-plan). Like landconflictsignal
+// it is purely result-driven — Runway pushes the result, so there is no poll
 // loop or self-reschedule.
-package mergesignal
+package landsignal
 
 import (
 	"context"
@@ -39,7 +39,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles mergesignal queue messages. Implements consumer.Controller.
+// Controller handles landsignal queue messages. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -52,7 +52,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new mergesignal controller for the orchestrator.
+// NewController creates a new landsignal controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -62,8 +62,8 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("mergesignal_controller"),
-		metricsScope:  scope.SubScope("mergesignal_controller"),
+		logger:        logger.Named("landsignal_controller"),
+		metricsScope:  scope.SubScope("landsignal_controller"),
 		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -71,10 +71,10 @@ func NewController(
 	}
 }
 
-// Process consumes a runway merge result and advances or fails the batch.
+// Process consumes a runway land result and advances or fails the batch.
 // Returns nil to ack, or error to nack/reject.
 //
-// A not-merged verdict is an expected outcome of the merge, not a failure: the
+// A not-landed verdict is an expected outcome of the land, not a failure: the
 // batch is driven to terminal Failed inline and the message is acked. Only
 // infrastructure faults — deserialize, storage, the state transition, and the
 // fan-out publishes — return an error and reject to the DLQ, where the batch is
@@ -89,7 +89,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
-		return fmt.Errorf("failed to deserialize merge result: %w", err)
+		return fmt.Errorf("failed to deserialize land result: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
 		return fmt.Errorf("invalid message identity: %w", err)
@@ -108,9 +108,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get batch %s: %w", result.Id, err)
 	}
 
-	c.logger.Infow("received merge signal",
+	c.logger.Infow("received land signal",
 		"batch_id", batch.ID,
-		"merged", result.Outcome == runwaypb.Outcome_SUCCEEDED,
+		"landed", result.Outcome == runwaypb.Outcome_SUCCEEDED,
 		"state", string(batch.State),
 		"version", batch.Version,
 		"attempt", delivery.Attempt(),
@@ -119,22 +119,22 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Cancelling: the cancel path (via speculate) owns the terminal write and the
 	// downstream fan-out for a batch the user asked to cancel. Silently ack — do
-	// not transition (a racing terminal merge result must not override the
+	// not transition (a racing terminal land result must not override the
 	// cancel) and do not fan out.
 	if batch.State == entity.BatchStateCancelling {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_cancelling", 1)
 		return nil
 	}
 
-	// A merge failure's reason travels to conclude on the fan-out message, not on
+	// A land failure's reason travels to conclude on the fan-out message, not on
 	// the batch, so it reaches the request's terminal log without becoming durable
-	// batch state. Empty on the merged path. Computed before the idempotency check
+	// batch state. Empty on the landed path. Computed before the idempotency check
 	// so a redelivered failed batch re-fans-out with its reason intact.
 	var failureReason string
 	if result.Outcome != runwaypb.Outcome_SUCCEEDED {
 		failureReason = result.Reason
 		if failureReason == "" {
-			failureReason = "merge failed"
+			failureReason = "land failed"
 		}
 	}
 
@@ -154,14 +154,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	var newState entity.BatchState
 	if result.Outcome == runwaypb.Outcome_SUCCEEDED {
 		newState = entity.BatchStateSucceeded
-		c.logger.Infow("merged batch",
+		c.logger.Infow("landed batch",
 			"batch_id", batch.ID,
 			"steps", result.Steps,
 		)
 	} else {
-		metrics.NamedCounter(c.metricsScope, opName, "not_merged", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "not_landed", 1)
 		newState = entity.BatchStateFailed
-		c.logger.Warnw("batch merge failed",
+		c.logger.Warnw("batch land failed",
 			"batch_id", batch.ID,
 			"reason", result.Reason,
 		)
@@ -179,7 +179,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // fanout publishes the batch ID to conclude (so requests are updated) and to
 // speculate (so dependents can re-evaluate now that this batch is done).
 //
-// Both messages name the merge as their cause. Without it the speculate
+// Both messages name the land as their cause. Without it the speculate
 // publish would reuse the bare batch ID, which the batch controller already
 // published at creation, and the queue would drop this one as a duplicate for
 // as long as that row survives — leaving dependents unwoken. Conclude is
@@ -191,11 +191,11 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue, failureReason s
 	if failureReason != "" {
 		concludeMeta = map[string]string{topickey.MetadataKeyFailureReason: failureReason}
 	}
-	if err := c.publish(ctx, topickey.TopicKeyConclude, publish.IntentID(batchID, "conclude", "merged"), batchID, queue, concludeMeta); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, publish.IntentID(batchID, "conclude", "landed"), batchID, queue, concludeMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
-	if err := c.publish(ctx, topickey.TopicKeySpeculate, publish.IntentID(batchID, "merged"), batchID, queue, nil); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, publish.IntentID(batchID, "landed"), batchID, queue, nil); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -226,7 +226,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msgID, 
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "mergesignal"
+	return "landsignal"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

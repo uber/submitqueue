@@ -1,7 +1,7 @@
 -- MESSAGES TABLE (Immutable Log)
 -- Single table for all topics. tenant is the shard key; partition_key orders work within a tenant.
 -- Messages are append-only; per-consumer-group delivery tracking is in queue_delivery_state.
--- Example: tenant="monorepo/main", topic="merge_queue", partition_key="uber/cadence"
+-- Example: tenant="monorepo/main", topic="land_queue", partition_key="uber/cadence"
 --
 -- Identifier encodings (InnoDB max key 3072 bytes; utf8mb4 counted at 4 bytes/char):
 --   ascii COLLATE ascii_bin: bytes 0x00-0x7F, VARCHAR(255)=255 bytes, byte-wise compare (case-sensitive).

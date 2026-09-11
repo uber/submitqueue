@@ -54,9 +54,9 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 			name: "terminal error status with last error",
 			logs: []entity.RequestLog{
 				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "land"}},
 			},
-			expected: CurrentState{Status: entity.RequestStatusError, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
+			expected: CurrentState{Status: entity.RequestStatusError, LastError: "merge conflict", Metadata: map[string]string{"step": "land"}},
 		},
 		{
 			name: "multiple terminal records picks highest version",

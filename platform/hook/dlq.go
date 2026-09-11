@@ -41,7 +41,7 @@ const reconcileOp = "reconcile"
 //
 // That is a deliberate step up from the log topic's DLQ, which warns and moves
 // on. Dropping an observability row costs a gap in a read model; dropping a
-// merge-failure comment costs a support ticket, and nothing else in the system
+// land-failure comment costs a support ticket, and nothing else in the system
 // will notice it is missing.
 type DLQController struct {
 	logger        *zap.SugaredLogger

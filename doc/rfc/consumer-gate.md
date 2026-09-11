@@ -76,7 +76,7 @@ If gate state cannot be read (directory missing, I/O error), the check logs, inc
 The cancellation scenario, expressed as stop → observe → start:
 
 1. The test closes the gate for `runway-mergeconflictcheck` (all partitions, or scoped to the test queue's partition key), before landing.
-2. It lands a request. The orchestrator runs it to the merge-conflict-check hand-off; runway's subscriber delivers the check message, and the gate parks it.
+2. It lands a request. The orchestrator runs it to the merge-conflict-check hand-off; Runway's subscriber delivers the check message, and the gate parks it.
 3. The test awaits the parked record — proof the controller is stopped *and* holding exactly this message. Runway itself is still running; its RPC surface and merge controller are untouched.
 4. While stopped, the test observes and acts: it cancels the request, awaits the terminal `cancelled` status through the existing event plane, and asserts no batch ever enrolled the request.
 5. The test opens the gate. Within a re-check tick the postponed delivery redelivers, clears the open gate, and proceeds into the controller as a fresh attempt (postponing resets retry accounting); runway answers the now-stale check, and the test asserts the signal is dropped for the halted request.
