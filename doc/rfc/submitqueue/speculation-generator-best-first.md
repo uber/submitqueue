@@ -36,7 +36,7 @@ D.Dependencies = []
 
 C contains A because C directly conflicts with A, not because B depends on A. The generator uses these stored direct dependencies and does not compute a transitive closure.
 
-The scorer estimates:
+The predictor estimates:
 
 | Dependency | Success | Failure |
 | --- | ---: | ---: |
@@ -47,13 +47,13 @@ The batch being built is written before its assumptions. For example, `C [A succ
 
 ## The snapshot is a caller precondition
 
-`Generate` receives the queue's live batches as a snapshot and takes it as given. A well-formed snapshot carries unique, non-empty batch IDs, includes every batch a head's direct dependencies reference, and gives no head an empty, duplicate, or self dependency. Those are preconditions the caller owns, established where the snapshot is assembled. The generator does not re-check them: it is on the hot path of every run, the checks it could make are the ones an assembled-correctly snapshot can never fail, and paying for them here only spreads the same contract across two places. A malformed snapshot yields undefined candidates rather than an error.
+`Generate` receives the queue's live batches and path sets as one snapshot and takes it as given. Path sets are what each batch's builds have done so far — at most one per head, none for a batch nothing has speculated on. The speculate controller assembles both halves once per run and never re-reads mid-run; see [outcome-predictor.md](outcome-predictor.md) for why the predictor does not load them itself. A well-formed snapshot carries unique, non-empty batch IDs, includes every batch a head's direct dependencies reference, and gives no head an empty, duplicate, or self dependency. Those are preconditions the caller owns, established where the snapshot is assembled. The generator does not re-check them: it is on the hot path of every run, the checks it could make are the ones an assembled-correctly snapshot can never fail, and paying for them here only spreads the same contract across two places. A malformed snapshot yields undefined candidates rather than an error.
 
-A dependency the generator cannot price is the one bad input it absorbs, because it arrives from the injected scorer rather than from the caller and there is no earlier point that could catch it. Three cases take the same 0.95 default: a score outside `[0, 1]` or `NaN`, a scorer call that returned an error, and a dependency the snapshot never carried. The default is optimistic on purpose, so a dependency nobody could estimate keeps its head's preferred path near the front instead of burying it or failing the whole run on one number — and failing the whole run is the real hazard, because `Generate` seeds the heap for every head at once, so one unpriceable dependency would otherwise cost the queue every candidate it had. A batch absent from the snapshot is never passed to the scorer at all: it would resolve to a zero-valued batch belonging to no queue, so scoring it would price some other batch entirely or fail on the empty queue name. Any deliberate defaulting still belongs to the scorer implementation, which knows what information it does and does not have; this is only the floor under it.
+A dependency the generator cannot price is the one bad input it absorbs, because it arrives from the injected predictor rather than from the caller and there is no earlier point that could catch it. Three cases take the same 0.95 default: a probability outside `[0, 1]` or `NaN`, a predictor call that returned an error, and a dependency the snapshot never carried. The default is optimistic on purpose, so a dependency nobody could estimate keeps its head's preferred path near the front instead of burying it or failing the whole run on one number — and failing the whole run is the real hazard, because `Generate` seeds the heap for every head at once, so one unpriceable dependency would otherwise cost the queue every candidate it had. A batch absent from the snapshot is never passed to the predictor at all: it would resolve to a zero-valued batch belonging to no queue, so predicting it would price some other batch entirely or fail on the empty queue name. Any deliberate defaulting still belongs to the predictor implementation, which knows what information it does and does not have; this is only the floor under it.
 
 ## Step 1: `Generate` prepares each head
 
-`Generate` scores each unique unresolved dependency once, however many heads wait on it. If A appears in both B's and C's dependency lists, the scorer is still called for A only once.
+`Generate` predicts each unique unresolved dependency once, however many heads wait on it. If A appears in both B's and C's dependency lists, the predictor is still called for A only once.
 
 For each unresolved direct dependency, `Generate` records:
 
@@ -420,7 +420,7 @@ A and D tie at 1.0, so batch ID puts A first. Other exact ties prefer fewer flip
 
 `Generate` must eagerly:
 
-- score every unique unresolved direct dependency needed by an eligible head, substituting the default for any score that is not a probability;
+- predict every unique unresolved direct dependency needed by an eligible head, substituting the default for an unusable probability;
 - choose each unresolved dependency's preferred assumption and calculate its `flipCost`; and
 - total the best score for every head.
 
@@ -447,9 +447,9 @@ The ordering stays the same. `CandidatePath.RankingScore` contains this logarith
 - `Succeeded` fixes an assumption to succeeds.
 - `Failed` or `Cancelled` fixes an assumption to fails.
 - `Cancelling` remains undecided because cancellation may lose a race with completion.
-- `Merging` also remains undecided, because a merge can fail. It is tempting to treat it as committed to landing and skip the scorer call, but that puts a state-specific policy inside the search: whether a path betting against a merging batch is worth funding is a question of price, and price belongs to the scorer. The allocator draws the same line — "no batch state enters this decision" — and the generator holds it too. Nothing is lost by staying open: a single passed path still waits for the merge result, while passed paths covering every outcome let the controller bypass the dependency (see [speculation.md](speculation.md)). Funding the unlikely side spends budget, which is the allocator's to ration.
+- `Merging` also remains undecided, because a merge can fail. It is tempting to treat it as committed to landing and skip prediction, but that would turn an uncertain state into a fact inside the search. How much *merging* changes the probability belongs to the predictor; the Generator only consumes that price, and the Allocator still does not interpret batch state. Nothing is lost by staying open: a single passed path still waits for the merge result, while passed paths covering every outcome let the controller bypass the dependency (see [speculation.md](speculation.md)). Funding the unlikely side spends budget, which is the Allocator's to ration.
 - A fixed assumption stays in the returned path but contributes probability 1 and has no flip.
-- A shared dependency is scored once per run.
+- A shared dependency is predicted once per run.
 
 ## Why the algorithm works
 
