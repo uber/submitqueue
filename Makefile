@@ -622,7 +622,7 @@ run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make r
 
 test: ## Run unit tests
 	@echo "Running unit tests..."
-	@$(BAZEL) test //... --test_tag_filters=-manual,-integration || echo "No unit tests found (only integration tests exist)"
+	@$(BAZEL) test //... --test_tag_filters=-manual,-integration --build_tests_only
 
 test-no-cache: ## Run unit tests without cache (force re-run)
 	@echo "Running unit tests (no cache)..."

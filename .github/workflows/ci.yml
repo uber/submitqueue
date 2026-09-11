@@ -82,9 +82,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
 
-      - name: Build project
-        run: make build
-
       - name: Run unit tests
         run: make test
 
