@@ -185,7 +185,7 @@ type SpeculationPathSet struct {
 }
 
 // PathAction is an action proposed on a speculation path. The set is limited to
-// build and cancel; there is no merge or fail action, because a batch's verdict
+// build and cancel; there is no land or fail action, because a batch's verdict
 // is a controller-owned fact, not a proposed action.
 type PathAction string
 

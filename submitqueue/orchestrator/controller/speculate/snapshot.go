@@ -33,7 +33,7 @@ type snapshot struct {
 	// of one of them.
 	batches map[string]entity.Batch
 	// inFlight is the queue's in-flight batches in queue order, whatever their
-	// state. This is what the dispatch step walks: a merging or cancelling head
+	// state. This is what the dispatch step walks: a landing or cancelling head
 	// is closed to new work, but its paths still hold CI slots and their
 	// observations still need persisting.
 	inFlight []entity.Batch

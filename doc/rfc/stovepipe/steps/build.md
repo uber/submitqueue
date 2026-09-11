@@ -121,7 +121,7 @@ Both domains have a `build` controller that triggers via a build-runner extensio
 
 ### SubmitQueue
 
-SubmitQueue validates **stacks of changes** before merging. Its `build` controller loads `base []entity.Batch` (ordered dependency batches) and `head entity.Batch` and triggers:
+SubmitQueue validates **stacks of changes** before landing. Its `build` controller loads `base []entity.Batch` (ordered dependency batches) and `head entity.Batch` and triggers:
 
 ```go
 buildID, err := buildRunner.Trigger(ctx, base, head, metadata)

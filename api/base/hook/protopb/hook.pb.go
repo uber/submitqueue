@@ -40,19 +40,18 @@ const (
 
 // HookEvent is one fire-and-forget lifecycle event. Every domain publishes this
 // same shape to its own hook topic, so a sink that consumes several domains
-// reads one schema rather than one per producer. See api/base/hook/README.md.
+// reads one schema rather than one per producer.
 type HookEvent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the opaque identity of this occurrence, derived from the transition
 	// it describes so that replaying the transition mints the same id. It is
 	// the queue's dedupe key and a hook's idempotency key, and is never parsed.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// source is the domain that produced the event: "submitqueue",
-	// "stovepipe", ... An open string rather than an enum so a new producer
-	// does not break existing consumers.
+	// source is the domain that produced the event. An open string rather than
+	// an enum so a new producer does not break existing consumers.
 	Source string `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
 	// type is what happened, as one dotted open string: "request.landed",
-	// "batch.failed", ... It is the only dimension a consumer filters on, and
+	// "batch.failed", etc. It is the only dimension a consumer filters on, and
 	// open for the same reason as source.
 	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	// timestamp_ms is when the occurrence happened, in milliseconds since the

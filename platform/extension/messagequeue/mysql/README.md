@@ -26,11 +26,11 @@ defer q.Close()
 
 // Publish
 msg := entityqueue.NewMessage("msg-id", []byte(`{"data": "value"}`), "repo-123", nil)
-q.Publisher().Publish(ctx, "merge_events", msg)
+q.Publisher().Publish(ctx, "land_events", msg)
 
 // Subscribe with per-subscription config
 subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "orchestrator")
-deliveryCh, _ := q.Subscriber().Subscribe(ctx, "merge_events", subConfig)
+deliveryCh, _ := q.Subscriber().Subscribe(ctx, "land_events", subConfig)
 for delivery := range deliveryCh {
     if err := process(delivery.Message()); err != nil {
         delivery.Nack(ctx)  // Retry

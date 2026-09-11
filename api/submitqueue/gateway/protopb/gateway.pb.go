@@ -157,7 +157,7 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
-// LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+// LandRequest defines a request to land a set of code changes on the source control repository's target branch.
 //
 // SubmitQueue guarantees changes are landed in order with no other changes in between.
 // SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
