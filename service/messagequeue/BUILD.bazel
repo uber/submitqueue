@@ -2,16 +2,23 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["tenant.go"],
+    srcs = [
+        "database.go",
+        "tenant.go",
+    ],
     importpath = "github.com/uber/submitqueue/service/messagequeue",
     visibility = ["//visibility:public"],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["tenant_test.go"],
+    srcs = [
+        "database_test.go",
+        "tenant_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
+        "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

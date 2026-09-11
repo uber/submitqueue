@@ -273,6 +273,9 @@ func run() error {
 		return fmt.Errorf("failed to open queue database: %w", err)
 	}
 	defer queueDB.Close()
+	if err := servicemq.ConfigureQueueMySQLConnectionPool(queueDB, os.Getenv("QUEUE_MYSQL_MAX_OPEN_CONNECTIONS")); err != nil {
+		return fmt.Errorf("failed to configure queue database pool: %w", err)
+	}
 
 	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
 	if err != nil {
