@@ -121,7 +121,7 @@ func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[strin
 			probabilityByID[id] = defaultProbability
 			continue
 		}
-		probability, err := g.scorer.Score(ctx, batch)
+		probability, err := g.scorer.Score(ctx, batch, entity.SpeculationPathSet{})
 		if err != nil {
 			// A scorer that failed because the caller went away has not found
 			// an unpriceable dependency — it has found a dead ctx, which ends

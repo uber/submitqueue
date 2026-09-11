@@ -34,14 +34,14 @@ type fixedScorer struct {
 	score float64
 }
 
-func (f *fixedScorer) Score(_ context.Context, _ entity.Batch) (float64, error) {
+func (f *fixedScorer) Score(_ context.Context, _ entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
 	return f.score, nil
 }
 
 // errorScorer always returns an error.
 type errorScorer struct{}
 
-func (e *errorScorer) Score(_ context.Context, _ entity.Batch) (float64, error) {
+func (e *errorScorer) Score(_ context.Context, _ entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
 	return 0, fmt.Errorf("scorer failed")
 }
 
@@ -102,7 +102,7 @@ func TestScorer_Score(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := New(testCfg, tt.scorers, tt.reduce, tally.NoopScope)
-			got, err := s.Score(context.Background(), entity.Batch{})
+			got, err := s.Score(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
 			require.NoError(t, err)
 			assert.InDelta(t, tt.want, got, 1e-9)
 		})
@@ -114,7 +114,7 @@ func TestScorer_Score_ChildError(t *testing.T) {
 		"error": &errorScorer{},
 		"files": &fixedScorer{0.9},
 	}, Min, tally.NoopScope)
-	_, err := s.Score(context.Background(), entity.Batch{})
+	_, err := s.Score(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
 	require.Error(t, err)
 }
 
@@ -143,7 +143,7 @@ func TestReduceFunc_ReceivesNames(t *testing.T) {
 		"files": &fixedScorer{0.9},
 		"deps":  &fixedScorer{0.95},
 	}, custom, tally.NoopScope)
-	got, err := s.Score(context.Background(), entity.Batch{})
+	got, err := s.Score(context.Background(), entity.Batch{}, entity.SpeculationPathSet{})
 	require.NoError(t, err)
 	assert.Equal(t, 0.9, got)
 	assert.ElementsMatch(t, []string{"files", "deps"}, receivedNames)

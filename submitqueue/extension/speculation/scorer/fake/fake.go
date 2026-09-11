@@ -56,7 +56,7 @@ func New(cfg scorer.Config, resolver changeset.Resolver, delegate scorer.Scorer)
 
 // Score returns an error when a change URI carries the failure marker; otherwise
 // it delegates to the wrapped scorer.
-func (s scorerFake) Score(ctx context.Context, batch entity.Batch) (float64, error) {
+func (s scorerFake) Score(ctx context.Context, batch entity.Batch, paths entity.SpeculationPathSet) (float64, error) {
 	changes, err := s.resolver.DetailedForBatch(ctx, batch)
 	if err != nil {
 		return 0, err
@@ -64,7 +64,7 @@ func (s scorerFake) Score(ctx context.Context, batch entity.Batch) (float64, err
 	if markerToken(changes) == tokenError {
 		return 0, fmt.Errorf("fake: marked score error")
 	}
-	return s.delegate.Score(ctx, batch)
+	return s.delegate.Score(ctx, batch, paths)
 }
 
 // markerToken returns the marker token embedded in the first change URI that
