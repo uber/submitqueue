@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/consumer"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -77,7 +78,7 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
-	payload, err := entity.BuildID{ID: "build-1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, "build-1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -89,7 +90,7 @@ func TestDLQBuildSignalController_Process_TenantPayloadQueueMismatchAcks(t *test
 	store := storagemock.NewMockStorage(ctrl)
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
-	payload, err := entity.BuildID{ID: "build-1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, "build-1", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
@@ -107,7 +108,7 @@ func TestDLQBuildSignalController_Process_BuildNotFoundIsNoOp(t *testing.T) {
 
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
-	payload, err := entity.BuildID{ID: "build-1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, "build-1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -128,7 +129,7 @@ func TestDLQBuildSignalController_Process_BuildMissingBatchIsNoOp(t *testing.T) 
 
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
-	payload, err := entity.BuildID{ID: "build-1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, "build-1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)

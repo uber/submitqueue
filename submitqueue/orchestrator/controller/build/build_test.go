@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -58,7 +59,7 @@ func (f staticBuildRunnerFactory) For(buildrunner.Config) (buildrunner.BuildRunn
 
 func batchIDPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	payload, err := entity.BatchID{ID: id, Queue: "test-queue"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuild, id, "test-queue")
 	require.NoError(t, err)
 	return payload
 }
@@ -184,7 +185,7 @@ func expectSignal(t *testing.T, deps *testDeps, buildID string) {
 	t.Helper()
 	deps.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
-			got, err := entity.BuildIDFromBytes(msg.Payload)
+			got, err := sqmq.UnmarshalBuildID(sqmq.TopicKeyBuildSignal, msg.Payload)
 			require.NoError(t, err)
 			assert.Equal(t, buildID, got.ID)
 			assert.Equal(t, "test-queue", msg.Tenant)
@@ -248,7 +249,7 @@ func TestProcess_TriggersWithThePathsBase(t *testing.T) {
 		}).Return(nil),
 		deps.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).
 			DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
-				got, err := entity.BuildIDFromBytes(msg.Payload)
+				got, err := sqmq.UnmarshalBuildID(sqmq.TopicKeyBuildSignal, msg.Payload)
 				require.NoError(t, err)
 				assert.Equal(t, "build-1", got.ID)
 				assert.Equal(t, "build-1", msg.PartitionKey,

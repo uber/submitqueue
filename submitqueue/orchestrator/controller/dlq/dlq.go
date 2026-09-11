@@ -63,6 +63,12 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
+// primaryTopicKey strips the DLQ suffix so payload decode uses the originating
+// topic's message type. DLQ rows keep the primary payload bytes verbatim.
+func primaryTopicKey(dlqKey consumer.TopicKey) consumer.TopicKey {
+	return consumer.TopicKey(strings.TrimSuffix(string(dlqKey), topicSuffix))
+}
+
 // failureContext reads everything the queue recorded about a dead-lettered
 // message: the human-readable reason, and a metadata map to carry alongside it
 // on the terminal request log.

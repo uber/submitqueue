@@ -29,6 +29,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -86,7 +87,7 @@ func newMockStorage(ctrl *gomock.Controller) *storagemock.MockStorage {
 
 // makeDelivery builds a MockDelivery wrapping a serialized LandRequest.
 func makeDelivery(t *testing.T, ctrl *gomock.Controller, lr entity.LandRequest) *consumermock.MockDelivery {
-	payload, err := lr.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(lr))
 	require.NoError(t, err)
 
 	msg := entityqueue.NewMessage(lr.ID, payload, lr.Queue, nil)
@@ -125,7 +126,7 @@ func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 	request := entity.LandRequest{ID: "test-queue/123", Queue: "test-queue"}
-	payload, err := request.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(request))
 	require.NoError(t, err)
 	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
 	msg.Tenant = "other-queue"

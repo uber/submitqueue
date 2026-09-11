@@ -50,6 +50,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -138,7 +139,7 @@ func NewController(
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
-	buildID, err := entity.BuildIDFromBytes(msg.Payload)
+	buildID, err := sqmq.UnmarshalBuildID(c.topicKey, msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed.
@@ -440,7 +441,7 @@ func findEntry(set entity.SpeculationPathSet, pathID string) (entity.Speculation
 // publishBatchID publishes a batch ID to the topic identified by key under
 // msgID, stamped with and partitioned by the batch's queue.
 func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue string) error {
-	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(key, batchID, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}

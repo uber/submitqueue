@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -206,7 +207,7 @@ func (c *Controller) failRequest(ctx context.Context, store storage.Storage, req
 // per conflict-check result, so a redelivery that re-hands it is meant to dedup
 // away.
 func (c *Controller) publishRequestID(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
-	payload, err := entity.RequestID{ID: requestID, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(key, requestID, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}

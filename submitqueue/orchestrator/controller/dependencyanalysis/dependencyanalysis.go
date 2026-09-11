@@ -59,6 +59,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -110,7 +111,7 @@ func NewController(
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
-	bid, err := entity.BatchIDFromBytes(msg.Payload)
+	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
@@ -439,7 +440,7 @@ func (c *Controller) writeDependentIndexes(ctx context.Context, store storage.St
 // dropped. Every later publish about the same batch names its cause and so
 // cannot collide with this row — see publish.IntentID.
 func (c *Controller) publishToSpeculate(ctx context.Context, batch entity.Batch) error {
-	payload, err := entity.BatchID{ID: batch.ID, Queue: batch.Queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, batch.ID, batch.Queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}

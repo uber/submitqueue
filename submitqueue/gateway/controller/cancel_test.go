@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -156,7 +157,7 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, "my-queue", publishedMessage.Tenant)
 	assert.Equal(t, "my-queue/7", publishedMessage.PartitionKey)
 
-	deserialized, err := entity.CancelRequestFromBytes(publishedMessage.Payload)
+	deserialized, err := sqmq.UnmarshalCancelRequest(publishedMessage.Payload)
 	require.NoError(t, err)
 	assert.Equal(t, "my-queue/7", deserialized.ID)
 	assert.Equal(t, "obsolete change", deserialized.Reason)

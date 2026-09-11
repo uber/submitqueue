@@ -34,13 +34,13 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
-// batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
 // staticStorageFactory resolves every queue to one fixed store aggregate.
 type staticStorageFactory struct{ store storage.Storage }
 
@@ -48,7 +48,7 @@ type staticStorageFactory struct{ store storage.Storage }
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
 func batchIDPayload(t *testing.T, id, queue string) []byte {
-	payload, err := entity.BatchID{ID: id, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, id, queue)
 	require.NoError(t, err)
 	return payload
 }
@@ -306,7 +306,7 @@ func TestProcess_ReportsLandingBeforeDispatch(t *testing.T) {
 	logs := rec.byTopic["log"]
 	require.Len(t, logs, 2)
 	for i, requestID := range []string{req1.ID, req2.ID} {
-		entry, err := entity.RequestLogFromBytes(logs[i].Payload)
+		entry, err := sqmq.UnmarshalRequestLog(logs[i].Payload)
 		require.NoError(t, err)
 		assert.Equal(t, requestID, entry.RequestID)
 		assert.Equal(t, entity.RequestStatusLanding, entry.Status)

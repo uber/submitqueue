@@ -60,6 +60,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -106,7 +107,7 @@ func NewController(
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
-	cancelReq, err := entity.CancelRequestFromBytes(msg.Payload)
+	cancelReq, err := sqmq.UnmarshalCancelRequest(msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize cancel request: %w", err)
@@ -350,7 +351,7 @@ func (c *Controller) cancelBatch(ctx context.Context, store storage.Storage, bat
 // redelivery re-publish documented above a silent no-op — leaving a batch
 // Cancelling with nothing driving it to terminal.
 func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
-	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
+	payload, err := sqmq.MarshalID(key, batchID, queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}

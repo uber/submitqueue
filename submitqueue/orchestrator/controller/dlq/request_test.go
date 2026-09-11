@@ -24,6 +24,7 @@ import (
 	queue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -37,7 +38,7 @@ func TestDLQRequestController_InterfaceAndAccessors(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	assert.Equal(t, "validate_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("validate_dlq"), c.TopicKey())
@@ -65,7 +66,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
 
-	payload, err := entity.LandRequest{ID: "q/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(entity.LandRequest{ID: "q/1", Queue: "q"}))
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -75,9 +76,9 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 func TestDLQRequestController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
-	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyValidate, "q/1", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
@@ -104,7 +105,7 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
 
-	payload, err := entity.CancelRequest{ID: "q/7", Queue: "q", Reason: "user"}.ToBytes()
+	payload, err := sqmq.Marshal(sqmq.CancelFromEntity(entity.CancelRequest{ID: "q/7", Queue: "q", Reason: "user"}))
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -131,9 +132,9 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeRequestID(topickey.TopicKeyBatch), TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
-	payload, err := entity.RequestID{ID: "q/3", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, "q/3", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -153,9 +154,9 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
-	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyValidate, "q/1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -170,7 +171,7 @@ func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	// no store calls expected
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("not json"))
 	err := c.Process(context.Background(), delivery)
@@ -185,9 +186,9 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	// no store calls expected
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
-	payload, err := entity.RequestID{ID: "", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyValidate, "", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -255,9 +256,9 @@ func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T)
 			store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
 
 			c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
-				consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+				consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyBatch), TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
-			payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+			payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, "q/1", "q")
 			require.NoError(t, err)
 
 			require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
@@ -294,9 +295,9 @@ func TestDLQRequestController_Process_FailsWhenEveryBatchIsTerminal(t *testing.T
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
-		registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+		registry, DecodeRequestID(topickey.TopicKeyBatch), TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
-	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, "q/1", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
@@ -338,9 +339,9 @@ func TestDLQRequestController_Process_FailsWhenCreatingBatchNeverClaimed(t *test
 			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 			c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
-				registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+				registry, DecodeRequestID(topickey.TopicKeyBatch), TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
-			payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+			payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, "q/1", "q")
 			require.NoError(t, err)
 
 			require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
@@ -376,9 +377,9 @@ func TestDLQRequestController_Process_SkipsWhenCreatingBatchAlreadyClaimed(t *te
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
-		consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+		consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyBatch), TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
-	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, "q/1", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))

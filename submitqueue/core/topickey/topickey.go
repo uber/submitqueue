@@ -12,48 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package topickey defines SubmitQueue pipeline stage identifiers.
+// Package topickey re-exports SubmitQueue pipeline stage identifiers from
+// submitqueue/core/messagequeue, the package that owns the topic-key constants
+// and the payloads bound to them.
 package topickey
 
-import "github.com/uber/submitqueue/platform/consumer"
+import "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 
 // TopicKey is the shared pipeline stage identifier type.
-type TopicKey = consumer.TopicKey
+type TopicKey = messagequeue.TopicKey
 
 const (
-	// TopicKeyStart is the pipeline stage where new requests arrive from the gateway.
-	TopicKeyStart TopicKey = "start"
-	// TopicKeyCancel is the pipeline stage where cancellation requests arrive from the gateway.
-	TopicKeyCancel TopicKey = "cancel"
-	// TopicKeyValidate is the pipeline stage where requests are published for validation.
-	TopicKeyValidate TopicKey = "validate"
-	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.
-	TopicKeyBatch TopicKey = "batch"
-	// TopicKeyDependencyAnalysis is the pipeline stage where newly created batches are
-	// published for conflict analysis. Messages must be partitioned by queue:
-	// analysis reads the queue's dependency-eligible batches, so two batches of
-	// one queue analyzed concurrently would each miss the other.
-	TopicKeyDependencyAnalysis TopicKey = "dependency-analysis"
-	// TopicKeySpeculate is the pipeline stage where batches are published for speculation.
-	TopicKeySpeculate TopicKey = "speculate"
-	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
-	TopicKeyBuild TopicKey = "build"
-	// TopicKeyBuildSignal is the polling stage for triggered builds. Each
-	// message carries a Build; the consumer calls BuildRunner.Status,
-	// persists the latest status, publishes the batch ID to TopicKeySpeculate
-	// so the state machine re-evaluates, and holds the delivery for the next
-	// poll when the build has not yet reached a terminal state.
-	TopicKeyBuildSignal TopicKey = "buildsignal"
-	// TopicKeyLand is the pipeline stage where speculated batches are published for landing.
-	TopicKeyLand TopicKey = "submitqueue-land"
-	// TopicKeyConclude is the pipeline stage where landed requests are published for conclusion.
-	TopicKeyConclude TopicKey = "conclude"
-	// TopicKeyLog is the pipeline stage where per-request logs are written.
-	TopicKeyLog TopicKey = "log"
+	// TopicKeyStart carries new land requests from the gateway to start.
+	TopicKeyStart = messagequeue.TopicKeyStart
+	// TopicKeyCancel carries cancellation requests from the gateway to cancel.
+	TopicKeyCancel = messagequeue.TopicKeyCancel
+	// TopicKeyValidate carries request ids from start to validate.
+	TopicKeyValidate = messagequeue.TopicKeyValidate
+	// TopicKeyBatch carries request ids from landconflictsignal to batch.
+	TopicKeyBatch = messagequeue.TopicKeyBatch
+	// TopicKeyDependencyAnalysis carries newly created batch ids for conflict analysis.
+	TopicKeyDependencyAnalysis = messagequeue.TopicKeyDependencyAnalysis
+	// TopicKeySpeculate carries batch ids for speculation.
+	TopicKeySpeculate = messagequeue.TopicKeySpeculate
+	// TopicKeyBuild carries batch ids whose speculated heads should be built.
+	TopicKeyBuild = messagequeue.TopicKeyBuild
+	// TopicKeyBuildSignal carries build ids to poll.
+	TopicKeyBuildSignal = messagequeue.TopicKeyBuildSignal
+	// TopicKeyLand carries batch ids to the internal land stage before Runway.
+	TopicKeyLand = messagequeue.TopicKeyLand
+	// TopicKeyConclude carries batch ids for terminal request reconciliation.
+	TopicKeyConclude = messagequeue.TopicKeyConclude
+	// TopicKeyLog carries per-request log entries from the orchestrator to the gateway.
+	TopicKeyLog = messagequeue.TopicKeyLog
+	// MetadataKeyFailureReason is the conclude message metadata attribute for a failed batch's reason.
+	MetadataKeyFailureReason = messagequeue.MetadataKeyFailureReason
 )
-
-// MetadataKeyFailureReason is the conclude message's metadata attribute carrying
-// a failed batch's human-readable reason. Set by the failure sites (land and
-// speculate) on the conclude publish and read by conclude to stamp the request's
-// terminal log; absent on the landed and cancelled paths.
-const MetadataKeyFailureReason = "failure_reason"

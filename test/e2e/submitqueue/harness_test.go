@@ -41,6 +41,7 @@ import (
 	queuemysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -297,7 +298,7 @@ func (s *E2EIntegrationSuite) redeliverBatchMessage(req request) {
 	})
 	require.NoError(t, err)
 
-	payload, err := entity.RequestID{ID: req.sqid, Queue: req.queue}.ToBytes()
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, req.sqid, req.queue)
 	require.NoError(t, err)
 
 	require.NoError(t, publish.Message(entityqueue.WithQueueName(s.ctx, req.queue), registry, topickey.TopicKeyBatch, publish.MessageParams{
