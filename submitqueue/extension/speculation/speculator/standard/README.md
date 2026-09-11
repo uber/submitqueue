@@ -6,7 +6,7 @@ Each run it considers candidate paths in descending order of their probability o
 
 When the budget runs out, everything below the cut waits for a later run. That is safe because the propose-side cannot invent a batch verdict: the speculate controller still decides merge from the persisted paths, including complete coverage of unsettled dependencies.
 
-Both halves are swappable. The ranking is the `Generator`'s: the default `bestfirst` asks the queue's predictor for each unresolved dependency's probability of reaching Succeeded, then ranks paths by the probability that all their assumptions hold. The budget policy is the `Allocator`'s: the default `sticky` fills only free slots and never preempts, where a preempting allocator would cancel a low-value in-flight path to fund a better one.
+Both halves are swappable. The ranking is the `Generator`'s: the default `bestfirst` asks the queue's scorer for each unresolved dependency's probability of reaching Succeeded, then ranks paths by the probability that all their assumptions hold. The budget policy is the `Allocator`'s: the default `sticky` fills only free slots and never preempts, where a preempting allocator would cancel a low-value in-flight path to fund a better one.
 
 `standard` itself decides nothing — it connects the `Generator`'s stream to the `Allocator` — so changing prioritization or budget behavior means swapping a part, not writing a new `Speculator`.
 

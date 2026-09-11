@@ -369,12 +369,14 @@ func defaultProfilesConfig() profilesConfig {
 			// Bucketed scoring: smaller batches are likelier to land, so they
 			// rank ahead of larger ones. Conflicts stay conservative.
 			{Name: "test-queue", Scorer: &scorerConfig{
-				Type: scorerTypeHeuristic,
-				Buckets: []bucketConfig{
-					{Min: 0, Max: 1, Score: 0.95},
-					{Min: 2, Max: 5, Score: 0.80},
-					{Min: 6, Max: 20, Score: 0.60},
-					{Min: 21, Max: maxBucket, Score: 0.40},
+				Base: &scorerConfig{
+					Type: scorerTypeHeuristic,
+					Buckets: []bucketConfig{
+						{Min: 0, Max: 1, Score: 0.95},
+						{Min: 2, Max: 5, Score: 0.80},
+						{Min: 6, Max: 20, Score: 0.60},
+						{Min: 21, Max: maxBucket, Score: 0.40},
+					},
 				},
 			}},
 			// Maximum parallelism: nothing ever conflicts. Scored by a
@@ -382,11 +384,13 @@ func defaultProfilesConfig() profilesConfig {
 			{Name: "e2e-test-queue",
 				Analyzer: &analyzerConfig{Type: analyzerTypeNone},
 				Scorer: &scorerConfig{
-					Type:    scorerTypeComposite,
-					Combine: combineAvg,
-					Components: map[string]scorerConfig{
-						"size": {Type: scorerTypeHeuristic, Buckets: []bucketConfig{{Min: 0, Max: maxBucket, Score: 0.8}}},
-						"flat": {Type: scorerTypeHeuristic, Buckets: []bucketConfig{{Min: 0, Max: maxBucket, Score: 0.6}}},
+					Base: &scorerConfig{
+						Type:    scorerTypeComposite,
+						Combine: combineAvg,
+						Components: map[string]scorerConfig{
+							"size": {Type: scorerTypeHeuristic, Buckets: []bucketConfig{{Min: 0, Max: maxBucket, Score: 0.8}}},
+							"flat": {Type: scorerTypeHeuristic, Buckets: []bucketConfig{{Min: 0, Max: maxBucket, Score: 0.6}}},
+						},
 					},
 				},
 			},

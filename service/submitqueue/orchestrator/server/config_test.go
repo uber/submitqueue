@@ -344,20 +344,24 @@ func TestDefaultProfilesConfig_KeepsPerQueueScorers(t *testing.T) {
 		byName[q.Name] = q
 	}
 
-	assert.Equal(t, scorerTypeHeuristic, cfg.Defaults.Scorer.Type)
-	assert.Len(t, cfg.Defaults.Scorer.Buckets, 1, "the baseline scores every batch alike")
+	assert.Equal(t, scorerTypeEvidence, cfg.Defaults.Scorer.Type)
+	require.NotNil(t, cfg.Defaults.Scorer.Base)
+	assert.Equal(t, scorerTypeHeuristic, cfg.Defaults.Scorer.Base.Type)
+	assert.Len(t, cfg.Defaults.Scorer.Base.Buckets, 1, "the baseline scores every batch alike")
 
 	bucketed, ok := byName["test-queue"]
 	require.True(t, ok)
 	require.NotNil(t, bucketed.Scorer)
-	assert.Equal(t, scorerTypeHeuristic, bucketed.Scorer.Type)
-	assert.Len(t, bucketed.Scorer.Buckets, 4, "smaller batches must rank ahead of larger ones")
+	require.NotNil(t, bucketed.Scorer.Base)
+	assert.Equal(t, scorerTypeHeuristic, bucketed.Scorer.Base.Type)
+	assert.Len(t, bucketed.Scorer.Base.Buckets, 4, "smaller batches must rank ahead of larger ones")
 
 	comp, ok := byName["e2e-test-queue"]
 	require.True(t, ok)
 	require.NotNil(t, comp.Scorer)
-	assert.Equal(t, scorerTypeComposite, comp.Scorer.Type)
-	assert.ElementsMatch(t, []string{"size", "flat"}, keysOf(comp.Scorer.Components))
+	require.NotNil(t, comp.Scorer.Base)
+	assert.Equal(t, scorerTypeComposite, comp.Scorer.Base.Type)
+	assert.ElementsMatch(t, []string{"size", "flat"}, keysOf(comp.Scorer.Base.Components))
 }
 
 func keysOf(m map[string]scorerConfig) []string {
@@ -654,10 +658,11 @@ func TestLoadProfilesConfig_RejectsBadScorers(t *testing.T) {
 		contents string
 	}{
 		{name: "unknown scorer type", contents: "defaults:\n  scorer: {type: vibes}\n"},
-		{name: "composite with no components", contents: "defaults:\n  scorer: {type: composite}\n"},
-		{name: "unknown combine", contents: "defaults:\n  scorer:\n    type: composite\n    combine: median\n    components: {a: {type: heuristic}}\n"},
-		{name: "score out of range", contents: "defaults:\n  scorer:\n    type: heuristic\n    buckets: [{min: 0, max: 10, score: 2.0}]\n"},
-		{name: "inverted bucket", contents: "defaults:\n  scorer:\n    type: heuristic\n    buckets: [{min: 10, max: 1, score: 0.5}]\n"},
+		{name: "top-level heuristic", contents: "defaults:\n  scorer: {type: heuristic}\n"},
+		{name: "composite with no components", contents: "defaults:\n  scorer:\n    base: {type: composite}\n"},
+		{name: "unknown combine", contents: "defaults:\n  scorer:\n    base:\n      type: composite\n      combine: median\n      components: {a: {type: heuristic}}\n"},
+		{name: "score out of range", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      buckets: [{min: 0, max: 10, score: 2.0}]\n"},
+		{name: "inverted bucket", contents: "defaults:\n  scorer:\n    base:\n      type: heuristic\n      buckets: [{min: 10, max: 1, score: 0.5}]\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -667,17 +672,16 @@ func TestLoadProfilesConfig_RejectsBadScorers(t *testing.T) {
 	}
 }
 
-func TestLoadProfilesConfig_RejectsBadPredictors(t *testing.T) {
+func TestLoadProfilesConfig_RejectsBadScorerFactors(t *testing.T) {
 	tests := []struct {
 		name     string
 		contents string
 	}{
-		{name: "unknown predictor type", contents: "defaults:\n  predictor: {type: vibes}\n"},
-		{name: "unknown factor", contents: "defaults:\n  predictor:\n    factors: {pathPased: 2}\n"},
-		{name: "zero factor", contents: "defaults:\n  predictor:\n    factors: {merging: 0}\n"},
-		{name: "negative factor", contents: "defaults:\n  predictor:\n    factors: {pathFailed: -1}\n"},
-		{name: "infinite factor", contents: "defaults:\n  predictor:\n    factors: {pathPassed: .inf}\n"},
-		{name: "bad factor on a queue override", contents: "defaults: {}\nqueues:\n  - name: q\n    predictor:\n      factors: {merging: 0}\n"},
+		{name: "unknown factor", contents: "defaults:\n  scorer:\n    factors: {pathPased: 2}\n"},
+		{name: "zero factor", contents: "defaults:\n  scorer:\n    factors: {merging: 0}\n"},
+		{name: "negative factor", contents: "defaults:\n  scorer:\n    factors: {pathFailed: -1}\n"},
+		{name: "infinite factor", contents: "defaults:\n  scorer:\n    factors: {pathPassed: .inf}\n"},
+		{name: "bad factor on a queue override", contents: "defaults: {}\nqueues:\n  - name: q\n    scorer:\n      factors: {merging: 0}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -687,44 +691,46 @@ func TestLoadProfilesConfig_RejectsBadPredictors(t *testing.T) {
 	}
 }
 
-// An omitted predictor block leaves the queue ranking on its scorer's price
+// An omitted factors map leaves the queue ranking on its base price
 // alone, which is what every queue does until someone states a factor.
-func TestLoadProfilesConfig_DefaultsThePredictorToNeutral(t *testing.T) {
+func TestLoadProfilesConfig_DefaultsTheScorerToEvidence(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t, "defaults: {}\nqueues:\n  - name: q\n"))
 	require.NoError(t, err)
 
-	assert.Equal(t, predictorTypeEvidence, cfg.Defaults.Predictor.Type)
+	assert.Equal(t, scorerTypeEvidence, cfg.Defaults.Scorer.Type)
+	require.NotNil(t, cfg.Defaults.Scorer.Base)
+	assert.Equal(t, scorerTypeHeuristic, cfg.Defaults.Scorer.Base.Type)
 
-	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Predictor)
+	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Scorer)
 	assert.Equal(t, neutralFactor, factors.PathPassed)
 	assert.Equal(t, neutralFactor, factors.PathFailed)
 	assert.Equal(t, neutralFactor, factors.Merging)
 	assert.Equal(t, neutralFactor, factors.Cancelling)
 }
 
-func TestLoadProfilesConfig_ReadsPredictorFactors(t *testing.T) {
+func TestLoadProfilesConfig_ReadsScorerFactors(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t,
-		"defaults:\n  predictor:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\n"))
+		"defaults:\n  scorer:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\n"))
 	require.NoError(t, err)
 
-	factors := factorsFrom(cfg.Defaults.Predictor)
+	factors := factorsFrom(cfg.Defaults.Scorer)
 	assert.Equal(t, 10.0, factors.PathPassed)
 	assert.Equal(t, 0.3, factors.PathFailed)
 	assert.Equal(t, 12.0, factors.Merging)
 	assert.Equal(t, 0.1, factors.Cancelling)
 }
 
-func TestLoadProfilesConfig_QueuePredictorFactorsOverlayDefaults(t *testing.T) {
+func TestLoadProfilesConfig_QueueScorerFactorsOverlayDefaults(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t,
-		"defaults:\n  predictor:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\nqueues:\n  - name: q\n    predictor:\n      factors: {pathPassed: 4}\n"))
+		"defaults:\n  scorer:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\nqueues:\n  - name: q\n    scorer:\n      factors: {pathPassed: 4}\n"))
 	require.NoError(t, err)
 
-	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Predictor)
+	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Scorer)
 	assert.Equal(t, 4.0, factors.PathPassed)
 	assert.Equal(t, 0.3, factors.PathFailed)
 	assert.Equal(t, 12.0, factors.Merging)
 	assert.Equal(t, 0.1, factors.Cancelling)
 
-	defaults := factorsFrom(cfg.Defaults.Predictor)
+	defaults := factorsFrom(cfg.Defaults.Scorer)
 	assert.Equal(t, 10.0, defaults.PathPassed)
 }
