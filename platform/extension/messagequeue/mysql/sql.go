@@ -91,7 +91,7 @@ func NewQueue(params Params) (extqueue.Queue, error) {
 	messageStore := newMessageStore(params.DB, logger, params.MetricsScope)
 	offsetStore := newOffsetStore(params.DB, params.MetricsScope)
 	leaseStore := newPartitionLeaseStore(params.DB, logger, params.MetricsScope)
-	heartbeatStore := newSubscriberHeartbeatStore(params.DB, logger, params.MetricsScope, time.Now)
+	heartbeatStore := newSubscriberHeartbeatStore(params.DB, params.MetricsScope, time.Now)
 	deliveryStateStore := newDeliveryStateStore(params.DB, logger, params.MetricsScope)
 
 	queueMetrics := params.MetricsScope.SubScope("queue")

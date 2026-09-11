@@ -52,76 +52,24 @@ func testSubscriptionConfig() extqueue.SubscriptionConfig {
 	return extqueue.DefaultSubscriptionConfig("test-subscriber", "test-consumer")
 }
 
-func TestRunTenantOperationsConcurrentlyWithDeadlines(t *testing.T) {
-	slowStarted := make(chan struct{})
-	releaseSlow := make(chan struct{})
-	fastCompleted := make(chan struct{})
-	operationCompleted := make(chan []tenantOperationResult[string])
-
-	go func() {
-		operationCompleted <- runTenantOperations(
-			context.Background(),
-			[]string{"slow", "fast"},
-			time.Hour,
-			func(ctx context.Context, tenant string) (string, error) {
-				_, hasDeadline := ctx.Deadline()
-				if !hasDeadline {
-					return "", errors.New("tenant operation has no deadline")
-				}
-				if tenant == "slow" {
-					close(slowStarted)
-					<-releaseSlow
-				} else {
-					close(fastCompleted)
-				}
-				return tenant, nil
-			},
-		)
-	}()
-
-	<-slowStarted
-	<-fastCompleted
-	close(releaseSlow)
-	results := <-operationCompleted
-	assert.Equal(t, []tenantOperationResult[string]{
-		{tenant: "slow", value: "slow"},
-		{tenant: "fast", value: "fast"},
-	}, results)
-}
-
-func TestRunTenantOperationsPropagatesCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan string, 2)
-	operationCompleted := make(chan []tenantOperationResult[struct{}])
-
-	go func() {
-		operationCompleted <- runTenantOperations(
-			ctx,
-			[]string{"tenant-a", "tenant-b"},
-			time.Hour,
-			func(ctx context.Context, tenant string) (struct{}, error) {
-				started <- tenant
-				<-ctx.Done()
-				return struct{}{}, ctx.Err()
-			},
-		)
-	}()
-
-	assert.ElementsMatch(t, []string{"tenant-a", "tenant-b"}, []string{<-started, <-started})
-	cancel()
-	for _, result := range <-operationCompleted {
-		assert.ErrorIs(t, result.err, context.Canceled)
-	}
-}
-
 // newTestHeartbeatStore creates a mock heartbeat store that allows all calls
 func newTestHeartbeatStore(ctrl *gomock.Controller) *MocksubscriberHeartbeatStore {
 	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
-	mockHB.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockHB.EXPECT().ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{"self"}, nil).AnyTimes()
-	mockHB.EXPECT().Deregister(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockHB.EXPECT().PurgeStale(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockHB.EXPECT().HeartbeatForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockHB.EXPECT().ActiveSubscribersForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]string{}, nil).AnyTimes()
+	mockHB.EXPECT().DeregisterForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockHB.EXPECT().PurgeStaleForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockHB
+}
+
+func allowSupervisorLeaseCalls(mockLeaseStore *MockpartitionLeaseStore) {
+	mockLeaseStore.EXPECT().GetLeasedPartitionsForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]string{}, nil).AnyTimes()
+	mockLeaseStore.EXPECT().DiscoverPartitions(gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]string{}, nil).AnyTimes()
+	mockLeaseStore.EXPECT().GetAllLeasesForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]leaseInfo{}, nil).AnyTimes()
+	mockLeaseStore.EXPECT().RenewOwnedLeases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockLeaseStore.EXPECT().ReleaseOwnedLeases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockLeaseStore.EXPECT().PurgeStaleForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockLeaseStore.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 }
 
 // newTestDeliveryStateStore creates a mock delivery state store that allows all calls
@@ -181,9 +129,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 			mockOffsetStore := NewMockoffsetStore(ctrl)
 			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 
-			// Reached via releaseAllLeases on the shutdown path, and by the
-			// discovery ticker if it fires before teardown.
-			mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+			allowSupervisorLeaseCalls(mockLeaseStore)
 
 			sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
 			// Close waits for managePartitions to exit; a bare cancel would only
@@ -294,7 +240,7 @@ func TestSubscriber_SubscribeContextCancellation(t *testing.T) {
 	mockMessageStore := NewMockmessageStore(ctrl)
 	mockOffsetStore := NewMockoffsetStore(ctrl)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
-	mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+	allowSupervisorLeaseCalls(mockLeaseStore)
 
 	sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
 	defer func() {
@@ -320,7 +266,7 @@ func TestSubscriber_SubscribeReplacesStaleSubscription(t *testing.T) {
 	mockMessageStore := NewMockmessageStore(ctrl)
 	mockOffsetStore := NewMockoffsetStore(ctrl)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
-	mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+	allowSupervisorLeaseCalls(mockLeaseStore)
 
 	sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
 	defer func() {
@@ -762,7 +708,7 @@ func TestSubscriber_Close(t *testing.T) {
 			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 
 			// Expect lease operations during cleanup
-			mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+			allowSupervisorLeaseCalls(mockLeaseStore)
 
 			sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
 			ctx := context.Background()
@@ -992,46 +938,18 @@ func TestSubscriber_ReconcilePartitionWorkersKeepsTenantIdentity(t *testing.T) {
 	s.stopAllWorkers(sub)
 }
 
-func TestSubscriber_DiscoverAndReconcileWorkersIsolatesTenantFailures(t *testing.T) {
-	const (
-		tenantBefore     = "tenant-before"
-		tenantFailed     = "tenant-failed"
-		tenantAfter      = "tenant-after"
-		tenantFailedLast = "tenant-failed-last"
-	)
-
+func TestSubscriber_DiscoverFailureKeepsCachedDiscovery(t *testing.T) {
+	const tenantFailed = "tenant-failed"
 	ctrl := gomock.NewController(t)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 	discoveryErr := errors.New("tenant store unavailable")
-	lastDiscoveryErr := errors.New("last tenant store unavailable")
 
 	cfg := testSubscriptionConfig()
 	cfg.PollIntervalMs = int64(time.Hour / time.Millisecond)
 
 	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenantBefore, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil, nil)
-	mockLeaseStore.EXPECT().
-		DiscoverAndAcquirePartitions(gomock.Any(), tenantBefore, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs, 0).
-		Return(1, []string{"before-new"}, nil)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenantBefore, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return([]string{"before-new"}, nil)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenantFailed, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		DiscoverPartitions(gomock.Any(), []string{tenantFailed}, "test-topic").
 		Return(nil, discoveryErr)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenantAfter, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil, nil)
-	mockLeaseStore.EXPECT().
-		DiscoverAndAcquirePartitions(gomock.Any(), tenantAfter, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs, 0).
-		Return(1, []string{"after-new"}, nil)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenantAfter, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return([]string{"after-new"}, nil)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenantFailedLast, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil, lastDiscoveryErr)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(),
@@ -1041,13 +959,13 @@ func TestSubscriber_DiscoverAndReconcileWorkersIsolatesTenantFailures(t *testing
 		mockLeaseStore,
 		newTestHeartbeatStore(ctrl),
 		newTestDeliveryStateStore(ctrl),
-		[]string{tenantBefore, tenantFailed, tenantAfter, tenantFailedLast},
+		[]string{tenantFailed},
 	)
 
 	failedWorkerDone := make(chan struct{})
 	close(failedWorkerDone)
 	failedWorkerKey := entityqueue.PartitionIdentity{Tenant: tenantFailed, PartitionKey: "failed-existing"}
-	failedDrainSince := time.Now().Add(-time.Hour)
+	cached := []entityqueue.PartitionIdentity{{Tenant: tenantFailed, PartitionKey: "failed-discovered"}}
 	sub := &subscription{
 		topic:      "test-topic",
 		config:     cfg,
@@ -1058,39 +976,14 @@ func TestSubscriber_DiscoverAndReconcileWorkersIsolatesTenantFailures(t *testing
 				done:       failedWorkerDone,
 			},
 		},
-		lastDiscoveredPartitions: []entityqueue.PartitionIdentity{{Tenant: tenantFailed, PartitionKey: "failed-discovered"}},
-		drainedSince:             map[entityqueue.PartitionIdentity]time.Time{failedWorkerKey: failedDrainSince},
+		lastDiscoveredPartitions: cached,
+		drainedSince:             map[entityqueue.PartitionIdentity]time.Time{failedWorkerKey: time.Now().Add(-time.Hour)},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() {
-		cancel()
-		s.stopAllWorkers(sub)
-		sub.workerWg.Wait()
-	})
-
-	err := s.discoverAndReconcileWorkers(ctx, sub, true)
+	err := s.discoverAndReconcileWorkers(context.Background(), sub, true)
 	require.ErrorIs(t, err, discoveryErr)
-	require.ErrorIs(t, err, lastDiscoveryErr)
-
-	sub.workersMu.Lock()
-	workerKeys := make([]entityqueue.PartitionIdentity, 0, len(sub.workers))
-	for key := range sub.workers {
-		workerKeys = append(workerKeys, key)
-	}
-	discovered := append([]entityqueue.PartitionIdentity(nil), sub.lastDiscoveredPartitions...)
-	sub.workersMu.Unlock()
-
-	assert.ElementsMatch(t, []entityqueue.PartitionIdentity{
-		{Tenant: tenantBefore, PartitionKey: "before-new"},
-		{Tenant: tenantAfter, PartitionKey: "after-new"},
-	}, workerKeys)
-	assert.ElementsMatch(t, []entityqueue.PartitionIdentity{
-		{Tenant: tenantBefore, PartitionKey: "before-new"},
-		{Tenant: tenantFailed, PartitionKey: "failed-discovered"},
-		{Tenant: tenantAfter, PartitionKey: "after-new"},
-	}, discovered)
-	assert.NotContains(t, sub.drainedSince, failedWorkerKey)
+	assert.NotContains(t, sub.workers, failedWorkerKey)
+	assert.Equal(t, cached, sub.lastDiscoveredPartitions)
 }
 
 func TestSubscriber_DiscoverFailureStopsUnconfirmedWorkers(t *testing.T) {
@@ -1102,7 +995,7 @@ func TestSubscriber_DiscoverFailureStopsUnconfirmedWorkers(t *testing.T) {
 	discoveryErr := errors.New("tenant store unavailable")
 
 	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), tenant, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		DiscoverPartitions(gomock.Any(), []string{tenant}, "test-topic").
 		Return(nil, discoveryErr)
 
 	s := NewSubscriber(
@@ -1136,6 +1029,422 @@ func TestSubscriber_DiscoverFailureStopsUnconfirmedWorkers(t *testing.T) {
 	assert.NotContains(t, sub.workers, failedWorkerKey)
 }
 
+func TestSubscriber_GetLeasedPartitionsFailureKeepsCachedDiscovery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	cfg := testSubscriptionConfig()
+	cfg.PollIntervalMs = int64(time.Hour / time.Millisecond)
+	leasedErr := errors.New("leased partitions unavailable")
+	cached := []entityqueue.PartitionIdentity{{Tenant: testTenant, PartitionKey: "cached"}}
+	failedWorkerKey := entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "existing"}
+
+	mockLeaseStore.EXPECT().
+		DiscoverPartitions(gomock.Any(), []string{testTenant}, "test-topic").
+		Return(map[string][]string{testTenant: {"discovered"}}, nil)
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil, leasedErr)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		newTestHeartbeatStore(ctrl),
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	failedWorkerDone := make(chan struct{})
+	close(failedWorkerDone)
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 1),
+		workers: map[entityqueue.PartitionIdentity]*partitionWorker{
+			failedWorkerKey: {
+				cancelFunc: func() {},
+				done:       failedWorkerDone,
+			},
+		},
+		lastDiscoveredPartitions: cached,
+	}
+
+	err := s.discoverAndReconcileWorkers(context.Background(), sub, true)
+	require.ErrorIs(t, err, leasedErr)
+	assert.NotContains(t, sub.workers, failedWorkerKey)
+	assert.Equal(t, cached, sub.lastDiscoveredPartitions)
+}
+
+func TestSubscriber_AcquireUnownedPartitions(t *testing.T) {
+	cfg := testSubscriptionConfig()
+	freshMs := time.Now().UnixMilli()
+	staleMs := freshMs - cfg.LeaseDurationMs - 60_000
+
+	expectAcquire := func(mockLeaseStore *MockpartitionLeaseStore, pk string, acquired bool) {
+		mockLeaseStore.EXPECT().
+			TryAcquireLease(gomock.Any(), testTenant, "test-topic", pk, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs).
+			Return(acquired, nil)
+	}
+
+	tests := []struct {
+		name          string
+		discovered    []string
+		leases        []leaseInfo
+		maxPartitions int
+		setup         func(*MockpartitionLeaseStore)
+		want          []string
+	}{
+		{
+			name:       "acquires unleased, skips fresh lease held by other",
+			discovered: []string{"part1", "part2"},
+			leases: []leaseInfo{
+				{PartitionKey: "part2", LeasedBy: "other-worker", LeaseRenewedAt: freshMs},
+			},
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part1", true)
+			},
+			want: []string{"part1"},
+		},
+		{
+			name:       "stale lease held by other is stealable",
+			discovered: []string{"part1"},
+			leases: []leaseInfo{
+				{PartitionKey: "part1", LeasedBy: "other-worker", LeaseRenewedAt: staleMs},
+			},
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part1", true)
+			},
+			want: []string{"part1"},
+		},
+		{
+			name:       "self-owned partitions are not re-probed",
+			discovered: []string{"part1", "part2"},
+			leases: []leaseInfo{
+				{PartitionKey: "part1", LeasedBy: cfg.SubscriberName, LeaseRenewedAt: freshMs},
+			},
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part2", true)
+			},
+			want: []string{"part2"},
+		},
+		{
+			name:          "stops acquiring when cap reached",
+			discovered:    []string{"part1", "part2", "part3"},
+			maxPartitions: 2,
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part1", true)
+				expectAcquire(mockLeaseStore, "part2", true)
+			},
+			want: []string{"part1", "part2"},
+		},
+		{
+			name:          "pre-owned partitions count toward cap",
+			discovered:    []string{"part1", "part2", "part3"},
+			maxPartitions: 3,
+			leases: []leaseInfo{
+				{PartitionKey: "existing1", LeasedBy: cfg.SubscriberName, LeaseRenewedAt: freshMs},
+				{PartitionKey: "existing2", LeasedBy: cfg.SubscriberName, LeaseRenewedAt: freshMs},
+			},
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part1", true)
+			},
+			want: []string{"part1"},
+		},
+		{
+			name:          "already at cap acquires nothing",
+			discovered:    []string{"part1", "part2"},
+			maxPartitions: 2,
+			leases: []leaseInfo{
+				{PartitionKey: "existing1", LeasedBy: cfg.SubscriberName, LeaseRenewedAt: freshMs},
+				{PartitionKey: "existing2", LeasedBy: cfg.SubscriberName, LeaseRenewedAt: freshMs},
+			},
+			want: nil,
+		},
+		{
+			name:       "lost race counts nothing",
+			discovered: []string{"part1"},
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part1", false)
+			},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			if tt.setup != nil {
+				tt.setup(mockLeaseStore)
+			}
+			s := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				NewMockmessageStore(ctrl),
+				NewMockoffsetStore(ctrl),
+				mockLeaseStore,
+				NewMocksubscriberHeartbeatStore(ctrl),
+				NewMockdeliveryStateStore(ctrl),
+				[]string{testTenant},
+			)
+			sub := &subscription{topic: "test-topic", config: cfg}
+			got := s.acquireUnownedPartitions(context.Background(), sub, testTenant, tt.discovered, tt.leases, tt.maxPartitions)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSubscriber_LeaseTickRenewsWhenActiveSubscribersFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+	activeErr := errors.New("active subscribers unavailable")
+
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(nil, activeErr)
+	mockLeaseStore.EXPECT().
+		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+	mockLeaseStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 1),
+		workers:    make(map[entityqueue.PartitionIdentity]*partitionWorker),
+	}
+
+	s.runLeaseTick(context.Background(), sub, time.Second, []any{"topic", sub.topic})
+}
+
+func TestSubscriber_LeaseTickRenewsWhenGetLeasedPartitionsFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+	leasedErr := errors.New("leased partitions unavailable")
+
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil, leasedErr)
+	mockLeaseStore.EXPECT().
+		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+	mockLeaseStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 1),
+		workers:    make(map[entityqueue.PartitionIdentity]*partitionWorker),
+	}
+
+	s.runLeaseTick(context.Background(), sub, time.Second, []any{"topic", sub.topic})
+}
+
+func TestSubscriber_ActiveSubscribersFailureKeepsWorkers(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+	cfg.PollIntervalMs = int64(time.Hour / time.Millisecond)
+	activeErr := errors.New("active subscribers unavailable")
+	partition := entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "p1"}
+
+	mockLeaseStore.EXPECT().
+		DiscoverPartitions(gomock.Any(), []string{testTenant}, "test-topic").
+		Return(map[string][]string{testTenant: {partition.PartitionKey}}, nil)
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {partition.PartitionKey}}, nil)
+	mockLeaseStore.EXPECT().
+		GetAllLeasesForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup).
+		Return(map[string][]leaseInfo{}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(nil, activeErr)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	failedWorkerDone := make(chan struct{})
+	close(failedWorkerDone)
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 1),
+		workers: map[entityqueue.PartitionIdentity]*partitionWorker{
+			partition: {
+				cancelFunc: func() {},
+				done:       failedWorkerDone,
+			},
+		},
+	}
+
+	err := s.discoverAndReconcileWorkers(context.Background(), sub, false)
+	require.ErrorIs(t, err, activeErr)
+	assert.Contains(t, sub.workers, partition)
+	assert.Equal(t, []entityqueue.PartitionIdentity{partition}, sub.lastDiscoveredPartitions)
+}
+
+func TestSubscriber_GetAllLeasesFailureKeepsWorkers(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+	cfg.PollIntervalMs = int64(time.Hour / time.Millisecond)
+	leasesErr := errors.New("all leases unavailable")
+	partition := entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "p1"}
+
+	mockLeaseStore.EXPECT().
+		DiscoverPartitions(gomock.Any(), []string{testTenant}, "test-topic").
+		Return(map[string][]string{testTenant: {partition.PartitionKey}}, nil)
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {partition.PartitionKey}}, nil)
+	mockLeaseStore.EXPECT().
+		GetAllLeasesForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup).
+		Return(nil, leasesErr)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	failedWorkerDone := make(chan struct{})
+	close(failedWorkerDone)
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 1),
+		workers: map[entityqueue.PartitionIdentity]*partitionWorker{
+			partition: {
+				cancelFunc: func() {},
+				done:       failedWorkerDone,
+			},
+		},
+	}
+
+	err := s.discoverAndReconcileWorkers(context.Background(), sub, false)
+	require.ErrorIs(t, err, leasesErr)
+	assert.Contains(t, sub.workers, partition)
+	assert.Equal(t, []entityqueue.PartitionIdentity{partition}, sub.lastDiscoveredPartitions)
+}
+
+func TestSubscriber_DiscoverAppliesFairSharePerTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+	cfg.PollIntervalMs = int64(time.Hour / time.Millisecond)
+	tenantA, tenantB := "tenant-a", "tenant-b"
+	tenants := []string{tenantA, tenantB}
+	discoveredA := []string{"a1", "a2", "a3", "a4"}
+	discoveredB := []string{"b1", "b2", "b3"}
+
+	mockLeaseStore.EXPECT().
+		DiscoverPartitions(gomock.Any(), tenants, "test-topic").
+		Return(map[string][]string{tenantA: discoveredA, tenantB: discoveredB}, nil)
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), tenants, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{}, nil)
+	mockLeaseStore.EXPECT().
+		GetAllLeasesForTenants(gomock.Any(), tenants, "test-topic", cfg.ConsumerGroup).
+		Return(map[string][]leaseInfo{}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), tenants, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(map[string][]string{
+			tenantA: {cfg.SubscriberName, "peer"},
+			tenantB: {cfg.SubscriberName},
+		}, nil)
+	for _, pk := range discoveredA[:2] {
+		mockLeaseStore.EXPECT().
+			TryAcquireLease(gomock.Any(), tenantA, "test-topic", pk, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs).
+			Return(true, nil)
+	}
+	for _, pk := range discoveredB {
+		mockLeaseStore.EXPECT().
+			TryAcquireLease(gomock.Any(), tenantB, "test-topic", pk, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs).
+			Return(true, nil)
+	}
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		tenants,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 8),
+		workers:    make(map[entityqueue.PartitionIdentity]*partitionWorker),
+	}
+
+	require.NoError(t, s.discoverAndReconcileWorkers(ctx, sub, false))
+	s.stopAllWorkers(sub)
+}
+
 func TestSubscriber_DrainedPartitionKeepsOffsetWhenLeaseReleaseFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
@@ -1143,14 +1452,14 @@ func TestSubscriber_DrainedPartitionKeepsOffsetWhenLeaseReleaseFails(t *testing.
 	partition := entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "drained"}
 
 	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), testTenant, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return([]string{partition.PartitionKey}, nil)
+		DiscoverPartitions(gomock.Any(), []string{testTenant}, "test-topic").
+		Return(map[string][]string{}, nil)
 	mockLeaseStore.EXPECT().
-		DiscoverAndAcquirePartitions(gomock.Any(), testTenant, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs, 0).
-		Return(0, nil, nil)
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {partition.PartitionKey}}, nil)
 	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), testTenant, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return([]string{partition.PartitionKey}, nil)
+		GetAllLeasesForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup).
+		Return(map[string][]leaseInfo{}, nil)
 	mockLeaseStore.EXPECT().
 		ReleaseLease(gomock.Any(), testTenant, "test-topic", partition.PartitionKey, cfg.SubscriberName, cfg.ConsumerGroup).
 		Return(errors.New("release failed"))
@@ -1188,71 +1497,48 @@ func TestSubscriber_ReleaseAllLeasesContinuesAfterErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 	releaseErr := errors.New("release failed")
-	discoveryErr := errors.New("lease lookup failed")
 	cfg := testSubscriptionConfig()
+	tenants := []string{"tenant-1", "tenant-2", "tenant-3"}
 
 	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), "tenant-1", "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return([]string{"p1", "p2"}, nil)
-	mockLeaseStore.EXPECT().
-		ReleaseLease(gomock.Any(), "tenant-1", "test-topic", "p1", cfg.SubscriberName, cfg.ConsumerGroup).
+		ReleaseOwnedLeases(gomock.Any(), tenants, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
 		Return(releaseErr)
-	mockLeaseStore.EXPECT().
-		ReleaseLease(gomock.Any(), "tenant-1", "test-topic", "p2", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), "tenant-2", "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil, discoveryErr)
-	mockLeaseStore.EXPECT().
-		GetLeasedPartitions(gomock.Any(), "tenant-3", "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return([]string{"p3"}, nil)
-	mockLeaseStore.EXPECT().
-		ReleaseLease(gomock.Any(), "tenant-3", "test-topic", "p3", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
 		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
 		mockLeaseStore, NewMocksubscriberHeartbeatStore(ctrl),
 		NewMockdeliveryStateStore(ctrl),
-		[]string{"tenant-1", "tenant-2", "tenant-3"},
+		tenants,
 	)
 	sub := &subscription{topic: "test-topic", config: cfg}
 
 	err := s.releaseAllLeases(context.Background(), sub)
 	require.ErrorIs(t, err, releaseErr)
-	require.ErrorIs(t, err, discoveryErr)
 }
 
 func TestSubscriber_DeregisterHeartbeatContinuesAfterErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
-	firstErr := errors.New("first deregistration failed")
-	lastErr := errors.New("last deregistration failed")
+	deregisterErr := errors.New("deregistration failed")
 	cfg := testSubscriptionConfig()
+	tenants := []string{"tenant-1", "tenant-2", "tenant-3"}
 
 	mockHeartbeatStore.EXPECT().
-		Deregister(gomock.Any(), "tenant-1", "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(firstErr)
-	mockHeartbeatStore.EXPECT().
-		Deregister(gomock.Any(), "tenant-2", "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil)
-	mockHeartbeatStore.EXPECT().
-		Deregister(gomock.Any(), "tenant-3", "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(lastErr)
+		DeregisterForTenants(gomock.Any(), tenants, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(deregisterErr)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
 		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
 		NewMockpartitionLeaseStore(ctrl), mockHeartbeatStore,
 		NewMockdeliveryStateStore(ctrl),
-		[]string{"tenant-1", "tenant-2", "tenant-3"},
+		tenants,
 	)
 	sub := &subscription{topic: "test-topic", config: cfg}
 
 	err := s.deregisterHeartbeat(context.Background(), sub)
-	require.ErrorIs(t, err, firstErr)
-	require.ErrorIs(t, err, lastErr)
+	require.ErrorIs(t, err, deregisterErr)
 }
 
 // TestSubscriber_PartitionWorkerPollAndDeliver verifies a partition worker delivers messages.
@@ -1775,16 +2061,10 @@ func TestSubscriber_FairShareCap(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			mockHB := NewMocksubscriberHeartbeatStore(ctrl)
-			mockHB.EXPECT().
-				ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tt.active, nil).
-				AnyTimes()
-
 			s := NewSubscriber(
 				zaptest.NewLogger(t).Sugar(), tally.NoopScope,
 				NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
-				NewMockpartitionLeaseStore(ctrl), mockHB,
+				NewMockpartitionLeaseStore(ctrl), NewMocksubscriberHeartbeatStore(ctrl),
 				NewMockdeliveryStateStore(ctrl),
 				[]string{testTenant},
 			)
@@ -1793,8 +2073,7 @@ func TestSubscriber_FairShareCap(t *testing.T) {
 				config: extqueue.DefaultSubscriptionConfig(tt.self, "test-cg"),
 			}
 
-			got, err := s.fairShareCap(context.Background(), sub, testTenant, tt.owned, tt.discovered)
-			require.NoError(t, err)
+			got := s.fairShareCap(sub, tt.owned, tt.discovered, tt.active)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -1811,15 +2090,10 @@ func TestSubscriber_FairShareCap(t *testing.T) {
 				}
 
 				ctrl := gomock.NewController(t)
-				mockHB := NewMocksubscriberHeartbeatStore(ctrl)
-				mockHB.EXPECT().
-					ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(active, nil).
-					AnyTimes()
 				s := NewSubscriber(
 					zaptest.NewLogger(t).Sugar(), tally.NoopScope,
 					NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
-					NewMockpartitionLeaseStore(ctrl), mockHB,
+					NewMockpartitionLeaseStore(ctrl), NewMocksubscriberHeartbeatStore(ctrl),
 					NewMockdeliveryStateStore(ctrl),
 					[]string{testTenant},
 				)
@@ -1830,8 +2104,7 @@ func TestSubscriber_FairShareCap(t *testing.T) {
 						topic:  "test-topic",
 						config: extqueue.DefaultSubscriptionConfig(self, "test-cg"),
 					}
-					cap, err := s.fairShareCap(context.Background(), sub, testTenant, nil, partitionKeysN(p))
-					require.NoError(t, err)
+					cap := s.fairShareCap(sub, nil, partitionKeysN(p), active)
 					sum += cap
 				}
 				require.Equal(t, p, sum, "n=%d p=%d", n, p)
@@ -1861,12 +2134,6 @@ func TestSubscriber_RebalanceReleasesExcess(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	// Two active subscribers, four partitions: self is rank 0 -> cap 2.
-	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
-	mockHB.EXPECT().
-		ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]string{"s1", "s2"}, nil)
-
-	// The lexicographically largest partitions beyond the cap are released.
 	mockLease := NewMockpartitionLeaseStore(ctrl)
 	mockLease.EXPECT().
 		ReleaseLease(gomock.Any(), testTenant, "test-topic", "pk-c", "s1", "test-cg").
@@ -1878,7 +2145,7 @@ func TestSubscriber_RebalanceReleasesExcess(t *testing.T) {
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
 		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
-		mockLease, mockHB, NewMockdeliveryStateStore(ctrl),
+		mockLease, NewMocksubscriberHeartbeatStore(ctrl), NewMockdeliveryStateStore(ctrl),
 		[]string{testTenant},
 	)
 	sub := &subscription{
@@ -1888,7 +2155,7 @@ func TestSubscriber_RebalanceReleasesExcess(t *testing.T) {
 	}
 
 	owned := []string{"pk-d", "pk-a", "pk-c", "pk-b"}
-	released, err := s.rebalance(context.Background(), sub, testTenant, owned)
+	released, err := s.rebalance(context.Background(), sub, testTenant, owned, []string{"s1", "s2"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"pk-c", "pk-d"}, released)
 	// The caller's slice is shared with lease renewal and must not be
@@ -1900,16 +2167,10 @@ func TestSubscriber_RebalanceReleasesExcess(t *testing.T) {
 func TestSubscriber_RebalanceUnderCapReleasesNothing(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
-	mockHB.EXPECT().
-		ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]string{"s1", "s2"}, nil)
-
-	// No ReleaseLease expectations: owning exactly the cap sheds nothing.
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
 		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
-		NewMockpartitionLeaseStore(ctrl), mockHB, NewMockdeliveryStateStore(ctrl),
+		NewMockpartitionLeaseStore(ctrl), NewMocksubscriberHeartbeatStore(ctrl), NewMockdeliveryStateStore(ctrl),
 		[]string{testTenant},
 	)
 	sub := &subscription{
@@ -1921,7 +2182,7 @@ func TestSubscriber_RebalanceUnderCapReleasesNothing(t *testing.T) {
 		lastDiscoveredPartitions: tenantPartitionKeys(testTenant, []string{"pk-a", "pk-b", "pk-c", "pk-d"}),
 	}
 
-	released, err := s.rebalance(context.Background(), sub, testTenant, []string{"pk-a", "pk-b"})
+	released, err := s.rebalance(context.Background(), sub, testTenant, []string{"pk-a", "pk-b"}, []string{"s1", "s2"})
 	require.NoError(t, err)
 	assert.Empty(t, released)
 }

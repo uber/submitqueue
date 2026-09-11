@@ -246,14 +246,13 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 	}
 
 	// Batch-fetch delivery state for the provided offsets.
-	placeholders := make([]byte, 0, len(offsets)*2-1)
+	placeholders, ok := inListPlaceholders(len(offsets))
+	if !ok {
+		return currentWatermark, nil
+	}
 	args := make([]interface{}, 0, 4+len(offsets))
 	args = append(args, tenant, consumerGroup, topic, partitionKey)
-	for i, offset := range offsets {
-		if i > 0 {
-			placeholders = append(placeholders, ',')
-		}
-		placeholders = append(placeholders, '?')
+	for _, offset := range offsets {
 		args = append(args, offset)
 	}
 
@@ -261,7 +260,7 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 		SELECT message_offset, acked FROM %s
 		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ?
 		AND message_offset IN (%s)
-	`, DeliveryStateTableName, string(placeholders)), args...)
+	`, DeliveryStateTableName, placeholders), args...)
 	if err != nil {
 		return currentWatermark, fmt.Errorf("query delivery state for watermark tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}

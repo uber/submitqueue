@@ -7,6 +7,7 @@ go_library(
         "delivery_state_store.go",
         "errors.go",
         "identifier.go",
+        "inlist.go",
         "message_store.go",
         "mock_stores.go",
         "offset_store.go",
@@ -35,6 +36,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "delivery_state_store_test.go",
+        "inlist_test.go",
         "message_store_test.go",
         "offset_store_test.go",
         "partition_lease_store_test.go",

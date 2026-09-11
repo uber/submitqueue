@@ -144,22 +144,6 @@ func (s *sqlmessageStore) Insert(ctx context.Context, tenant string, topic strin
 	return nil
 }
 
-// Delete deletes a message by tenant, topic, partition key, and ID
-func (s *sqlmessageStore) Delete(ctx context.Context, tenant string, topic string, partitionKey string, messageID string) (retErr error) {
-	op := metrics.Begin(s.scope, "delete", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr) }()
-
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE tenant = ? AND topic = ? AND partition_key = ? AND id = ?
-	`, MessagesTableName), tenant, topic, partitionKey, messageID)
-
-	if err != nil {
-		return fmt.Errorf("delete message tenant=%s topic=%s partition=%s message=%s: %w", tenant, topic, partitionKey, messageID, err)
-	}
-
-	return nil
-}
-
 // FetchByOffset fetches messages with offset > currentOffset for a specific partition.
 // Messages are fetched from the immutable log; no per-message mutation occurs.
 func (s *sqlmessageStore) FetchByOffset(ctx context.Context, tenant string, topic string, partitionKey string, currentOffset int64, limit int) (_ []messageRow, retErr error) {
