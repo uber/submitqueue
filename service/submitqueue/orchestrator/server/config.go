@@ -583,6 +583,9 @@ func (s *scorerConfig) normalizeRanking(where string, fillBase bool) error {
 	if s.Type != scorerTypeEvidence {
 		return fmt.Errorf("%s: scorer type %q belongs under base, not at the ranking layer", where, s.Type)
 	}
+	if len(s.Buckets) > 0 || len(s.Components) > 0 || s.Combine != "" {
+		return fmt.Errorf("%s: buckets, components, and combine belong under base", where)
+	}
 	if err := validateFactors(where, s.Factors); err != nil {
 		return err
 	}
