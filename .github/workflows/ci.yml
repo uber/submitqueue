@@ -68,10 +68,10 @@ jobs:
         run: make check-gazelle
 
   # ---------------------------------------------------------------------------
-  # BUILD AND UNIT TESTS
+  # BUILD AND UNIT TESTS (parallel jobs, separate Bazel caches)
   # ---------------------------------------------------------------------------
-  build-and-unit-test:
-    name: Build and Unit Test
+  build:
+    name: Build
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
@@ -84,6 +84,18 @@ jobs:
 
       - name: Build project
         run: make build
+
+  unit-test:
+    name: Unit Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
+      - uses: ./.github/actions/setup
 
       - name: Run unit tests
         run: make test
@@ -289,7 +301,8 @@ jobs:
     needs:
       - lint
       - tidy
-      - build-and-unit-test
+      - build
+      - unit-test
       - e2e
       - gateway-integration-test
       - orchestrator-integration-test

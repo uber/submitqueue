@@ -123,6 +123,7 @@ func TestPrimaryConsumer_GitFailureDisposition(t *testing.T) {
 			require.NoError(t, serviceConsumer.Start(context.Background()))
 
 			message := entityqueue.NewMessage("git-test-message", []byte("payload"), "partition", nil)
+			message.Tenant = "git-test"
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(message).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
