@@ -692,10 +692,10 @@ func TestLoadProfilesConfig_RejectsBadScorerFactors(t *testing.T) {
 		contents string
 	}{
 		{name: "unknown factor", contents: "defaults:\n  scorer:\n    factors: {pathPased: 2}\n"},
-		{name: "zero factor", contents: "defaults:\n  scorer:\n    factors: {merging: 0}\n"},
+		{name: "zero factor", contents: "defaults:\n  scorer:\n    factors: {landing: 0}\n"},
 		{name: "negative factor", contents: "defaults:\n  scorer:\n    factors: {pathFailed: -1}\n"},
 		{name: "infinite factor", contents: "defaults:\n  scorer:\n    factors: {pathPassed: .inf}\n"},
-		{name: "bad factor on a queue override", contents: "defaults: {}\nqueues:\n  - name: q\n    scorer:\n      factors: {merging: 0}\n"},
+		{name: "bad factor on a queue override", contents: "defaults: {}\nqueues:\n  - name: q\n    scorer:\n      factors: {landing: 0}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -718,31 +718,31 @@ func TestLoadProfilesConfig_DefaultsTheScorerToEvidence(t *testing.T) {
 	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Scorer)
 	assert.Equal(t, neutralFactor, factors.PathPassed)
 	assert.Equal(t, neutralFactor, factors.PathFailed)
-	assert.Equal(t, neutralFactor, factors.Merging)
+	assert.Equal(t, neutralFactor, factors.Landing)
 	assert.Equal(t, neutralFactor, factors.Cancelling)
 }
 
 func TestLoadProfilesConfig_ReadsScorerFactors(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t,
-		"defaults:\n  scorer:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\n"))
+		"defaults:\n  scorer:\n    factors: {pathPassed: 10, pathFailed: 0.3, landing: 12, cancelling: 0.1}\n"))
 	require.NoError(t, err)
 
 	factors := factorsFrom(cfg.Defaults.Scorer)
 	assert.Equal(t, 10.0, factors.PathPassed)
 	assert.Equal(t, 0.3, factors.PathFailed)
-	assert.Equal(t, 12.0, factors.Merging)
+	assert.Equal(t, 12.0, factors.Landing)
 	assert.Equal(t, 0.1, factors.Cancelling)
 }
 
 func TestLoadProfilesConfig_QueueScorerFactorsOverlayDefaults(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t,
-		"defaults:\n  scorer:\n    factors: {pathPassed: 10, pathFailed: 0.3, merging: 12, cancelling: 0.1}\nqueues:\n  - name: q\n    scorer:\n      factors: {pathPassed: 4}\n"))
+		"defaults:\n  scorer:\n    factors: {pathPassed: 10, pathFailed: 0.3, landing: 12, cancelling: 0.1}\nqueues:\n  - name: q\n    scorer:\n      factors: {pathPassed: 4}\n"))
 	require.NoError(t, err)
 
 	factors := factorsFrom(cfg.resolve(cfg.Queues[0]).Scorer)
 	assert.Equal(t, 4.0, factors.PathPassed)
 	assert.Equal(t, 0.3, factors.PathFailed)
-	assert.Equal(t, 12.0, factors.Merging)
+	assert.Equal(t, 12.0, factors.Landing)
 	assert.Equal(t, 0.1, factors.Cancelling)
 
 	defaults := factorsFrom(cfg.Defaults.Scorer)

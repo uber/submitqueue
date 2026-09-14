@@ -309,8 +309,8 @@ func factorsFrom(cfg scorerConfig) evidence.Factors {
 			factors.PathPassed = factor
 		case factorPathFailed:
 			factors.PathFailed = factor
-		case factorMerging:
-			factors.Merging = factor
+		case factorLanding:
+			factors.Landing = factor
 		case factorCancelling:
 			factors.Cancelling = factor
 		}

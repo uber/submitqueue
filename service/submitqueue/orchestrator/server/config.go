@@ -76,7 +76,7 @@ const combineAvg = "avg"
 const (
 	factorPathPassed = "pathPassed"
 	factorPathFailed = "pathFailed"
-	factorMerging    = "merging"
+	factorLanding    = "landing"
 	factorCancelling = "cancelling"
 )
 
@@ -602,7 +602,7 @@ func (s *scorerConfig) normalizeRanking(where string, fillBase bool) error {
 func validateFactors(where string, factors map[string]float64) error {
 	for name, factor := range factors {
 		switch name {
-		case factorPathPassed, factorPathFailed, factorMerging, factorCancelling:
+		case factorPathPassed, factorPathFailed, factorLanding, factorCancelling:
 		default:
 			return fmt.Errorf("%s: unknown scorer factor %q", where, name)
 		}
