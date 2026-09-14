@@ -17,7 +17,7 @@ defaults:
     factors:
       pathPassed: 10
       pathFailed: 0.3
-      merging: 12
+      landing: 12
       cancelling: 0.1
     base:
       type: heuristic
