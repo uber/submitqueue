@@ -6,7 +6,7 @@ The [best-first speculation path generation RFC](../../../../../doc/rfc/submitqu
 
 ## Behavior
 
-- `Generate` takes the queue's live batches and path sets as one snapshot, predicts each unique unresolved direct dependency once against that dependency's own path set, fixes assumptions for resolved dependencies, calculates each head's best score, and seeds the global heap with every eligible head's best-path candidate. Each head's remaining paths wait in that head's own lazy stream, whose flips are worked out only when the head is first handed out.
+- `Generate` takes the queue's live batches and path sets as one snapshot, scores each unique unresolved direct dependency once against that dependency's own path set, fixes assumptions for resolved dependencies, calculates each head's best score, and seeds the global heap with every eligible head's best-path candidate. Each head's remaining paths wait in that head's own lazy stream, whose flips are worked out only when the head is first handed out.
 - `Next` removes the highest-ranked candidate, advances only that head's stream, constructs that candidate's complete path, and returns it. Pulling long enough returns every path exactly once in non-increasing score order.
 - Ranking scores are sums of log probabilities, avoiding underflow while preserving probability order. They are meaningful only within the run that produced them.
 - Exact ties prefer fewer flips; head ID then decides between heads (the cross-head heap holds one candidate per head), and taken flip indexes decide within a head.

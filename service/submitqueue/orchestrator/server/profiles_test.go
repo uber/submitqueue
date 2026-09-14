@@ -21,13 +21,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber-go/tally"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -41,14 +39,15 @@ type recorder struct {
 	analyzer       string
 	storage        string
 	scorer         string
-	predictor      string
 }
 
 // stubScorer stands in wherever a Profile's scorer has to be real rather than
 // nil, because something is composed over it.
 type stubScorer struct{}
 
-func (stubScorer) Score(_ context.Context, _ entity.Batch) (float64, error) { return 0.5, nil }
+func (stubScorer) Score(_ context.Context, _ entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
+	return 0.5, nil
+}
 
 // profileRecording returns a Profile whose every factory records the queue name
 // it receives into rec and returns a nil implementation. Nil is fine: these
@@ -74,10 +73,6 @@ func profileRecording(rec *recorder) Profile {
 		Scorer: scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
 			rec.scorer = c.QueueName
 			return stubScorer{}, nil
-		}),
-		Predictor: predictorFunc(func(c predictor.Config) (predictor.Predictor, error) {
-			rec.predictor = c.QueueName
-			return nil, nil
 		}),
 	}
 }
@@ -118,23 +113,20 @@ func TestProfilesForwardQueueNameToFactories(t *testing.T) {
 			require.NoError(t, err)
 			_, err = profiles.ScorerFactory().For(scorer.Config{QueueName: tt.queue})
 			require.NoError(t, err)
-			_, err = profiles.PredictorFactory().For(predictor.Config{QueueName: tt.queue})
-			require.NoError(t, err)
 
 			assert.Equal(t, tt.queue, rec.changeProvider)
 			assert.Equal(t, tt.queue, rec.buildRunner)
 			assert.Equal(t, tt.queue, rec.analyzer)
 			assert.Equal(t, tt.queue, rec.storage)
 			assert.Equal(t, tt.queue, rec.scorer)
-			assert.Equal(t, tt.queue, rec.predictor)
 		})
 	}
 }
 
-// The speculator is composed from the profile's predictor, which is itself
-// composed over the profile's scorer. Each has to be asked for at the queue the
-// one above it was asked for, or an implementation is built for the wrong one.
-func TestWithSpeculatorResolvesPredictorAtSameQueue(t *testing.T) {
+// The speculator is composed from the profile's scorer. It has to be asked for
+// at the queue the speculator was asked for, or an implementation is built for
+// the wrong one.
+func TestWithSpeculatorResolvesScorerAtSameQueue(t *testing.T) {
 	var rec recorder
 	profile := withSpeculator(profileRecording(&rec), defaultBuildBudget)
 	profiles := Profiles{defaultProfile: profile}
@@ -142,39 +134,16 @@ func TestWithSpeculatorResolvesPredictorAtSameQueue(t *testing.T) {
 	spec, err := profiles.SpeculatorFactory().For(speculator.Config{QueueName: "unlisted-queue"})
 	require.NoError(t, err)
 	assert.NotNil(t, spec)
-	assert.Equal(t, "unlisted-queue", rec.predictor)
-}
-
-func TestWithPredictorResolvesScorerAtSameQueue(t *testing.T) {
-	var rec recorder
-	profile := withPredictor(profileRecording(&rec), predictorConfig{}, tally.NoopScope)
-
-	pred, err := profile.Predictor.For(predictor.Config{QueueName: "unlisted-queue"})
-	require.NoError(t, err)
-	assert.NotNil(t, pred)
 	assert.Equal(t, "unlisted-queue", rec.scorer)
 }
 
-// Resolving either level can fail where reading a struct field could not, and
-// the failure must surface rather than yielding something built over a nil.
-func TestWithSpeculatorPropagatesPredictorError(t *testing.T) {
-	sentinel := errors.New("predictor unavailable")
+func TestWithSpeculatorPropagatesScorerError(t *testing.T) {
+	sentinel := errors.New("scorer unavailable")
 	profile := withSpeculator(Profile{
-		Predictor: predictorFunc(func(predictor.Config) (predictor.Predictor, error) { return nil, sentinel }),
+		Scorer: scorerFunc(func(scorer.Config) (scorer.Scorer, error) { return nil, sentinel }),
 	}, defaultBuildBudget)
 
 	spec, err := profile.Speculator.For(speculator.Config{QueueName: "any-queue"})
 	require.ErrorIs(t, err, sentinel)
 	assert.Nil(t, spec)
-}
-
-func TestWithPredictorPropagatesScorerError(t *testing.T) {
-	sentinel := errors.New("scorer unavailable")
-	profile := withPredictor(Profile{
-		Scorer: scorerFunc(func(scorer.Config) (scorer.Scorer, error) { return nil, sentinel }),
-	}, predictorConfig{}, tally.NoopScope)
-
-	pred, err := profile.Predictor.For(predictor.Config{QueueName: "any-queue"})
-	require.ErrorIs(t, err, sentinel)
-	assert.Nil(t, pred)
 }
