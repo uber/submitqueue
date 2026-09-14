@@ -91,44 +91,44 @@ func TestScore_AppliesOneFactorPerEvidence(t *testing.T) {
 	}{
 		{
 			name:    "a passed path",
-			factors: Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1},
+			factors: Factors{PathPassed: 9, PathFailed: 1, Landing: 1, Cancelling: 1},
 			paths:   pathSet(entity.SpeculationPathStatusPassed),
 			want:    0.9,
 		},
 		{
 			name:    "no passed path leaves the price alone",
-			factors: Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1},
+			factors: Factors{PathPassed: 9, PathFailed: 1, Landing: 1, Cancelling: 1},
 			paths:   pathSet(entity.SpeculationPathStatusBuilding),
 			want:    0.5,
 		},
 		{
 			name:    "one failed path",
-			factors: Factors{PathPassed: 1, PathFailed: 0.25, Merging: 1, Cancelling: 1},
+			factors: Factors{PathPassed: 1, PathFailed: 0.25, Landing: 1, Cancelling: 1},
 			paths:   pathSet(entity.SpeculationPathStatusFailed),
 			want:    0.2,
 		},
 		{
-			name:    "merging",
-			factors: Factors{PathPassed: 1, PathFailed: 1, Merging: 19, Cancelling: 1},
-			batch:   entity.Batch{State: entity.BatchStateMerging},
+			name:    "landing",
+			factors: Factors{PathPassed: 1, PathFailed: 1, Landing: 19, Cancelling: 1},
+			batch:   entity.Batch{State: entity.BatchStateLanding},
 			want:    0.95,
 		},
 		{
 			name:    "cancelling",
-			factors: Factors{PathPassed: 1, PathFailed: 1, Merging: 1, Cancelling: 0.25},
+			factors: Factors{PathPassed: 1, PathFailed: 1, Landing: 1, Cancelling: 0.25},
 			batch:   entity.Batch{State: entity.BatchStateCancelling},
 			want:    0.2,
 		},
 		{
 			name:    "a state with no factor leaves the price alone",
-			factors: Factors{PathPassed: 1, PathFailed: 1, Merging: 19, Cancelling: 0.25},
+			factors: Factors{PathPassed: 1, PathFailed: 1, Landing: 19, Cancelling: 0.25},
 			batch:   entity.Batch{State: entity.BatchStateSpeculating},
 			want:    0.5,
 		},
 		{
 			name:    "evidence compounds across kinds",
-			factors: Factors{PathPassed: 4, PathFailed: 1, Merging: 3, Cancelling: 1},
-			batch:   entity.Batch{State: entity.BatchStateMerging},
+			factors: Factors{PathPassed: 4, PathFailed: 1, Landing: 3, Cancelling: 1},
+			batch:   entity.Batch{State: entity.BatchStateLanding},
 			paths:   pathSet(entity.SpeculationPathStatusPassed),
 			want:    0.923076923,
 		},
@@ -146,7 +146,7 @@ func TestScore_IgnoresAPassedPathThatAssumesAFailure(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusPassed)
 	paths.Paths[0].Path.Dependencies[0].Assumption = entity.DependencyAssumptionFails
 
-	factors := Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1}
+	factors := Factors{PathPassed: 9, PathFailed: 1, Landing: 1, Cancelling: 1}
 	assert.InDelta(t, 0.5, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
@@ -156,7 +156,7 @@ func TestScore_IgnoresAFailedPathThatAssumesAFailure(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusPassed, entity.SpeculationPathStatusFailed)
 	paths.Paths[1].Path.Dependencies[0].Assumption = entity.DependencyAssumptionFails
 
-	factors := Factors{PathPassed: 9, PathFailed: 0.25, Merging: 1, Cancelling: 1}
+	factors := Factors{PathPassed: 9, PathFailed: 0.25, Landing: 1, Cancelling: 1}
 	assert.InDelta(t, 0.9, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
@@ -164,7 +164,7 @@ func TestScore_APathWithNoDependenciesCounts(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusPassed)
 	paths.Paths[0].Path.Dependencies = nil
 
-	factors := Factors{PathPassed: 9, PathFailed: 1, Merging: 1, Cancelling: 1}
+	factors := Factors{PathPassed: 9, PathFailed: 1, Landing: 1, Cancelling: 1}
 	assert.InDelta(t, 0.9, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
@@ -172,12 +172,12 @@ func TestScore_AFailedPathWithNoDependenciesCounts(t *testing.T) {
 	paths := pathSet(entity.SpeculationPathStatusFailed)
 	paths.Paths[0].Path.Dependencies = nil
 
-	factors := Factors{PathPassed: 1, PathFailed: 0.25, Merging: 1, Cancelling: 1}
+	factors := Factors{PathPassed: 1, PathFailed: 0.25, Landing: 1, Cancelling: 1}
 	assert.InDelta(t, 0.2, scoreOnce(t, 0.5, factors, entity.Batch{}, paths), 1e-9)
 }
 
 func TestScore_AnEmptyPathSetIsNoEvidence(t *testing.T) {
-	factors := Factors{PathPassed: 9, PathFailed: 0.1, Merging: 1, Cancelling: 1}
+	factors := Factors{PathPassed: 9, PathFailed: 0.1, Landing: 1, Cancelling: 1}
 	assert.InDelta(t, 0.5, scoreOnce(t, 0.5, factors, entity.Batch{}, entity.SpeculationPathSet{}), 1e-9)
 }
 
@@ -234,7 +234,7 @@ func TestScore_PropagatesAScorerError(t *testing.T) {
 
 func TestNew_RejectsUnusableConstruction(t *testing.T) {
 	zeroed := AllOnes()
-	zeroed.Merging = 0
+	zeroed.Landing = 0
 	negative := AllOnes()
 	negative.PathFailed = -1
 	infinite := AllOnes()

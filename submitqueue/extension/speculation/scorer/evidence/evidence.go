@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package evidence revises a base Scorer's price with factors for observed batch
-// progress. See doc/rfc/submitqueue/outcome-predictor.md.
+// progress. See doc/rfc/submitqueue/outcome-scorer.md.
 package evidence
 
 import (
@@ -36,15 +36,15 @@ type Factors struct {
 	PathPassed float64
 	// PathFailed applies once when the all-succeed path has failed.
 	PathFailed float64
-	// Merging applies while the batch is merging.
-	Merging float64
+	// Landing applies while the batch is landing.
+	Landing float64
 	// Cancelling applies while the batch is cancelling.
 	Cancelling float64
 }
 
 // AllOnes is the neutral set: Score returns the base price.
 func AllOnes() Factors {
-	return Factors{PathPassed: 1, PathFailed: 1, Merging: 1, Cancelling: 1}
+	return Factors{PathPassed: 1, PathFailed: 1, Landing: 1, Cancelling: 1}
 }
 
 // epsilon keeps exact certainty revisable while remaining close to the scorer.
@@ -73,7 +73,7 @@ func New(cfg scorer.Config, base scorer.Scorer, factors Factors, scope tally.Sco
 	for name, factor := range map[string]float64{
 		"PathPassed": factors.PathPassed,
 		"PathFailed": factors.PathFailed,
-		"Merging":    factors.Merging,
+		"Landing":    factors.Landing,
 		"Cancelling": factors.Cancelling,
 	} {
 		// Zero would permanently pin matching batches to 0; negatives cannot
@@ -110,8 +110,8 @@ func (r *evidence) Score(ctx context.Context, batch entity.Batch, paths entity.S
 		factor *= r.factors.PathFailed
 	}
 	switch batch.State {
-	case entity.BatchStateMerging:
-		factor *= r.factors.Merging
+	case entity.BatchStateLanding:
+		factor *= r.factors.Landing
 	case entity.BatchStateCancelling:
 		factor *= r.factors.Cancelling
 	}

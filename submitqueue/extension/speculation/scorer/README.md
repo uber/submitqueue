@@ -8,7 +8,7 @@ The default `bestfirst` generator ranks on this number. The default scorer is **
 
 Like the other extensions, a `Scorer` is selected **per queue** by the wiring layer through the `Config` (queue name) and `Factory` interface.
 
-See [doc/rfc/submitqueue/outcome-predictor.md](../../../../doc/rfc/submitqueue/outcome-predictor.md) for the GLM, factor contract, evidence rules, and configuration shape.
+See [doc/rfc/submitqueue/outcome-scorer.md](../../../../doc/rfc/submitqueue/outcome-scorer.md) for the GLM, factor contract, evidence rules, and configuration shape.
 
 ## Implementations
 
