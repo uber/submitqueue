@@ -11,7 +11,7 @@ See [speculation.md](speculation.md) for batches, paths, heads, and the Speculat
 That number has two parts, composed as one scorer:
 
 1. A **base** price for the change from content signals such as its size. Heuristic and composite supply this. They implement the same `Score` and ignore `paths`.
-2. An **evidence** layer that revises the base with facts the speculate run already holds: a path *passed*, a path *failed*, the batch is *merging*, the batch is *cancelling*.
+2. An **evidence** layer that revises the base with facts the speculate run already holds: a path *passed*, a path *failed*, the batch is *landing*, the batch is *cancelling*.
 
 Evidence is the scorer the queue exposes. The base sits under it. There is no sibling Predictor factory.
 
@@ -47,7 +47,7 @@ The unconfigured base prices every batch at `0.5`. From that price, one factor `
 | `0.3` | ~0.23 |
 | `0.25` | 0.20 |
 
-A base price of `0.6` with `pathPassed: 10` becomes about `0.94`. `merging: 12` on top of that becomes about `0.995`.
+A base price of `0.6` with `pathPassed: 10` becomes about `0.94`. `landing: 12` on top of that becomes about `0.995`.
 
 `pathFailed: 0.3` from `0.5` becomes about `0.23`. It applies at most once because the path set has one current entry for the all-*succeeds* path; retry attempts replace that entry rather than adding evidence. `0` is rejected because it would pin matching batches at probability 0.
 
@@ -63,7 +63,7 @@ scorer:
   factors:
     pathPassed: 10
     pathFailed: 0.3
-    merging: 12
+    landing: 12
     cancelling: 0.1
   base:
     type: heuristic
@@ -79,10 +79,10 @@ Profiles may set `factors` under `defaults.scorer` and revise them per queue. An
 | --- | --- | --- |
 | `pathPassed` | Once, if a path that assumes every dependency *succeeds* has *passed* | Up |
 | `pathFailed` | Once, if the path that assumes every dependency *succeeds* has *failed* | Down |
-| `merging` | While the batch is *merging* | Up |
+| `landing` | While the batch is *landing* | Up |
 | `cancelling` | While the batch is *cancelling* | Down |
 
-`bestfirst` already treats a terminal batch as a fact (*Succeeded*, *Failed*, *Cancelled*). The scorer is not asked. *Merging* is not terminal: a merge can still fail, so how much it is worth stays a price.
+`bestfirst` already treats a terminal batch as a fact (*Succeeded*, *Failed*, *Cancelled*). The scorer is not asked. *Landing* is not terminal: a land can still fail, so how much it is worth stays a price.
 
 ### Only the *succeeds* path counts
 
@@ -95,9 +95,9 @@ Take `C` depending on `B`, and `B` depending on `A`. Ranking `C`'s candidates ne
 | `B` with `A` *succeeds* | `B` on top of `A`'s changes |
 | `B` with `A` *fails* | `B` without them |
 
-`B` merges after `A` does, so the first build is a build of the code that will actually land: if it *passed*, `B` is likely to merge, and `pathPassed` applies.
+`B` lands after `A` does, so the first build is a build of the code that will actually land: if it *passed*, `B` is likely to land, and `pathPassed` applies.
 
-The second is a different set of changes. `B` may call something `A` introduces and fail to compile on its own — a *failed* result that says nothing about `B` merging in the normal case. Counting it would push `B` down the ranking over a build it was never going to need, while a green build of the real combination sits in the same set.
+The second is a different set of changes. `B` may call something `A` introduces and fail to compile on its own — a *failed* result that says nothing about `B` landing in the normal case. Counting it would push `B` down the ranking over a build it was never going to need, while a green build of the real combination sits in the same set.
 
 So `pathPassed` and `pathFailed` both look only at paths that assume every dependency *succeeds*. Results on any other path are skipped. This is a filter on which results are evidence, not a check on whether an assumption came true — nothing here revisits that.
 
@@ -117,9 +117,9 @@ Every content backend reads the path set. We tried forwarding path sets through 
 
 Train a single estimate over diff shape and build outcomes together. Content signals and situation signals change at different rates, need different amounts of data, and would force every queue onto the same content scorer. **Instead:** the base stays per-queue; evidence weights layer on in YAML. `p_base` remains the GLM offset if someone later fits `w`.
 
-### Treat *merging* and *cancelling* as settled in the Generator
+### Treat *landing* and *cancelling* as settled in the Generator
 
-Rank a *merging* batch like Succeeded and a *cancelling* batch like Cancelled. We tried and reverted: a merge can still fail, so the rank was wrong once outcomes diverged. **Instead:** only terminal states short-circuit in the Generator; *merging* and *cancelling* are scorer features (see [Evidence](#evidence)).
+Rank a *landing* batch like Succeeded and a *cancelling* batch like Cancelled. We tried and reverted: a land can still fail, so the rank was wrong once outcomes diverged. **Instead:** only terminal states short-circuit in the Generator; *landing* and *cancelling* are scorer features (see [Evidence](#evidence)).
 
 ### Let the scorer read the path-set store
 
