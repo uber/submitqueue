@@ -458,7 +458,9 @@ func TestBestFirst_PricesEachDependencyAgainstItsOwnPathSet(t *testing.T) {
 // evidence scorer sees a path set.
 type flatScorer struct{}
 
-func (flatScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return 0.5, nil }
+func (flatScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
+	return 0.5, nil
+}
 
 func evidenceScorer(t *testing.T, factors evidence.Factors) scorer.Scorer {
 	t.Helper()
