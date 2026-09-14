@@ -155,7 +155,9 @@ func (errScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet)
 // constScorer scores every batch identically, regardless of ID.
 type constScorer struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) { return c.v, nil }
+func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPathSet) (float64, error) {
+	return c.v, nil
+}
 
 // wideHead builds one Speculating head over n unresolved dependencies, each at a
 // distinct score so no two combinations tie.
