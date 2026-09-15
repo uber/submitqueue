@@ -55,6 +55,7 @@ go_library(
         "//submitqueue/extension/speculation/generator/bestfirst:go_default_library",
         "//submitqueue/extension/speculation/scorer:go_default_library",
         "//submitqueue/extension/speculation/scorer/composite:go_default_library",
+        "//submitqueue/extension/speculation/scorer/evidence:go_default_library",
         "//submitqueue/extension/speculation/scorer/fake:go_default_library",
         "//submitqueue/extension/speculation/scorer/heuristic:go_default_library",
         "//submitqueue/extension/speculation/speculator:go_default_library",

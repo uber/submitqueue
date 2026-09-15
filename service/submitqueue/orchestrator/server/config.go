@@ -16,6 +16,8 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"math"
 	"os"
 	"time"
 
@@ -53,6 +55,7 @@ const (
 
 // Scorer types selectable from configuration.
 const (
+	scorerTypeEvidence  = "evidence"
 	scorerTypeHeuristic = "heuristic"
 	scorerTypeComposite = "composite"
 )
@@ -66,6 +69,19 @@ const (
 
 // Ways a composite scorer combines its components.
 const combineAvg = "avg"
+
+// Evidence an evidence scorer prices, as named in configuration. The set is
+// closed: a factor under any other name would be applied to nothing and never
+// noticed.
+const (
+	factorPathPassed = "pathPassed"
+	factorPathFailed = "pathFailed"
+	factorLanding    = "landing"
+	factorCancelling = "cancelling"
+)
+
+// neutralFactor leaves the scorer's price untouched.
+const neutralFactor = 1.0
 
 // defaultBuildBudget is how many builds a queue may have occupying CI at once
 // when it states no budget of its own. Four is enough for speculation to be
@@ -208,11 +224,19 @@ type analyzerConfig struct {
 	FailAlways bool `yaml:"failAlways"`
 }
 
-// scorerConfig selects how a queue ranks candidate speculation paths. There is
-// no scoring stage: the scorer feeds the queue's speculator, which is composed
-// from it rather than configured separately.
+// scorerConfig selects how a queue ranks candidate speculation paths. The
+// ranking scorer is evidence wrapping a nested content base. Heuristic and
+// composite belong on base (and on composite components), not at the top level.
 type scorerConfig struct {
 	Type string `yaml:"type"`
+	// Factors revise the base price, one per piece of evidence (evidence only).
+	// An omitted key keeps the inherited value, or 1 if neither defaults nor
+	// the queue named it.
+	Factors map[string]float64 `yaml:"factors"`
+	// Base is the content scorer evidence revises (evidence only). An omitted
+	// base on defaults is the default heuristic; a present base on a queue
+	// replaces the default base wholesale.
+	Base *scorerConfig `yaml:"base"`
 	// Buckets map a batch's total lines changed onto a score (heuristic only).
 	Buckets []bucketConfig `yaml:"buckets"`
 	// Components are the scorers a composite combines, keyed by name.
@@ -291,7 +315,7 @@ func (c *profilesConfig) normalizeAndValidate() error {
 			}
 		}
 		if q.Scorer != nil {
-			if err := q.Scorer.normalizeAndValidate(where); err != nil {
+			if err := q.Scorer.normalizeOverlay(where); err != nil {
 				return err
 			}
 		}
@@ -353,12 +377,34 @@ func (c profilesConfig) resolve(q namedQueueProfileConfig) queueProfileConfig {
 		profile.Analyzer = *q.Analyzer
 	}
 	if q.Scorer != nil {
-		profile.Scorer = *q.Scorer
+		profile.Scorer = overlayScorer(profile.Scorer, *q.Scorer)
 	}
 	if q.Speculator != nil {
 		profile.Speculator = *q.Speculator
 	}
 	return profile
+}
+
+// overlayScorer keeps default factors the queue did not name. A present base
+// replaces the default base wholesale. Type stays evidence unless the override
+// names one, which must still be evidence.
+func overlayScorer(base, override scorerConfig) scorerConfig {
+	if override.Type != "" {
+		base.Type = override.Type
+	}
+	if len(override.Factors) > 0 {
+		merged := maps.Clone(base.Factors)
+		if merged == nil {
+			merged = make(map[string]float64, len(override.Factors))
+		}
+		maps.Copy(merged, override.Factors)
+		base.Factors = merged
+	}
+	if override.Base != nil {
+		copied := *override.Base
+		base.Base = &copied
+	}
+	return base
 }
 
 func (p *queueProfileConfig) normalizeAndValidate(where string) error {
@@ -374,7 +420,10 @@ func (p *queueProfileConfig) normalizeAndValidate(where string) error {
 	if err := p.Scorer.normalizeAndValidate(where); err != nil {
 		return err
 	}
-	return p.Speculator.normalizeAndValidate(where)
+	if err := p.Speculator.normalizeAndValidate(where); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *changeProviderConfig) normalizeAndValidate(where string) error {
@@ -514,10 +563,62 @@ func (a *analyzerConfig) normalizeAndValidate(where string) error {
 	}
 }
 
-// normalizeAndValidate applies defaults and rejects a scorer that could not be
-// built. An empty block is a flat heuristic: every batch scores the same, which
-// is the neutral choice for a queue with no opinion about ordering.
+// normalizeAndValidate applies defaults and rejects a ranking scorer that
+// could not be built. An empty block is evidence wrapping the default
+// heuristic, with every factor neutral.
 func (s *scorerConfig) normalizeAndValidate(where string) error {
+	return s.normalizeRanking(where, true)
+}
+
+// normalizeOverlay validates a queue's scorer override without inventing a
+// base: omitted base means inherit the default base.
+func (s *scorerConfig) normalizeOverlay(where string) error {
+	return s.normalizeRanking(where, false)
+}
+
+func (s *scorerConfig) normalizeRanking(where string, fillBase bool) error {
+	if s.Type == "" {
+		s.Type = scorerTypeEvidence
+	}
+	if s.Type != scorerTypeEvidence {
+		return fmt.Errorf("%s: scorer type %q belongs under base, not at the ranking layer", where, s.Type)
+	}
+	if len(s.Buckets) > 0 || len(s.Components) > 0 || s.Combine != "" {
+		return fmt.Errorf("%s: buckets, components, and combine belong under base", where)
+	}
+	if err := validateFactors(where, s.Factors); err != nil {
+		return err
+	}
+	if s.Base != nil {
+		return s.Base.normalizeContent(where + " base")
+	}
+	if fillBase {
+		s.Base = &scorerConfig{}
+		return s.Base.normalizeContent(where + " base")
+	}
+	return nil
+}
+
+func validateFactors(where string, factors map[string]float64) error {
+	for name, factor := range factors {
+		switch name {
+		case factorPathPassed, factorPathFailed, factorLanding, factorCancelling:
+		default:
+			return fmt.Errorf("%s: unknown scorer factor %q", where, name)
+		}
+		// Zero would permanently pin matching batches to 0; negatives cannot
+		// represent either direction in the factor contract.
+		if !(factor > 0) || math.IsInf(factor, 0) {
+			return fmt.Errorf("%s: scorer factor %q is %v, must be finite and positive", where, name, factor)
+		}
+	}
+	return nil
+}
+
+func (s *scorerConfig) normalizeContent(where string) error {
+	if len(s.Factors) > 0 || s.Base != nil {
+		return fmt.Errorf("%s: factors and base belong on the ranking scorer, not under base", where)
+	}
 	if s.Type == "" {
 		s.Type = scorerTypeHeuristic
 	}
@@ -539,7 +640,7 @@ func (s *scorerConfig) normalizeAndValidate(where string) error {
 			return fmt.Errorf("%s: composite scorer needs at least one component", where)
 		}
 		for name, component := range s.Components {
-			if err := component.normalizeAndValidate(fmt.Sprintf("%s component %q", where, name)); err != nil {
+			if err := component.normalizeContent(fmt.Sprintf("%s component %q", where, name)); err != nil {
 				return err
 			}
 			s.Components[name] = component

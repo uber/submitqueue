@@ -15,12 +15,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
@@ -37,6 +39,14 @@ type recorder struct {
 	analyzer       string
 	storage        string
 	scorer         string
+}
+
+// stubScorer stands in wherever a Profile's scorer has to be real rather than
+// nil, because something is composed over it.
+type stubScorer struct{}
+
+func (stubScorer) Score(_ context.Context, _ entity.Batch, _ entity.SpeculationPathSet) (float64, error) {
+	return 0.5, nil
 }
 
 // profileRecording returns a Profile whose every factory records the queue name
@@ -62,7 +72,7 @@ func profileRecording(rec *recorder) Profile {
 		}),
 		Scorer: scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
 			rec.scorer = c.QueueName
-			return nil, nil
+			return stubScorer{}, nil
 		}),
 	}
 }
@@ -113,9 +123,9 @@ func TestProfilesForwardQueueNameToFactories(t *testing.T) {
 	}
 }
 
-// TestWithSpeculatorResolvesScorerAtSameQueue covers the one seam that resolves
-// another seam: the speculator is composed from the profile's scorer, and must
-// ask for it at the queue it was itself asked for.
+// The speculator is composed from the profile's scorer. It has to be asked for
+// at the queue the speculator was asked for, or an implementation is built for
+// the wrong one.
 func TestWithSpeculatorResolvesScorerAtSameQueue(t *testing.T) {
 	var rec recorder
 	profile := withSpeculator(profileRecording(&rec), defaultBuildBudget)
@@ -127,10 +137,6 @@ func TestWithSpeculatorResolvesScorerAtSameQueue(t *testing.T) {
 	assert.Equal(t, "unlisted-queue", rec.scorer)
 }
 
-// TestWithSpeculatorPropagatesScorerError covers the error path the factory
-// conversion introduced: resolving the scorer can now fail where reading a
-// struct field could not, and the failure must surface rather than yielding a
-// speculator built over a nil scorer.
 func TestWithSpeculatorPropagatesScorerError(t *testing.T) {
 	sentinel := errors.New("scorer unavailable")
 	profile := withSpeculator(Profile{

@@ -49,6 +49,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/composite"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/evidence"
 	scorerfake "github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
@@ -75,7 +76,7 @@ type Profile struct {
 	// splits queues across storage backends overrides this per queue.
 	Storage storage.Factory
 
-	// Scorer holds this queue's scoring profile. There is no scoring stage: the
+	// Scorer holds this queue's ranking profile. There is no scoring stage: the
 	// scorer feeds the queue's speculator, which ranks candidate paths by how
 	// likely their assumptions are to hold.
 	Scorer scorer.Factory
@@ -265,8 +266,6 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	if err != nil {
 		return Profile{}, err
 	}
-	// The speculator is composed last, because it is built from whatever scorer
-	// the profile ended up with.
 	return withSpeculator(Profile{
 		ChangeProvider: provider,
 		BuildRunner:    runner,
@@ -283,15 +282,15 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 // policy without touching the speculate controller, which depends only on the
 // Speculator contract.
 //
-// The scorer is resolved lazily, at the queue the speculator itself was asked
-// for, so the queue's identity reaches one level down into the scorer too.
+// The scorer is resolved lazily, at the queue the speculator itself was
+// asked for, so the queue's identity reaches the ranking scorer.
 func withSpeculator(p Profile, buildBudget int) Profile {
 	p.Speculator = speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
-		sc, err := p.Scorer.For(scorer.Config{QueueName: c.QueueName})
+		s, err := p.Scorer.For(scorer.Config{QueueName: c.QueueName})
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve scorer for queue %q: %w", c.QueueName, err)
 		}
-		return specstandard.New(c, bestfirst.New(sc), sticky.New(buildBudget)), nil
+		return specstandard.New(c, bestfirst.New(s), sticky.New(buildBudget)), nil
 	})
 	return p
 }
@@ -300,6 +299,23 @@ func withSpeculator(p Profile, buildBudget int) Profile {
 // larger batches are likelier to fail to land.
 func batchLines(_ context.Context, changes entity.BatchChanges) (int, error) {
 	return changes.TotalLinesChanged(), nil
+}
+
+func factorsFrom(cfg scorerConfig) evidence.Factors {
+	factors := evidence.AllOnes()
+	for name, factor := range cfg.Factors {
+		switch name {
+		case factorPathPassed:
+			factors.PathPassed = factor
+		case factorPathFailed:
+			factors.PathFailed = factor
+		case factorLanding:
+			factors.Landing = factor
+		case factorCancelling:
+			factors.Cancelling = factor
+		}
+	}
+	return factors
 }
 
 // newScorerFactory builds the configured scorer's factory.
@@ -311,11 +327,22 @@ func batchLines(_ context.Context, changes entity.BatchChanges) (int, error) {
 // The configuration is walked once up front so an unusable scorer config fails
 // at wiring time rather than on the first queue that resolves it.
 func (b *profileBuilder) newScorerFactory(cfg scorerConfig, where string) (scorer.Factory, error) {
-	if _, err := b.buildScorer(scorer.Config{}, cfg, where, "scorer"); err != nil {
+	if cfg.Base == nil {
+		return nil, fmt.Errorf("%s: evidence scorer needs a base", where)
+	}
+	base, err := b.buildScorer(scorer.Config{}, *cfg.Base, where, "scorer.base")
+	if err != nil {
 		return nil, err
 	}
+	if _, err := evidence.New(scorer.Config{}, base, factorsFrom(cfg), b.scope.SubScope("scorer")); err != nil {
+		return nil, fmt.Errorf("%s: %w", where, err)
+	}
 	return scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
-		inner, err := b.buildScorer(c, cfg, where, "scorer")
+		base, err := b.buildScorer(c, *cfg.Base, where, "scorer.base")
+		if err != nil {
+			return nil, err
+		}
+		inner, err := evidence.New(c, base, factorsFrom(cfg), b.scope.SubScope("scorer"))
 		if err != nil {
 			return nil, err
 		}
