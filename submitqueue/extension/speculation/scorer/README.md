@@ -12,7 +12,7 @@ See [doc/rfc/submitqueue/outcome-scorer.md](../../../../doc/rfc/submitqueue/outc
 
 ## Implementations
 
-**`evidence`** revises a nested base scorer with YAML-configured factors for `pathPassed`, `pathFailed`, `merging`, and `cancelling`. A factor of `1` leaves the base price alone; every factor defaults to `1` until someone sets one. Only paths that assume every dependency succeeds count as path evidence.
+**`evidence`** revises a nested base scorer with YAML-configured factors for `pathPassed`, `pathFailed`, `landing`, and `cancelling`. A factor of `1` leaves the base price alone; every factor defaults to `1` until someone sets one. Only paths that assume every dependency succeeds count as path evidence.
 
 **`heuristic`** scores a batch by extracting one number from its changes and matching that against ordered buckets, each mapping a `[Min, Max]` range to a probability. The extraction is a caller-supplied `ValueFunc` over the resolved `entity.BatchChanges`, so the same bucketing works for files touched, lines changed, or any other metric. It ignores `paths`.
 
