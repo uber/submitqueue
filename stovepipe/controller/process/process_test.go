@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,7 @@ import (
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -48,6 +50,7 @@ const (
 	testID      = "request/monorepo/main/7"
 	testOlderID = "request/monorepo/main/3"
 	testURI     = "git://repo/monorepo/main/abc123"
+	testNowMs   = int64(2_000_000)
 )
 
 func queueContext(queueName string) context.Context {
@@ -70,6 +73,15 @@ type staticStorageFactory struct{ store storage.Storage }
 
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
+func queueConfig(minimumBuildAdmissionIntervalMs int64) entity.QueueConfig {
+	return entity.QueueConfig{
+		Name:                            testQueue,
+		MaxConcurrent:                   1,
+		GateWaitDelayMs:                 5000,
+		MinimumBuildAdmissionIntervalMs: minimumBuildAdmissionIntervalMs,
+	}
+}
 
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
 	t.Helper()
@@ -111,6 +123,7 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 		stovepipemq.TopicKeyProcess,
 		"stovepipe-process",
 	)
+	c.now = func() time.Time { return time.UnixMilli(testNowMs) }
 	return c, m
 }
 
@@ -508,6 +521,7 @@ func TestProcess(t *testing.T) {
 		wantHoldMs int64
 		wantErr    bool
 		wantRetry  bool
+		config     entity.QueueConfig
 	}{
 		{
 			name: "superseded redelivery repairs its state log",
@@ -731,6 +745,67 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
+			name:       "latest accepted head holds while admission deadline is active",
+			wantHoldMs: 5000,
+			config:     queueConfig(3_600_000),
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:                      testQueue,
+					LatestRequestID:           testID,
+					BuildAdmissionNotBeforeMs: testNowMs + 7500,
+					Version:                   1,
+				}, nil)
+			},
+		},
+		{
+			name:       "admission deadline uses remaining duration below gate wait",
+			wantHoldMs: 2500,
+			config:     queueConfig(3_600_000),
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:                      testQueue,
+					LatestRequestID:           testID,
+					BuildAdmissionNotBeforeMs: testNowMs + 2500,
+					Version:                   1,
+				}, nil)
+			},
+		},
+		{
+			name:   "admission claim reserves the next configured interval",
+			config: queueConfig(3_600_000),
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: testID, Version: 1,
+				}, nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+					Name:                      testQueue,
+					LatestRequestID:           testID,
+					InFlightCount:             1,
+					BuildAdmissionNotBeforeMs: testNowMs + 3_600_000,
+					Version:                   1,
+				}, int32(1), int32(2)).Return(nil)
+				updatedReq := acceptedRequest(testID)
+				updatedReq.State = entity.RequestStateProcessing
+				updatedReq.BuildStrategy = entity.BuildStrategyFull
+				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+				expectStartAnnounceAndBuildPublish(t, m, testID)
+			},
+		},
+		{
+			name:   "negative admission interval leaves throttling disabled",
+			config: queueConfig(-1),
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: testID, Version: 1,
+				}, nil)
+				expectAdmit(t, m, testID)
+			},
+		},
+		{
 			name:       "gate closed after slot claim race holds",
 			wantHoldMs: 5000,
 			setup: func(m processMocks) {
@@ -751,6 +826,30 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					InFlightCount:   1,
 					Version:         2,
+				}, nil)
+			},
+		},
+		{
+			name:       "claim conflict reload observes a concurrent admission deadline",
+			wantHoldMs: 5000,
+			config:     queueConfig(3_600_000),
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: testID, Version: 1,
+				}, nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+					Name:                      testQueue,
+					LatestRequestID:           testID,
+					InFlightCount:             1,
+					BuildAdmissionNotBeforeMs: testNowMs + 3_600_000,
+					Version:                   1,
+				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:                      testQueue,
+					LatestRequestID:           testID,
+					BuildAdmissionNotBeforeMs: testNowMs + 10_000,
+					Version:                   2,
 				}, nil)
 			},
 		},
@@ -995,6 +1094,11 @@ func TestProcess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			c, m := newController(t, ctrl)
+			if tt.config.Name != "" {
+				queueConfigs := queueconfigmock.NewMockStore(ctrl)
+				queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(tt.config, nil).AnyTimes()
+				c.queueConfigs = queueConfigs
+			}
 			if tt.setup != nil {
 				tt.setup(m)
 			}
