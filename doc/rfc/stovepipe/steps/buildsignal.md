@@ -12,7 +12,7 @@ It handles only the poll loop: it does not decide build strategy, write greennes
 
 Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the request id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
 
-`buildsignal` is the sole writer of `Build.Status`/`Build.Version` after `build` creates the row (see [build.md](doc/rfc/stovepipe/steps/build.md#input-partitioning-and-the-single-writer-property)). It reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and writes it exactly once, at the terminal transition, to record the build's outcome — the one `Request.State` write outside `process` and the DLQ reconciler.
+`buildsignal` is the sole writer of `Build.Status`/`Build.TerminalAtMs`/`Build.Version` after `build` creates the row (see [build.md](doc/rfc/stovepipe/steps/build.md#input-partitioning-and-the-single-writer-property)). It reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and writes it exactly once, at the terminal transition, to record the build's outcome — the one `Request.State` write outside `process` and the DLQ reconciler.
 
 Its early-exit guard is deliberately narrower than `State.IsTerminal()`: it proceeds when the request is `processing` **or** already carries a build outcome. The second case matters because a redelivery after the outcome was stamped but before the `record` publish landed must re-publish rather than drop the signal; everything it re-runs is a no-op (the status is unchanged, the outcome is already recorded, the slot is not released twice) and the `record` publish is idempotent.
 
@@ -55,15 +55,20 @@ For a delivery carrying build id `B`:
    - Build.Status already terminal, status differs -> terminal is WRITE-ONCE: do not overwrite;
      continue with the STORED status as authoritative (see Edge cases).
    - otherwise persist via BuildStore.Update(ctx, Build{...Status: status}, oldVersion, newVersion):
+     - when status is terminal, stamp TerminalAtMs with the observation time in the same update;
      - newVersion = Build.Version + 1; assign Build.Version = newVersion only on success.
      - ErrVersionMismatch -> return with its declaration-level retryable classification (a concurrent writer moved the row; reload and re-check).
      - with the write-once rule, accepted -> running -> {succeeded|failed|cancelled} is monotonic
        by mechanism, not by assumption about the backend.
 
 7. If the stored status is terminal, and R does not already carry an outcome:
-   a. Release the queue's build slot: CAS-decrement Queue.in_flight_count, clamped at zero.
+   a. Load the queue config only when the runner-reported status is failed. Apply
+      failure_cooldown_ms only when it is positive; non-positive values disable the policy.
+   b. Release the queue's build slot in one Queue CAS: decrement in_flight_count, clamped at zero,
+      and for failed status advance build_admission_not_before_ms to at least
+      Build.TerminalAtMs + failure_cooldown_ms.
       - failure here aborts the step: R must not go terminal while still holding a slot.
-   b. CAS R from processing to the outcome the stored status projects onto it:
+   c. CAS R from processing to the outcome the stored status projects onto it:
       succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
    Then publish R.ID to the record topic, partitioned by request id; ack, return.
    No re-publish to buildsignal.
@@ -85,6 +90,8 @@ For a delivery carrying build id `B`:
 **Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever decrement it. Failing this way leaves the request non-terminal: redelivery re-runs both steps and decrements again, transiently over-admitting by one slot until the zero clamp reconverges. Over-admission is the failure mode this pipeline already prefers, for the same reason and in the same words as the DLQ reconciler (see [process.md](doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity)).
 
 **Why `buildsignal` releases the slot rather than `record`**: the gate `process` claims is a *build* slot — it exists to bound concurrent builds per Queue — and once the build is terminal the build is over. Releasing here also keeps the invariant *a terminal `Request` has already released its slot*, which is what makes the DLQ reconciler's early-return on terminal requests safe.
+
+**Why failure cooldown is part of the slot-release CAS**: both fields govern the next logical admission, so updating them from the same freshly loaded Queue snapshot prevents a process admission from slipping between capacity release and deadline advancement. A version conflict reloads the row and recomputes the maximum, preserving a later deadline written by the minimum-interval policy or another terminal result. The deadline is based on the persisted `Build.TerminalAtMs`, not redelivery time, so retries cannot slide the cooldown forward. Only an actual runner-reported `failed` status applies this policy; `cancelled` and DLQ-forced request failure do not.
 
 **Why `record` hears only terminal signals**: `record` has no non-terminal work — by its own contract a non-terminal signal would be a pure no-op — and step 7 already branches on terminality to decide whether to keep polling, so gating the publish costs nothing and spares `record` a no-op delivery on every poll tick of every running build. Crash-safety is unaffected: a crash between the terminal `Update` and the publish redelivers the message; step 5 re-polls (the runner reports the same terminal status), step 6 no-ops, step 7 publishes. This is a deliberate divergence from SubmitQueue, whose buildsignal republishes to `speculate` on every tick — sound there because speculate is a state machine that may act on any signal; stovepipe has no such consumer.
 

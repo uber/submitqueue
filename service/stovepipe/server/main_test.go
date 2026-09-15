@@ -240,6 +240,7 @@ func TestLoadQueueConfigs(t *testing.T) {
 		require.NoError(t, err)
 		assert.EqualValues(t, 1, cfg.MaxConcurrent)
 		assert.Zero(t, cfg.MinimumBuildAdmissionIntervalMs)
+		assert.Zero(t, cfg.FailureCooldownMs)
 	})
 
 	t.Run("path loads per-queue policies", func(t *testing.T) {
@@ -249,6 +250,7 @@ func TestLoadQueueConfigs(t *testing.T) {
     max_concurrent: 2
     gate_wait_delay_ms: 5000
     minimum_build_admission_interval_ms: 3600000
+    failure_cooldown_ms: 900000
 `), 0o600))
 
 		store, err := loadQueueConfigs(path)
@@ -257,6 +259,7 @@ func TestLoadQueueConfigs(t *testing.T) {
 		require.NoError(t, err)
 		assert.EqualValues(t, 2, cfg.MaxConcurrent)
 		assert.EqualValues(t, 3_600_000, cfg.MinimumBuildAdmissionIntervalMs)
+		assert.EqualValues(t, 900_000, cfg.FailureCooldownMs)
 		require.NoError(t, validateQueueConfigTenants(context.Background(), path, store, []string{"monorepo/main"}))
 		require.Error(t, validateQueueConfigTenants(context.Background(), path, store, []string{"other"}))
 	})

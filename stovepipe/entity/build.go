@@ -54,9 +54,9 @@ func (s BuildStatus) IsTerminal() bool {
 }
 
 // Build represents a single build triggered for a Request's commit. All
-// fields except Status and Version are immutable after creation — build is
-// the sole creator (via BuildStore.Create), and buildsignal is the sole
-// writer of Status/Version afterward.
+// fields except Status, TerminalAtMs, and Version are immutable after creation —
+// build is the sole creator (via BuildStore.Create), and buildsignal is the sole
+// writer of the lifecycle fields afterward.
 type Build struct {
 	// ID is the build's own key: the runner-assigned id returned by
 	// Trigger (e.g. a Buildkite build number). Opaque; never parsed or
@@ -67,6 +67,9 @@ type Build struct {
 	RequestID string `json:"request_id"`
 	// Status is the build's lifecycle state.
 	Status BuildStatus `json:"status"`
+	// TerminalAtMs is when the first terminal status was observed, in Unix milliseconds.
+	// Zero while the build is non-terminal and immutable once set.
+	TerminalAtMs int64 `json:"terminal_at_ms"`
 	// Version is used for optimistic locking. Versioning starts at 1 and
 	// is incremented for each change to the object.
 	Version int32 `json:"version"`

@@ -10,7 +10,7 @@ It handles only the trigger: it does not poll for completion, record greenness, 
 
 `build` consumes a request id, published by `process` in Phase 1 (see [workflow.md](doc/rfc/stovepipe/workflow.md#workflow)). Both phases drive the same `build` → `buildsignal` machinery against the same `Request` row. The `process`/`analyze` → `build` topic is partitioned by **request id**; see [Partitioning](#partitioning) for the full rationale, including why `build` → `buildsignal` partitions finer (by build id) than SubmitQueue's equivalent topic.
 
-**`build` is not the sole writer of the rows it touches, and its own writes are narrow.** On `Request`, `build` never writes at all — it only reads the `BuildStrategy`/`BaseURI`/`URI` fields `process` set at admit, and it leaves `Request.State` untouched at `processing` throughout (`process`, `buildsignal`, and the DLQ reconciler are `Request.State`'s only writers). On `Build`, `build` is the sole creator — it calls `BuildStore.Create` exactly once, at step 6 — and never mutates the row again; `buildsignal` is the sole writer of `Build.Status`/`Build.Version` afterward (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#input-and-re-entrancy)). This division is why `build` never needs a CAS/version write of its own: `Create` is the only storage mutation in its algorithm.
+**`build` is not the sole writer of the rows it touches, and its own writes are narrow.** On `Request`, `build` never writes at all — it only reads the `BuildStrategy`/`BaseURI`/`URI` fields `process` set at admit, and it leaves `Request.State` untouched at `processing` throughout (`process`, `buildsignal`, and the DLQ reconciler are `Request.State`'s only writers). On `Build`, `build` is the sole creator — it calls `BuildStore.Create` exactly once, at step 6 — and never mutates the row again; `buildsignal` is the sole writer of `Build.Status`/`Build.TerminalAtMs`/`Build.Version` afterward (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#input-and-re-entrancy)). This division is why `build` never needs a CAS/version write of its own: `Create` is the only storage mutation in its algorithm.
 
 `build` is phase-agnostic: it never asks "which phase is this?" It reads whatever scope is already persisted and immutable on the `Request` and acts on it. Phase 2's project-scoped invocation is expected to read project-scoped equivalents of the scope fields off the same `Request`; the exact shape of a project-scoped trigger is left to the `analyze` design, consistent with `workflow.md`'s "project mapping contract" open question — see [Project-scoped `Trigger`: reserved, not yet designed](#project-scoped-trigger-reserved-not-yet-designed) for the resulting gap in the `BuildRunner` contract itself.
 
@@ -52,7 +52,7 @@ For a delivery carrying request id `R`:
      either domain — the shape is deferred until then, not decided here.
    - failure -> return raw; classifier decides (transient runner blip retryable, bad URI not).
 
-6. Persist Build{ID: buildID.ID, RequestID: R.ID, Status: accepted, Version: 1}
+6. Persist Build{ID: buildID.ID, RequestID: R.ID, Status: accepted, TerminalAtMs: 0, Version: 1}
    via BuildStore.Create.
    - the row carries no scope; it is recoverable from the Request's immutable fields
      (see the entity table).

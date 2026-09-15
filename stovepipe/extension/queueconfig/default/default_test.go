@@ -33,6 +33,7 @@ func TestStore_Get(t *testing.T) {
 		assert.Equal(t, int32(1), cfg.MaxConcurrent)
 		assert.Equal(t, int64(5000), cfg.GateWaitDelayMs)
 		assert.Zero(t, cfg.MinimumBuildAdmissionIntervalMs)
+		assert.Zero(t, cfg.FailureCooldownMs)
 	})
 
 	t.Run("empty name is not found", func(t *testing.T) {
