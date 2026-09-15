@@ -24,6 +24,8 @@ Stovepipe therefore needs two MySQL databases: a **storage** database (the `queu
 - **`inMemoryCounter`** — a process-local `counter.Counter` for sequence numbers; not durable. A real deployment uses a persistent implementation (e.g. `platform/extension/counter/mysql`).
 - **`fakeSourceControlFactory`** — seeds each queue with a deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting the same queue exercises the dedup path). A real deployment supplies a VCS-backed `sourcecontrol.Factory`, which is also where a queue's promotion ref is resolved. The fake has no ref to move, so a promotion locally shows up only in the record consumer's logs.
 
+`QUEUE_CONFIG_PATH` selects the YAML-backed queue policy store. When it is unset, the server uses the built-in defaults (`max_concurrent: 1`, `gate_wait_delay_ms: 5000`, and time-based admission throttling disabled). When it is set, the configured queue names must exactly match `MQ_TENANTS`. Each configured queue can set `minimum_build_admission_interval_ms` for general start-to-start throttling. For example, `minimum_build_admission_interval_ms: 3600000` permits at most one logical admission per hour.
+
 ## Layout
 
 ```
@@ -46,6 +48,7 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 | `STORAGE_MYSQL_DSN` | yes      | Storage database DSN | — |
 | `QUEUE_MYSQL_DSN`   | yes      | Queue database DSN                       | —                    |
 | `QUEUE_LOG_LEVEL`   | no       | Message-queue logger level               | `info`               |
+| `QUEUE_CONFIG_PATH` | no       | YAML file containing per-queue admission policies | built-in defaults |
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
 | `HOSTNAME`          | no       | Subscriber name for the queue consumers  | `stovepipe-<unix_ts>` |
 
