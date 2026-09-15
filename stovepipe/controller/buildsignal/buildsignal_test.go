@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnermock "github.com/uber/submitqueue/stovepipe/extension/buildrunner/mock"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -44,6 +46,7 @@ const (
 	testQueue   = "monorepo/main"
 	testID      = "request/monorepo/main/7"
 	testBuildID = "bk-1"
+	testNowMs   = int64(1_750_000_000_000)
 )
 
 func queueContext() context.Context {
@@ -59,6 +62,7 @@ type buildsignalMocks struct {
 	queueStore    *storagemock.MockQueueStore
 	store         *storagemock.MockStorage
 	materializer  *requestlogmock.MockMaterializer
+	queueConfigs  *queueconfigmock.MockStore
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
@@ -81,6 +85,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		store:         storagemock.NewMockStorage(ctrl),
 		materializer:  requestlogmock.NewMockMaterializer(ctrl),
+		queueConfigs:  queueconfigmock.NewMockStore(ctrl),
 		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
 		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
@@ -100,7 +105,8 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.queueConfigs, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	c.now = func() time.Time { return time.UnixMilli(testNowMs) }
 	return c, m
 }
 
@@ -163,6 +169,12 @@ func build(status entity.BuildStatus, version int32) entity.Build {
 		Status:    status,
 		Version:   version,
 	}
+}
+
+func terminalBuild(status entity.BuildStatus, version int32) entity.Build {
+	build := build(status, version)
+	build.TerminalAtMs = testNowMs
+	return build
 }
 
 // queueRow returns the testQueue's row holding inFlight admitted validations.
@@ -326,7 +338,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
-				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusSucceeded, 2), int32(2), int32(3)).Return(nil)
+				m.buildStore.EXPECT().Update(gomock.Any(), terminalBuild(entity.BuildStatusSucceeded, 2), int32(2), int32(3)).Return(nil)
 				logCall := expectFinish(m, entity.RequestStateSucceeded)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
 			},
@@ -338,7 +350,8 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
-				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusFailed, 2), int32(2), int32(3)).Return(nil)
+				m.buildStore.EXPECT().Update(gomock.Any(), terminalBuild(entity.BuildStatusFailed, 2), int32(2), int32(3)).Return(nil)
+				m.queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(entity.QueueConfig{Name: testQueue}, nil)
 				logCall := expectFinish(m, entity.RequestStateFailed)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
 			},
@@ -350,7 +363,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusCancelled, nil, nil)
-				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusCancelled, 2), int32(2), int32(3)).Return(nil)
+				m.buildStore.EXPECT().Update(gomock.Any(), terminalBuild(entity.BuildStatusCancelled, 2), int32(2), int32(3)).Return(nil)
 				logCall := expectFinish(m, entity.RequestStateCancelled)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
 			},
@@ -360,7 +373,7 @@ func TestProcess(t *testing.T) {
 			setup: func(m buildsignalMocks) {
 				request := requestWithState(entity.RequestStateSucceeded)
 				request.Version = 2
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 3), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
@@ -375,7 +388,7 @@ func TestProcess(t *testing.T) {
 			name:    "build event failure stops before request outcome",
 			wantErr: true,
 			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 3), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
@@ -398,7 +411,7 @@ func TestProcess(t *testing.T) {
 			setup: func(m buildsignalMocks) {
 				request := requestWithState(entity.RequestStateSucceeded)
 				request.Version = 2
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 3), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
@@ -413,7 +426,7 @@ func TestProcess(t *testing.T) {
 		{
 			name: "write-once: stored terminal status is never overwritten",
 			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 5), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 5), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
@@ -452,7 +465,7 @@ func TestProcess(t *testing.T) {
 			wantErr:   true,
 			wantRetry: false,
 			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 3), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
@@ -467,7 +480,7 @@ func TestProcess(t *testing.T) {
 			wantErr:   true,
 			wantRetry: false,
 			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 3), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
@@ -482,7 +495,7 @@ func TestProcess(t *testing.T) {
 			name:    "outcome log failure retains terminal request and released slot",
 			wantErr: true,
 			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusSucceeded, 3), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
@@ -547,6 +560,101 @@ func TestProcess(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestProcessFailedBuildAppliesCooldown(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	const cooldownMs = int64(60_000)
+
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+	m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
+	m.buildStore.EXPECT().Update(gomock.Any(), terminalBuild(entity.BuildStatusFailed, 2), int32(2), int32(3)).Return(nil)
+	eventCall := expectBuildFinished(m)
+	configCall := m.queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(entity.QueueConfig{
+		Name:              testQueue,
+		FailureCooldownMs: cooldownMs,
+	}, nil).After(eventCall)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(configCall)
+	cooledDownQueue := queueRow(0, 4)
+	cooledDownQueue.BuildAdmissionNotBeforeMs = testNowMs + cooldownMs
+	queueCall := m.queueStore.EXPECT().Update(gomock.Any(), cooledDownQueue, int32(4), int32(5)).Return(nil)
+	requestCall := m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(entity.RequestStateFailed), int32(1), int32(2)).Return(nil).After(queueCall)
+	logCall := expectOutcomeLog(m, entity.RequestStateFailed, 2).After(requestCall)
+	m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+}
+
+func TestProcessStoredFailedBuildDoesNotSlideCooldown(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	c.now = func() time.Time { return time.UnixMilli(testNowMs + 10_000) }
+	const cooldownMs = int64(60_000)
+
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusFailed, 3), nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+	m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
+	eventCall := expectBuildFinished(m)
+	configCall := m.queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(entity.QueueConfig{
+		Name:              testQueue,
+		FailureCooldownMs: cooldownMs,
+	}, nil).After(eventCall)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(configCall)
+	cooledDownQueue := queueRow(0, 4)
+	cooledDownQueue.BuildAdmissionNotBeforeMs = testNowMs + cooldownMs
+	queueCall := m.queueStore.EXPECT().Update(gomock.Any(), cooledDownQueue, int32(4), int32(5)).Return(nil)
+	requestCall := m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(entity.RequestStateFailed), int32(1), int32(2)).Return(nil).After(queueCall)
+	logCall := expectOutcomeLog(m, entity.RequestStateFailed, 2).After(requestCall)
+	m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+}
+
+func TestProcessNegativeFailureCooldownLeavesPolicyDisabled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(terminalBuild(entity.BuildStatusFailed, 3), nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+	m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
+	eventCall := expectBuildFinished(m)
+	m.queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(entity.QueueConfig{
+		Name:              testQueue,
+		FailureCooldownMs: -1,
+	}, nil).After(eventCall)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
+	queueCall := m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
+	requestCall := m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(entity.RequestStateFailed), int32(1), int32(2)).Return(nil).After(queueCall)
+	logCall := expectOutcomeLog(m, entity.RequestStateFailed, 2).After(requestCall)
+	m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+}
+
+func TestReleaseBuildSlotPreservesConcurrentLaterDeadline(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	const cooldownMs = int64(60_000)
+
+	first := queueRow(1, 4)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(first, nil)
+	firstUpdate := queueRow(0, 4)
+	firstUpdate.BuildAdmissionNotBeforeMs = testNowMs + cooldownMs
+	m.queueStore.EXPECT().Update(gomock.Any(), firstUpdate, int32(4), int32(5)).Return(storage.ErrVersionMismatch)
+
+	concurrent := queueRow(1, 5)
+	concurrent.BuildAdmissionNotBeforeMs = testNowMs + 2*cooldownMs
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(concurrent, nil)
+	secondUpdate := concurrent
+	secondUpdate.InFlightCount = 0
+	m.queueStore.EXPECT().Update(gomock.Any(), secondUpdate, int32(5), int32(6)).Return(nil)
+
+	require.NoError(t, c.releaseBuildSlot(queueContext(), m.store, testQueue, testNowMs, cooldownMs))
 }
 
 // TestPublishRecordCarriesRequestID pins the record contract: the payload and the

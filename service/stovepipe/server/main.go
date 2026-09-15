@@ -472,7 +472,7 @@ func registerPrimaryControllers(
 		scope,
 		store,
 		materializer,
-		queueconfigdefault.NewStore(),
+		queueConfigs,
 		sourceControl,
 		registry,
 		stovepipemq.TopicKeyProcess,
@@ -489,7 +489,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	buildSignalController := buildsignal.NewController(logger, scope, store, materializer, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	buildSignalController := buildsignal.NewController(logger, scope, store, materializer, queueConfigs, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
 	if err := c.Register(buildSignalController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
 	}

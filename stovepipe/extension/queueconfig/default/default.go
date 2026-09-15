@@ -28,6 +28,7 @@ const (
 	_defaultMaxConcurrent                   = 1
 	_defaultGateWaitDelayMs                 = 5000
 	_defaultMinimumBuildAdmissionIntervalMs = 0
+	_defaultFailureCooldownMs               = 0
 )
 
 // Store is a queueconfig.Store that returns the same defaults for every queue.
@@ -48,6 +49,7 @@ func (Store) Get(_ context.Context, name string) (entity.QueueConfig, error) {
 		MaxConcurrent:                   _defaultMaxConcurrent,
 		GateWaitDelayMs:                 _defaultGateWaitDelayMs,
 		MinimumBuildAdmissionIntervalMs: _defaultMinimumBuildAdmissionIntervalMs,
+		FailureCooldownMs:               _defaultFailureCooldownMs,
 	}, nil
 }
 

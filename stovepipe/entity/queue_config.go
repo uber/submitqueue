@@ -29,4 +29,7 @@ type QueueConfig struct {
 	// MinimumBuildAdmissionIntervalMs is the minimum start-to-start spacing between logical
 	// build admissions for this queue. Non-positive values disable time-based throttling.
 	MinimumBuildAdmissionIntervalMs int64 `json:"minimum_build_admission_interval_ms" yaml:"minimum_build_admission_interval_ms"`
+	// FailureCooldownMs is the admission delay applied after the runner reports a failed
+	// build. Non-positive values disable failure-specific cooldown.
+	FailureCooldownMs int64 `json:"failure_cooldown_ms" yaml:"failure_cooldown_ms"`
 }

@@ -42,10 +42,11 @@ func setupBuildStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BuildS
 
 func TestBuildStore_Create(t *testing.T) {
 	build := entity.Build{
-		ID:        "bk-1001",
-		RequestID: "request/monorepo/main/1",
-		Status:    entity.BuildStatusAccepted,
-		Version:   1,
+		ID:           "bk-1001",
+		RequestID:    "request/monorepo/main/1",
+		Status:       entity.BuildStatusAccepted,
+		TerminalAtMs: 1234,
+		Version:      1,
 	}
 
 	tests := []struct {
@@ -58,7 +59,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.Version).
+					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.TerminalAtMs, build.Version).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -66,7 +67,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "duplicate id returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.Version).
+					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.TerminalAtMs, build.Version).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -76,7 +77,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.Version).
+					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.TerminalAtMs, build.Version).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -106,10 +107,11 @@ func TestBuildStore_Create(t *testing.T) {
 
 func TestBuildStore_Get(t *testing.T) {
 	want := entity.Build{
-		ID:        "bk-1001",
-		RequestID: "request/monorepo/main/1",
-		Status:    entity.BuildStatusRunning,
-		Version:   2,
+		ID:           "bk-1001",
+		RequestID:    "request/monorepo/main/1",
+		Status:       entity.BuildStatusRunning,
+		TerminalAtMs: 1234,
+		Version:      2,
 	}
 
 	tests := []struct {
@@ -124,9 +126,9 @@ func TestBuildStore_Get(t *testing.T) {
 			name: "found",
 			id:   want.ID,
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"id", "request_id", "status", "version"}).
-					AddRow(want.ID, want.RequestID, string(want.Status), want.Version)
-				mock.ExpectQuery("SELECT id, request_id, status, version").
+				rows := sqlmock.NewRows([]string{"id", "request_id", "status", "terminal_at_ms", "version"}).
+					AddRow(want.ID, want.RequestID, string(want.Status), want.TerminalAtMs, want.Version)
+				mock.ExpectQuery("SELECT id, request_id, status, terminal_at_ms, version").
 					WithArgs("monorepo/main", want.ID).
 					WillReturnRows(rows)
 			},
@@ -136,7 +138,7 @@ func TestBuildStore_Get(t *testing.T) {
 			name: "not found",
 			id:   "missing",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT id, request_id, status, version").
+				mock.ExpectQuery("SELECT id, request_id, status, terminal_at_ms, version").
 					WithArgs("monorepo/main", "missing").
 					WillReturnError(sql.ErrNoRows)
 			},
@@ -147,7 +149,7 @@ func TestBuildStore_Get(t *testing.T) {
 			name: "query error",
 			id:   "bad",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT id, request_id, status, version").
+				mock.ExpectQuery("SELECT id, request_id, status, terminal_at_ms, version").
 					WithArgs("monorepo/main", "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
@@ -178,7 +180,7 @@ func TestBuildStore_Get(t *testing.T) {
 }
 
 func TestBuildStore_Update(t *testing.T) {
-	build := entity.Build{ID: "bk-1001", Status: entity.BuildStatusRunning}
+	build := entity.Build{ID: "bk-1001", Status: entity.BuildStatusRunning, TerminalAtMs: 1234}
 	const oldVersion, newVersion = int32(1), int32(2)
 
 	tests := []struct {
@@ -191,7 +193,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
+					WithArgs(build.Status, build.TerminalAtMs, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -199,7 +201,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "version mismatch",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
+					WithArgs(build.Status, build.TerminalAtMs, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -209,7 +211,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
+					WithArgs(build.Status, build.TerminalAtMs, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -218,7 +220,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "rows affected error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
+					WithArgs(build.Status, build.TerminalAtMs, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,

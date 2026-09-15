@@ -5,11 +5,14 @@ queues:
     gate_wait_delay_ms: 5000
     # Set to 3600000 to admit at most one build per hour.
     minimum_build_admission_interval_ms: 0
+    failure_cooldown_ms: 0
   - name: monorepo/release
     max_concurrent: 1
     gate_wait_delay_ms: 5000
     minimum_build_admission_interval_ms: 0
+    failure_cooldown_ms: 0
   - name: "monorepo/slow?buildrunner-fake=build-slow"
     max_concurrent: 1
     gate_wait_delay_ms: 5000
     minimum_build_admission_interval_ms: 0
+    failure_cooldown_ms: 0

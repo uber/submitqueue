@@ -6,5 +6,6 @@ CREATE TABLE IF NOT EXISTS build (
     request_id  VARCHAR(255) NOT NULL,
     status      VARCHAR(64)  NOT NULL,
     version     INT          NOT NULL,
+    terminal_at_ms BIGINT    NOT NULL DEFAULT 0,
     PRIMARY KEY (queue, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

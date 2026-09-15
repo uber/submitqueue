@@ -413,11 +413,13 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateCAS() {
 
 	updated := created
 	updated.Status = entity.BuildStatusRunning
+	updated.TerminalAtMs = 1234
 	require.NoError(t, s.buildStore.Update(s.ctx, updated, 1, 2))
 
 	got, err := s.buildStore.Get(s.ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusRunning, got.Status)
+	assert.EqualValues(t, 1234, got.TerminalAtMs)
 	assert.Equal(t, int32(2), got.Version)
 
 	err = s.buildStore.Update(s.ctx, updated, 1, 2)

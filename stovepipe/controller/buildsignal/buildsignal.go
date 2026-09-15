@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -35,6 +36,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -63,10 +65,12 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	materializer  requestlog.Materializer
+	queueConfigs  queueconfig.Store
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
+	now           func() time.Time
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -81,6 +85,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
+	queueConfigs queueconfig.Store,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -91,10 +96,12 @@ func NewController(
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		stores:        stores,
 		materializer:  materializer,
+		queueConfigs:  queueConfigs,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
+		now:           time.Now,
 	}
 }
 
@@ -168,16 +175,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to poll status for build %s: %w", build.ID, err)
 	}
 
-	effective, err := c.reconcile(ctx, store, build, status)
+	build, err = c.reconcile(ctx, store, build, status)
 	if err != nil {
 		return err
 	}
 
-	if effective.IsTerminal() {
+	if build.Status.IsTerminal() {
 		if err := c.persistBuildFinishedLog(ctx, store, request, build.ID); err != nil {
 			return err
 		}
-		if err := c.finishRequest(ctx, store, &request, effective); err != nil {
+		if err := c.finishRequest(ctx, store, &request, build); err != nil {
 			return err
 		}
 		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
@@ -189,7 +196,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		c.logger.Infow("build reached terminal status",
 			"build_id", build.ID,
 			"request_id", request.ID,
-			"status", string(effective),
+			"status", string(build.Status),
 			"request_state", string(request.State),
 		)
 		return nil
@@ -198,11 +205,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Not terminal yet: hold the delivery so this same message redelivers
 	// after the poll delay — the partition (keyed by build id) sleeps with it,
 	// and the redelivery does not count toward the retry limit.
-	delayMs := pollDelay(effective)
+	delayMs := pollDelay(build.Status)
 	delivery.Hold(delayMs)
 	c.logger.Debugw("holding for next build status poll",
 		"build_id", build.ID,
-		"status", string(effective),
+		"status", string(build.Status),
 		"delay_ms", delayMs,
 	)
 	return nil
@@ -234,21 +241,39 @@ func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.
 // the request non-terminal, so redelivery re-runs both steps and decrements again
 // — transiently over-admitting by one until releaseBuildSlot's zero clamp
 // reconverges, which is the failure mode this pipeline prefers.
-func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, status entity.BuildStatus) error {
+func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, build entity.Build) error {
 	if request.State.HasBuildOutcome() {
 		return nil
 	}
 
-	if err := c.releaseBuildSlot(ctx, store, request.Queue); err != nil {
+	failureCooldownMs, err := c.failureCooldown(ctx, request.Queue, build)
+	if err != nil {
+		return err
+	}
+	if err := c.releaseBuildSlot(ctx, store, request.Queue, build.TerminalAtMs, failureCooldownMs); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
-	if err := c.markOutcome(ctx, store, request, outcomeState(status)); err != nil {
+	if err := c.markOutcome(ctx, store, request, outcomeState(build.Status)); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 	return nil
+}
+
+func (c *Controller) failureCooldown(ctx context.Context, queueName string, build entity.Build) (int64, error) {
+	if build.Status != entity.BuildStatusFailed || build.TerminalAtMs == 0 {
+		return 0, nil
+	}
+	cfg, err := c.queueConfigs.Get(ctx, queueName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to load queue config for %s: %w", queueName, err)
+	}
+	if cfg.FailureCooldownMs <= 0 {
+		return 0, nil
+	}
+	return cfg.FailureCooldownMs, nil
 }
 
 func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) error {
@@ -326,7 +351,7 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 // (preserving concurrent updates), clamps at zero, and retries on version conflicts.
 // Unlike process's unwind-path release this is not best-effort: the caller must not
 // mark the request terminal if the slot was not freed, so a hard failure is returned.
-func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) error {
+func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string, terminalAtMs, failureCooldownMs int64) error {
 	queueStore := store.GetQueueStore()
 
 	for {
@@ -340,6 +365,11 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 
 		updated := queueRow
 		updated.InFlightCount = queueRow.InFlightCount - 1
+		cooldownNotBeforeMs := terminalAtMs + failureCooldownMs
+		cooldownAdvanced := failureCooldownMs > 0 && cooldownNotBeforeMs > updated.BuildAdmissionNotBeforeMs
+		if cooldownAdvanced {
+			updated.BuildAdmissionNotBeforeMs = cooldownNotBeforeMs
+		}
 		newVersion := queueRow.Version + 1
 		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
@@ -348,6 +378,9 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 			return fmt.Errorf("failed to release build slot for queue %s: %w", queueName, err)
 		}
 		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
+		if cooldownAdvanced {
+			metrics.NamedCounter(c.metricsScope, _opName, "failure_cooldowns", 1, metrics.TagsFromContext(ctx)...)
+		}
 		return nil
 	}
 }
@@ -356,24 +389,28 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 // should drive the rest of Process: the polled status when persisted (or
 // already unchanged), or the stored status when a stored terminal status is
 // write-once-protected against a differing poll.
-func (c *Controller) reconcile(ctx context.Context, store storage.Storage, build entity.Build, status entity.BuildStatus) (entity.BuildStatus, error) {
+func (c *Controller) reconcile(ctx context.Context, store storage.Storage, build entity.Build, status entity.BuildStatus) (entity.Build, error) {
 	if status == build.Status {
-		return build.Status, nil
+		return build, nil
 	}
 
 	// Terminal is write-once: a later poll of a flaky backend must never
 	// overwrite an already-committed terminal status.
 	if build.Status.IsTerminal() {
-		return build.Status, nil
+		return build, nil
 	}
 
 	newVersion := build.Version + 1
 	updated := build
 	updated.Status = status
-	if err := store.GetBuildStore().Update(ctx, updated, build.Version, newVersion); err != nil {
-		return "", fmt.Errorf("failed to persist status for build %s: %w", build.ID, err)
+	if status.IsTerminal() {
+		updated.TerminalAtMs = c.now().UnixMilli()
 	}
-	return status, nil
+	if err := store.GetBuildStore().Update(ctx, updated, build.Version, newVersion); err != nil {
+		return entity.Build{}, fmt.Errorf("failed to persist status for build %s: %w", build.ID, err)
+	}
+	updated.Version = newVersion
+	return updated, nil
 }
 
 // loadBuild returns the build for id.
