@@ -139,6 +139,14 @@ func (m *gitMerger) updateHeadBranchFor(ctx context.Context, u headUpdate, tips 
 		case 1:
 			branch, lease = candidates[0], u.ref.SHA
 		case 0:
+			// An earlier delivery that moved the branch and then failed to push
+			// the target leaves nothing at the pinned SHA, so the tips cannot
+			// name it and the tracker is empty in a fresh process. The URI names
+			// the branch directly, which is enough to move it on.
+			if moved, tip, ok := m.headBranchMovedByMerger(ctx, u.ref); ok {
+				branch, lease = moved, tip
+				break
+			}
 			// Nothing on this remote is at the change's head. The ordinary cause is
 			// a change proposed from a fork, whose head branch lives in another
 			// repository entirely and is not ours to move; a deleted or already
@@ -205,4 +213,32 @@ func (m *gitMerger) remoteBranchTips(ctx context.Context) (map[string][]string, 
 		tips[sha] = append(tips[sha], ref)
 	}
 	return tips, nil
+}
+
+// headBranchMovedByMerger resolves a change's own head branch and the commit it
+// currently sits on, for the case where it has already been moved off the SHA
+// the URI pinned.
+//
+// It answers only when the branch is on a commit this merger made. A branch its
+// author advanced is a change that moved on, not one a previous attempt got
+// half-way through, and moving it would discard their push — the lease would
+// refuse it anyway, but declining here keeps the reason legible.
+func (m *gitMerger) headBranchMovedByMerger(ctx context.Context, ref changeRef) (branch, tip string, ok bool) {
+	if !strings.HasPrefix(ref.Ref, headBranchPrefix) {
+		return "", "", false
+	}
+	out, err := m.run(ctx, nil, "ls-remote", m.remote, ref.Ref)
+	if err != nil {
+		return "", "", false
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	current := fields[0]
+	if !m.isOwnCommit(ctx, current) {
+		return "", "", false
+	}
+	coremetrics.NamedCounter(m.metricsScope, "head_branch", "resumed", 1)
+	return ref.Ref, current, true
 }
