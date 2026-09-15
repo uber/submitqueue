@@ -39,6 +39,10 @@ type Queue struct {
 	// InFlightCount is the number of trunk validations admitted by process but not yet terminal.
 	InFlightCount int32 `json:"in_flight_count"`
 
+	// BuildAdmissionNotBeforeMs is the earliest Unix-millisecond timestamp at which another
+	// build may be admitted. Zero means no time-based admission restriction.
+	BuildAdmissionNotBeforeMs int64 `json:"build_admission_not_before_ms"`
+
 	// LatestRequestID is the request id of the newest head ingest accepted for this queue.
 	// Empty until the first request is created. Coalescing compares IDs via CompareRequestID.
 	LatestRequestID string `json:"latest_request_id"`

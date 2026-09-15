@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS queue (
     latest_request_id      VARCHAR(255) NOT NULL DEFAULT '',
     version                INT          NOT NULL,
     last_green_request_id  VARCHAR(255) NOT NULL DEFAULT '',
+    build_admission_not_before_ms BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
