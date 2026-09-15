@@ -86,8 +86,9 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	composeFile := testutil.Runfile("service/stovepipe/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe",
 		testutil.WithBuildContext(map[string]string{
-			".docker-bin/stovepipe":               "service/stovepipe/server/stovepipe_linux",
-			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
+			".docker-bin/stovepipe":                "service/stovepipe/server/stovepipe_linux",
+			"service/stovepipe/server/Dockerfile":  "service/stovepipe/server/Dockerfile",
+			"service/stovepipe/server/queues.yaml": "service/stovepipe/server/queues.yaml",
 		}))
 
 	err := s.stack.Up()

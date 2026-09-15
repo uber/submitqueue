@@ -55,7 +55,9 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
+	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	queueconfigyaml "github.com/uber/submitqueue/stovepipe/extension/queueconfig/yaml"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -330,10 +332,18 @@ func run() error {
 	// silently duplicated across controllers.
 	sourceControl := fakeSourceControlFactory{}
 	brf := fakeBuildRunnerFactory{}
+	queueConfigPath := os.Getenv("QUEUE_CONFIG_PATH")
+	queueConfigs, err := loadQueueConfigs(queueConfigPath)
+	if err != nil {
+		return err
+	}
+	if err := validateQueueConfigTenants(ctx, queueConfigPath, queueConfigs, tenants); err != nil {
+		return err
+	}
 
 	storageFty := storageFactory{backend: store}
 	materializer := requestlog.NewMaterializer(scope)
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{})
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, queueConfigs, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
 		return err
 	}
@@ -449,6 +459,7 @@ func registerPrimaryControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	materializer requestlog.Materializer,
+	queueConfigs queueconfig.Store,
 	registry consumer.TopicRegistry,
 	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
@@ -497,6 +508,35 @@ func registerPrimaryControllers(
 	count++
 
 	return count, nil
+}
+
+func loadQueueConfigs(path string) (queueconfig.Store, error) {
+	if path == "" {
+		return queueconfigdefault.NewStore(), nil
+	}
+	store, err := queueconfigyaml.NewStore(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load queue configs: %w", err)
+	}
+	return store, nil
+}
+
+func validateQueueConfigTenants(ctx context.Context, path string, store queueconfig.Store, tenants []string) error {
+	if path == "" {
+		return nil
+	}
+	configs, err := store.List(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list queue configs: %w", err)
+	}
+	configuredQueueNames := make([]string, 0, len(configs))
+	for _, cfg := range configs {
+		configuredQueueNames = append(configuredQueueNames, cfg.Name)
+	}
+	if err := servicemq.ValidateTenantSetsEqual("MQ_TENANTS", tenants, "QUEUE_CONFIG_PATH", configuredQueueNames); err != nil {
+		return fmt.Errorf("failed to validate queue config tenants: %w", err)
+	}
+	return nil
 }
 
 // registerDLQControllers creates one DLQ reconciler per primary stage and
