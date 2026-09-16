@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "ingest.go",
+        "project_status.go",
         "request_history.go",
     ],
     importpath = "github.com/uber/submitqueue/service/stovepipe/server/mapper",
@@ -18,6 +19,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "ingest_test.go",
+        "project_status_test.go",
         "request_history_test.go",
     ],
     embed = [":go_default_library"],
