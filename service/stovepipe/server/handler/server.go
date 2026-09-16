@@ -29,6 +29,7 @@ type StovepipeServer struct {
 	pingController           *controller.PingController
 	ingestController         *controller.IngestController
 	requestHistoryController controller.RequestHistoryController
+	projectStatusController  *controller.GetProjectStatusByURIController
 }
 
 // NewStovepipeServer creates a gRPC service handler from Stovepipe controllers.
@@ -36,11 +37,13 @@ func NewStovepipeServer(
 	pingController *controller.PingController,
 	ingestController *controller.IngestController,
 	requestHistoryController controller.RequestHistoryController,
+	projectStatusController *controller.GetProjectStatusByURIController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
 		ingestController:         ingestController,
 		requestHistoryController: requestHistoryController,
+		projectStatusController:  projectStatusController,
 	}
 }
 
@@ -75,4 +78,13 @@ func (s *StovepipeServer) GetRequestHistoryByURI(ctx context.Context, req *pb.Ge
 		return nil, err
 	}
 	return &pb.GetRequestHistoryByURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
+}
+
+// GetProjectStatusByURI returns the current repository validation status for a commit.
+func (s *StovepipeServer) GetProjectStatusByURI(ctx context.Context, req *pb.GetProjectStatusByURIRequest) (*pb.GetProjectStatusByURIResponse, error) {
+	result, err := s.projectStatusController.GetProjectStatusByURI(ctx, mapper.ProtoToGetProjectStatusByURIRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.GetProjectStatusByURIResultToProto(result), nil
 }
