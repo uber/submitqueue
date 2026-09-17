@@ -849,6 +849,8 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			deliveryChan <- mockDel
 			<-done
 
+			require.NoError(t, testC.Stop(30000))
+
 			snapshot := testScope.Snapshot()
 
 			histograms := snapshot.Histograms()
@@ -895,8 +897,6 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 					assert.NotContains(t, counter.Name(), duplicate)
 				}
 			}
-
-			_ = testC.Stop(30000)
 		})
 	}
 }
@@ -989,6 +989,9 @@ func TestConsumer_AckLifecycleMetrics(t *testing.T) {
 	deliveryChan <- mockDel
 	<-done
 
+	err = c.Stop(30000)
+	require.NoError(t, err)
+
 	snapshot := scope.Snapshot()
 	histograms := snapshot.Histograms()
 	var foundAck bool
@@ -999,9 +1002,6 @@ func TestConsumer_AckLifecycleMetrics(t *testing.T) {
 		}
 	}
 	assert.True(t, foundAck, "Should have successful ack.finish metric")
-
-	err = c.Stop(30000)
-	require.NoError(t, err)
 }
 
 func TestConsumer_NackLifecycleMetrics(t *testing.T) {
@@ -1043,6 +1043,9 @@ func TestConsumer_NackLifecycleMetrics(t *testing.T) {
 	deliveryChan <- mockDel
 	<-done
 
+	err = c.Stop(30000)
+	require.NoError(t, err)
+
 	snapshot := scope.Snapshot()
 	histograms := snapshot.Histograms()
 	var foundNackError bool
@@ -1053,9 +1056,6 @@ func TestConsumer_NackLifecycleMetrics(t *testing.T) {
 		}
 	}
 	assert.True(t, foundNackError, "Should have failed nack.finish metric")
-
-	err = c.Stop(30000)
-	require.NoError(t, err)
 }
 
 // TestConsumer_PerPartitionProcessing verifies that a slow message on partition A
