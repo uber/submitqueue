@@ -195,29 +195,6 @@ func (s *GitMergeSuite) TestLand_Stack_LandsInOrderInOneRefUpdate() {
 		"the whole stack must reach the target in exactly one ref update")
 }
 
-func (s *GitMergeSuite) TestLand_MovesEachChangeHeadBranchToItsLandedCommit() {
-	// What makes a provider mark a rebased change merged: its head branch is moved
-	// to the commit the change became, so the head is reachable from the target.
-	before := s.mainSHA()
-	first := s.pushChange("feature/head-1", map[string]string{"h1.txt": "h1\n"}, "add h1")
-	second := s.pushChange("feature/head-2", map[string]string{"h2.txt": "h2\n"}, "add h2")
-
-	sqid := s.land(gitQueue, s.uri("feature/head-1", first), s.uri("feature/head-2", second))
-	s.requireStatus(sqid, entity.RequestStatusLanded)
-
-	landed := s.shasSince(before)
-	s.Require().Len(landed, 2)
-
-	// Each change gets its own landed commit, not the final tip.
-	s.Equal(landed[0], s.branchSHA("feature/head-1"))
-	s.Equal(landed[1], s.branchSHA("feature/head-2"))
-	s.NotEqual(s.branchSHA("feature/head-1"), s.branchSHA("feature/head-2"))
-
-	// Reachability is the property a provider actually reads.
-	s.True(s.isAncestorOfMain(s.branchSHA("feature/head-1")))
-	s.True(s.isAncestorOfMain(s.branchSHA("feature/head-2")))
-}
-
 func (s *GitMergeSuite) TestLand_Conflict_FailsAndLeavesTheTargetUntouched() {
 	// Two changes editing the same line from the same base: the first lands,
 	// the second cannot be replayed onto it.
@@ -236,23 +213,16 @@ func (s *GitMergeSuite) TestLand_Conflict_FailsAndLeavesTheTargetUntouched() {
 	s.Equal(loser, s.branchSHA("feature/conflict-b"))
 }
 
-func (s *GitMergeSuite) TestLand_ResubmittedAfterLanding_IsRejectedAsStale() {
-	// Landing a change moves its head branch to the commit it became, so the
-	// URI that was submitted no longer describes where that branch points. The
-	// staleness check catches exactly that, which is what stops a change from
-	// being replayed onto the target a second time.
+func (s *GitMergeSuite) TestLand_ResubmittedAfterLanding_IsSuccessfulNoOp() {
 	head := s.pushChange("feature/already", map[string]string{"already.txt": "already\n"}, "add already")
 	s.requireStatus(s.land(gitQueue, s.uri("feature/already", head)), entity.RequestStatusLanded)
 
 	settled := s.mainSHA()
 	updates := s.mainRefUpdateCount()
-	landedAs := s.branchSHA("feature/already")
-	s.NotEqual(head, landedAs, "the head branch moved to the landed commit")
 
-	s.requireStatus(s.land(gitQueue, s.uri("feature/already", head)), entity.RequestStatusError)
-	s.Equal(settled, s.mainSHA(), "a stale resubmission must not move the target")
+	s.requireStatus(s.land(gitQueue, s.uri("feature/already", head)), entity.RequestStatusLanded)
+	s.Equal(settled, s.mainSHA(), "a change already on the target must not move it again")
 	s.Equal(updates, s.mainRefUpdateCount(), "and must not push at all")
-	s.Equal(landedAs, s.branchSHA("feature/already"), "nor disturb the change's branch")
 }
 
 // --- gateway helpers ---
@@ -394,14 +364,6 @@ func (s *GitMergeSuite) subjectsSince(since string) []string {
 // fileOnMain reads a file's contents at the target tip.
 func (s *GitMergeSuite) fileOnMain(path string) string {
 	return s.runGit(s.bare, "show", "refs/heads/main:"+path) + "\n"
-}
-
-// isAncestorOfMain reports whether a commit is reachable from the target — the
-// property a provider reads to decide a change has merged.
-func (s *GitMergeSuite) isAncestorOfMain(sha string) bool {
-	cmd := exec.Command(s.git, "merge-base", "--is-ancestor", sha, "refs/heads/main")
-	cmd.Dir = s.bare
-	return cmd.Run() == nil
 }
 
 // mainRefUpdateCount is how many times the target branch has been updated,

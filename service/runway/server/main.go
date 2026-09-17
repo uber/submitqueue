@@ -477,7 +477,6 @@ func loadMergeConfigFromEnv(logger *zap.Logger) (mergeConfig, error) {
 		// graphs, which is a safeguard everywhere except a queue whose purpose
 		// is importing one repository's history into another.
 		AllowUnrelatedHistories: envBool("MERGE_ALLOW_UNRELATED_HISTORIES", false),
-		UpdateHeadBranch:        envBool("MERGE_UPDATE_HEAD_BRANCH", false),
 		FetchRefspecs:           splitRefspecs(os.Getenv("MERGE_FETCH_REFSPECS")),
 		CommitterName:           os.Getenv("MERGE_COMMITTER_NAME"),
 		CommitterEmail:          os.Getenv("MERGE_COMMITTER_EMAIL"),
@@ -538,7 +537,6 @@ func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, e
 		MaxPushAttempts:         cfg.MaxPushAttempts,
 		FetchRefspecs:           cfg.FetchRefspecs,
 		CheckStaleness:          *cfg.CheckStaleness,
-		UpdateHeadBranch:        cfg.UpdateHeadBranch,
 		AllowUnrelatedHistories: cfg.AllowUnrelatedHistories,
 		CommitterName:           cfg.CommitterName,
 		CommitterEmail:          cfg.CommitterEmail,
@@ -553,7 +551,6 @@ func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, e
 		zap.String("checkout", cfg.CheckoutPath),
 		zap.String("target", cfg.Target),
 		zap.String("default_strategy", cfg.strategy().String()),
-		zap.Bool("update_head_branch", cfg.UpdateHeadBranch),
 	)
 	f := &gitMergerFactory{merger: m}
 	b.byTarget[cfg.CheckoutPath] = f

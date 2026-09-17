@@ -65,7 +65,6 @@ queues:
 	assert.Equal(t, mergestrategypb.Strategy_REBASE, demo.strategy())
 	require.NotNil(t, demo.CheckStaleness)
 	assert.True(t, *demo.CheckStaleness, "staleness checking is on unless turned off")
-	assert.False(t, demo.UpdateHeadBranch)
 	assert.True(t, cfg.usesGit())
 }
 
@@ -83,7 +82,6 @@ queues:
       checkoutPath: /var/checkouts/r
       defaultStrategy: SQUASH_REBASE
       checkStaleness: false
-      updateHeadBranch: true
       tokenEnv: SOME_TOKEN
       tokenUser: oauth2
 `)
@@ -98,7 +96,6 @@ queues:
 	assert.Equal(t, mergestrategypb.Strategy_SQUASH_REBASE, demo.strategy())
 	require.NotNil(t, demo.CheckStaleness)
 	assert.False(t, *demo.CheckStaleness)
-	assert.True(t, demo.UpdateHeadBranch)
 }
 
 func TestLoadMergeConfig_NoopOnlyNeedsNoGit(t *testing.T) {
@@ -302,10 +299,6 @@ func TestLoadMergeConfig_RejectsSharedCheckoutWithDivergentMergerFields(t *testi
 		{
 			name: "default strategy",
 			b:    "{type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r, defaultStrategy: REBASE}",
-		},
-		{
-			name: "update head branch",
-			b:    "{type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r, updateHeadBranch: true}",
 		},
 		{
 			name: "staleness checking",

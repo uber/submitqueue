@@ -34,7 +34,6 @@ queues:
       target: main
       checkoutPath: /var/runway/checkouts/sq-sandbox
       defaultStrategy: SQUASH_REBASE
-      updateHeadBranch: true
       tokenEnv: GITHUB_TOKEN
 ```
 
@@ -81,7 +80,6 @@ The Runway controllers themselves live under [`runway/controller/`](../../runway
 | `MERGE_COMMITTER_EMAIL` | no | Committer email for service-created commits     | `runway@submitqueue.invalid` |
 | `GIT_EXECUTABLE` / `GIT_EXEC_PATH` / `GIT_TEMPLATE_DIR` | no | Absolute paths pinning the git runtime. Each is derived from the installed git when unset — the executable from `PATH`, the exec path from `git --exec-path`, the templates from the matching install prefix. | derived |
 | `MERGE_CHECK_STALENESS` | no | Verify each change's provider ref still points at the commit its URI names before applying | `true` |
-| `MERGE_UPDATE_HEAD_BRANCH` | no | Before pushing the target, move each change's head branch to the commit it landed as, so the provider marks the change merged rather than closed. Only affects `REBASE`/`SQUASH_REBASE`. | `false` |
 | `MERGE_ALLOW_UNRELATED_HISTORIES` | no | Let a `MERGE` step integrate a change sharing no ancestry with the target (repository imports). Leave off unless the queue exists to perform imports. | `false` |
 | `MERGE_FETCH_REFSPECS` | no | Comma-separated extra refspecs fetched each cycle. Only needed for a remote that refuses to serve an unadvertised commit by SHA. | — |
 

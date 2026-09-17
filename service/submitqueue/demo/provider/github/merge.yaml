@@ -30,14 +30,6 @@ queues:
       # Refuse a change whose head has moved since it was submitted, rather
       # than landing a commit nobody is looking at any more.
       checkStaleness: true
-      # SQUASH_REBASE rewrites commits, so the pull request's original head is
-      # not reachable from the target and GitHub would leave it open. Moving the
-      # head branch to the commit it landed as is what makes GitHub mark it
-      # merged — no API call, no close-PR permission.
-      #
-      # This cannot work for a pull request opened from a fork: its head branch
-      # lives in another repository. Such a change lands and stays open.
-      updateHeadBranch: true
       # The credential for cloning, fetching, and pushing. Written into the
       # checkout as an HTTP Authorization header — never into the remote URL,
       # which git would echo back in error messages.

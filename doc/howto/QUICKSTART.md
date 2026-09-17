@@ -253,7 +253,7 @@ The last rung is the only one that needs credentials, and the only one where a c
 
 ### What you need
 
-A **scratch repository** you are willing to have commits pushed to and branches force-moved on. Do not point this at anything you care about — the merger pushes to the target branch and rewrites the head branch of every change it lands.
+A **scratch repository** you are willing to have commits pushed to. Do not point this at anything you care about — the merger pushes every landed change straight to the target branch.
 
 A **token** for it, scoped to that one repository.
 
@@ -262,7 +262,7 @@ For a **fine-grained** token, grant these repository permissions. Each is here b
 | Permission | Access | Needed by |
 |---|---|---|
 | Metadata | Read | mandatory on every fine-grained token; GitHub adds it for you |
-| Contents | Read and write | the git merger — clone, fetch, push to the target branch, and force-move each landed change's head branch |
+| Contents | Read and write | the git merger — clone, fetch, and push to the target branch |
 | Pull requests | Read | the change provider reads pull request metadata, and `land -pr` reads the head commit |
 | Pull requests | Read **and write** | only for `make demo-requests`, which opens pull requests |
 | Actions | Read and write | the build runner — dispatch a run per batch, poll it, cancel it |
@@ -306,11 +306,9 @@ It opens real pull requests, enqueues each as it is created, and watches them la
   demo-queue/3  https://github.com/behinddwalls/sq-demo/pull/524      25s  accepted → … → landed
 ```
 
-All three show **Merged** on GitHub and their commits are on `main`.
+Their commits land on `main`, but the pull requests themselves stay open: nothing here calls GitHub's API to close them, and `SQUASH_REBASE` rewrites the commits, so a pull request's original head never becomes reachable from `main` for GitHub to notice on its own. Closing them requires a separately driven automation, which nothing in this stack provides.
 
-Worth understanding *why* they show merged, because nothing called an API to close them. A provider marks a change merged once its head commit is reachable from the target branch. `SQUASH_REBASE` rewrites the commits, so a pull request's original head is nowhere in `main` — and `updateHeadBranch` therefore moves its branch to the commit it landed as. GitHub draws its own conclusion from that.
-
-`make demo-requests STACKED=true` submits a chain instead, each pull request targeting the previous one's branch. All of them land as one push to `main`, and all of them show as merged.
+`make demo-requests STACKED=true` submits a chain instead, each pull request targeting the previous one's branch. All of them land as one push to `main`, and all of them stay open the same way.
 
 **These builds are real.** This rung dispatches your workflow once per speculative batch and polls it to completion, so `landed` here means a build of that batch passed — not that a fake said so. It is the only rung where nothing is faked, and the only one that costs you Actions minutes. [Using real CI](#using-real-ci) below covers what the workflow has to accept and why testing the *combination* is the whole point.
 
@@ -405,9 +403,9 @@ Both MySQL services mount **anonymous** volumes, so a stop/start cycle orphans a
 
 **`PROVIDER=github`: the push is rejected on the first try.** Branch protection on `main` — required status checks, or a linear-history or no-force-push rule — applies to the merger like anyone else. Either relax it on the scratch repo or add the token's identity to the bypass list.
 
-**`PROVIDER=github`: the change lands but the pull request stays open.** Two causes, distinguishable in Runway's logs. If the change came from a **fork**, this is expected and permanent: the head branch lives in the contributor's repository, which this stack has no business writing to, and the log says `no head branch on this remote for change`. Otherwise it is **protection on the head branch** blocking the force update, logged as `could not move change head branch`. The land itself succeeded either way — the failure is reported and deliberately not retried, because the push already happened and cannot be undone.
+**`PROVIDER=github`: the change lands but the pull request stays open.** Expected under `REBASE` and `SQUASH_REBASE`: nothing here calls GitHub's API to close a pull request, and rewriting its commits leaves its original head unreachable from the target branch, so GitHub has nothing to notice the change by. Closing it requires a separately driven automation, which nothing in this stack provides.
 
-**A change is rejected as stale.** Its head moved after it was submitted, so the commit named is no longer the one under review. Re-submit it. This also happens if you re-land a change that already landed, since landing moved its branch.
+**A change is rejected as stale.** Its head moved after it was submitted, so the commit named is no longer the one under review. Re-submit it.
 
 **`grpcurl` reports `target server does not expose service`.** The server registers reflection, but its descriptor references `api/base/change/proto/change.proto` while the generated code registers that file as `change.proto`, so reflection cannot resolve the gateway's descriptor. Use the client CLI, which is what every command here does.
 

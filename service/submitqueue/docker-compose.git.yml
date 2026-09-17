@@ -11,8 +11,8 @@
 #
 # The merge target is a bare repository on a shared volume, addressed by path.
 # That exercises the whole merge path (git in the image, checkout provisioning,
-# real cherry-pick and push, head-branch updates) with no credential, no
-# network, and no account anywhere — which is what lets it gate a pull request.
+# real cherry-pick and push) with no credential, no network, and no account
+# anywhere — which is what lets it gate a pull request.
 #
 # Required in the environment, all owned by the test:
 #   SQ_PROVIDER_CONFIG_DIR   profiles.yaml / merge.yaml selecting each queue's

@@ -1,9 +1,9 @@
 # Merge targets for the "git" example: a plain git remote with no provider.
 #
 # The target is a bare repository on a shared volume, addressed by path. That
-# exercises the whole merge machinery (real fetch, cherry-pick, push,
-# head-branch update) with no credential, no network, and no provider account,
-# which is what lets the hermetic git E2E (`make e2e-git-test`) gate PRs in CI.
+# exercises the whole merge machinery (real fetch, cherry-pick, push) with no
+# credential, no network, and no provider account, which is what lets the
+# hermetic git E2E (`make e2e-git-test`) gate PRs in CI.
 #
 # It doubles as the worked example of a non-GitHub target: nothing below names a
 # provider, because the merger does not have one. See ../README.md.
@@ -29,11 +29,6 @@ queues:
       checkoutPath: /var/runway/checkouts/demo
       defaultStrategy: SQUASH_REBASE
       checkStaleness: true
-      # Rewriting strategies leave the change's original head unreachable from
-      # the target, so its branch is moved to the commit it landed as. On a
-      # provider this is what makes the change show as merged; here it is simply
-      # observable as the branch having moved.
-      updateHeadBranch: true
 
   # Driven by the E2E, which asserts against the repository itself — what
   # reached the target branch, in what order, and in how many ref updates. These
@@ -48,4 +43,3 @@ queues:
       checkoutPath: /var/runway/checkouts/sandbox
       defaultStrategy: REBASE
       checkStaleness: true
-      updateHeadBranch: true

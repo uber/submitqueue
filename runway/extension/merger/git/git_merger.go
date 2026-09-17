@@ -39,22 +39,13 @@
 // Atomicity: for a committing merge nothing reaches the remote until every step
 // has applied cleanly (PROMOTE excepted, which is itself a single atomic
 // fast-forward ref update). A step that fails to apply aborts the in-progress
-// git operation and returns without pushing. With Params.UpdateHeadBranch the
-// merge then writes two things rather than one — the changes' head branches
-// first, then the target — and only the target's push is the point of no return.
+// git operation and returns without pushing, and the target's push is the point
+// of no return.
 //
 // Contention: if the push fails because the remote tip moved between reset and
 // push, the whole reset/apply/push cycle is retried up to Params.MaxPushAttempts
 // (default 10). Detection re-fetches the remote tip after a push failure and
 // compares it to the SHA reset to at the start of the cycle.
-//
-// Head branches: a provider decides whether a change merged while it processes
-// the push to the target, comparing the change's recorded head against what that
-// push makes reachable — a comparison REBASE and SQUASH_REBASE break by
-// rewriting the change's commits. With Params.UpdateHeadBranch, a committing
-// merge first moves each change's head branch to the commit it became and then
-// pushes the target, so the provider sees its own recorded head land and marks
-// the change merged rather than closed. See headbranch.go.
 //
 // Dry-run (CheckMergeability) applies the exact same steps but never pushes;
 // intermediate steps are committed locally so a cumulative multi-step check
@@ -151,27 +142,6 @@ type Params struct {
 	// CheckStaleness enables verifying, before applying, that each change's
 	// canonical ref still points at the commit its URI names.
 	CheckStaleness bool
-	// UpdateHeadBranch moves each change's head branch to the commit that now
-	// represents it on the target, as its own push immediately before the target
-	// is pushed. A provider decides merged-versus-closed while processing the
-	// push to the target, against the head it has recorded at that moment, so
-	// this is what makes a rewriting strategy have the change marked merged —
-	// without the merger having to know the provider or call its API.
-	//
-	// The ordering is the whole mechanism, not an implementation detail: moving
-	// the branch after the target has been pushed, or in the same atomic push,
-	// both leave the provider comparing against the pre-merge head, and it
-	// records the change as closed instead.
-	//
-	// Only REBASE and SQUASH_REBASE need it: MERGE keeps the change's own head
-	// reachable through second-parent history, and PROMOTE fast-forwards the
-	// target to that head directly. Off by default, since moving a branch the
-	// merger was not asked to move is a surprise unless a deployment opted in.
-	//
-	// A head branch that cannot be moved fails the merge before the target is
-	// pushed. A change with no branch of ours to move — proposed from a fork, or
-	// with a head several branches share — is skipped and lands normally.
-	UpdateHeadBranch bool
 	// AllowUnrelatedHistories lets a MERGE step integrate a change that shares
 	// no ancestry with the target — importing one repository's history into
 	// another. Off by default: the refusal it lifts is a real safeguard, since
@@ -192,15 +162,14 @@ type Params struct {
 // gitMerger implements merger.Merger by shelling out to the `git` CLI against a
 // local checkout.
 type gitMerger struct {
-	checkoutPath     string
-	remote           string
-	target           string
-	defaultStrategy  mergestrategypb.Strategy
-	runtime          GitRuntime
-	maxPushAttempts  int
-	fetchRefspecs    []string
-	checkStaleness   bool
-	updateHeadBranch bool
+	checkoutPath    string
+	remote          string
+	target          string
+	defaultStrategy mergestrategypb.Strategy
+	runtime         GitRuntime
+	maxPushAttempts int
+	fetchRefspecs   []string
+	checkStaleness  bool
 
 	// allowUnrelatedHistories permits a MERGE across disjoint history graphs.
 	allowUnrelatedHistories bool
@@ -251,15 +220,14 @@ func NewMerger(params Params) (merger.Merger, error) {
 		committerEmail = defaultCommitterEmail
 	}
 	return &gitMerger{
-		checkoutPath:     params.CheckoutPath,
-		remote:           params.Remote,
-		target:           params.Target,
-		defaultStrategy:  params.DefaultStrategy,
-		runtime:          params.Runtime,
-		maxPushAttempts:  maxAttempts,
-		fetchRefspecs:    params.FetchRefspecs,
-		checkStaleness:   params.CheckStaleness,
-		updateHeadBranch: params.UpdateHeadBranch,
+		checkoutPath:    params.CheckoutPath,
+		remote:          params.Remote,
+		target:          params.Target,
+		defaultStrategy: params.DefaultStrategy,
+		runtime:         params.Runtime,
+		maxPushAttempts: maxAttempts,
+		fetchRefspecs:   params.FetchRefspecs,
+		checkStaleness:  params.CheckStaleness,
 
 		allowUnrelatedHistories: params.AllowUnrelatedHistories,
 		committerName:           committerName,
@@ -434,12 +402,8 @@ func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRe
 	}
 
 	var lastErr error
-	// Head branches an attempt moved before failing to push the target stay
-	// moved. The tracker carries what that attempt resolved into the next one, so
-	// the branch is moved on rather than stranded on a commit that never landed.
-	tracked := make(headBranchTracker)
 	for attempt := 1; attempt <= m.maxPushAttempts; attempt++ {
-		baseSHA, stepResults, err := m.tryApply(ctx, steps, commit, tracked)
+		baseSHA, stepResults, err := m.tryApply(ctx, steps, commit)
 		if err == nil {
 			if !commit {
 				// Discard the local commits the dry run created so the checkout
@@ -492,9 +456,8 @@ func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRe
 
 // tryApply runs one full reset+apply(+push) cycle. The returned baseSHA is the
 // SHA the cycle was based on (set as soon as resetToRemote completes) so the
-// caller can distinguish concurrent-push contention from other failures. The
-// tracker carries head-branch state across attempts; see headBranchTracker.
-func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep, commit bool, tracked headBranchTracker) (string, []*runwaymq.StepResult, error) {
+// caller can distinguish concurrent-push contention from other failures.
+func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep, commit bool) (string, []*runwaymq.StepResult, error) {
 	if err := m.resetToRemote(ctx); err != nil {
 		coremetrics.NamedCounter(m.metricsScope, "merge", "reset_errors", 1)
 		return "", nil, err
@@ -504,7 +467,7 @@ func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep, commit b
 		return "", nil, err
 	}
 
-	stepResults, heads, err := m.applySteps(ctx, steps)
+	stepResults, err := m.applySteps(ctx, steps)
 	if err != nil {
 		// The failing apply function aborts its own in-progress git operation;
 		// the next attempt starts with resetToRemote regardless.
@@ -512,15 +475,6 @@ func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep, commit b
 	}
 
 	if commit {
-		// The head branches move first, as their own push. A provider decides
-		// merged-versus-closed while processing the push to the target, against
-		// the head it has recorded at that moment, so a head that moves later —
-		// or in the same atomic push — is recorded too late. See headbranch.go.
-		if m.updateHeadBranch {
-			if err := m.updateHeadBranches(ctx, heads, tracked); err != nil {
-				return baseSHA, nil, err
-			}
-		}
 		if err := m.push(ctx); err != nil {
 			coremetrics.NamedCounter(m.metricsScope, "merge", "git_push_errors", 1)
 			return baseSHA, nil, err
@@ -529,20 +483,16 @@ func (m *gitMerger) tryApply(ctx context.Context, steps []resolvedStep, commit b
 	return baseSHA, stepResults, nil
 }
 
-// applied is what one step produced: the commits created on the target, and the
-// per-change head updates those commits represent. The two differ because a
-// step's outputs are flat while a head update has to stay attributed to the
-// change it came from.
+// applied is what one step produced: the commits created on the target, in
+// application order.
 type applied struct {
 	outputs []*runwaymq.StepOutput
-	heads   []headUpdate
 }
 
 // applySteps dispatches each step by its resolved strategy, in order, building
 // up local HEAD and collecting one StepResult per step.
-func (m *gitMerger) applySteps(ctx context.Context, steps []resolvedStep) ([]*runwaymq.StepResult, []headUpdate, error) {
+func (m *gitMerger) applySteps(ctx context.Context, steps []resolvedStep) ([]*runwaymq.StepResult, error) {
 	results := make([]*runwaymq.StepResult, 0, len(steps))
-	var heads []headUpdate
 	for _, rs := range steps {
 		var (
 			out applied
@@ -557,25 +507,24 @@ func (m *gitMerger) applySteps(ctx context.Context, steps []resolvedStep) ([]*ru
 			out, err = m.applyMerge(ctx, rs)
 		default:
 			// resolveAndValidate rejects anything else; defensive.
-			return nil, nil, fmt.Errorf("%w: unsupported strategy %v", merger.ErrInvalidRequest, rs.strategy)
+			return nil, fmt.Errorf("%w: unsupported strategy %v", merger.ErrInvalidRequest, rs.strategy)
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		results = append(results, &runwaymq.StepResult{StepId: rs.step.GetStepId(), Outputs: out.outputs})
-		heads = append(heads, out.heads...)
 	}
-	return results, heads, nil
+	return results, nil
 }
 
 // applyRebase cherry-picks the head SHA of every URI of every change in the
 // step, in order, returning one StepOutput per newly-created commit.
 func (m *gitMerger) applyRebase(ctx context.Context, rs resolvedStep) (applied, error) {
-	picked, heads, err := m.pickStepChanges(ctx, rs)
+	picked, err := m.pickStepChanges(ctx, rs)
 	if err != nil {
 		return applied{}, err
 	}
-	return applied{outputs: toOutputs(picked), heads: heads}, nil
+	return applied{outputs: toOutputs(picked)}, nil
 }
 
 // applySquashRebase collapses each change in the step into a single commit.
@@ -595,7 +544,6 @@ func (m *gitMerger) applySquashRebase(ctx context.Context, rs resolvedStep) (app
 		}
 		if squashed {
 			out.outputs = append(out.outputs, &runwaymq.StepOutput{Id: sha})
-			out.heads = append(out.heads, headUpdate{ref: ref, newSHA: sha})
 		}
 	}
 	return out, nil
@@ -663,9 +611,6 @@ func (m *gitMerger) squashChange(ctx context.Context, step *runwaymq.MergeStep, 
 // history — the property that distinguishes MERGE from the picking strategies,
 // which rewrite those commits. A change already contained in HEAD produces no
 // output, which is what makes redelivery idempotent.
-//
-// It reports no head updates: the change's own head is already reachable from
-// the target, so its branch needs no moving for a provider to call it merged.
 func (m *gitMerger) applyMerge(ctx context.Context, rs resolvedStep) (applied, error) {
 	var out applied
 	for _, ref := range rs.refs {
@@ -796,22 +741,17 @@ func (m *gitMerger) classifyMergeFailure(ref changeRef, out []byte, conflicted b
 
 // pickStepChanges applies every change in the step, in order, returning the
 // SHAs of the commits created on the target (empty for a change whose content
-// was already present) and, per change that produced any, the last of those
-// commits — the one that now represents the change on the target.
-func (m *gitMerger) pickStepChanges(ctx context.Context, rs resolvedStep) ([]string, []headUpdate, error) {
+// was already present).
+func (m *gitMerger) pickStepChanges(ctx context.Context, rs resolvedStep) ([]string, error) {
 	var picked []string
-	var heads []headUpdate
 	for _, ref := range rs.refs {
 		created, err := m.pickRange(ctx, ref)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		picked = append(picked, created...)
-		if len(created) > 0 {
-			heads = append(heads, headUpdate{ref: ref, newSHA: created[len(created)-1]})
-		}
 	}
-	return picked, heads, nil
+	return picked, nil
 }
 
 // pickRange replays every commit the change introduces, not just its head.

@@ -84,9 +84,6 @@ type mergerConfig struct {
 	// CheckStaleness verifies each change still points at the commit its URI
 	// names before applying it. Defaults to true.
 	CheckStaleness *bool `yaml:"checkStaleness"`
-	// UpdateHeadBranch moves each change's head branch to the commit it landed
-	// as, so the provider marks it merged. Defaults to false.
-	UpdateHeadBranch bool `yaml:"updateHeadBranch"`
 	// AllowUnrelatedHistories lets a MERGE step integrate a change sharing no
 	// ancestry with the target. Defaults to false.
 	AllowUnrelatedHistories bool `yaml:"allowUnrelatedHistories"`

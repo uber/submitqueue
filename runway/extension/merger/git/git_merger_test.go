@@ -1633,8 +1633,6 @@ func (f gitFixture) installRaceHook(t *testing.T, raceSHAs []string) {
 		strings.Join(raceSHAs, "\n")+"\n",
 	))
 	const script = `#!/bin/sh
-# Contend only on the target branch. A merge that moves change head branches
-# pushes those first, and they are not what this hook simulates a race for.
 target_pushed=0
 while read -r _old _new ref; do
   if [ "$ref" = "refs/heads/main" ]; then
@@ -1659,31 +1657,6 @@ unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 "$GIT_EXEC_PATH/git" update-ref refs/heads/main "$next_sha"
 echo "race hook moved main to $next_sha and rejected push" >&2
 exit 1
-`
-	hookPath := filepath.Join(hookDir, "pre-receive")
-	require.NoError(t, os.WriteFile(hookPath, []byte(script), 0o755))
-}
-
-// installRefRejectHook makes the bare remote refuse every push that touches the
-// given fully-qualified ref, leaving all other refs alone. Used to fail a head
-// branch update without disturbing the target.
-func (f gitFixture) installRefRejectHook(t *testing.T, rejectRef string) {
-	t.Helper()
-	hookDir := filepath.Join(f.remoteDir, "hooks")
-	require.NoError(t, os.MkdirAll(hookDir, 0o755))
-	// Override the system-wide core.hooksPath so the hook we just wrote actually
-	// fires on the bare remote.
-	mustGit(t, f.remoteDir, "config", "core.hooksPath", hookDir)
-	require.NoError(t, writeFile(filepath.Join(hookDir, "reject-ref"), rejectRef+"\n"))
-	const script = `#!/bin/sh
-reject_ref=$(cat "$GIT_DIR/hooks/reject-ref")
-while read -r _old _new ref; do
-  if [ "$ref" = "$reject_ref" ]; then
-    echo "hook rejects $ref" >&2
-    exit 1
-  fi
-done
-exit 0
 `
 	hookPath := filepath.Join(hookDir, "pre-receive")
 	require.NoError(t, os.WriteFile(hookPath, []byte(script), 0o755))

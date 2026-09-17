@@ -37,12 +37,10 @@ Everything provider-specific is reached through an existing seam, so a new provi
 
 The Makefile line is there because a mode's *mounts* are not something the two config files can express: `github` needs a credential in the environment, `git` needs the sandbox and checkout directories bind-mounted, and `fake` needs neither. A provider reaching a remote API over a token is the common case and can reuse `docker-compose.provider.yml` verbatim, so for most new providers that line names an existing file rather than a new one.
 
-What is **not** on that list is the point of it: the merger's apply and push paths, the head-branch update, the orchestrator pipeline, the wire contract, and the hermetic git E2E are all provider-independent and need no change.
+What is **not** on that list is the point of it: the merger's apply and push paths, the orchestrator pipeline, the wire contract, and the hermetic git E2E are all provider-independent and need no change.
 
-Two of those deserve explanation.
+One of those deserves explanation.
 
 **The merger stays provider-neutral** because `resolveChange` reduces every URI to the same three things — the commit to apply, the ref it lives under, and a label — before any git command runs. The apply paths never learn which provider a change came from.
-
-**Marking a change merged needs no provider API.** A provider decides whether a change merged while it processes the push to the target branch, comparing the change's recorded head against what that push makes reachable. `MERGE` and `PROMOTE` satisfy that by construction; the rewriting strategies do not, so `updateHeadBranch` moves the change's head branch to the commit it landed as — as its own push, immediately before the target is pushed. The ordering is the mechanism: a head moved *after* the target has been pushed, or in the same atomic push, is recorded too late, and the provider marks the change closed rather than merged even though its head is demonstrably on the target. That works by matching a SHA against the remote's branch tips — no change number, no API call — so it behaves identically for a GitHub pull request and a GitLab merge request. The one case it cannot serve is a change proposed from a fork, whose head branch lives in another repository: such a change lands and stays open.
 
 See [doc/howto/QUICKSTART.md](../../../../doc/howto/QUICKSTART.md) for running each of these by hand, from the credential-free modes to a real land against GitHub.
