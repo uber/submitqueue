@@ -55,6 +55,9 @@ type Merger interface {
 	CheckMergeability(ctx context.Context, req *runwaymq.MergeRequest) (*runwaymq.MergeResult, error)
 	// Merge applies the ordered steps, commits the result to the remote, and
 	// reports per-step Outputs (the VCS-neutral revision identifiers produced).
+	// Merge is all-or-nothing against the target: it updates the target at
+	// most once per request, and afterwards either every step is reachable
+	// from the target or the target is unchanged.
 	Merge(ctx context.Context, req *runwaymq.MergeRequest) (*runwaymq.MergeResult, error)
 }
 
