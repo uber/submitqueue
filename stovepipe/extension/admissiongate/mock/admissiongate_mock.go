@@ -57,41 +57,41 @@ func (mr *MockGateMockRecorder) TryAdmit(ctx, request any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryAdmit", reflect.TypeOf((*MockGate)(nil).TryAdmit), ctx, request)
 }
 
-// MockFactory is a mock of Factory interface.
-type MockFactory struct {
+// MockGates is a mock of Gates interface.
+type MockGates struct {
 	ctrl     *gomock.Controller
-	recorder *MockFactoryMockRecorder
+	recorder *MockGatesMockRecorder
 	isgomock struct{}
 }
 
-// MockFactoryMockRecorder is the mock recorder for MockFactory.
-type MockFactoryMockRecorder struct {
-	mock *MockFactory
+// MockGatesMockRecorder is the mock recorder for MockGates.
+type MockGatesMockRecorder struct {
+	mock *MockGates
 }
 
-// NewMockFactory creates a new mock instance.
-func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
-	mock := &MockFactory{ctrl: ctrl}
-	mock.recorder = &MockFactoryMockRecorder{mock}
+// NewMockGates creates a new mock instance.
+func NewMockGates(ctrl *gomock.Controller) *MockGates {
+	mock := &MockGates{ctrl: ctrl}
+	mock.recorder = &MockGatesMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+func (m *MockGates) EXPECT() *MockGatesMockRecorder {
 	return m.recorder
 }
 
 // For mocks base method.
-func (m *MockFactory) For(cfg admissiongate.Config) (admissiongate.Gate, error) {
+func (m *MockGates) For(point admissiongate.Point, request entity.Request) (admissiongate.Gate, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "For", cfg)
+	ret := m.ctrl.Call(m, "For", point, request)
 	ret0, _ := ret[0].(admissiongate.Gate)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // For indicates an expected call of For.
-func (mr *MockFactoryMockRecorder) For(cfg any) *gomock.Call {
+func (mr *MockGatesMockRecorder) For(point, request any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), cfg)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockGates)(nil).For), point, request)
 }

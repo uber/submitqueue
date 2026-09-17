@@ -39,12 +39,14 @@ type Gate interface {
     TryAdmit(context.Context, entity.Request) (Result, error)
 }
 
-type Factory interface {
-    For(Config) (Gate, error)
+type Gates interface {
+    For(Point, entity.Request) (Gate, error)
 }
 ```
 
-`Point` is an open string identifier. The shared package names only points understood by Stovepipe; adding a point is additive and does not change `Gate`. `Config` carries the queue and point so host wiring can select an implementation without putting routing in an extension package.
+`Point` is an open string identifier. The shared package names only points understood by Stovepipe; adding a point is additive and does not change `Gate`.
+
+`Gates` is the host-owned resolver across queues and points. `For` takes the request rather than a separate queue configuration because the request already carries its authoritative queue identity. It returns exactly one composite gate: returning a slice of independently stateful gates would make atomic admission impossible when one gate records a reservation before a later gate defers. Concrete routing belongs in service wiring, not an extension implementation package.
 
 `TryAdmit` takes the thin `entity.Request`, following the repository's identity-in extension rule. The request already identifies its queue. A gate resolves the queue-scoped storage, configuration, request history, clocks, or remote services it needs through dependencies injected when its implementation is constructed. Controllers do not pre-resolve policy facts and hand them across the contract.
 
@@ -63,7 +65,7 @@ There is intentionally no `Complete`, `Release`, or `RecordOutcome` method. `Try
 `process` retains responsibility for request choreography; the gate owns only admission policy and its reservation:
 
 1. Load the request and queue, then coalesce it against the latest request ID.
-2. Resolve the gate for `(request.Queue, PointBuild)`.
+2. Resolve the gate with `gates.For(PointBuild, request)`.
 3. Call `TryAdmit(ctx, request)`.
 4. On `DecisionDeferred`, hold the delivery for the queue's normal gate re-check delay and return successfully.
 5. On redelivery, start again at coalescing before evaluating the gate.
@@ -149,7 +151,7 @@ Future policies at the same point, such as a calendar window, cost budget, provi
 
 Queue policy settings remain deployment configuration supplied through `queueconfig`; mutable observations remain in `AdmissionState`. Configuration is read during evaluation so a changed interval or cooldown affects the next attempt without rewriting stored state.
 
-The common admission-gate contract does not define a universal policy configuration language. The standard gate understands Stovepipe's typed queue settings. Another gate may receive configuration through dependencies injected by its constructor. Per-queue and per-point selection belongs in service wiring through `Factory.For(Config)`, consistent with other extensions; no implementation package contains a routing map.
+The common admission-gate contract does not define a universal policy configuration language. The standard gate understands Stovepipe's typed queue settings. Another gate may receive configuration through dependencies injected by its constructor. Per-queue and per-point selection belongs in service wiring through `Gates.For`, consistent with other plural resolver contracts; no implementation package contains a routing map.
 
 This separation permits gradual evolution. The current build point can use the standard composite gate, a high-cost queue can use a remote budget gate, and a future promotion point can use an independently selected gate without changing controllers' result handling.
 
@@ -173,7 +175,7 @@ The implementation PR can migrate incrementally:
 
 1. Add the opaque queue field and append the MySQL column, treating empty bytes as version-1 empty state.
 2. Implement the standard composite gate with concurrency and minimum-interval policies matching current behavior.
-3. Wire `process` through `Factory` and remove its direct admission-counter/deadline decisions.
+3. Wire `process` through `Gates` and remove its direct admission-counter/deadline decisions.
 4. Stop `buildsignal` from directly releasing admission capacity; reconciliation becomes authoritative.
 5. Add failure cooldown as another standard policy.
 

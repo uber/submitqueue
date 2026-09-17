@@ -64,17 +64,10 @@ type Gate interface {
 	TryAdmit(ctx context.Context, request entity.Request) (Result, error)
 }
 
-// Config identifies the queue and admission point resolved by a Factory.
-type Config struct {
-	// QueueName identifies the queue whose requests the Gate evaluates.
-	QueueName string
-	// Point identifies the logical pipeline boundary the Gate protects.
-	Point Point
-}
-
-// Factory resolves queue- and point-scoped admission gates. Concrete routing
-// belongs in service wiring rather than an extension implementation package.
-type Factory interface {
-	// For returns the Gate selected for cfg.
-	For(cfg Config) (Gate, error)
+// Gates resolves the gate for a request and logical admission point. Concrete
+// routing belongs in service wiring rather than an extension implementation
+// package.
+type Gates interface {
+	// For returns the Gate selected for point and request.
+	For(point Point, request entity.Request) (Gate, error)
 }
