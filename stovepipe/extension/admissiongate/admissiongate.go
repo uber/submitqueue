@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package admissiongate defines Stovepipe's extension contract for deciding
-// whether a request may cross a logical pipeline admission point.
+// whether a request may cross a logical pipeline boundary.
 package admissiongate
 
 //go:generate mockgen -source=admissiongate.go -destination=mock/admissiongate_mock.go -package=mock
@@ -22,16 +22,6 @@ import (
 	"context"
 
 	"github.com/uber/submitqueue/stovepipe/entity"
-)
-
-// Point identifies a logical pipeline boundary guarded by an admission gate.
-type Point string
-
-const (
-	// PointUnknown is the invalid zero value.
-	PointUnknown Point = ""
-	// PointBuild guards admission of a request toward the build stage.
-	PointBuild Point = "build"
 )
 
 // Decision is the expected outcome of evaluating an admission gate.
@@ -54,7 +44,7 @@ type Result struct {
 	BlockedBy []string
 }
 
-// Gate decides whether requests may cross one queue-scoped admission point.
+// Gate decides whether requests may cross one queue-scoped pipeline boundary.
 // Implementations resolve the durable facts they need from the request's
 // identity and must make repeated calls for the same request idempotent.
 type Gate interface {
@@ -64,10 +54,10 @@ type Gate interface {
 	TryAdmit(ctx context.Context, request entity.Request) (Result, error)
 }
 
-// Gates resolves the gate for a request and logical admission point. Concrete
-// routing belongs in service wiring rather than an extension implementation
-// package.
+// Gates resolves the gate for a request. A controller receives the resolver
+// for the pipeline boundary it owns; concrete queue routing belongs in service
+// wiring rather than an extension implementation package.
 type Gates interface {
-	// For returns the Gate selected for point and request.
-	For(point Point, request entity.Request) (Gate, error)
+	// For returns the Gate selected for request.
+	For(request entity.Request) (Gate, error)
 }

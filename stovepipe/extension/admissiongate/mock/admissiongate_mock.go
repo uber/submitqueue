@@ -82,16 +82,16 @@ func (m *MockGates) EXPECT() *MockGatesMockRecorder {
 }
 
 // For mocks base method.
-func (m *MockGates) For(point admissiongate.Point, request entity.Request) (admissiongate.Gate, error) {
+func (m *MockGates) For(request entity.Request) (admissiongate.Gate, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "For", point, request)
+	ret := m.ctrl.Call(m, "For", request)
 	ret0, _ := ret[0].(admissiongate.Gate)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // For indicates an expected call of For.
-func (mr *MockGatesMockRecorder) For(point, request any) *gomock.Call {
+func (mr *MockGatesMockRecorder) For(request any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockGates)(nil).For), point, request)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockGates)(nil).For), request)
 }

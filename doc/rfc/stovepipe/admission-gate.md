@@ -13,11 +13,11 @@ The immediate requirements are:
 - After a build runner reports a failed result, defer the next admission for a configured cooldown.
 - Keep coalescing active while a request is deferred, so a newer head can supersede it without waiting for the gate to open.
 
-The framework must also leave room for policies such as maintenance windows, resource budgets, provider health, or an operator hold, and for logical admission points other than build admission.
+The framework must also leave room for policies such as maintenance windows, resource budgets, provider health, or an operator hold, and for logical admission boundaries other than build admission.
 
 ## Scope
 
-An **admission gate** decides whether one domain entity may cross a logical pipeline boundary. The first point is `build`: whether the latest accepted Stovepipe request may reserve validation capacity and advance toward the build stage.
+An **admission gate** decides whether one domain entity may cross a logical pipeline boundary. The first use is build admission: whether the latest accepted Stovepipe request may reserve validation capacity and advance toward the build stage.
 
 This is separate from the shared [Consumer Gate](../consumer-gate.md). A consumer gate is an external operational control that stops deliveries before a controller. A Stovepipe admission gate is domain policy evaluated by a controller for a specific request. Both defer with queue redelivery, but they answer different questions and own different state.
 
@@ -26,10 +26,6 @@ This is separate from the shared [Consumer Gate](../consumer-gate.md). A consume
 The vendor-neutral contract lives at `stovepipe/extension/admissiongate`:
 
 ```go
-type Point string
-
-const PointBuild Point = "build"
-
 type Result struct {
     Decision  Decision
     BlockedBy []string
@@ -40,13 +36,11 @@ type Gate interface {
 }
 
 type Gates interface {
-    For(Point, entity.Request) (Gate, error)
+    For(entity.Request) (Gate, error)
 }
 ```
 
-`Point` is an open string identifier. The shared package names only points understood by Stovepipe; adding a point is additive and does not change `Gate`.
-
-`Gates` is the host-owned resolver across queues and points. `For` takes the request rather than a separate queue configuration because the request already carries its authoritative queue identity. It returns exactly one composite gate: returning a slice of independently stateful gates would make atomic admission impossible when one gate records a reservation before a later gate defers. Concrete routing belongs in service wiring, not an extension implementation package.
+`Gates` is the host-owned resolver across queues for one logical boundary. The controller receives the resolver for the admission it performs, so that context does not need to travel through a string identifier on every call. `For` takes the request rather than a separate queue configuration because the request already carries its authoritative queue identity. It returns exactly one composite gate: returning a slice of independently stateful gates would make atomic admission impossible when one gate records a reservation before a later gate defers. Concrete routing belongs in service wiring, not an extension implementation package.
 
 `TryAdmit` takes the thin `entity.Request`, following the repository's identity-in extension rule. The request already identifies its queue. A gate resolves the queue-scoped storage, configuration, request history, clocks, or remote services it needs through dependencies injected when its implementation is constructed. Controllers do not pre-resolve policy facts and hand them across the contract.
 
@@ -65,7 +59,7 @@ There is intentionally no `Complete`, `Release`, or `RecordOutcome` method. `Try
 `process` retains responsibility for request choreography; the gate owns only admission policy and its reservation:
 
 1. Load the request and queue, then coalesce it against the latest request ID.
-2. Resolve the gate with `gates.For(PointBuild, request)`.
+2. Resolve the gate with `gates.For(request)`.
 3. Call `TryAdmit(ctx, request)`.
 4. On `DecisionDeferred`, hold the delivery for the queue's normal gate re-check delay and return successfully.
 5. On redelivery, start again at coalescing before evaluating the gate.
@@ -127,7 +121,7 @@ Using request history is what lets failure cooldown mean "after the runner-repor
 
 ## Policy Composition
 
-One resolved `Gate` is the atomic composition boundary for one queue and admission point. The implementation may contain several policies, but they are not independently stateful extensions called in sequence.
+One resolved `Gate` is the atomic composition boundary for one queue and logical admission. The implementation may contain several policies, but they are not independently stateful extensions called in sequence.
 
 For each `TryAdmit`, the implementation:
 
@@ -145,19 +139,19 @@ The initial standard gate composes:
 - **Minimum interval:** when configured above zero, require at least that many milliseconds between admission timestamps. Non-positive values disable it.
 - **Failure cooldown:** after a configured runner-reported failure, defer until the failure occurrence time plus the cooldown. Non-positive values disable it.
 
-Future policies at the same point, such as a calendar window, cost budget, provider-health circuit, or manual hold, fit inside the same atomic composition. A policy that needs its own durable facts receives a namespaced section in the gate envelope. A fundamentally different backend or evaluation model is another `Gate` implementation selected by wiring.
+Future policies for build admission, such as a calendar window, cost budget, provider-health circuit, or manual hold, fit inside the same atomic composition. A policy that needs its own durable facts receives a namespaced section in the gate envelope. A fundamentally different backend or evaluation model is another `Gate` implementation selected by wiring.
 
 ## Configuration And Routing
 
 Queue policy settings remain deployment configuration supplied through `queueconfig`; mutable observations remain in `AdmissionState`. Configuration is read during evaluation so a changed interval or cooldown affects the next attempt without rewriting stored state.
 
-The common admission-gate contract does not define a universal policy configuration language. The standard gate understands Stovepipe's typed queue settings. Another gate may receive configuration through dependencies injected by its constructor. Per-queue and per-point selection belongs in service wiring through `Gates.For`, consistent with other plural resolver contracts; no implementation package contains a routing map.
+The common admission-gate contract does not define a universal policy configuration language. The standard gate understands Stovepipe's typed queue settings. Another gate may receive configuration through dependencies injected by its constructor. Per-queue selection belongs in service wiring through `Gates.For`, consistent with other plural resolver contracts; no implementation package contains a routing map.
 
-This separation permits gradual evolution. The current build point can use the standard composite gate, a high-cost queue can use a remote budget gate, and a future promotion point can use an independently selected gate without changing controllers' result handling.
+This separation permits gradual evolution. Build admission can use the standard composite gate, a high-cost queue can use a remote budget gate, and a future promotion controller can receive a separately wired `Gates` resolver without changing the gate or result contracts.
 
 ## Observability
 
-The controller records admitted and deferred counters tagged by admission point. Deferred counters may additionally use each `BlockedBy` identifier, whose low-cardinality contract makes it safe as a metric tag. Logs include request ID, queue, point, decision, and blockers.
+The controller records admitted and deferred counters; its operation name identifies the guarded boundary. Deferred counters may additionally use each `BlockedBy` identifier, whose low-cardinality contract makes it safe as a metric tag. Logs include request ID, queue, decision, and blockers.
 
 The gate implementation records evaluation, state decode, reconciliation, CAS-conflict, and dependency errors. It must not place opaque state contents or arbitrary configuration values in metric tags.
 
