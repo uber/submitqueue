@@ -10,8 +10,9 @@ Pipeline stages read mutable runtime state from storage and read knobs such as `
 
 ## Entities
 
-Queue configuration entity lives in `stovepipe/entity/queue_config.go` and carries deployment knobs (`max_concurrent`, `gate_wait_delay_ms`, `minimum_build_admission_interval_ms`) separate from the mutable `Queue` row. The minimum interval is start-to-start spacing between logical admissions; zero disables time-based throttling.
+Queue configuration entity lives in `stovepipe/entity/queue_config.go` and carries deployment knobs (`max_concurrent`, `gate_wait_delay_ms`, `minimum_build_admission_interval_ms`) separate from the mutable `Queue` row. The minimum interval is start-to-start spacing between logical admissions. Positive values enable the policy; non-positive values disable it.
 
 ## Implementations
 
-`default` returns the global wiring defaults for any non-empty queue name until a file- or service-backed store lands.
+- `default` returns the global wiring defaults for any non-empty queue name. Time-based admission throttling is disabled.
+- `yaml` loads a validated immutable snapshot from a file. Every queue entry specifies its concurrency, gate delay, and general minimum admission interval.

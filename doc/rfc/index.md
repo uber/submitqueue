@@ -27,6 +27,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 ## Stovepipe
 
 - [Stovepipe Workflow](stovepipe/workflow.md) - Post-land validation pipeline overview: ingest, process, build, record greenness, analyze projects, notify downstream
+- [Admission Gates](stovepipe/admission-gate.md) - Extensible, queue-scoped logical admission decisions with atomic policy composition, opaque versioned state, optimistic locking, and reconciliation from durable request outcomes
 - [Process stage](stovepipe/steps/process.md) - Build-strategy decision, per-queue concurrency gate, backlog coalescing, entity model, platform prerequisites
 - [Build stage](stovepipe/steps/build.md) - Trigger-only stage and Stovepipe's URI-based BuildRunner contract
 - [Buildsignal stage](stovepipe/steps/buildsignal.md) - Build polling, terminal status persistence, and the handoff to record
