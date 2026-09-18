@@ -40,6 +40,7 @@ import (
 	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	platformerrs "github.com/uber/submitqueue/platform/errs"
 	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
@@ -71,6 +72,11 @@ var _ consumer.Controller = (*Controller)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "record"
+
+const (
+	failureDetailKeyRecordStage = "stovepipe.record.stage"
+	failureRecordStagePromotion = "promotion"
+)
 
 // wholeRepositoryProject is the project component of a fact covering the whole
 // repository rather than one project within it. Per-project facts need target-graph
@@ -483,7 +489,7 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
 			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "resolve"))...,
 		)
-		return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
+		return promotionFailure(fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err))
 	}
 
 	if err := sc.Promote(ctx, request.URI); err != nil {
@@ -502,7 +508,7 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
 			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "promote"))...,
 		)
-		return fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err)
+		return promotionFailure(fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err))
 	}
 
 	metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1, metrics.TagsFromContext(ctx)...)
@@ -512,6 +518,10 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		"uri", request.URI,
 	)
 	return nil
+}
+
+func promotionFailure(err error) error {
+	return platformerrs.Detail(err, map[string]any{failureDetailKeyRecordStage: failureRecordStagePromotion})
 }
 
 // publishHookEvent sends one event about request to the domain's hook topic.

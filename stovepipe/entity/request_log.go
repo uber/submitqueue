@@ -28,6 +28,8 @@ const (
 	RequestEventBuildFinished RequestEvent = "build_finished"
 	// RequestEventValidationFactRecorded records that an immutable validation verdict was established.
 	RequestEventValidationFactRecorded RequestEvent = "validation_fact_recorded"
+	// RequestEventPromotionFailed records that the request's green commit could not be promoted.
+	RequestEventPromotionFailed RequestEvent = "promotion_failed"
 )
 
 // RequestOutcomeReason identifies the durable domain reason for a terminal request state.
@@ -133,7 +135,7 @@ func (e RequestLog) validateEvent() error {
 		return fmt.Errorf("event log must not contain request-state context")
 	}
 	switch e.Event {
-	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded:
+	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventPromotionFailed:
 	default:
 		return fmt.Errorf("unknown request event %q", e.Event)
 	}

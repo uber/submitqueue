@@ -27,6 +27,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
@@ -741,7 +742,9 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 
 			// The bookmark already advanced, so the redelivery re-promotes the
 			// same commit; failing here is what makes that retry happen.
-			require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+			require.Error(t, err)
+			assert.Equal(t, failureRecordStagePromotion, errs.Attribution(err).Detail[failureDetailKeyRecordStage])
 		})
 	}
 }
