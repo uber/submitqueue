@@ -71,6 +71,7 @@ type StovepipeServer struct {
 	pingController           *controller.PingController
 	ingestController         *controller.IngestController
 	requestHistoryController controller.RequestHistoryController
+	projectStatusController  *controller.GetProjectStatusByURIController
 }
 
 // Ping delegates to the controller.
@@ -104,6 +105,15 @@ func (s *StovepipeServer) GetRequestHistoryByURI(ctx context.Context, req *pb.Ge
 		return nil, err
 	}
 	return &pb.GetRequestHistoryByURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
+}
+
+// GetProjectStatusByURI returns the current repository validation status for a commit.
+func (s *StovepipeServer) GetProjectStatusByURI(ctx context.Context, req *pb.GetProjectStatusByURIRequest) (*pb.GetProjectStatusByURIResponse, error) {
+	result, err := s.projectStatusController.GetProjectStatusByURI(ctx, mapper.ProtoToGetProjectStatusByURIRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.GetProjectStatusByURIResultToProto(result), nil
 }
 
 // inMemoryCounter is a minimal, process-local counter.Counter used to wire the example
@@ -372,10 +382,12 @@ func run() error {
 		tenants,
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
+	projectStatusController := controller.NewGetProjectStatusByURIController(logger.Sugar(), scope, storageFty)
 	srv := &StovepipeServer{
 		pingController:           pingController,
 		ingestController:         ingestController,
 		requestHistoryController: requestHistoryController,
+		projectStatusController:  projectStatusController,
 	}
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
