@@ -16,133 +16,160 @@ package record
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
 
-// DLQController reconciles record work without replaying known promotion failures.
+const _dlqOpName = "record_dlq"
+
+// DLQController records that record-stage work was abandoned without replaying
+// any of the stage's durable writes or outbound calls.
 type DLQController struct {
-	requestRecorder
+	logger        *zap.SugaredLogger
+	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
 
 var _ consumer.Controller = (*DLQController)(nil)
 
-// NewDLQController creates a controller for record dead-letter reconciliation.
+// NewDLQController creates a controller for abandoned record work.
 func NewDLQController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
-	sourceControl sourcecontrol.Factory,
-	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *DLQController {
 	name := string(topicKey) + "_controller"
 	return &DLQController{
-		requestRecorder: newRequestRecorder(logger, scope, materializer, sourceControl, registry, name),
-		stores:          stores,
-		topicKey:        topicKey,
-		consumerGroup:   consumerGroup,
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
+		stores:        stores,
+		materializer:  materializer,
+		topicKey:      topicKey,
+		consumerGroup: consumerGroup,
 	}
 }
 
-// Process reconstructs the record stage's durable effects. It never replays a
-// known promotion failure; a newly encountered promotion failure is retained in
-// request history and acknowledged rather than retried on the DLQ.
+// Process retains an observable abandonment occurrence for record work that the
+// primary consumer could not finish. Deterministic poison is acknowledged;
+// failures reading durable state or retaining history are returned for retry.
 func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 	rec := &stovepipemq.Record{}
 	if err := stovepipemq.Unmarshal(msg.Payload, rec); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("failed to deserialize record: %w", err)
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Errorw("discarding malformed record dlq message",
+			"message_id", msg.ID,
+			"error", err,
+		)
+		return nil
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, rec.GetQueueName()); err != nil {
-		return fmt.Errorf("invalid message identity: %w", err)
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Errorw("discarding record dlq message with invalid queue identity",
+			"message_id", msg.ID,
+			"request_id", rec.GetId(),
+			"error", err,
+		)
+		return nil
 	}
-	store, err := c.stores.For(storage.Config{QueueName: rec.GetQueueName()})
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("failed to resolve storage for queue %q: %w", rec.GetQueueName(), err)
-	}
-	request, err := loadRequest(ctx, store, rec.GetId())
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return err
-	}
-	if rec.GetQueueName() != "" && rec.GetQueueName() != request.Queue {
-		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rec.GetQueueName(), request.Queue, request.ID)
-	}
-
-	if originalFailure, failed := delivery.Failure(); failed && isPromotionFailure(originalFailure) {
-		return c.abandonPromotion(ctx, delivery, store, request, originalFailure, "dead_lettered")
-	}
-
-	err = c.recordRequest(ctx, store, request)
-	if err == nil {
+	if rec.GetId() == "" {
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Errorw("discarding record dlq message with empty request id",
+			"message_id", msg.ID,
+			"queue", rec.GetQueueName(),
+		)
 		return nil
 	}
 
-	currentFailure := errs.Attribution(err)
-	if !isPromotionFailure(currentFailure) {
-		return err
-	}
-	return c.abandonPromotion(ctx, delivery, store, request, currentFailure, "reconciliation_failed")
-}
-
-func isPromotionFailure(f failure.Failure) bool {
-	stage, ok := f.Detail[failureDetailKeyRecordStage].(string)
-	return ok && stage == failureRecordStagePromotion
-}
-
-func (c *DLQController) abandonPromotion(
-	ctx context.Context,
-	delivery consumer.Delivery,
-	store storage.Storage,
-	request entity.Request,
-	f failure.Failure,
-	reason string,
-) error {
-	if err := c.persistPromotionFailedHistory(ctx, store, request); err != nil {
-		return promotionFailure(fmt.Errorf("failed to persist promotion failure history: %w", err))
+	store, err := c.stores.For(storage.Config{QueueName: rec.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Errorw("discarding record dlq message for unresolvable queue",
+			"message_id", msg.ID,
+			"request_id", rec.GetId(),
+			"queue", rec.GetQueueName(),
+			"error", err,
+		)
+		return nil
 	}
 
-	msg := delivery.Message()
-	metrics.NamedCounter(c.metricsScope, _opName, "promotions_abandoned", 1,
-		metrics.TagsFromContext(ctx, metrics.NewTag("reason", reason))...,
-	)
-	c.logger.Errorw("abandoned promotion from record dlq",
-		"queue", msg.Tenant,
-		"message_id", msg.ID,
-		"attempt", delivery.Attempt(),
-		"reason", reason,
-		"error", f.Message,
-	)
-	return nil
-}
+	request, err := store.GetRequestStore().Get(ctx, rec.GetId())
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, _dlqOpName, "request_not_found", 1, metrics.TagsFromContext(ctx)...)
+			c.logger.Errorw("discarding record dlq message for missing request",
+				"message_id", msg.ID,
+				"request_id", rec.GetId(),
+				"queue", rec.GetQueueName(),
+			)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "request_store_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to load request %s for record dlq: %w", rec.GetId(), err)
+	}
+	if request.Queue != rec.GetQueueName() {
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Errorw("discarding record dlq message whose request belongs to another queue",
+			"message_id", msg.ID,
+			"request_id", request.ID,
+			"payload_queue", rec.GetQueueName(),
+			"request_queue", request.Queue,
+		)
+		return nil
+	}
 
-func (c *DLQController) persistPromotionFailedHistory(ctx context.Context, store storage.Storage, request entity.Request) error {
-	log := requestlog.NewRequestEventLog(request, entity.RequestEventPromotionFailed, "repository", nil)
+	originalFailure, hasFailure := delivery.Failure()
+	event := recordFailureEvent(originalFailure)
+	log := requestlog.NewRequestEventLog(request, event, "repository", nil)
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("failed to record promotion failure for request %s: %w", request.ID, err)
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "history_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to retain abandoned record work for request %s: %w", request.ID, err)
 	}
+
+	metrics.NamedCounter(c.metricsScope, _dlqOpName, "requests_abandoned", 1,
+		metrics.TagsFromContext(ctx, metrics.NewTag("event", string(event)))...,
+	)
+	fields := []any{
+		"message_id", msg.ID,
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"request_state", request.State,
+		"history_event", event,
+		"attempt", delivery.Attempt(),
+	}
+	if hasFailure {
+		fields = append(fields,
+			"failure", originalFailure.Message,
+			"failure_subjects", originalFailure.Subjects,
+			"failure_detail", originalFailure.Detail,
+		)
+	}
+	c.logger.Errorw("abandoned record work after retaining failure history", fields...)
 	return nil
+}
+
+func recordFailureEvent(f failure.Failure) entity.RequestEvent {
+	if stage, ok := f.Detail[failureDetailKeyRecordStage].(string); ok && stage == failureRecordStagePromotion {
+		return entity.RequestEventPromotionFailed
+	}
+	return entity.RequestEventRecordFailed
 }
 
 // Name returns the controller's name.

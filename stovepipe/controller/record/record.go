@@ -57,18 +57,14 @@ import (
 // when that fact is green advances the queue's last-green bookmark and promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	requestRecorder
-	stores        storage.Factory
-	topicKey      consumer.TopicKey
-	consumerGroup string
-}
-
-type requestRecorder struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
+	stores        storage.Factory
 	materializer  requestlog.Materializer
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
+	topicKey      consumer.TopicKey
+	consumerGroup string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -100,27 +96,14 @@ func NewController(
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		requestRecorder: newRequestRecorder(logger, scope, materializer, sourceControl, registry, name),
-		stores:          stores,
-		topicKey:        topicKey,
-		consumerGroup:   consumerGroup,
-	}
-}
-
-func newRequestRecorder(
-	logger *zap.SugaredLogger,
-	scope tally.Scope,
-	materializer requestlog.Materializer,
-	sourceControl sourcecontrol.Factory,
-	registry consumer.TopicRegistry,
-	name string,
-) requestRecorder {
-	return requestRecorder{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
+		stores:        stores,
 		materializer:  materializer,
 		sourceControl: sourceControl,
 		registry:      registry,
+		topicKey:      topicKey,
+		consumerGroup: consumerGroup,
 	}
 }
 
@@ -151,7 +134,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", rec.GetQueueName(), err)
 	}
 
-	request, err := loadRequest(ctx, store, rec.Id)
+	request, err := c.loadRequest(ctx, store, rec.Id)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
@@ -164,10 +147,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rec.GetQueueName(), request.Queue, request.ID)
 	}
 
-	return c.recordRequest(ctx, store, request)
-}
-
-func (c *requestRecorder) recordRequest(ctx context.Context, store storage.Storage, request entity.Request) error {
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
 		fact, created, err := c.recordFact(ctx, store, request)
@@ -203,7 +182,7 @@ func (c *requestRecorder) recordRequest(ctx context.Context, store storage.Stora
 	}
 }
 
-func (c *requestRecorder) persistValidationFactRecordedLog(
+func (c *Controller) persistValidationFactRecordedLog(
 	ctx context.Context,
 	store storage.Storage,
 	request entity.Request,
@@ -228,7 +207,7 @@ func (c *requestRecorder) persistValidationFactRecordedLog(
 // green fact advances the queue's bookmark and, when this request ends up holding
 // it, promotes the commit. A broken fact moves neither, and instead reports how
 // long the break it names went undetected.
-func (c *requestRecorder) applyFactToDerivedCaches(
+func (c *Controller) applyFactToDerivedCaches(
 	ctx context.Context,
 	store storage.Storage,
 	request entity.Request,
@@ -267,7 +246,7 @@ func (c *requestRecorder) applyFactToDerivedCaches(
 // request, so a redelivery cannot reach a different verdict than the original. The
 // second return reports whether this call is the one that wrote the fact, which is
 // how a caller tells the original delivery from a redelivery.
-func (c *requestRecorder) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, bool, error) {
+func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, bool, error) {
 	factStore := store.GetValidationFactStore()
 
 	fact := entity.ValidationFact{
@@ -323,7 +302,7 @@ func (c *requestRecorder) recordFact(ctx context.Context, store storage.Storage,
 // source-control lookup cannot be moved off the delivery path onto a clock. It is
 // confined to failures and made once the fact is durable, and every way it can fail is
 // counted and swallowed so a reporting fault cannot retry an outcome already recorded.
-func (c *requestRecorder) reportFailureDetectionLatency(ctx context.Context, request entity.Request) {
+func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request entity.Request) {
 	strategyTag := metrics.NewTag("strategy", string(request.BuildStrategy))
 
 	// Only a strategy that validates a delta pins a base commit, so a full build has
@@ -370,7 +349,7 @@ func (c *requestRecorder) reportFailureDetectionLatency(ctx context.Context, req
 // failureDetectionUnobserved counts a latency that could not be observed, tagged with
 // the step that failed so an unmeasurable failure can be told apart from a broken
 // dependency.
-func (c *requestRecorder) failureDetectionUnobserved(ctx context.Context, request entity.Request, step string, err error) {
+func (c *Controller) failureDetectionUnobserved(ctx context.Context, request entity.Request, step string, err error) {
 	metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_errors", 1,
 		metrics.TagsFromContext(ctx, metrics.NewTag("step", step))...,
 	)
@@ -402,7 +381,7 @@ func degreeFor(state entity.RequestState) float64 {
 // advanced only after the green fact is durable. Losing the advance to a crash is
 // recoverable — the redelivery reloads the same fact and retries — whereas a
 // bookmark with no fact behind it would point at greenness nothing recorded.
-func (c *requestRecorder) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) (bool, error) {
+func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) (bool, error) {
 	queueStore := store.GetQueueStore()
 
 	for {
@@ -449,7 +428,7 @@ func (c *requestRecorder) advanceLastGreen(ctx context.Context, store storage.St
 // points at, once that bookmark is durable. Reporting is best-effort so an
 // observability failure cannot turn a successful record operation into a retry,
 // which is why each cause is counted and logged separately instead of returned.
-func (c *requestRecorder) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
+func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
 	sourceControl, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
@@ -504,7 +483,7 @@ func (c *requestRecorder) emitLastGreenTimestamp(ctx context.Context, request en
 // green fact is durable. Promotion is idempotent, so a redelivery repeats it
 // harmlessly. A commit that a rewritten history dropped from the ref cannot be
 // promoted by any retry, so that case is counted and skipped rather than failed.
-func (c *requestRecorder) promote(ctx context.Context, request entity.Request) error {
+func (c *Controller) promote(ctx context.Context, request entity.Request) error {
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
@@ -554,7 +533,7 @@ func promotionFailure(err error) error {
 //
 // Partitioning by request id matches the record topic's own, carrying
 // per-request ordering across the seam.
-func (c *requestRecorder) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
+func (c *Controller) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
 	if err := platformhook.Publish(ctx, c.registry, request.Queue, event, request.ID); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
@@ -588,7 +567,7 @@ func compareToBookmark(queue, candidate, current string) (int, error) {
 }
 
 // loadRequest loads the request by id.
-func loadRequest(ctx context.Context, store storage.Storage, id string) (entity.Request, error) {
+func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id string) (entity.Request, error) {
 	return loader.ByID(ctx, id, store.GetRequestStore().Get, "request")
 }
 

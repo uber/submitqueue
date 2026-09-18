@@ -127,6 +127,15 @@ func TestRequestLogValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "record failed event",
+			mutate: func(entry RequestLog) RequestLog {
+				entry.State = RequestStateUnknown
+				entry.Event = RequestEventRecordFailed
+				entry.RequestVersion = 0
+				return entry
+			},
+		},
+		{
 			name: "promotion failed event",
 			mutate: func(entry RequestLog) RequestLog {
 				entry.State = RequestStateUnknown
