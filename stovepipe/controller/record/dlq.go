@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -26,31 +27,74 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
+	"go.uber.org/zap"
 )
 
-// DLQController abandons promotion failures while leaving all other record
-// reconciliation failures under the DLQ consumer's normal retry policy.
+// DLQController reconciles record work without replaying known promotion failures.
 type DLQController struct {
-	controller *Controller
+	requestRecorder
+	stores        storage.Factory
+	topicKey      consumer.TopicKey
+	consumerGroup string
 }
 
 var _ consumer.Controller = (*DLQController)(nil)
 
-// NewDLQController wraps a record controller with promotion-specific DLQ policy.
-func NewDLQController(controller *Controller) *DLQController {
-	return &DLQController{controller: controller}
+// NewDLQController creates a controller for record dead-letter reconciliation.
+func NewDLQController(
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	stores storage.Factory,
+	materializer requestlog.Materializer,
+	sourceControl sourcecontrol.Factory,
+	registry consumer.TopicRegistry,
+	topicKey consumer.TopicKey,
+	consumerGroup string,
+) *DLQController {
+	name := string(topicKey) + "_controller"
+	return &DLQController{
+		requestRecorder: newRequestRecorder(logger, scope, materializer, sourceControl, registry, name),
+		stores:          stores,
+		topicKey:        topicKey,
+		consumerGroup:   consumerGroup,
+	}
 }
 
-// Process never replays a known promotion failure. If reconciliation reaches
-// promotion for a failure originally raised by another stage, it makes that one
-// attempt and acknowledges a promotion failure rather than retrying it on the DLQ.
+// Process reconstructs the record stage's durable effects. It never replays a
+// known promotion failure; a newly encountered promotion failure is retained in
+// request history and acknowledged rather than retried on the DLQ.
 func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery) error {
-	if originalFailure, failed := delivery.Failure(); failed && isPromotionFailure(originalFailure) {
-		return c.abandonPromotion(ctx, delivery, originalFailure, "dead_lettered")
+	msg := delivery.Message()
+	rec := &stovepipemq.Record{}
+	if err := stovepipemq.Unmarshal(msg.Payload, rec); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to deserialize record: %w", err)
+	}
+	if err := entityqueue.ValidatePayloadQueue(msg, rec.GetQueueName()); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
+	}
+	store, err := c.stores.For(storage.Config{QueueName: rec.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", rec.GetQueueName(), err)
+	}
+	request, err := loadRequest(ctx, store, rec.GetId())
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		return err
+	}
+	if rec.GetQueueName() != "" && rec.GetQueueName() != request.Queue {
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rec.GetQueueName(), request.Queue, request.ID)
 	}
 
-	err := c.controller.Process(ctx, delivery)
+	if originalFailure, failed := delivery.Failure(); failed && isPromotionFailure(originalFailure) {
+		return c.abandonPromotion(ctx, delivery, store, request, originalFailure, "dead_lettered")
+	}
+
+	err = c.recordRequest(ctx, store, request)
 	if err == nil {
 		return nil
 	}
@@ -59,7 +103,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	if !isPromotionFailure(currentFailure) {
 		return err
 	}
-	return c.abandonPromotion(ctx, delivery, currentFailure, "reconciliation_failed")
+	return c.abandonPromotion(ctx, delivery, store, request, currentFailure, "reconciliation_failed")
 }
 
 func isPromotionFailure(f failure.Failure) bool {
@@ -67,16 +111,23 @@ func isPromotionFailure(f failure.Failure) bool {
 	return ok && stage == failureRecordStagePromotion
 }
 
-func (c *DLQController) abandonPromotion(ctx context.Context, delivery consumer.Delivery, f failure.Failure, reason string) error {
-	if err := c.persistPromotionFailedHistory(ctx, delivery); err != nil {
+func (c *DLQController) abandonPromotion(
+	ctx context.Context,
+	delivery consumer.Delivery,
+	store storage.Storage,
+	request entity.Request,
+	f failure.Failure,
+	reason string,
+) error {
+	if err := c.persistPromotionFailedHistory(ctx, store, request); err != nil {
 		return promotionFailure(fmt.Errorf("failed to persist promotion failure history: %w", err))
 	}
 
 	msg := delivery.Message()
-	metrics.NamedCounter(c.controller.metricsScope, _opName, "promotions_abandoned", 1,
+	metrics.NamedCounter(c.metricsScope, _opName, "promotions_abandoned", 1,
 		metrics.TagsFromContext(ctx, metrics.NewTag("reason", reason))...,
 	)
-	c.controller.logger.Errorw("abandoned promotion from record dlq",
+	c.logger.Errorw("abandoned promotion from record dlq",
 		"queue", msg.Tenant,
 		"message_id", msg.ID,
 		"attempt", delivery.Attempt(),
@@ -86,35 +137,19 @@ func (c *DLQController) abandonPromotion(ctx context.Context, delivery consumer.
 	return nil
 }
 
-func (c *DLQController) persistPromotionFailedHistory(ctx context.Context, delivery consumer.Delivery) error {
-	msg := delivery.Message()
-	rec := &stovepipemq.Record{}
-	if err := stovepipemq.Unmarshal(msg.Payload, rec); err != nil {
-		return fmt.Errorf("failed to deserialize record: %w", err)
-	}
-	if err := entityqueue.ValidatePayloadQueue(msg, rec.GetQueueName()); err != nil {
-		return fmt.Errorf("invalid message identity: %w", err)
-	}
-	store, err := c.controller.stores.For(storage.Config{QueueName: rec.GetQueueName()})
-	if err != nil {
-		return fmt.Errorf("failed to resolve storage for queue %q: %w", rec.GetQueueName(), err)
-	}
-	request, err := c.controller.loadRequest(ctx, store, rec.GetId())
-	if err != nil {
-		return err
-	}
+func (c *DLQController) persistPromotionFailedHistory(ctx context.Context, store storage.Storage, request entity.Request) error {
 	log := requestlog.NewRequestEventLog(request, entity.RequestEventPromotionFailed, "repository", nil)
-	if err := c.controller.materializer.PersistLog(ctx, store, log); err != nil {
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("failed to record promotion failure for request %s: %w", request.ID, err)
 	}
 	return nil
 }
 
-// Name returns the wrapped record controller's name.
-func (c *DLQController) Name() string { return c.controller.Name() }
+// Name returns the controller's name.
+func (c *DLQController) Name() string { return string(c.topicKey) }
 
-// TopicKey returns the wrapped record controller's topic key.
-func (c *DLQController) TopicKey() consumer.TopicKey { return c.controller.TopicKey() }
+// TopicKey returns the controller's topic key.
+func (c *DLQController) TopicKey() consumer.TopicKey { return c.topicKey }
 
-// ConsumerGroup returns the wrapped record controller's consumer group.
-func (c *DLQController) ConsumerGroup() string { return c.controller.ConsumerGroup() }
+// ConsumerGroup returns the controller's consumer group.
+func (c *DLQController) ConsumerGroup() string { return c.consumerGroup }

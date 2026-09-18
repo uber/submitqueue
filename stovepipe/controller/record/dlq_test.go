@@ -30,15 +30,15 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 )
 
 func TestDLQControllerSkipsDeadLetteredPromotion(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	inner, mocks := newControllerForTopic(t, ctrl, consumer.TopicKey("record_dlq"), "stovepipe-record-dlq")
-	c := NewDLQController(inner)
+	c, mocks := newDLQControllerForTest(t, ctrl)
 	request := requestWithState(entity.RequestStateSucceeded)
 	mocks.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
-	expectPromotionFailedHistory(t, ctrl, inner, mocks, false)
+	expectPromotionFailedHistory(t, ctrl, c, mocks, false)
 
 	delivery := newDLQDelivery(t, ctrl, 1, failure.Failure{
 		Message: "permission denied",
@@ -52,21 +52,32 @@ func TestDLQControllerSkipsDeadLetteredPromotion(t *testing.T) {
 
 func TestDLQControllerAcknowledgesNewPromotionFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	inner, mocks := newControllerForTopic(t, ctrl, consumer.TopicKey("record_dlq"), "stovepipe-record-dlq")
-	c := NewDLQController(inner)
+	c, mocks := newDLQControllerForTest(t, ctrl)
 	expectGreenPromotionReplay(mocks, errors.New("unavailable"))
-	mocks.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
-	expectPromotionFailedHistory(t, ctrl, inner, mocks, true)
+	expectPromotionFailedHistory(t, ctrl, c, mocks, true)
 	delivery := newDLQDelivery(t, ctrl, 1, failure.Failure{})
 
 	require.NoError(t, c.Process(queueContext(), delivery))
 	assertAbandonedPromotionCount(t, mocks, "reconciliation_failed")
 }
 
+func TestDLQControllerReconcilesDurableRecordEffects(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, mocks := newDLQControllerForTest(t, ctrl)
+	mocks.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
+	var fact entity.ValidationFact
+	mocks.expectFactCreated(&fact)
+	delivery := newDLQDelivery(t, ctrl, 1, failure.Failure{})
+
+	require.NoError(t, c.Process(queueContext(), delivery))
+	assert.Equal(t, entity.DegreeBroken, fact.Degree)
+	assert.Equal(t, testID, fact.RequestID)
+	assert.Len(t, mocks.hooks.events, 1)
+}
+
 func TestDLQControllerLeavesOtherFailuresToDLQPolicy(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	inner, _ := newControllerForTopic(t, ctrl, consumer.TopicKey("record_dlq"), "stovepipe-record-dlq")
-	c := NewDLQController(inner)
+	c, _ := newDLQControllerForTest(t, ctrl)
 	delivery := newDLQDeliveryWithPayload(ctrl, 1, []byte("not protobuf json"), failure.Failure{})
 
 	require.Error(t, c.Process(queueContext(), delivery))
@@ -74,11 +85,10 @@ func TestDLQControllerLeavesOtherFailuresToDLQPolicy(t *testing.T) {
 
 func TestDLQControllerPreservesPromotionAttributionWhenHistoryFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	inner, mocks := newControllerForTopic(t, ctrl, consumer.TopicKey("record_dlq"), "stovepipe-record-dlq")
-	c := NewDLQController(inner)
+	c, mocks := newDLQControllerForTest(t, ctrl)
 	mocks.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
 	materializer := requestlogmock.NewMockMaterializer(ctrl)
-	inner.materializer = materializer
+	c.materializer = materializer
 	materializer.EXPECT().PersistLog(gomock.Any(), mocks.store, gomock.Any()).Return(errors.New("db down"))
 	delivery := newDLQDelivery(t, ctrl, 1, failure.Failure{
 		Message: "permission denied",
@@ -90,7 +100,7 @@ func TestDLQControllerPreservesPromotionAttributionWhenHistoryFails(t *testing.T
 	assert.Equal(t, failureRecordStagePromotion, errs.Attribution(err).Detail[failureDetailKeyRecordStage])
 }
 
-func expectPromotionFailedHistory(t *testing.T, ctrl *gomock.Controller, controller *Controller, mocks recordMocks, includeValidationFact bool) {
+func expectPromotionFailedHistory(t *testing.T, ctrl *gomock.Controller, controller *DLQController, mocks recordMocks, includeValidationFact bool) {
 	t.Helper()
 	materializer := requestlogmock.NewMockMaterializer(ctrl)
 	controller.materializer = materializer
@@ -114,6 +124,21 @@ func expectPromotionFailedHistory(t *testing.T, ctrl *gomock.Controller, control
 		},
 	))
 	gomock.InOrder(calls...)
+}
+
+func newDLQControllerForTest(t *testing.T, ctrl *gomock.Controller) (*DLQController, recordMocks) {
+	t.Helper()
+	fixture, mocks := newControllerForTopic(t, ctrl, consumer.TopicKey("record_dlq"), "stovepipe-record-dlq")
+	return NewDLQController(
+		zap.NewNop().Sugar(),
+		mocks.metricsScope,
+		fixture.stores,
+		fixture.materializer,
+		fixture.sourceControl,
+		fixture.registry,
+		consumer.TopicKey("record_dlq"),
+		"stovepipe-record-dlq",
+	), mocks
 }
 
 func expectGreenPromotionReplay(mocks recordMocks, promotionErr error) {
