@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package requestlog retains the request occurrences exposed by Stovepipe's history API.
+// Package requestlog retains request occurrences and projects request status read models.
 package requestlog
 
 //go:generate mockgen -source=materializer.go -destination=mock/materializer_mock.go -package=mock
@@ -40,11 +40,13 @@ const (
 	MetadataKeyBuildID = "build_id"
 	// MetadataKeyFactDegree records the degree established by a validation fact.
 	MetadataKeyFactDegree = "fact_degree"
+	// MetadataKeyBaseURI records the selected build baseline; an empty value means a full build.
+	MetadataKeyBaseURI = "base_uri"
 )
 
-// Materializer persists request-log occurrences into their queue-scoped read model.
+// Materializer retains request-log occurrences and advances their derived read models.
 type Materializer interface {
-	// PersistLog retains one request-log occurrence idempotently.
+	// PersistLog retains one occurrence idempotently and updates projections derived from it.
 	PersistLog(context.Context, storage.Storage, entity.RequestLog) error
 }
 
@@ -65,6 +67,13 @@ func NewMaterializer(scope tally.Scope) Materializer {
 
 // NewRequestStateLog constructs the occurrence representing the request's current durable state.
 func NewRequestStateLog(request entity.Request, outcomeReason entity.RequestOutcomeReason) entity.RequestLog {
+	metadata := make(map[string]string)
+	switch request.BuildStrategy {
+	case entity.BuildStrategyFull:
+		metadata[MetadataKeyBaseURI] = ""
+	case entity.BuildStrategyIncrementalSinceGreen:
+		metadata[MetadataKeyBaseURI] = request.BaseURI
+	}
 	return entity.RequestLog{
 		ID:             publish.IntentID(_occurrenceKindState, strconv.FormatInt(int64(request.Version), 10)),
 		Queue:          request.Queue,
@@ -72,6 +81,7 @@ func NewRequestStateLog(request entity.Request, outcomeReason entity.RequestOutc
 		State:          request.State,
 		RequestVersion: request.Version,
 		OutcomeReason:  outcomeReason,
+		Metadata:       metadata,
 	}
 }
 
@@ -100,30 +110,49 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		m.count(ctx, "validation_failure")
 		return fmt.Errorf("invalid request log occurrence: %w", err)
 	}
-
-	store := stores.GetRequestLogStore()
-	// SubmitQueue deduplicates the message that hands a log to its materializer. Stovepipe has no
-	// log topic, so the retained occurrence ID is the retry boundary instead.
-	if err := store.Create(ctx, log); err == nil {
-		m.count(ctx, "created")
-		return nil
-	} else if !errors.Is(err, storage.ErrAlreadyExists) {
-		m.count(ctx, "storage_failure")
-		return fmt.Errorf("failed to create request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
+	retained, err := m.retainRequestLog(ctx, stores.GetRequestLogStore(), log)
+	if err != nil {
+		return err
 	}
 
-	stored, err := store.Get(ctx, log.RequestID, log.ID)
+	if retained.State == entity.RequestStateUnknown {
+		return nil
+	}
+	if err := materializeRequestSummary(ctx, stores, retained); err != nil {
+		m.count(ctx, "projection_failure")
+		return err
+	}
+	return nil
+}
+
+func (m *materializer) retainRequestLog(
+	ctx context.Context,
+	requestLogs storage.RequestLogStore,
+	log entity.RequestLog,
+) (entity.RequestLog, error) {
+	// SubmitQueue deduplicates the message that hands a log to its materializer. Stovepipe has no
+	// log topic, so the retained occurrence ID is the retry boundary instead.
+	err := requestLogs.Create(ctx, log)
+	if err == nil {
+		m.count(ctx, "created")
+		return log, nil
+	}
+	if !errors.Is(err, storage.ErrAlreadyExists) {
+		m.count(ctx, "storage_failure")
+		return entity.RequestLog{}, fmt.Errorf("failed to create request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
+	}
+
+	stored, err := requestLogs.Get(ctx, log.RequestID, log.ID)
 	if err != nil {
 		m.count(ctx, "storage_failure")
-		return fmt.Errorf("failed to reconcile request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
+		return entity.RequestLog{}, fmt.Errorf("failed to reconcile request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
 	if !sameSemanticOccurrence(stored, log) {
 		m.count(ctx, "conflict")
-		return fmt.Errorf("request log conflicts with retained occurrence request_id=%q log_id=%q", log.RequestID, log.ID)
+		return entity.RequestLog{}, fmt.Errorf("request log conflicts with retained occurrence request_id=%q log_id=%q", log.RequestID, log.ID)
 	}
-
 	m.count(ctx, "identical_existing")
-	return nil
+	return stored, nil
 }
 
 func (m *materializer) count(ctx context.Context, counter string) {
@@ -144,8 +173,8 @@ func sameSemanticOccurrence(stored, candidate entity.RequestLog) bool {
 }
 
 func metadataCompatible(stored, candidate map[string]string) bool {
-	// One-sided keys permit additive metadata rollout without making a retry conflict with an older
-	// immutable row. Values emitted by both versions must still agree.
+	// Keys present on only one side permit additive rollout against older immutable rows. Values
+	// emitted by both versions must still agree.
 	for key, storedValue := range stored {
 		if candidateValue, ok := candidate[key]; ok && candidateValue != storedValue {
 			return false

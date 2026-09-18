@@ -31,21 +31,41 @@ import (
 )
 
 const (
-	testQueue     = "monorepo/main"
-	testRequestID = "request/monorepo/main/1"
-	testNowMs     = int64(1735689600000)
+	testQueue      = "monorepo/main"
+	testRequestID  = "request/monorepo/main/1"
+	testRequestURI = "git://repo/head"
+	testBaseURI    = "git://repo/base"
+	testNowMs      = int64(1735689600000)
 )
 
-func newTestMaterializer(t *testing.T) (*materializer, *storagemock.MockStorage, *storagemock.MockRequestLogStore) {
+func newTestMaterializer(t *testing.T) (*materializer, *storagemock.MockStorage, *storagemock.MockRequestLogStore, *storagemock.MockRequestSummaryStore, *storagemock.MockRequestStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	stores := storagemock.NewMockStorage(ctrl)
 	store := storagemock.NewMockRequestLogStore(ctrl)
+	summaries := storagemock.NewMockRequestSummaryStore(ctrl)
+	requests := storagemock.NewMockRequestStore(ctrl)
 	stores.EXPECT().GetRequestLogStore().Return(store).AnyTimes()
+	stores.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
+	stores.EXPECT().GetRequestStore().Return(requests).AnyTimes()
 	return &materializer{
 		scope: tally.NoopScope,
 		now:   func() time.Time { return time.UnixMilli(testNowMs) },
-	}, stores, store
+	}, stores, store, summaries, requests
+}
+
+func seededRequestSummary() entity.RequestSummary {
+	return entity.RequestSummary{
+		RequestID: testRequestID,
+		Queue:     testQueue,
+		URI:       testRequestURI,
+		Version:   1,
+	}
+}
+
+func expectRequestSummaryUpdate(summaries *storagemock.MockRequestSummaryStore) {
+	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(seededRequestSummary(), nil)
+	summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 }
 
 func TestMaterializerPersistRequestStateLog(t *testing.T) {
@@ -72,14 +92,20 @@ func TestMaterializerPersistRequestStateLog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			materializer, stores, store := newTestMaterializer(t)
+			materializer, stores, store, summaries, _ := newTestMaterializer(t)
 			request := entity.Request{
 				ID:      testRequestID,
 				Queue:   testQueue,
+				URI:     testRequestURI,
 				State:   tt.state,
 				Version: 2,
 			}
+			if tt.state != entity.RequestStateAccepted {
+				request.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
+				request.BaseURI = testBaseURI
+			}
 			if !tt.wantErr {
+				expectRequestSummaryUpdate(summaries)
 				store.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, entry entity.RequestLog) error {
 					assert.NotEmpty(t, entry.ID)
 					assert.Equal(t, testNowMs, entry.TimestampMs)
@@ -88,6 +114,11 @@ func TestMaterializerPersistRequestStateLog(t *testing.T) {
 					assert.Equal(t, tt.state, entry.State)
 					assert.Equal(t, int32(2), entry.RequestVersion)
 					assert.Equal(t, tt.outcomeReason, entry.OutcomeReason)
+					baseURI, hasBaseURI := entry.Metadata[MetadataKeyBaseURI]
+					assert.Equal(t, tt.state != entity.RequestStateAccepted, hasBaseURI)
+					if hasBaseURI {
+						assert.Equal(t, testBaseURI, baseURI)
+					}
 					require.NoError(t, entry.Validate())
 					return nil
 				})
@@ -105,8 +136,8 @@ func TestMaterializerPersistRequestStateLog(t *testing.T) {
 }
 
 func TestMaterializerExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
-	materializer, stores, store := newTestMaterializer(t)
-	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1}
+	materializer, stores, store, summaries, _ := newTestMaterializer(t)
+	request := entity.Request{ID: testRequestID, Queue: testQueue, URI: testRequestURI, State: entity.RequestStateAccepted, Version: 1}
 
 	var candidate entity.RequestLog
 	store.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, entry entity.RequestLog) error {
@@ -122,25 +153,63 @@ func TestMaterializerExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
 			return stored, nil
 		},
 	)
+	current := seededRequestSummary()
+	current.State = entity.RequestStateAccepted
+	current.RequestVersion = 1
+	current.StateTimestampMs = testNowMs - 1000
+	current.Version = 2
+	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil)
 
 	require.NoError(t, materializer.PersistLog(context.Background(), stores, NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)))
 }
 
+func TestMaterializerDuplicateProjectsRetainedMetadata(t *testing.T) {
+	materializer, stores, requestLogs, summaries, _ := newTestMaterializer(t)
+	candidate := NewRequestStateLog(entity.Request{
+		ID: testRequestID, Queue: testQueue, URI: testRequestURI,
+		BuildStrategy: entity.BuildStrategyIncrementalSinceGreen, BaseURI: "git://repo/new-base",
+		State: entity.RequestStateProcessing, Version: 2,
+	}, entity.RequestOutcomeReasonUnknown)
+	stored := candidate
+	stored.TimestampMs = testNowMs - 1000
+	stored.Metadata = map[string]string{}
+
+	requestLogs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+	requestLogs.EXPECT().Get(gomock.Any(), testRequestID, candidate.ID).Return(stored, nil)
+	current := seededRequestSummary()
+	current.BaseURI = testBaseURI
+	current.State = entity.RequestStateAccepted
+	current.RequestVersion = 1
+	current.StateTimestampMs = testNowMs - 2000
+	current.Version = 3
+	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil)
+	summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(3), int32(4)).DoAndReturn(
+		func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
+			assert.Equal(t, testBaseURI, updated.BaseURI)
+			assert.Equal(t, stored.TimestampMs, updated.StateTimestampMs)
+			return nil
+		},
+	)
+
+	require.NoError(t, materializer.PersistLog(context.Background(), stores, candidate))
+}
+
 func TestMaterializerPreservesSuppliedTimestamp(t *testing.T) {
-	materializer, stores, store := newTestMaterializer(t)
+	materializer, stores, store, summaries, _ := newTestMaterializer(t)
 	log := NewRequestStateLog(
-		entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1},
+		entity.Request{ID: testRequestID, Queue: testQueue, URI: testRequestURI, State: entity.RequestStateAccepted, Version: 1},
 		entity.RequestOutcomeReasonUnknown,
 	)
 	log.TimestampMs = testNowMs - 1000
 	store.EXPECT().Create(gomock.Any(), log).Return(nil)
+	expectRequestSummaryUpdate(summaries)
 
 	require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
 }
 
 func TestMaterializerExistingConflictingOccurrenceFails(t *testing.T) {
-	materializer, stores, store := newTestMaterializer(t)
-	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateSucceeded, Version: 3}
+	materializer, stores, store, _, _ := newTestMaterializer(t)
+	request := entity.Request{ID: testRequestID, Queue: testQueue, URI: testRequestURI, State: entity.RequestStateSucceeded, Version: 3}
 
 	var candidate entity.RequestLog
 	store.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, entry entity.RequestLog) error {
@@ -180,10 +249,10 @@ func TestMaterializerStorageFailures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			materializer, stores, store := newTestMaterializer(t)
+			materializer, stores, store, _, _ := newTestMaterializer(t)
 			tt.setup(store)
 			log := NewRequestStateLog(entity.Request{
-				ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1,
+				ID: testRequestID, Queue: testQueue, URI: testRequestURI, State: entity.RequestStateAccepted, Version: 1,
 			}, entity.RequestOutcomeReasonUnknown)
 			err := materializer.PersistLog(context.Background(), stores, log)
 			require.Error(t, err)
@@ -191,8 +260,36 @@ func TestMaterializerStorageFailures(t *testing.T) {
 	}
 }
 
+func TestNewRequestStateLogBuildSelectionMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		strategy    entity.BuildStrategy
+		baseURI     string
+		wantPresent bool
+		wantBaseURI string
+	}{
+		{name: "not selected"},
+		{name: "full build", strategy: entity.BuildStrategyFull, wantPresent: true},
+		{name: "full build ignores stale baseline", strategy: entity.BuildStrategyFull, baseURI: testBaseURI, wantPresent: true},
+		{name: "incremental", strategy: entity.BuildStrategyIncrementalSinceGreen, baseURI: testBaseURI, wantPresent: true, wantBaseURI: testBaseURI},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := NewRequestStateLog(entity.Request{
+				ID: testRequestID, Queue: testQueue, URI: testRequestURI,
+				BuildStrategy: tt.strategy, BaseURI: tt.baseURI,
+				State: entity.RequestStateAccepted, Version: 1,
+			}, entity.RequestOutcomeReasonUnknown)
+			baseURI, ok := log.Metadata[MetadataKeyBaseURI]
+			assert.Equal(t, tt.wantPresent, ok)
+			assert.Equal(t, tt.wantBaseURI, baseURI)
+		})
+	}
+}
+
 func TestNewRequestStateLogStableID(t *testing.T) {
-	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1}
+	request := entity.Request{ID: testRequestID, Queue: testQueue, URI: testRequestURI, State: entity.RequestStateAccepted, Version: 1}
 	first := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
 	retry := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
 	request.Version++
@@ -250,12 +347,15 @@ func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
 	}
 	stores := storagemock.NewMockStorage(ctrl)
 	store := storagemock.NewMockRequestLogStore(ctrl)
+	summaries := storagemock.NewMockRequestSummaryStore(ctrl)
 	stores.EXPECT().GetRequestLogStore().Return(store)
+	stores.EXPECT().GetRequestSummaryStore().Return(summaries)
 	store.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	expectRequestSummaryUpdate(summaries)
 	ctx := metrics.WithContextTags(context.Background(), metrics.NewTag("queue", testQueue))
 
 	log := NewRequestStateLog(entity.Request{
-		ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1,
+		ID: testRequestID, Queue: testQueue, URI: testRequestURI, State: entity.RequestStateAccepted, Version: 1,
 	}, entity.RequestOutcomeReasonUnknown)
 	require.NoError(t, materializer.PersistLog(ctx, stores, log))
 
