@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -56,7 +57,7 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 		name       string
 		failure    failure.Failure
 		hasFailure bool
-		wantEvent  entity.RequestEvent
+		wantStage  string
 	}{
 		{
 			name: "promotion failure",
@@ -65,17 +66,23 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 				Detail:  map[string]any{failureDetailKeyRecordStage: failureRecordStagePromotion},
 			},
 			hasFailure: true,
-			wantEvent:  entity.RequestEventPromotionFailed,
+			wantStage:  failureRecordStagePromotion,
 		},
 		{
 			name:       "other record failure",
 			failure:    failure.Failure{Message: "hook publish failed"},
 			hasFailure: true,
-			wantEvent:  entity.RequestEventRecordFailed,
 		},
 		{
-			name:      "missing failure attribution",
-			wantEvent: entity.RequestEventRecordFailed,
+			name: "unrecognized stage is omitted",
+			failure: failure.Failure{
+				Message: "fact write failed",
+				Detail:  map[string]any{failureDetailKeyRecordStage: "future_stage"},
+			},
+			hasFailure: true,
+		},
+		{
+			name: "missing failure attribution",
 		},
 	}
 
@@ -86,18 +93,22 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 			expectDLQRequestLoad(m, requestWithState(entity.RequestStateSucceeded), nil)
 			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 				func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-					assert.Equal(t, tt.wantEvent, log.Event)
-					assert.Equal(t, "event/"+string(tt.wantEvent)+"/repository", log.ID)
+					assert.Equal(t, entity.RequestEventRecordFailed, log.Event)
+					assert.Equal(t, "event/record_failed/repository", log.ID)
 					assert.Equal(t, testID, log.RequestID)
 					assert.Empty(t, log.State)
-					assert.Empty(t, log.Metadata)
+					if tt.wantStage == "" {
+						assert.Empty(t, log.Metadata)
+					} else {
+						assert.Equal(t, map[string]string{requestlog.MetadataKeyRecordStage: tt.wantStage}, log.Metadata)
+					}
 					return nil
 				},
 			)
 
 			require.NoError(t, c.Process(queueContext(), newDLQDelivery(t, ctrl, recordPayload(t, testID), testQueue, tt.failure, tt.hasFailure)))
 
-			counterName := "record_dlq_controller.record_dlq.requests_abandoned+event=" + string(tt.wantEvent) + ",queue=monorepo/main"
+			counterName := "record_dlq_controller.record_dlq.requests_abandoned+queue=monorepo/main"
 			counter, ok := m.metricsScope.Snapshot().Counters()[counterName]
 			require.True(t, ok)
 			assert.EqualValues(t, 1, counter.Value())

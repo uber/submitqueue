@@ -136,22 +136,21 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	}
 
 	originalFailure, hasFailure := delivery.Failure()
-	event := recordFailureEvent(originalFailure)
-	log := requestlog.NewRequestEventLog(request, event, "repository", nil)
+	metadata := recordFailureMetadata(originalFailure)
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventRecordFailed, "repository", metadata)
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		metrics.NamedCounter(c.metricsScope, _dlqOpName, "history_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to retain abandoned record work for request %s: %w", request.ID, err)
 	}
 
-	metrics.NamedCounter(c.metricsScope, _dlqOpName, "requests_abandoned", 1,
-		metrics.TagsFromContext(ctx, metrics.NewTag("event", string(event)))...,
-	)
+	metrics.NamedCounter(c.metricsScope, _dlqOpName, "requests_abandoned", 1, metrics.TagsFromContext(ctx)...)
 	fields := []any{
 		"message_id", msg.ID,
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"request_state", request.State,
-		"history_event", event,
+		"history_event", entity.RequestEventRecordFailed,
+		"history_metadata", metadata,
 		"attempt", delivery.Attempt(),
 	}
 	if hasFailure {
@@ -165,11 +164,11 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	return nil
 }
 
-func recordFailureEvent(f failure.Failure) entity.RequestEvent {
+func recordFailureMetadata(f failure.Failure) map[string]string {
 	if stage, ok := f.Detail[failureDetailKeyRecordStage].(string); ok && stage == failureRecordStagePromotion {
-		return entity.RequestEventPromotionFailed
+		return map[string]string{requestlog.MetadataKeyRecordStage: stage}
 	}
-	return entity.RequestEventRecordFailed
+	return nil
 }
 
 // Name returns the controller's name.

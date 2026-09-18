@@ -135,15 +135,6 @@ func TestRequestLogValidate(t *testing.T) {
 				return entry
 			},
 		},
-		{
-			name: "promotion failed event",
-			mutate: func(entry RequestLog) RequestLog {
-				entry.State = RequestStateUnknown
-				entry.Event = RequestEventPromotionFailed
-				entry.RequestVersion = 0
-				return entry
-			},
-		},
 		{name: "missing ID", mutate: func(entry RequestLog) RequestLog { entry.ID = ""; return entry }, wantErr: true},
 		{name: "missing queue", mutate: func(entry RequestLog) RequestLog { entry.Queue = ""; return entry }, wantErr: true},
 		{name: "missing request ID", mutate: func(entry RequestLog) RequestLog { entry.RequestID = ""; return entry }, wantErr: true},
