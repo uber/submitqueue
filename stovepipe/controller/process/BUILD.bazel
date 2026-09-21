@@ -44,6 +44,7 @@ go_test(
         "//stovepipe/core/requestlog/mock:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/queueconfig/default:go_default_library",
+        "//stovepipe/extension/queueconfig/mock:go_default_library",
         "//stovepipe/extension/sourcecontrol:go_default_library",
         "//stovepipe/extension/sourcecontrol/mock:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
