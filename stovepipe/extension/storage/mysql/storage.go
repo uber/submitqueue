@@ -48,6 +48,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		requestStore:        NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
 		requestURIStore:     NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
 		requestLogStore:     NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
+		requestSummaryStore: NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
 		queueStore:          NewQueueStore(s.db, s.scope.SubScope("queue_store"), queueName),
 		buildStore:          NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
 		validationFactStore: NewValidationFactStore(s.db, s.scope.SubScope("validation_fact_store"), queueName),
@@ -64,6 +65,7 @@ type mysqlStorage struct {
 	requestStore        storage.RequestStore
 	requestURIStore     storage.RequestURIStore
 	requestLogStore     storage.RequestLogStore
+	requestSummaryStore storage.RequestSummaryStore
 	queueStore          storage.QueueStore
 	buildStore          storage.BuildStore
 	validationFactStore storage.ValidationFactStore
@@ -85,6 +87,11 @@ func (f *mysqlStorage) GetRequestURIStore() storage.RequestURIStore {
 // GetRequestLogStore returns the MySQL-backed RequestLogStore.
 func (f *mysqlStorage) GetRequestLogStore() storage.RequestLogStore {
 	return f.requestLogStore
+}
+
+// GetRequestSummaryStore returns the MySQL-backed RequestSummaryStore.
+func (f *mysqlStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
+	return f.requestSummaryStore
 }
 
 // GetQueueStore returns the MySQL-backed QueueStore.

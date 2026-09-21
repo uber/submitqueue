@@ -11,6 +11,7 @@ go_library(
         "request_history.go",
         "request_id.go",
         "request_log.go",
+        "request_summary.go",
         "validation_fact.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
