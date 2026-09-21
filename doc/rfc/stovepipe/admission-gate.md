@@ -4,7 +4,7 @@ Status: proposed. This RFC defines the framework and extension contract; storage
 
 ## Problem
 
-Stovepipe currently implements one build-admission policy directly in `process`: admit only while the queue's in-flight count is below its concurrency limit. General admission throttling and a cooldown after a failed build are new requirements. Implementing each new rule in a controller would spread policy across lifecycle stages and make every additional rule another special case.
+Stovepipe currently implements one build-admission policy directly in `process`: admit only while the queue's in-flight count is below its concurrency limit. New requirements, such as general admission throttling and a cooldown after a failed build, will continue to surface, indicating a need for a standard admission gating framework that individual controllers can use to gate work based on customized policy decisions.
 
 The immediate requirements are:
 
@@ -14,12 +14,6 @@ The immediate requirements are:
 - Keep coalescing active while a request is deferred, so a newer head can supersede it without waiting for the gate to open.
 
 The framework must also leave room for policies such as maintenance windows, resource budgets, provider health, or an operator hold, and for logical admission boundaries other than build admission.
-
-## Current Behavior
-
-On `main`, `process` loads the queue and its `QueueConfig`, coalesces the request against `Queue.LatestRequestID`, and compares `Queue.InFlightCount` with `QueueConfig.MaxConcurrent`. When the queue is full, it calls `delivery.Hold(QueueConfig.GateWaitDelayMs)` and returns successfully. `GateWaitDelayMs` is only the delay before redelivery and another concurrency check; it does not impose a minimum interval between admitted builds. Redelivery starts from request loading and coalescing, so a newer head can supersede the deferred request.
-
-When capacity is available, `process` claims it by incrementing `Queue.InFlightCount` with a queue-version CAS. A queue version conflict reloads the queue and repeats coalescing before another claim. After a terminal runner result, `buildsignal` decrements the counter before marking the request terminal. Relevant DLQ paths also decrement it so abandoned processing work does not permanently consume capacity. There is no minimum-admission timestamp, failure-cooldown state, or opaque admission payload on the queue today.
 
 ## Scope
 
@@ -32,40 +26,52 @@ This is separate from the shared [Consumer Gate](../consumer-gate.md). A consume
 The vendor-neutral contract lives at `stovepipe/extension/admissiongate`:
 
 ```go
+type Blocker string
+
 type Result struct {
     Decision  Decision
-    BlockedBy []string
+    BlockedBy []Blocker
 }
 
 type Gate interface {
     TryAdmit(context.Context, entity.Request) (Result, error)
 }
 
+type Config struct {
+    QueueName string
+}
+
 type Gates interface {
-    For(entity.Request) (Gate, error)
+    For(Config) (Gate, error)
 }
 ```
 
-`Gates` is the host-owned resolver across queues for one logical boundary. The controller receives the resolver for the admission it performs, so that context does not need to travel through a string identifier on every call. `For` takes the request rather than a separate queue configuration because the request already carries its authoritative queue identity. It returns exactly one composite gate: returning a slice of independently stateful gates would make atomic admission impossible when one gate records a reservation before a later gate defers. Concrete routing belongs in service wiring, not an extension implementation package.
+`Gates` is the host-owned resolver across queues for one logical boundary. The controller receives the resolver for the admission it performs. Like the `buildrunner`, `sourcecontrol`, and `storage` resolver contracts, `For` takes a typed `Config` containing only `QueueName`; wiring uses that identity to select and bind the implementation. It returns exactly one composite gate: returning a slice of independently stateful gates would make atomic admission impossible when one gate records a reservation before a later gate defers. Concrete routing belongs in service wiring, not an extension implementation package.
 
-`TryAdmit` takes the thin `entity.Request`, following the repository's identity-in extension rule. The request already identifies its queue. A gate resolves the queue-scoped storage, configuration, request history, clocks, or remote services it needs through dependencies injected when its implementation is constructed. Controllers do not pre-resolve policy facts and hand them across the contract.
+`TryAdmit` takes the thin `entity.Request`, following the repository's identity-in extension rule for request-stage decisions. Passing only its string ID would discard the queue and immutable request identity already available to the controller, force implementations to parse an ID or add another lookup merely to recover that identity, and diverge from other decision extensions that receive the stage entity. The request is a reference, not a bundle of pre-resolved policy facts: a gate reloads mutable state and resolves queue-scoped storage, configuration, request history, clocks, or remote services through dependencies injected when its implementation is constructed.
 
 `Result` represents expected control flow:
 
 - `DecisionAdmitted` means this request's admission was already recorded or has been durably recorded before the call returns.
-- `DecisionDeferred` means no admission was recorded because one or more policies currently block it. `BlockedBy` contains stable, low-cardinality policy identifiers for logs and metrics, not human-readable errors.
-- `DecisionUnknown` is the invalid zero value and must be treated as an implementation failure.
+- `DecisionDeferred` means no admission was recorded because one or more policies currently block it. `BlockedBy` contains typed `Blocker` values: stable, low-cardinality policy identifiers for logs and metrics, not human-readable errors. Each implementation defines constants for the policies it can report.
+- `DecisionUnknown` is not a runtime outcome. It is the invalid zero value, consistent with entity enums elsewhere in the repository, so an implementation that accidentally returns an empty `Result` fails closed. The controller converts a nil-error result with this decision into an error.
 
 Errors are reserved for failures to evaluate or durably record the decision. A closed gate is not an error and does not consume retry budget.
 
 There is intentionally no `Complete`, `Release`, or `RecordOutcome` method. `TryAdmit` must be able to derive the current answer from durable state. This keeps build outcomes owned by the request lifecycle and prevents `buildsignal`, DLQ controllers, or future terminal paths from each needing policy-specific callbacks.
+
+## Current Behavior
+
+On `main`, `process` loads the queue and its `QueueConfig`, coalesces the request against `Queue.LatestRequestID`, and compares `Queue.InFlightCount` with `QueueConfig.MaxConcurrent`. When the queue is full, it calls `delivery.Hold(QueueConfig.GateWaitDelayMs)` and returns successfully. `GateWaitDelayMs` is only the delay before redelivery and another concurrency check; it does not impose a minimum interval between admitted builds. Redelivery starts from request loading and coalescing, so a newer head can supersede the deferred request.
+
+When capacity is available, `process` claims it by incrementing `Queue.InFlightCount` with a queue-version CAS. A queue version conflict reloads the queue and repeats coalescing before another claim. After a terminal runner result, `buildsignal` decrements the counter before marking the request terminal. Relevant DLQ paths also decrement it so abandoned processing work does not permanently consume capacity. There is no minimum-admission timestamp, failure-cooldown state, or opaque admission payload on the queue today.
 
 ## Process Integration
 
 `process` retains responsibility for request choreography; the gate owns only admission policy and its reservation. The integration preserves the current re-check behavior:
 
 1. Load the request and queue, then coalesce it against the latest request ID.
-2. Resolve the gate with `gates.For(request)`.
+2. Resolve the gate with `gates.For(admissiongate.Config{QueueName: request.Queue})`.
 3. Call `TryAdmit(ctx, request)`.
 4. On `DecisionDeferred`, hold the delivery for the queue's normal gate re-check delay and return successfully.
 5. On redelivery, start again at coalescing before evaluating the gate.
@@ -75,36 +81,36 @@ The hold delay belongs to controller scheduling configuration, not `Result`. A p
 
 If the process dies after the gate records admission but before the request reaches `processing`, redelivery calls `TryAdmit` with the same request ID. The result is admitted without reserving twice, and the controller retries the transition. If the process message ultimately reaches its DLQ, the DLQ's terminal request transition becomes visible to later reconciliation.
 
-## Durable State
+## State And Storage
 
-The first implementation adds `AdmissionState []byte` to `entity.Queue` and appends an `admission_state BLOB` column to the end of the MySQL queue schema. `QueueStore` only round-trips those bytes as part of the existing versioned queue snapshot; it does not parse, validate, merge, or version the payload.
+The extension contract does not prescribe storage. A stateless gate stores nothing; another implementation may use an implementation-owned table, a key-value store, or a remote quota service. Those dependencies are injected when the implementation is constructed, and neither `Gates` nor `Gate` exposes a generic state API.
 
-The concrete gate exclusively owns the payload's encoding and compatibility. The initial implementation uses versioned JSON because the state is small and operationally inspectable, but the storage contract is opaque bytes rather than a JSON contract. A different implementation may use protobuf or another encoding. Changing the implementation for a live queue requires that the replacement understand or explicitly migrate the prior payload.
+The proposed standard composite build gate does need a small amount of durable state for idempotent reservations, concurrency reconciliation, minimum-interval history, and failure cooldown. Its first implementation adds `AdmissionState []byte` to `entity.Queue` and appends an `admission_state BLOB` column to the end of the MySQL queue schema. `QueueStore` only round-trips those bytes as part of the existing versioned queue snapshot; it does not parse, validate, merge, or version the payload.
+
+Keeping this implementation's state on the queue is deliberate rather than a framework requirement. The standard build gate must order its reservation with `Queue.LatestRequestID`, matching the current queue CAS that prevents a newly superseded head from claiming capacity. A separate table would give admission state its own CAS but could not atomically observe the latest-head update without a cross-entity transaction. A different gate whose facts do not need that ordering should own its own table or backend instead of adding data to this payload.
+
+The standard gate exclusively owns the payload's encoding and compatibility. Its initial implementation uses versioned JSON because the state is small and operationally inspectable, but the storage contract is opaque bytes rather than a JSON contract. Another gate does not read or write this envelope. Changing the standard implementation for a live queue requires that the replacement understand or explicitly migrate the prior payload.
 
 A representative initial payload is:
 
 ```json
 {
   "version": 1,
-  "last_admitted_request_id": "request/monorepo/main/42",
-  "active": {
-    "request/monorepo/main/42": {
-      "admitted_at_ms": 1789506000000
-    }
-  },
+  "active_request_ids": [
+    "request/monorepo/main/42"
+  ],
   "policies": {
     "minimum_interval": {
       "last_admitted_at_ms": 1789506000000
     },
     "failure_cooldown": {
-      "not_before_ms": 1789509600000,
-      "source_request_id": "request/monorepo/main/41"
+      "not_before_ms": 1789509600000
     }
   }
 }
 ```
 
-This shape illustrates ownership, not a shared wire contract. Policy keys and values are namespaced inside the implementation's versioned envelope. Unrelated controllers never mutate individual keys, and independently selected extensions never share a metadata map.
+This shape illustrates the minimum facts the initial policies need, not a shared wire contract. Active request IDs support idempotency and concurrency reconciliation; the last admission time survives completion for general throttling; and the cooldown deadline survives removal of the failed request. Policy keys and values are namespaced inside the implementation's versioned envelope. Unrelated controllers never mutate individual keys, and independently selected extensions never share a metadata map.
 
 Storing the envelope on the queue gives admission one optimistic-lock boundary with the queue's latest-head pointer and other coordination fields. The gate loads the complete queue snapshot, changes only its owned field, computes `newVersion = oldVersion + 1`, performs the conditional write, and assigns the new version only after success. On `ErrVersionMismatch`, it reloads and restarts evaluation. It preserves concurrent changes to fields it does not own by always rebuilding from the reloaded snapshot.
 
@@ -112,7 +118,7 @@ No cross-entity transaction is introduced. Recording an admission and transition
 
 ## Independent Reconciliation
 
-The state retains the IDs and admission times of active requests. Before evaluating a new admission, the gate reconciles that bounded set against authoritative request storage:
+The state retains the IDs of active requests. Before evaluating a new admission, the gate reconciles that bounded set against authoritative request storage:
 
 - `accepted` or `processing` remains active.
 - A terminal request is removed from the active set.

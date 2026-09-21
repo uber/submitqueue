@@ -36,12 +36,15 @@ const (
 	DecisionDeferred Decision = "deferred"
 )
 
+// Blocker identifies a policy that currently prevents admission.
+type Blocker string
+
 // Result describes an expected admission outcome.
 type Result struct {
 	// Decision is whether the request was admitted or deferred.
 	Decision Decision
 	// BlockedBy contains stable policy identifiers when Decision is deferred.
-	BlockedBy []string
+	BlockedBy []Blocker
 }
 
 // Gate decides whether requests may cross one queue-scoped pipeline boundary.
@@ -54,10 +57,16 @@ type Gate interface {
 	TryAdmit(ctx context.Context, request entity.Request) (Result, error)
 }
 
-// Gates resolves the gate for a request. A controller receives the resolver
+// Config identifies the queue for which a Gate is resolved.
+type Config struct {
+	// QueueName identifies the queue the resolved Gate serves.
+	QueueName string
+}
+
+// Gates resolves the gate for a queue. A controller receives the resolver
 // for the pipeline boundary it owns; concrete queue routing belongs in service
 // wiring rather than an extension implementation package.
 type Gates interface {
-	// For returns the Gate selected for request.
-	For(request entity.Request) (Gate, error)
+	// For returns the Gate selected for config.
+	For(config Config) (Gate, error)
 }
