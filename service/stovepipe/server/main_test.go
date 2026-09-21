@@ -17,6 +17,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -173,7 +176,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	primary := &recordingConsumer{}
 	deadLetter := &recordingConsumer{}
 
-	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
+	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), queueconfigdefault.NewStore(), registry,
 		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{})
 	require.NoError(t, err)
 
@@ -225,5 +228,41 @@ func TestHookStage(t *testing.T) {
 			require.True(t, ok)
 			assert.True(t, strings.HasPrefix(name, "stovepipe-"), "topic %q is not domain-qualified", name)
 		}
+	})
+}
+
+func TestLoadQueueConfigs(t *testing.T) {
+	t.Run("empty path uses defaults", func(t *testing.T) {
+		store, err := loadQueueConfigs("")
+		require.NoError(t, err)
+
+		cfg, err := store.Get(context.Background(), "monorepo/main")
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, cfg.MaxConcurrent)
+		assert.Zero(t, cfg.MinimumBuildAdmissionIntervalMs)
+	})
+
+	t.Run("path loads per-queue policies", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "queues.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`queues:
+  - name: monorepo/main
+    max_concurrent: 2
+    gate_wait_delay_ms: 5000
+    minimum_build_admission_interval_ms: 3600000
+`), 0o600))
+
+		store, err := loadQueueConfigs(path)
+		require.NoError(t, err)
+		cfg, err := store.Get(context.Background(), "monorepo/main")
+		require.NoError(t, err)
+		assert.EqualValues(t, 2, cfg.MaxConcurrent)
+		assert.EqualValues(t, 3_600_000, cfg.MinimumBuildAdmissionIntervalMs)
+		require.NoError(t, validateQueueConfigTenants(context.Background(), path, store, []string{"monorepo/main"}))
+		require.Error(t, validateQueueConfigTenants(context.Background(), path, store, []string{"other"}))
+	})
+
+	t.Run("invalid path fails", func(t *testing.T) {
+		_, err := loadQueueConfigs(filepath.Join(t.TempDir(), "missing.yaml"))
+		require.Error(t, err)
 	})
 }

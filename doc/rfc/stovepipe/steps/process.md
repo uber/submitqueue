@@ -62,7 +62,7 @@ Validation is expensive and shares a baseline, so heads arriving while an earlie
 | Queue row | `last_green_uri` | Bookmark `record` advances on whole-repo green; empty until first green. |
 | Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `buildsignal` (or DLQ reconciliation) decrements on terminal. |
 | Queue row | `build_admission_not_before_ms` | Durable earliest time for the next logical admission; zero until a time policy advances it. |
-| Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
+| Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1**; the YAML store supports per-queue overrides. |
 | Queue config | `minimum_build_admission_interval_ms` | Minimum start-to-start spacing between logical admissions. Positive values enable general throttling; non-positive values disable it. **Default 0**. |
 
 A slot is held from admit until the build goes terminal (`process → build → buildsignal`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `buildsignal` recording the build's outcome, success *or* failure, or the DLQ reconciler forcing a terminal `failed` (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
