@@ -33,6 +33,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Record stage](stovepipe/steps/record.md) - Immutable validation facts keyed by `(queue, uri, project)`, monotonic last-green bookmark advancement and ref promotion, and the deferred hook-event and analyze handoffs
 - [Request Log](stovepipe/request-log.md) - Append-only request lifecycle log, durable source context, idempotent storage, and reliable write and repair paths
 - [Request History API](stovepipe/request-history-api.md) - Queue-scoped request-ID and URI lookup, public projection, materialization decision, ordering, and retention
+- [GetProjectStatusByURI API](stovepipe/get-project-status-by-uri-api.md) - Queue-scoped current validation lookup for a commit, with repository and future project-level results
 
 ## Runway
 

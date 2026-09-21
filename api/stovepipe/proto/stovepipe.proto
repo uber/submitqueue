@@ -107,6 +107,52 @@ message GetRequestHistoryByURIResponse {
     repeated RequestHistory histories = 1;
 }
 
+// GetProjectStatusByURIRequest selects the validation status for an exact commit URI.
+message GetProjectStatusByURIRequest {
+    // Logical queue containing the validation request.
+    string queue = 1;
+    // Exact VCS-agnostic URI of the commit under validation.
+    string change_uri = 2;
+    // Required consumer-defined project IDs whose recorded results are requested.
+    repeated string projects = 3;
+    // Maximum requested projects to return in one page. Zero selects the server default.
+    int32 page_size = 4;
+    // Opaque continuation token for requested-project result pagination.
+    string page_token = 5;
+}
+
+// ProjectValidation contains one reported project and its recorded result, if any.
+message ProjectValidation {
+    // Stable consumer-defined project identifier.
+    string project = 1;
+    // Breakage degree on [0.0, 1.0]. Zero is green; absence means no result is recorded yet.
+    optional double breakage_degree = 2;
+}
+
+// GetProjectStatusByURIResponse contains the selected validation's current projection.
+message GetProjectStatusByURIResponse {
+    // Globally unique identifier of the validation request.
+    string request_id = 1;
+    // Logical queue containing the validation request.
+    string queue = 2;
+    // VCS-agnostic URI of the commit under validation.
+    string change_uri = 3;
+    // Baseline URI for incremental validation. Empty for a full build.
+    string base_uri = 4;
+    // Stable public lifecycle state of the validation request.
+    string request_state = 5;
+    // Unix millisecond timestamp of the newest durable lifecycle or result record.
+    int64 updated_at_ms = 10;
+    // Whole-repository breakage degree. Absent until the result is durable.
+    optional double repository_breakage_degree = 6;
+    // True after the implementation has durably finished producing relevant project results.
+    bool project_results_complete = 7;
+    // Recorded results for requested projects.
+    repeated ProjectValidation projects = 8;
+    // Opaque continuation token for another requested-project result page. Empty on the final page.
+    string next_page_token = 9;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -118,4 +164,6 @@ service Stovepipe {
     rpc GetRequestHistoryByID(GetRequestHistoryByIDRequest) returns (GetRequestHistoryByIDResponse) {}
     // GetRequestHistoryByURI returns retained histories for an exact commit URI.
     rpc GetRequestHistoryByURI(GetRequestHistoryByURIRequest) returns (GetRequestHistoryByURIResponse) {}
+    // GetProjectStatusByURI returns the current validation status for an exact commit URI.
+    rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
 }
