@@ -26,9 +26,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -40,7 +42,8 @@ var schemaShardColumns = map[string]map[string]bool{
 	"platform/extension/messagequeue/mysql/schema": {"tenant": true},
 }
 
-// schemaRoots are the directories scanned for table definitions.
+// schemaRoots are the directory trees scanned for table definitions. A root's
+// tables may be grouped into per-owner subpackages; the whole tree is scanned.
 var schemaRoots = []string{
 	"submitqueue/extension/storage/mysql/schema",
 	"stovepipe/extension/storage/mysql/schema",
@@ -74,9 +77,9 @@ func main() {
 	var checked int
 	for _, schemaRoot := range schemaRoots {
 		shardColumns := schemaShardColumns[schemaRoot]
-		files, err := filepath.Glob(filepath.Join(root, schemaRoot, "*.sql"))
+		files, err := findSchemaFiles(filepath.Join(root, schemaRoot))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error globbing %s: %v\n", schemaRoot, err)
+			fmt.Fprintf(os.Stderr, "error walking %s: %v\n", schemaRoot, err)
 			os.Exit(1)
 		}
 		if len(files) == 0 {
@@ -110,6 +113,27 @@ func main() {
 	}
 
 	fmt.Printf("All %d tables are shardable.\n", checked)
+}
+
+// findSchemaFiles returns every .sql file under dir, including subdirectories.
+// A schema root may group its tables into per-owner subpackages, so the whole
+// tree is scanned rather than only the root's own files.
+func findSchemaFiles(dir string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".sql") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 // check returns the number of tables found in content and any violations.

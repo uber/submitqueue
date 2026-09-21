@@ -17,9 +17,11 @@ package testutil
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -46,19 +48,33 @@ func SchemaDir(relativePath string) string {
 	return Runfile(relativePath)
 }
 
-// ApplySchema reads all .sql files from the schema directory and executes them on the database.
+// ApplySchema reads every .sql file under the schema directory, including
+// subdirectories, and executes them on the database. A schema may group its
+// tables into per-owner subpackages (see
+// submitqueue/extension/storage/mysql/schema), so passing the root applies the
+// whole schema regardless of how it is subdivided.
 func ApplySchema(t *testing.T, log *TestLogger, db *sql.DB, schemaDirectory string) {
 	t.Helper()
 
-	files, err := filepath.Glob(filepath.Join(schemaDirectory, "*.sql"))
-	require.NoError(t, err, "failed to glob schema files")
-	require.NotEmpty(t, files, "no .sql schema files found in %s", schemaDirectory)
+	var files []string
+	err := filepath.WalkDir(schemaDirectory, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".sql") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	require.NoError(t, err, "failed to walk schema files")
+	require.NotEmpty(t, files, "no .sql schema files found under %s", schemaDirectory)
 
 	// Sort files to ensure deterministic schema application order.
 	sort.Strings(files)
 
 	for _, f := range files {
-		name := filepath.Base(f)
+		name, relErr := filepath.Rel(schemaDirectory, f)
+		require.NoError(t, relErr, "failed to relativize schema file %s", f)
 		log.Logf("Applying schema: %s", name)
 
 		content, err := os.ReadFile(f)

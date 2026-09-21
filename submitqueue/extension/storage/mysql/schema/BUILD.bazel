@@ -1,5 +1,11 @@
+# The whole schema. A deployment that colocates gateway and orchestrator on one
+# database uses this alone; the per-owner packages exist for deployments that
+# give each service its own database, and are not a statement that they must.
 filegroup(
     name = "schema",
-    srcs = glob(["*.sql"]),
+    srcs = [
+        "//submitqueue/extension/storage/mysql/schema/pipeline",
+        "//submitqueue/extension/storage/mysql/schema/readmodel",
+    ],
     visibility = ["//visibility:public"],
 )

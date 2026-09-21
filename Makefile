@@ -386,7 +386,7 @@ local-submitqueue-gateway-stop: ## Stop Gateway service
 
 local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "Applying storage schema to mysql-app..."
-	@for file in submitqueue/extension/storage/mysql/schema/*.sql; do \
+	@for file in submitqueue/extension/storage/mysql/schema/*/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done

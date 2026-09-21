@@ -1,5 +1,14 @@
 # MySQL Schema
 
+## Layout
+
+Tables are grouped by the service that owns them, one Bazel package each:
+
+- `readmodel/` — the gateway-owned read model: the append-only request log and the three materialized projections behind request-summary retrieval and `List` (see [Gateway request read model](#gateway-request-read-model) below and [doc/rfc/submitqueue/status-list-api.md](../../../../../doc/rfc/submitqueue/status-list-api.md)).
+- `pipeline/` — orchestrator pipeline working state: requests, batches, builds, changes, and speculation. Different retention semantics from the read model, and never read by the gateway APIs.
+
+The parent `:schema` filegroup is the union of both and remains the default: a deployment that colocates gateway and orchestrator on one database depends on it alone. The per-owner packages exist so a deployment that gives each service its own database can provision exactly that service's tables; they are not a statement that it must. Adding a table means placing its `.sql` in the owning package — the grouping is the file's location, so there is no list to keep in sync.
+
 ## Queue-leading primary keys
 
 Every table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, `speculation_path_set` on `(queue, head)`, `request_summary` on `(queue, request_id)`, `request_log` on `(queue, request_id, timestamp_ms, salt)`, `change_uri_request_mapping` on `(queue, change_uri, received_at_ms, request_id)`, and `request_summary_by_queue` on `(queue, received_at_ms, request_id)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and every table is shardable by queue. `//tool/linter/queueshard` enforces this, and also rejects any secondary index that does not itself lead with `queue`, since such an index would reintroduce a cross-queue access path.

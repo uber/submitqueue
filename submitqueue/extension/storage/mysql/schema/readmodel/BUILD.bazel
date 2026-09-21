@@ -1,0 +1,5 @@
+filegroup(
+    name = "readmodel",
+    srcs = glob(["*.sql"]),
+    visibility = ["//visibility:public"],
+)
