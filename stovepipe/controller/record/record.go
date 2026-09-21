@@ -33,6 +33,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -47,6 +48,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -60,6 +62,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	materializer  requestlog.Materializer
+	projectResult projectresult.Factory
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -73,8 +76,7 @@ var _ consumer.Controller = (*Controller)(nil)
 const _opName = "record"
 
 // wholeRepositoryProject is the project component of a fact covering the whole
-// repository rather than one project within it. Per-project facts need target-graph
-// attribution that this stage does not do, so every fact it writes is whole-repository.
+// repository rather than one project within it.
 const wholeRepositoryProject = ""
 
 // NewController creates a new record controller.
@@ -83,6 +85,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
+	projectResult projectresult.Factory,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -94,6 +97,7 @@ func NewController(
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
 		materializer:  materializer,
+		projectResult: projectResult,
 		sourceControl: sourceControl,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -150,6 +154,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
 			return err
 		}
+		if err := c.recordProjectFacts(ctx, store, request); err != nil {
+			return err
+		}
 		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
@@ -174,6 +181,46 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
+}
+
+func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Storage, request entity.Request) error {
+	resolver, err := c.projectResult.For(projectresult.Config{QueueName: request.Queue})
+	if err != nil {
+		return fmt.Errorf("failed to resolve project result resolver for queue %q: %w", request.Queue, err)
+	}
+	results, err := resolver.Resolve(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project results for request %q: %w", request.ID, err)
+	}
+
+	seen := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		if result.Project == "" {
+			return fmt.Errorf("project result for request %q has an empty project", request.ID)
+		}
+		if _, ok := seen[result.Project]; ok {
+			return fmt.Errorf("project result for request %q contains duplicate project %q", request.ID, result.Project)
+		}
+		seen[result.Project] = struct{}{}
+		if math.IsNaN(result.Degree) || result.Degree < entity.DegreeGreen || result.Degree > entity.DegreeBroken {
+			return fmt.Errorf("project result for request %q and project %q has invalid degree %v", request.ID, result.Project, result.Degree)
+		}
+
+		fact, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
+			URI:       request.URI,
+			Project:   result.Project,
+			Degree:    result.Degree,
+			RequestID: request.ID,
+			CreatedAt: time.Now().UnixMilli(),
+		})
+		if err != nil {
+			return err
+		}
+		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Controller) persistValidationFactRecordedLog(
@@ -241,48 +288,49 @@ func (c *Controller) applyFactToDerivedCaches(
 // second return reports whether this call is the one that wrote the fact, which is
 // how a caller tells the original delivery from a redelivery.
 func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, bool, error) {
-	factStore := store.GetValidationFactStore()
-
-	fact := entity.ValidationFact{
+	return c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
 		URI:       request.URI,
 		Project:   wholeRepositoryProject,
 		Degree:    degreeFor(request.State),
 		RequestID: request.ID,
 		CreatedAt: time.Now().UnixMilli(),
-	}
+	})
+}
+
+func (c *Controller) recordValidationFact(ctx context.Context, factStore storage.ValidationFactStore, fact entity.ValidationFact) (entity.ValidationFact, bool, error) {
 
 	err := factStore.Create(ctx, fact)
 	switch {
 	case err == nil:
 		metrics.NamedCounter(c.metricsScope, _opName, "fact_created", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("recorded validation fact",
-			"queue", request.Queue,
-			"request_id", request.ID,
-			"uri", request.URI,
+			"request_id", fact.RequestID,
+			"uri", fact.URI,
+			"project", fact.Project,
 			"degree", fact.Degree,
 		)
 		return fact, true, nil
 
 	case errors.Is(err, storage.ErrAlreadyExists):
-		stored, getErr := factStore.Get(ctx, request.URI, wholeRepositoryProject)
+		stored, getErr := factStore.Get(ctx, fact.URI, fact.Project)
 		if getErr != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
+			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s and project %q: %w", fact.URI, fact.Project, getErr)
 		}
-		if stored.RequestID != request.ID {
+		if stored.RequestID != fact.RequestID {
 			// Two requests validating one URI would break the dedup ingest
 			// enforces, so this is a broken invariant rather than a race to
 			// resolve. Non-retryable: the stored fact is immutable.
 			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 			return entity.ValidationFact{}, false, fmt.Errorf(
-				"fact for uri %s is owned by request %s, not %s", request.URI, stored.RequestID, request.ID)
+				"fact for uri %s and project %q is owned by request %s, not %s", fact.URI, fact.Project, stored.RequestID, fact.RequestID)
 		}
 		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1, metrics.TagsFromContext(ctx)...)
 		return stored, false, nil
 
 	default:
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
+		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s and project %q: %w", fact.URI, fact.Project, err)
 	}
 }
 

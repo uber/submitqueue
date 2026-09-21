@@ -34,6 +34,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -125,6 +126,23 @@ func (f staticSourceControlFactory) For(sourcecontrol.Config) (sourcecontrol.Sou
 	return f.sourceControl, nil
 }
 
+type staticProjectResultFactory struct {
+	resolver projectresult.Resolver
+}
+
+func (f staticProjectResultFactory) For(projectresult.Config) (projectresult.Resolver, error) {
+	return f.resolver, nil
+}
+
+type staticProjectResultResolver struct {
+	results []projectresult.Result
+	err     error
+}
+
+func (r staticProjectResultResolver) Resolve(context.Context, entity.Request) ([]projectresult.Result, error) {
+	return r.results, r.err
+}
+
 // failingSourceControlFactory resolves no queue.
 type failingSourceControlFactory struct{}
 
@@ -194,6 +212,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		scope,
 		staticStorageFactory{store: m.store},
 		m.materializer,
+		projectresult.NoopFactory{},
 		staticSourceControlFactory{sourceControl: m.sourceControl},
 		registry,
 		topicKey,
@@ -322,6 +341,34 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			assert.Equal(t, wholeRepositoryProject, fact.Project)
 			assert.Positive(t, fact.CreatedAt)
 		})
+	}
+}
+
+func TestProcess_RecordsNamedProjectResults(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	c.projectResult = staticProjectResultFactory{resolver: staticProjectResultResolver{results: []projectresult.Result{
+		{Project: "project-a", Degree: entity.DegreeBroken},
+		{Project: "project-b", Degree: entity.DegreeBroken},
+	}}}
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
+
+	var facts []entity.ValidationFact
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
+			facts = append(facts, fact)
+			return nil
+		}).
+		Times(3)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.Len(t, facts, 3)
+	assert.Equal(t, []string{"", "project-a", "project-b"}, []string{facts[0].Project, facts[1].Project, facts[2].Project})
+	for _, fact := range facts {
+		assert.Equal(t, testURI, fact.URI)
+		assert.Equal(t, testID, fact.RequestID)
+		assert.Equal(t, entity.DegreeBroken, fact.Degree)
+		assert.Positive(t, fact.CreatedAt)
 	}
 }
 
