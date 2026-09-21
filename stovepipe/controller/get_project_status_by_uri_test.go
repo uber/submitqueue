@@ -50,6 +50,7 @@ func TestGetProjectStatusByURI(t *testing.T) {
 		wantNotFound    bool
 		wantRetryable   bool
 		wantInvalid     bool
+		noProjectLookup bool
 		wantConsistency bool
 	}{
 		{name: "in progress without fact", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, factErr: storage.ErrNotFound},
@@ -61,7 +62,7 @@ func TestGetProjectStatusByURI(t *testing.T) {
 		{name: "empty project", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{""}}, wantInvalid: true},
 		{name: "duplicate projects", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a", "project-a"}}, wantInvalid: true},
 		{name: "invalid page size", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, PageSize: maxProjectStatusPageSize + 1}, wantInvalid: true},
-		{name: "page token before project results", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, PageToken: "token"}, wantInvalid: true},
+		{name: "malformed page token", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}, PageToken: "token"}, factErr: storage.ErrNotFound, wantInvalid: true, noProjectLookup: true},
 		{name: "invalid fact degree", request: entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, fact: entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Degree: math.NaN()}, wantConsistency: true},
 	}
 
@@ -73,7 +74,7 @@ func TestGetProjectStatusByURI(t *testing.T) {
 			uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
 			summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
 			factStore := storagemock.NewMockValidationFactStore(mockCtrl)
-			if !tt.wantInvalid {
+			if !(tt.wantInvalid && tt.request.PageToken == "") {
 				factory.EXPECT().For(storage.Config{QueueName: projectStatusQueue}).Return(store, nil)
 				store.EXPECT().GetRequestURIStore().Return(uriStore)
 				uriStore.EXPECT().GetIDByURI(gomock.Any(), projectStatusURI).Return(projectStatusID, tt.uriErr)
@@ -83,6 +84,11 @@ func TestGetProjectStatusByURI(t *testing.T) {
 					if tt.summaryErr == nil {
 						store.EXPECT().GetValidationFactStore().Return(factStore)
 						factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(tt.fact, tt.factErr)
+						if !tt.noProjectLookup && !(tt.factErr == nil && tt.wantConsistency) {
+							for _, project := range tt.request.Projects {
+								factStore.EXPECT().Get(gomock.Any(), projectStatusURI, project).Return(entity.ValidationFact{}, storage.ErrNotFound)
+							}
+						}
 					}
 				}
 			}
@@ -126,11 +132,105 @@ func TestGetProjectStatusByURIUsesRequestSummaryTimestamp(t *testing.T) {
 	summaryStore.EXPECT().Get(gomock.Any(), projectStatusID).Return(requestSummary, nil)
 	store.EXPECT().GetValidationFactStore().Return(factStore)
 	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, CreatedAt: 20}, nil)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "project-a").Return(entity.ValidationFact{}, storage.ErrNotFound)
 
 	controller := NewGetProjectStatusByURIController(zap.NewNop().Sugar(), tally.NoopScope, factory)
 	got, err := controller.GetProjectStatusByURI(context.Background(), entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}})
 	require.NoError(t, err)
 	assert.Equal(t, int64(20), got.UpdatedAtMs)
+}
+
+func TestGetProjectStatusByURIReturnsProjectFactsInRequestedOrder(t *testing.T) {
+	requestSummary := entity.RequestSummary{RequestID: projectStatusID, Queue: projectStatusQueue, URI: projectStatusURI, StateTimestampMs: 10}
+	mockCtrl := gomock.NewController(t)
+	factory := storagemock.NewMockFactory(mockCtrl)
+	store := storagemock.NewMockStorage(mockCtrl)
+	uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
+	factStore := storagemock.NewMockValidationFactStore(mockCtrl)
+	factory.EXPECT().For(storage.Config{QueueName: projectStatusQueue}).Return(store, nil)
+	store.EXPECT().GetRequestURIStore().Return(uriStore)
+	uriStore.EXPECT().GetIDByURI(gomock.Any(), projectStatusURI).Return(projectStatusID, nil)
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+	summaryStore.EXPECT().Get(gomock.Any(), projectStatusID).Return(requestSummary, nil)
+	store.EXPECT().GetValidationFactStore().Return(factStore)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(entity.ValidationFact{}, storage.ErrNotFound)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "project-b").Return(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-b", Degree: entity.DegreeBroken, CreatedAt: 20}, nil)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "missing").Return(entity.ValidationFact{}, storage.ErrNotFound)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "project-a").Return(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-a", Degree: entity.DegreeGreen, CreatedAt: 30}, nil)
+
+	controller := NewGetProjectStatusByURIController(zap.NewNop().Sugar(), tally.NoopScope, factory)
+	got, err := controller.GetProjectStatusByURI(context.Background(), entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-b", "missing", "project-a"}})
+	require.NoError(t, err)
+	require.Len(t, got.ProjectValidationFacts, 2)
+	assert.Equal(t, []string{"project-b", "project-a"}, []string{got.ProjectValidationFacts[0].Project, got.ProjectValidationFacts[1].Project})
+	assert.Equal(t, int64(30), got.UpdatedAtMs)
+	assert.Empty(t, got.NextPageToken)
+	assert.False(t, got.ProjectResultsComplete)
+}
+
+func TestGetProjectStatusByURIPaginatesProjectFacts(t *testing.T) {
+	requestSummary := entity.RequestSummary{RequestID: projectStatusID, Queue: projectStatusQueue, URI: projectStatusURI, StateTimestampMs: 10}
+	projects := []string{"project-a", "project-b"}
+
+	firstPage := func(t *testing.T) string {
+		mockCtrl := gomock.NewController(t)
+		factory := storagemock.NewMockFactory(mockCtrl)
+		store := storagemock.NewMockStorage(mockCtrl)
+		uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
+		summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
+		factStore := storagemock.NewMockValidationFactStore(mockCtrl)
+		factory.EXPECT().For(storage.Config{QueueName: projectStatusQueue}).Return(store, nil)
+		store.EXPECT().GetRequestURIStore().Return(uriStore)
+		uriStore.EXPECT().GetIDByURI(gomock.Any(), projectStatusURI).Return(projectStatusID, nil)
+		store.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+		summaryStore.EXPECT().Get(gomock.Any(), projectStatusID).Return(requestSummary, nil)
+		store.EXPECT().GetValidationFactStore().Return(factStore)
+		factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(entity.ValidationFact{}, storage.ErrNotFound)
+		factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "project-a").Return(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-a", Degree: entity.DegreeGreen}, nil)
+
+		got, err := NewGetProjectStatusByURIController(zap.NewNop().Sugar(), tally.NoopScope, factory).GetProjectStatusByURI(context.Background(), entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: projects, PageSize: 1})
+		require.NoError(t, err)
+		require.Len(t, got.ProjectValidationFacts, 1)
+		assert.Equal(t, "project-a", got.ProjectValidationFacts[0].Project)
+		require.NotEmpty(t, got.NextPageToken)
+		return got.NextPageToken
+	}(t)
+
+	mockCtrl := gomock.NewController(t)
+	factory := storagemock.NewMockFactory(mockCtrl)
+	store := storagemock.NewMockStorage(mockCtrl)
+	uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
+	factStore := storagemock.NewMockValidationFactStore(mockCtrl)
+	factory.EXPECT().For(storage.Config{QueueName: projectStatusQueue}).Return(store, nil)
+	store.EXPECT().GetRequestURIStore().Return(uriStore)
+	uriStore.EXPECT().GetIDByURI(gomock.Any(), projectStatusURI).Return(projectStatusID, nil)
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+	summaryStore.EXPECT().Get(gomock.Any(), projectStatusID).Return(requestSummary, nil)
+	store.EXPECT().GetValidationFactStore().Return(factStore)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(entity.ValidationFact{}, storage.ErrNotFound)
+	factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "project-b").Return(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-b", Degree: entity.DegreeBroken}, nil)
+	got, err := NewGetProjectStatusByURIController(zap.NewNop().Sugar(), tally.NoopScope, factory).GetProjectStatusByURI(context.Background(), entity.GetProjectStatusByURIRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: projects, PageSize: 1, PageToken: firstPage})
+	require.NoError(t, err)
+	require.Len(t, got.ProjectValidationFacts, 1)
+	assert.Equal(t, "project-b", got.ProjectValidationFacts[0].Project)
+	assert.Empty(t, got.NextPageToken)
+}
+
+func TestSelectProjectStatusPageRejectsMismatchedToken(t *testing.T) {
+	token, err := encodeProjectStatusPageToken(projectStatusPageToken{RequestID: projectStatusID, Projects: []string{"project-a", "project-b"}, NextIndex: 1})
+	require.NoError(t, err)
+	_, err = selectProjectStatusPage(entity.GetProjectStatusByURIRequest{Projects: []string{"project-b", "project-a"}, PageToken: token}, projectStatusID)
+	require.Error(t, err)
+	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestValidateProjectFact(t *testing.T) {
+	requestSummary := entity.RequestSummary{RequestID: projectStatusID, URI: projectStatusURI}
+	assert.NoError(t, validateProjectFact(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-a", Degree: entity.DegreeGreen}, requestSummary, "project-a"))
+	assert.True(t, IsProjectStatusConsistency(validateProjectFact(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-b", Degree: entity.DegreeGreen}, requestSummary, "project-a")))
+	assert.True(t, IsProjectStatusConsistency(validateProjectFact(entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "project-a", Degree: math.NaN()}, requestSummary, "project-a")))
 }
 
 func TestGetProjectStatusByURIRejectsInconsistentRequest(t *testing.T) {

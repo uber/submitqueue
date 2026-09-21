@@ -22,7 +22,7 @@ type GetProjectStatusByURIRequest struct {
 	ChangeURI string
 	// Projects limits results to the supplied consumer-defined project IDs.
 	Projects []string
-	// PageSize is the requested maximum number of full-result projects.
+	// PageSize is the requested maximum number of requested projects to inspect.
 	PageSize int32
 	// PageToken is an opaque continuation token for full project-result pagination.
 	PageToken string
@@ -38,6 +38,10 @@ type GetProjectStatusByURIResult struct {
 	HasRepositoryValidationFact bool
 	// ProjectResultsComplete reports whether the implementation has finished its project-result set.
 	ProjectResultsComplete bool
-	// UpdatedAtMs is the newest durable lifecycle or repository-result timestamp.
+	// ProjectValidationFacts contains recorded results for requested projects in request order.
+	ProjectValidationFacts []ValidationFact
+	// NextPageToken continues requested-project result pagination when another page exists.
+	NextPageToken string
+	// UpdatedAtMs is the newest durable lifecycle or result timestamp represented by the response.
 	UpdatedAtMs int64
 }

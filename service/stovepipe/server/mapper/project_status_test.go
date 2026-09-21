@@ -35,10 +35,17 @@ func TestProjectStatusRequestAndResponseMapping(t *testing.T) {
 		RequestSummary:              entity.RequestSummary{RequestID: "request/1", Queue: "queue", URI: "uri", BaseURI: "base", State: entity.RequestStateSucceeded},
 		RepositoryValidationFact:    entity.ValidationFact{Degree: degree},
 		HasRepositoryValidationFact: true,
+		ProjectValidationFacts:      []entity.ValidationFact{{Project: "project-a", Degree: entity.DegreeBroken}},
+		NextPageToken:               "next-token",
 	})
 	assert.Equal(t, "request/1", response.GetRequestId())
 	assert.Equal(t, "succeeded", response.GetRequestState())
 	assert.Equal(t, &degree, response.RepositoryBreakageDegree)
 	assert.False(t, response.GetProjectResultsComplete())
-	assert.Empty(t, response.GetProjects())
+	if !assert.Len(t, response.GetProjects(), 1) {
+		return
+	}
+	assert.Equal(t, "project-a", response.GetProjects()[0].GetProject())
+	assert.Equal(t, entity.DegreeBroken, response.GetProjects()[0].GetBreakageDegree())
+	assert.Equal(t, "next-token", response.GetNextPageToken())
 }
