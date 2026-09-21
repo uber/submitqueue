@@ -4,7 +4,7 @@ Status: proposed. This RFC defines the framework and extension contract; storage
 
 ## Problem
 
-Stovepipe currently makes its build-admission decisions directly in `process`: admit only below the queue's concurrency limit, and optionally delay starts by a minimum interval. A failure cooldown adds a third decision with the same shape, but implementing each rule in a controller spreads policy across lifecycle stages and makes every new rule another special case.
+Stovepipe currently implements one build-admission policy directly in `process`: admit only while the queue's in-flight count is below its concurrency limit. General admission throttling and a cooldown after a failed build are new requirements. Implementing each new rule in a controller would spread policy across lifecycle stages and make every additional rule another special case.
 
 The immediate requirements are:
 
@@ -14,6 +14,12 @@ The immediate requirements are:
 - Keep coalescing active while a request is deferred, so a newer head can supersede it without waiting for the gate to open.
 
 The framework must also leave room for policies such as maintenance windows, resource budgets, provider health, or an operator hold, and for logical admission boundaries other than build admission.
+
+## Current Behavior
+
+On `main`, `process` loads the queue and its `QueueConfig`, coalesces the request against `Queue.LatestRequestID`, and compares `Queue.InFlightCount` with `QueueConfig.MaxConcurrent`. When the queue is full, it calls `delivery.Hold(QueueConfig.GateWaitDelayMs)` and returns successfully. `GateWaitDelayMs` is only the delay before redelivery and another concurrency check; it does not impose a minimum interval between admitted builds. Redelivery starts from request loading and coalescing, so a newer head can supersede the deferred request.
+
+When capacity is available, `process` claims it by incrementing `Queue.InFlightCount` with a queue-version CAS. A queue version conflict reloads the queue and repeats coalescing before another claim. After a terminal runner result, `buildsignal` decrements the counter before marking the request terminal. Relevant DLQ paths also decrement it so abandoned processing work does not permanently consume capacity. There is no minimum-admission timestamp, failure-cooldown state, or opaque admission payload on the queue today.
 
 ## Scope
 
@@ -56,7 +62,7 @@ There is intentionally no `Complete`, `Release`, or `RecordOutcome` method. `Try
 
 ## Process Integration
 
-`process` retains responsibility for request choreography; the gate owns only admission policy and its reservation:
+`process` retains responsibility for request choreography; the gate owns only admission policy and its reservation. The integration preserves the current re-check behavior:
 
 1. Load the request and queue, then coalesce it against the latest request ID.
 2. Resolve the gate with `gates.For(request)`.
@@ -117,7 +123,7 @@ The lookup cost is bounded by the configured concurrency limit rather than queue
 
 Using request history is what lets failure cooldown mean "after the runner-reported failure" rather than "after some later admission attempt noticed a failure." The initial cooldown policy reacts only to `RequestOutcomeReasonBuildFailed`. Success, cancellation, superseding, and failures synthesized by a DLQ or timeout do not activate it unless a later policy explicitly chooses those reasons.
 
-`buildsignal` therefore remains policy-neutral. It persists the build result, request terminal state, and request log. It neither understands the gate envelope nor invokes an admission callback.
+This reconciliation replaces the current shared-counter ownership in which `process` increments `Queue.InFlightCount` and `buildsignal` or a DLQ path decrements it. Under the proposal, `buildsignal` remains policy-neutral: it persists the build result, request terminal state, and request log, but neither understands the gate envelope nor invokes an admission callback. The next `TryAdmit` observes those durable facts and removes completed reservations.
 
 ## Policy Composition
 
@@ -135,15 +141,15 @@ This prevents partial admission: an interval policy cannot consume its next slot
 
 The initial standard gate composes:
 
-- **Concurrency:** defer while the number of reconciled active admissions is at the per-queue limit.
-- **Minimum interval:** when configured above zero, require at least that many milliseconds between admission timestamps. Non-positive values disable it.
-- **Failure cooldown:** after a configured runner-reported failure, defer until the failure occurrence time plus the cooldown. Non-positive values disable it.
+- **Concurrency:** preserve the current rule by deferring while the number of reconciled active admissions is at the per-queue limit.
+- **Minimum interval:** add general throttling by requiring at least the configured number of milliseconds between admission timestamps. Non-positive values disable it.
+- **Failure cooldown:** add outcome-sensitive throttling by deferring until a runner-reported failure's occurrence time plus the configured cooldown. Non-positive values disable it.
 
 Future policies for build admission, such as a calendar window, cost budget, provider-health circuit, or manual hold, fit inside the same atomic composition. A policy that needs its own durable facts receives a namespaced section in the gate envelope. A fundamentally different backend or evaluation model is another `Gate` implementation selected by wiring.
 
 ## Configuration And Routing
 
-Queue policy settings remain deployment configuration supplied through `queueconfig`; mutable observations remain in `AdmissionState`. Configuration is read during evaluation so a changed interval or cooldown affects the next attempt without rewriting stored state.
+Today `queueconfig` supplies `MaxConcurrent` and `GateWaitDelayMs`, and the service uses its built-in default implementation. The proposed minimum-interval and failure-cooldown settings belong in the same typed queue configuration contract; a deployment-backed configuration implementation is separate implementation work. Mutable observations such as admission times and failure facts belong in `AdmissionState`. Configuration is read during evaluation so a changed interval or cooldown affects the next attempt without rewriting stored state.
 
 The common admission-gate contract does not define a universal policy configuration language. The standard gate understands Stovepipe's typed queue settings. Another gate may receive configuration through dependencies injected by its constructor. Per-queue selection belongs in service wiring through `Gates.For`, consistent with other plural resolver contracts; no implementation package contains a routing map.
 
@@ -168,10 +174,10 @@ Unknown state versions also fail closed. Silently resetting an unreadable payloa
 The implementation PR can migrate incrementally:
 
 1. Add the opaque queue field and append the MySQL column, treating empty bytes as version-1 empty state.
-2. Implement the standard composite gate with concurrency and minimum-interval policies matching current behavior.
-3. Wire `process` through `Gates` and remove its direct admission-counter/deadline decisions.
-4. Stop `buildsignal` from directly releasing admission capacity; reconciliation becomes authoritative.
-5. Add failure cooldown as another standard policy.
+2. Implement the standard composite gate with a concurrency policy matching the current `InFlightCount < MaxConcurrent` behavior.
+3. Wire `process` through `Gates`, replace its direct counter claim, and make reconciliation authoritative instead of direct releases from `buildsignal` and DLQ paths.
+4. Add minimum interval as a new standard policy for general admission throttling.
+5. Add failure cooldown as another new standard policy.
 
 During a rolling deployment, old and new processes must not concurrently own different representations of admission capacity. The wiring cutover therefore occurs only after every binary understands the new queue field, or behind a deployment-wide switch that keeps one ownership model active at a time.
 
