@@ -27,7 +27,6 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
-	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -57,28 +56,15 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 		name       string
 		failure    failure.Failure
 		hasFailure bool
-		wantStage  string
 	}{
 		{
-			name: "promotion failure",
-			failure: failure.Failure{
-				Message: "permission denied",
-				Detail:  map[string]any{failureDetailKeyRecordStage: failureRecordStagePromotion},
-			},
+			name:       "promotion failure",
+			failure:    failure.Failure{Message: "failed to promote: permission denied"},
 			hasFailure: true,
-			wantStage:  failureRecordStagePromotion,
 		},
 		{
 			name:       "other record failure",
 			failure:    failure.Failure{Message: "hook publish failed"},
-			hasFailure: true,
-		},
-		{
-			name: "unrecognized stage is omitted",
-			failure: failure.Failure{
-				Message: "fact write failed",
-				Detail:  map[string]any{failureDetailKeyRecordStage: "future_stage"},
-			},
 			hasFailure: true,
 		},
 		{
@@ -93,15 +79,11 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 			expectDLQRequestLoad(m, requestWithState(entity.RequestStateSucceeded), nil)
 			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 				func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-					assert.Equal(t, entity.RequestEventRecordFailed, log.Event)
-					assert.Equal(t, "event/record_failed/repository", log.ID)
+					assert.Equal(t, entity.RequestEventRecordAbandoned, log.Event)
+					assert.Equal(t, "event/record_abandoned/repository", log.ID)
 					assert.Equal(t, testID, log.RequestID)
 					assert.Empty(t, log.State)
-					if tt.wantStage == "" {
-						assert.Empty(t, log.Metadata)
-					} else {
-						assert.Equal(t, map[string]string{requestlog.MetadataKeyRecordStage: tt.wantStage}, log.Metadata)
-					}
+					assert.Empty(t, log.Metadata)
 					return nil
 				},
 			)
@@ -177,16 +159,6 @@ func TestDLQControllerAcknowledgesUnresolvableMessages(t *testing.T) {
 			tenant:  testQueue,
 			setup: func(m dlqMocks) {
 				m.factory.EXPECT().For(storage.Config{QueueName: testQueue}).Return(nil, errors.New("unknown queue"))
-			},
-		},
-		{
-			name:    "stored request queue mismatch",
-			payload: recordPayload(t, testID),
-			tenant:  testQueue,
-			setup: func(m dlqMocks) {
-				request := requestWithState(entity.RequestStateSucceeded)
-				request.Queue = "monorepo/other"
-				expectDLQRequestLoad(m, request, nil)
 			},
 		},
 	}

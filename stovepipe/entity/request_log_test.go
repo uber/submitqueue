@@ -130,7 +130,7 @@ func TestRequestLogValidate(t *testing.T) {
 			name: "record failed event",
 			mutate: func(entry RequestLog) RequestLog {
 				entry.State = RequestStateUnknown
-				entry.Event = RequestEventRecordFailed
+				entry.Event = RequestEventRecordAbandoned
 				entry.RequestVersion = 0
 				return entry
 			},

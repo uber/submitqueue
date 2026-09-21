@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -124,20 +123,8 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		metrics.NamedCounter(c.metricsScope, _dlqOpName, "request_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to load request %s for record dlq: %w", rec.GetId(), err)
 	}
-	if request.Queue != rec.GetQueueName() {
-		metrics.NamedCounter(c.metricsScope, _dlqOpName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Errorw("discarding record dlq message whose request belongs to another queue",
-			"message_id", msg.ID,
-			"request_id", request.ID,
-			"payload_queue", rec.GetQueueName(),
-			"request_queue", request.Queue,
-		)
-		return nil
-	}
-
 	originalFailure, hasFailure := delivery.Failure()
-	metadata := recordFailureMetadata(originalFailure)
-	log := requestlog.NewRequestEventLog(request, entity.RequestEventRecordFailed, "repository", metadata)
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventRecordAbandoned, "repository", nil)
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		metrics.NamedCounter(c.metricsScope, _dlqOpName, "history_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to retain abandoned record work for request %s: %w", request.ID, err)
@@ -149,8 +136,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"request_state", request.State,
-		"history_event", entity.RequestEventRecordFailed,
-		"history_metadata", metadata,
+		"history_event", entity.RequestEventRecordAbandoned,
 		"attempt", delivery.Attempt(),
 	}
 	if hasFailure {
@@ -161,13 +147,6 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		)
 	}
 	c.logger.Errorw("abandoned record work after retaining failure history", fields...)
-	return nil
-}
-
-func recordFailureMetadata(f failure.Failure) map[string]string {
-	if stage, ok := f.Detail[failureDetailKeyRecordStage].(string); ok && stage == failureRecordStagePromotion {
-		return map[string]string{requestlog.MetadataKeyRecordStage: stage}
-	}
 	return nil
 }
 

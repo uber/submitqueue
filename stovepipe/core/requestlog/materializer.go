@@ -40,8 +40,6 @@ const (
 	MetadataKeyBuildID = "build_id"
 	// MetadataKeyFactDegree records the degree established by a validation fact.
 	MetadataKeyFactDegree = "fact_degree"
-	// MetadataKeyRecordStage identifies the record substage that failed when known.
-	MetadataKeyRecordStage = "record_stage"
 )
 
 // Materializer persists request-log occurrences into their queue-scoped read model.
