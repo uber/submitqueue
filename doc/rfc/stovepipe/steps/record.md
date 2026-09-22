@@ -202,7 +202,7 @@ Ordering is per-subject only and the subject is the Request, so events for *diff
 
 Absence of an event is not a signal. A Request abandoned before any build went terminal never reaches this stage, and a superseded one publishes nothing, so a consumer waiting for one event per ingested commit waits forever on those. Gating keeps treating "no recorded fact" as not green. The converse holds too — an event is not proof the code was tested, since a fail-closed Request can produce a broken fact without a build having failed.
 
-Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describes downstream consumption, not the publish: `record` never waits for a hook, but a failed *publish* fails the delivery. Per `[platform/errs](../../../../platform/errs/README.md)` rule 4 it is not wrapped retryable just because replaying it is convenient, so it dead-letters. The `record_dlq` consumer is this same controller on the dead-letter topic, so it re-runs this identical idempotent algorithm and the republish is its own recovery path: the fact is already durable, and only the notification was outstanding.
+Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describes downstream consumption, not the publish: `record` never waits for a hook, but a failed *publish* fails the delivery. Per `[platform/errs](../../../../platform/errs/README.md)` rule 4 it is not wrapped retryable just because replaying it is convenient, so it dead-letters. Once primary retries are exhausted, `record_dlq` stops trying to complete the original work: it reloads the already-terminal Request, retains `record_abandoned` history, logs and counts the abandonment, and acknowledges. It does not create a fact, advance the bookmark, promote, or publish a hook. Any partial durable effects already written remain authoritative; absence of a fact remains fail-closed, and a later request or operator action may repair external state. Promotion is one example of this case: an outbound call rejected for persistent permissions is not attempted again from the DLQ, and its diagnostic remains in structured logs.
 
 ## Request lifecycle
 
@@ -219,7 +219,7 @@ Phase 2 broadens "complete" to "all planned facts recorded", which needs a marke
 
 There is no `Update`. The first fact written for an identity is the permanent answer, and a caller that needs to know whether it won the race reads `ErrAlreadyExists` and then loads the winner.
 
-The topic key, the message, and the consumer all exist. The DLQ consumer does not (see [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior)).
+The topic key, message, primary consumer, and DLQ consumer all exist.
 
 
 | Topic key | Message                  | Producer      | Consumer | Partition key | Message id |
@@ -271,13 +271,13 @@ Every effect is recognize-and-skip, so a redelivery after a complete run re-runs
 
 ## DLQ and fail-closed behavior
 
-**Neither** `record_dlq` **nor** `build_dlq` **has a consumer today, and both topics are already receiving messages.** Every primary subscription comes from `DefaultSubscriptionConfig`, which enables dead-lettering with the `_dlq` suffix, so a message that is rejected outright *or* runs out of retries moves to its stage's dead-letter topic. The wiring registers only `process_dlq` and `buildsignal_dlq`, so messages pile up unread on the other two.
+Every primary subscription comes from `DefaultSubscriptionConfig`, which enables dead-lettering with the `_dlq` suffix, so a message that is rejected outright or runs out of retries moves to its stage's dead-letter topic. Stovepipe registers a reconciler for every pipeline DLQ, including `record_dlq`.
 
 Two different things put a message there, and only one is a poison payload. A delivery that fails with its retry budget spent is dead-lettered by the nack itself, carrying the reason it actually failed. A delivery that never reaches a nack, because it crashed or because its **ack failed** and the visibility timeout redelivered it, is dead-lettered by the poll loop once `retry_count` reaches `MaxAttempts` (3 by default), without the controller running on that final attempt and with only a generic reason recorded. So a missing reconciler exposes more than malformed messages: a fact can be lost to a storage failure that would have succeeded on a later retry, or to an ack that never landed even though the write did.
 
 Gating stays safe, because everything this stage can lose reads as not-green: a Request with no fact is indistinguishable from one not yet validated. What is lost is the *fact*. A green build whose fact write permanently failed leaves the URI looking unvalidated, which costs the queue an incremental baseline and forces a full build at the next head. A lost notification joins that list, and unlike the fact it gets no second chance from a later commit.
 
-This is the same failure shape [buildsignal.md](buildsignal.md#what-it-costs-when-a-backend-does-not-classify-status-errors) describes for a deployment that registers primary consumers without their reconciler. When the reconciler is built it should re-run this same idempotent algorithm from the request id, under `errs.AlwaysRetryableProcessor`: write and publish the immutable fact as usual if the Request carries a build outcome, keep retrying if Request storage is temporarily unavailable, and treat a malformed payload or a permanently missing Request as poison, which needs an operational alert rather than more retries.
+The reconciler does not re-run the stage. It loads the Request only to identify existing durable state and retain a stable `record_abandoned` event. The DLQ consumer uses `errs.AlwaysRetryableProcessor`, so a transient Request read or history persistence failure keeps retrying until that observable abandonment is durable. A malformed payload, invalid or unresolvable queue identity, or missing Request cannot be repaired by redelivery; those cases are logged, counted, and acknowledged so poison cannot occupy the DLQ indefinitely. No DLQ path creates a fact, advances a bookmark, invokes source control, or publishes a hook.
 
 ## Future Items
 

@@ -44,7 +44,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	platformhook "github.com/uber/submitqueue/platform/hook"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
-	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
+	"github.com/uber/submitqueue/service/stovepipe/server/handler"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/build"
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
@@ -64,47 +64,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
-
-// StovepipeServer wraps the controllers and implements the gRPC service interface.
-type StovepipeServer struct {
-	pb.UnimplementedStovepipeServer
-	pingController           *controller.PingController
-	ingestController         *controller.IngestController
-	requestHistoryController controller.RequestHistoryController
-}
-
-// Ping delegates to the controller.
-func (s *StovepipeServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
-	return s.pingController.Ping(ctx, req)
-}
-
-// Ingest maps the wire request to an entity, delegates to the controller, and maps
-// the result back to the wire response.
-func (s *StovepipeServer) Ingest(ctx context.Context, req *pb.IngestRequest) (*pb.IngestResponse, error) {
-	result, err := s.ingestController.Ingest(ctx, mapper.ProtoToIngestRequest(req))
-	if err != nil {
-		return nil, err
-	}
-	return mapper.IngestResultToProto(result), nil
-}
-
-// GetRequestHistoryByID returns retained history for one request ID.
-func (s *StovepipeServer) GetRequestHistoryByID(ctx context.Context, req *pb.GetRequestHistoryByIDRequest) (*pb.GetRequestHistoryByIDResponse, error) {
-	events, err := s.requestHistoryController.GetRequestHistoryByID(ctx, mapper.ProtoToGetRequestHistoryByIDRequest(req))
-	if err != nil {
-		return nil, err
-	}
-	return &pb.GetRequestHistoryByIDResponse{Events: mapper.HistoryEventsToProto(events)}, nil
-}
-
-// GetRequestHistoryByURI returns retained histories for one commit URI.
-func (s *StovepipeServer) GetRequestHistoryByURI(ctx context.Context, req *pb.GetRequestHistoryByURIRequest) (*pb.GetRequestHistoryByURIResponse, error) {
-	histories, err := s.requestHistoryController.GetRequestHistoryByURI(ctx, mapper.ProtoToGetRequestHistoryByURIRequest(req))
-	if err != nil {
-		return nil, err
-	}
-	return &pb.GetRequestHistoryByURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
-}
 
 // inMemoryCounter is a minimal, process-local counter.Counter used to wire the example
 // server. It is not durable; a real deployment supplies a persistent implementation
@@ -337,7 +296,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer)
 	if err != nil {
 		return err
 	}
@@ -372,11 +331,8 @@ func run() error {
 		tenants,
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
-	srv := &StovepipeServer{
-		pingController:           pingController,
-		ingestController:         ingestController,
-		requestHistoryController: requestHistoryController,
-	}
+	projectStatusController := controller.NewGetProjectStatusByURIController(logger.Sugar(), scope, storageFty)
+	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
 	// Register reflection service for debugging with grpcurl
@@ -507,8 +463,6 @@ func registerDLQControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	materializer requestlog.Materializer,
-	registry consumer.TopicRegistry,
-	sourceControl sourcecontrol.Factory,
 ) (int, error) {
 	var count int
 
@@ -530,7 +484,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	recordDLQController := record.NewController(logger, scope, store, materializer, sourceControl, registry, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	recordDLQController := record.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
 	if err := c.Register(recordDLQController); err != nil {
 		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}

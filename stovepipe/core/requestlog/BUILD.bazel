@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["materializer.go"],
+    srcs = [
+        "materializer.go",
+        "request_summary.go",
+    ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/requestlog",
     visibility = ["//visibility:public"],
     deps = [
@@ -16,7 +19,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["materializer_test.go"],
+    srcs = [
+        "materializer_test.go",
+        "request_summary_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "//platform/metrics:go_default_library",

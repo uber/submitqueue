@@ -741,7 +741,8 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 
 			// The bookmark already advanced, so the redelivery re-promotes the
 			// same commit; failing here is what makes that retry happen.
-			require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+			require.Error(t, err)
 		})
 	}
 }

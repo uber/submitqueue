@@ -160,10 +160,11 @@ func TestProcessBuildPublishRequiresRegisteredTopic(t *testing.T) {
 	c, m := newController(t, ctrl)
 	c.registry = consumer.TopicRegistry{}
 
-	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+	request := entity.Request{
 		ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
-	}, nil)
-	expectProcessingLog(t, m, testID, 2)
+	}
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	expectProcessingLog(t, m, request)
 
 	err := c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID)))
 
@@ -187,38 +188,33 @@ func expectAdmit(t *testing.T, m processMocks, id string) {
 	updatedReq.BuildStrategy = entity.BuildStrategyFull
 	m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
 
-	expectStartAnnounceAndBuildPublish(t, m, id)
+	loggedRequest := updatedReq
+	loggedRequest.Version = 2
+	expectStartAnnounceAndBuildPublish(t, m, loggedRequest)
 }
 
-func expectStartAnnounceAndBuildPublish(t *testing.T, m processMocks, id string) {
+func expectStartAnnounceAndBuildPublish(t *testing.T, m processMocks, request entity.Request) {
 	t.Helper()
-	expectProcessingLogAndHandoff(t, m, id, 2)
+	expectProcessingLogAndHandoff(t, m, request)
 }
 
-func expectProcessingLogAndHandoff(t *testing.T, m processMocks, id string, version int32) {
+func expectProcessingLogAndHandoff(t *testing.T, m processMocks, request entity.Request) {
 	t.Helper()
 
-	logCall := expectProcessingLog(t, m, id, version)
-	hookCall := expectStartValidationAnnounce(t, m, id)
-	buildCall := expectBuildPublish(t, m, id)
+	logCall := expectProcessingLog(t, m, request)
+	hookCall := expectStartValidationAnnounce(t, m, request.ID)
+	buildCall := expectBuildPublish(t, m, request.ID)
 	hookCall.After(logCall)
 	buildCall.After(hookCall)
 }
 
-func expectProcessingLog(t *testing.T, m processMocks, id string, version int32) *gomock.Call {
+func expectProcessingLog(t *testing.T, m processMocks, request entity.Request) *gomock.Call {
 	t.Helper()
-	return expectStateLog(t, m, id, entity.RequestStateProcessing, version, entity.RequestOutcomeReasonUnknown)
+	return expectStateLog(t, m, request, entity.RequestOutcomeReasonUnknown)
 }
 
-func expectStateLog(t *testing.T, m processMocks, id string, state entity.RequestState, version int32, reason entity.RequestOutcomeReason) *gomock.Call {
+func expectStateLog(t *testing.T, m processMocks, request entity.Request, reason entity.RequestOutcomeReason) *gomock.Call {
 	t.Helper()
-
-	request := entity.Request{
-		ID:      id,
-		Queue:   testQueue,
-		State:   state,
-		Version: version,
-	}
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
 		m.store,
@@ -490,7 +486,9 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), reloadedLastGreen, testURI).Return(true, nil)
 			m.queueStore.EXPECT().Update(gomock.Any(), claimedQueue, int32(2), int32(3)).Return(nil)
 			m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-			expectStartAnnounceAndBuildPublish(t, m, testID)
+			loggedRequest := updatedRequest
+			loggedRequest.Version = 2
+			expectStartAnnounceAndBuildPublish(t, m, loggedRequest)
 
 			require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
 		})
@@ -512,10 +510,11 @@ func TestProcess(t *testing.T) {
 		{
 			name: "superseded redelivery repairs its state log",
 			setup: func(m processMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+				request := entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
-				}, nil)
-				expectStateLog(t, m, testID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead)
+				}
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				expectStateLog(t, m, request, entity.RequestOutcomeReasonSupersededByNewerHead)
 			},
 		},
 		{
@@ -560,10 +559,11 @@ func TestProcess(t *testing.T) {
 		{
 			name: "processing redelivery re-announces the start and republishes to build",
 			setup: func(m processMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+				request := entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
-				}, nil)
-				expectStartAnnounceAndBuildPublish(t, m, testID)
+				}
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				expectStartAnnounceAndBuildPublish(t, m, request)
 			},
 		},
 		{
@@ -622,7 +622,9 @@ func TestProcess(t *testing.T) {
 				updatedRequest.State = entity.RequestStateProcessing
 				updatedRequest.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				logCall := expectProcessingLog(t, m, testID, 2)
+				loggedRequest := updatedRequest
+				loggedRequest.Version = 2
+				logCall := expectProcessingLog(t, m, loggedRequest)
 				m.publisher.EXPECT().
 					Publish(gomock.Any(), "stovepipe-hook", gomock.AssignableToTypeOf(entityqueue.Message{})).
 					Return(errors.New("queue unavailable")).
@@ -650,7 +652,9 @@ func TestProcess(t *testing.T) {
 				updatedRequest.State = entity.RequestStateProcessing
 				updatedRequest.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				logCall := expectProcessingLog(t, m, testID, 2)
+				loggedRequest := updatedRequest
+				loggedRequest.Version = 2
+				logCall := expectProcessingLog(t, m, loggedRequest)
 				hookCall := expectStartValidationAnnounce(t, m, testID)
 				m.publisher.EXPECT().
 					Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
@@ -680,9 +684,8 @@ func TestProcess(t *testing.T) {
 				updatedRequest.State = entity.RequestStateProcessing
 				updatedRequest.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				request := entity.Request{
-					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
-				}
+				request := updatedRequest
+				request.Version = 2
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
@@ -777,7 +780,9 @@ func TestProcess(t *testing.T) {
 				updatedReq.State = entity.RequestStateProcessing
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
-				expectStartAnnounceAndBuildPublish(t, m, testID)
+				loggedRequest := updatedReq
+				loggedRequest.Version = 2
+				expectStartAnnounceAndBuildPublish(t, m, loggedRequest)
 			},
 		},
 		{
@@ -797,7 +802,9 @@ func TestProcess(t *testing.T) {
 				superseded := acceptedRequest(testID)
 				superseded.State = entity.RequestStateSuperseded
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
-				expectStateLog(t, m, testID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				loggedRequest := superseded
+				loggedRequest.Version = 2
+				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
 			},
 		},
 		{
@@ -830,7 +837,9 @@ func TestProcess(t *testing.T) {
 				retry.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
 				retry.BaseURI = lastGreenURI
 				m.reqStore.EXPECT().Update(gomock.Any(), retry, int32(2), int32(3)).Return(nil)
-				expectProcessingLogAndHandoff(t, m, testID, 3)
+				loggedRequest := retry
+				loggedRequest.Version = 3
+				expectProcessingLogAndHandoff(t, m, loggedRequest)
 			},
 		},
 		{
@@ -898,7 +907,9 @@ func TestProcess(t *testing.T) {
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
-				expectStateLog(t, m, testOlderID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				loggedRequest := updated
+				loggedRequest.Version = 2
+				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
 			},
 		},
 		{
@@ -938,10 +949,11 @@ func TestProcess(t *testing.T) {
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(entity.Request{
+				reloaded := entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
-				}, nil)
-				expectStateLog(t, m, testOlderID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead).After(reloadCall)
+				}
+				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(reloaded, nil)
+				expectStateLog(t, m, reloaded, entity.RequestOutcomeReasonSupersededByNewerHead).After(reloadCall)
 			},
 		},
 		{

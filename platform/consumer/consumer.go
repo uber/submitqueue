@@ -414,13 +414,16 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	}
 
 	topicKey := controller.TopicKey()
+	ownerLogFields := deliveryOwnerLogFields(delivery)
 
 	m.logger.Debugw("processing delivery",
-		"controller", controller.Name(),
-		"topic_key", topicKey,
-		"message_id", msg.ID,
-		"partition_key", msg.PartitionKey,
-		"attempt", delivery.Attempt(),
+		append([]any{
+			"controller", controller.Name(),
+			"topic_key", topicKey,
+			"message_id", msg.ID,
+			"partition_key", msg.PartitionKey,
+			"attempt", delivery.Attempt(),
+		}, ownerLogFields...)...,
 	)
 
 	// Wrap delivery to hide Ack/Nack from controller
@@ -453,10 +456,12 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		if wrapped.held {
 			metrics.NamedCounter(controllerScope, opName, "hold_ignored", 1, metrics.TagsFromContext(ctx)...)
 			m.logger.Warnw("hold recorded but controller returned error, failure outcome wins",
-				"controller", controller.Name(),
-				"topic_key", topicKey,
-				"message_id", msg.ID,
-				"partition_key", msg.PartitionKey,
+				append([]any{
+					"controller", controller.Name(),
+					"topic_key", topicKey,
+					"message_id", msg.ID,
+					"partition_key", msg.PartitionKey,
+				}, ownerLogFields...)...,
 			)
 		}
 
@@ -473,13 +478,15 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		// Check if the error is non-retryable (poison pill message)
 		if !errs.IsRetryable(err) {
 			m.logger.Errorw("non-retryable controller error, rejecting message",
-				"controller", controller.Name(),
-				"topic_key", controller.TopicKey(),
-				"message_id", msg.ID,
-				"partition_key", msg.PartitionKey,
-				"attempt", delivery.Attempt(),
-				"error", err,
-				"elapsed_ms", elapsed.Milliseconds(),
+				append([]any{
+					"controller", controller.Name(),
+					"topic_key", controller.TopicKey(),
+					"message_id", msg.ID,
+					"partition_key", msg.PartitionKey,
+					"attempt", delivery.Attempt(),
+					"error", err,
+					"elapsed_ms", elapsed.Milliseconds(),
+				}, ownerLogFields...)...,
 			)
 
 			// Reject moves to DLQ (or acks if DLQ disabled)
@@ -488,10 +495,12 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			rejectOp.Complete(rejectErr)
 			if rejectErr != nil {
 				m.logger.Errorw("failed to reject non-retryable message",
-					"controller", controller.Name(),
-					"topic_key", controller.TopicKey(),
-					"message_id", msg.ID,
-					"error", rejectErr,
+					append([]any{
+						"controller", controller.Name(),
+						"topic_key", controller.TopicKey(),
+						"message_id", msg.ID,
+						"error", rejectErr,
+					}, ownerLogFields...)...,
 				)
 			}
 			return
@@ -504,14 +513,16 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			what = "cancel"
 		}
 		m.logger.Errorw("controller error or cancel, nacking message",
-			"what", what,
-			"controller", controller.Name(),
-			"topic_key", topicKey,
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-			"elapsed_ms", elapsed.Milliseconds(),
+			append([]any{
+				"what", what,
+				"controller", controller.Name(),
+				"topic_key", topicKey,
+				"message_id", msg.ID,
+				"partition_key", msg.PartitionKey,
+				"attempt", delivery.Attempt(),
+				"error", err,
+				"elapsed_ms", elapsed.Milliseconds(),
+			}, ownerLogFields...)...,
 		)
 
 		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
@@ -519,10 +530,12 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		nackOp.Complete(nackErr)
 		if nackErr != nil {
 			m.logger.Errorw("failed to nack message",
-				"controller", controller.Name(),
-				"topic_key", topicKey,
-				"message_id", msg.ID,
-				"error", nackErr,
+				append([]any{
+					"controller", controller.Name(),
+					"topic_key", topicKey,
+					"message_id", msg.ID,
+					"error", nackErr,
+				}, ownerLogFields...)...,
 			)
 		}
 		return
@@ -763,4 +776,19 @@ func (m *consumer) unsubscribeAll(timeoutMs int64) error {
 
 	m.logger.Debugw("all controllers stopped gracefully")
 	return nil
+}
+
+func deliveryOwnerLogFields(delivery extqueue.Delivery) []any {
+	meta := delivery.Metadata()
+	if len(meta) == 0 {
+		return nil
+	}
+	var fields []any
+	if v := meta["leased_by"]; v != "" {
+		fields = append(fields, "leased_by", v)
+	}
+	if v := meta["consumer_group"]; v != "" {
+		fields = append(fields, "consumer_group", v)
+	}
+	return fields
 }

@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["record.go"],
+    srcs = [
+        "dlq.go",
+        "record.go",
+    ],
     importpath = "github.com/uber/submitqueue/stovepipe/controller/record",
     visibility = ["//visibility:public"],
     deps = [
@@ -25,10 +28,14 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["record_test.go"],
+    srcs = [
+        "dlq_test.go",
+        "record_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "//api/base/hook:go_default_library",
+        "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/consumer/mock:go_default_library",

@@ -92,7 +92,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, tenant str
 }
 
 // ReleaseLease releases the lease for a partition owned by this worker
-func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string) (retErr error) {
+func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string) (_ int64, retErr error) {
 	op := metrics.Begin(s.scope, "release_lease", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
@@ -102,7 +102,7 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant string
 	`, PartitionLeasesTableName), tenant, consumerGroup, topic, partitionKey, subscriberName)
 
 	if err != nil {
-		return fmt.Errorf("release lease tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
+		return 0, fmt.Errorf("release lease tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
 	// RowsAffected error is swallowed because the DELETE query itself succeeded.
@@ -116,6 +116,7 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant string
 			logPartitionKey, partitionKey,
 			logError, err,
 		)
+		return 0, nil
 	}
 	if rows > 0 {
 		s.logger.Debugw("released lease",
@@ -125,7 +126,7 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant string
 		)
 	}
 
-	return nil
+	return rows, nil
 }
 
 func (s *sqlpartitionLeaseStore) GetLeasedPartitionsForTenants(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (_ map[string][]string, retErr error) {
@@ -197,49 +198,65 @@ func (s *sqlpartitionLeaseStore) GetAllLeasesForTenants(ctx context.Context, ten
 	return byTenant, nil
 }
 
-func (s *sqlpartitionLeaseStore) RenewOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (retErr error) {
+func (s *sqlpartitionLeaseStore) RenewOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (_ int64, retErr error) {
 	op := metrics.Begin(s.scope, "renew_owned_leases", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
 	placeholders, ok := inListPlaceholders(len(tenants))
 	if !ok {
-		return nil
+		return 0, nil
 	}
 	now := currentTimeMillis()
 	args := []any{now}
 	args = appendStrings(args, tenants)
 	args = append(args, consumerGroup, topic, subscriberName)
 
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s
 		SET lease_renewed_at = ?
 		WHERE tenant IN (%s) AND consumer_group = ? AND topic = ? AND leased_by = ?
 	`, PartitionLeasesTableName, placeholders), args...)
 	if err != nil {
-		return fmt.Errorf("renew owned leases topic=%s: %w", topic, err)
+		return 0, fmt.Errorf("renew owned leases topic=%s: %w", topic, err)
 	}
-	return nil
+	rows, err := result.RowsAffected()
+	if err != nil {
+		s.logger.Warnw("failed to get rows affected after renew owned leases",
+			logTopic, topic,
+			logError, err,
+		)
+		return 0, nil
+	}
+	return rows, nil
 }
 
-func (s *sqlpartitionLeaseStore) ReleaseOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (retErr error) {
+func (s *sqlpartitionLeaseStore) ReleaseOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (_ int64, retErr error) {
 	op := metrics.Begin(s.scope, "release_owned_leases", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
 	placeholders, ok := inListPlaceholders(len(tenants))
 	if !ok {
-		return nil
+		return 0, nil
 	}
 	args := appendStrings(nil, tenants)
 	args = append(args, consumerGroup, topic, subscriberName)
 
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s
 		WHERE tenant IN (%s) AND consumer_group = ? AND topic = ? AND leased_by = ?
 	`, PartitionLeasesTableName, placeholders), args...)
 	if err != nil {
-		return fmt.Errorf("release owned leases topic=%s: %w", topic, err)
+		return 0, fmt.Errorf("release owned leases topic=%s: %w", topic, err)
 	}
-	return nil
+	rows, err := result.RowsAffected()
+	if err != nil {
+		s.logger.Warnw("failed to get rows affected after release owned leases",
+			logTopic, topic,
+			logError, err,
+		)
+		return 0, nil
+	}
+	return rows, nil
 }
 
 func (s *sqlpartitionLeaseStore) PurgeStaleForTenants(ctx context.Context, tenants []string, topic string, consumerGroup string, olderThanMs int64) (retErr error) {

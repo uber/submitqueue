@@ -2,11 +2,12 @@
 
 ## Summary
 
-Stovepipe retains an append-only request log for each validation request. Its internal `RequestLog` is the counterpart of SubmitQueue's `RequestLog`: both retain request status changes and explanatory lifecycle events, while Stovepipe calls its materializer directly instead of sending records through a cross-service log topic. The public API presents these records as request history. The log records every durable `Request.State` transition plus three asynchronous milestones needed to explain those transitions and the public verdict:
+Stovepipe retains an append-only request log for each validation request. Its internal `RequestLog` is the counterpart of SubmitQueue's `RequestLog`: both retain request status changes and explanatory lifecycle events, while Stovepipe calls its materializer directly instead of sending records through a cross-service log topic. The public API presents these records as request history. The log records every durable `Request.State` transition plus asynchronous milestones needed to explain those transitions, the public verdict, and abandoned terminal-stage work:
 
 - `build_triggered`;
 - `build_finished`;
-- `validation_fact_recorded`.
+- `validation_fact_recorded`;
+- `record_abandoned`.
 
 The model deliberately follows SubmitQueue's distinction between statuses describing where a request is and events describing important activity that does not move it. It remains a bounded request-lifecycle log rather than a generic event bus or an audit of every correlated operation.
 
@@ -122,6 +123,7 @@ Immutable Request context such as URI, build strategy, and base URI remains on `
 | `build_triggered` | A runner accepted a build and its Build row became durable. | Build ID metadata and creation time |
 | `build_finished` | The Build first reached a write-once terminal status. | Build ID metadata and status-change time |
 | `validation_fact_recorded` | The immutable whole-repository fact became durable. | Degree metadata and fact creation time |
+| `record_abandoned` | Record-stage work stopped after exhausting primary retries. | Event retention time |
 
 Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Project facts remain outside the initial vocabulary.
 
@@ -208,6 +210,7 @@ Request creation, Build changes, and fact creation use the same source-write, lo
 | Build | Create Build after runner acceptance, then retain `build_triggered`. | An identical existing Build ensures the event before buildsignal publication. |
 | Buildsignal | Persist terminal Build and retain `build_finished`; CAS the Request outcome and retain its terminal state. | Existing terminal Build and Request outcome each ensure their own entry before record publication. |
 | Record | Create or verify the whole-repository fact, then retain `validation_fact_recorded`. | An identical fact owned by the Request ensures the event before bookmark or promotion work. |
+| Record DLQ | Retain `record_abandoned`, then acknowledge the remaining record work. | The stable event ID makes history retention idempotent without replaying facts, bookmarks, promotion, or hooks. |
 | Reconciler | CAS an unrecoverable non-terminal Request to failed, then retain failed. | An existing terminal Request is repaired from its persisted outcome without relabeling it. |
 
 Build running and unchanged polls create no entry. A failed runner trigger that creates no Build creates no event. Cancelled and superseded requests create no validation fact.

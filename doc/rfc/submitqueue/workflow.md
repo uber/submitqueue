@@ -6,74 +6,105 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
 
 ## Diagram
 
-```
-                    +----------------------------------+
-                    | gateway:Land  (RPC entry)        |
-                    | Accept, mint ID, hand off async  |
-                    +----------------+-----------------+
-                                     | LandRequest
-                                     v
-   +----------------------+    +----------------------------------+
-   | gateway: log         |<---| start                            |
-   | Persist request log  |    | Persist Request, emit Started    |
-   +----------------------+    +----------------+-----------------+
-              ^                                 | RequestID
-              |                                 v
-              |                 +----------------------------------+
-              |                 | validate                         |
-              |                 | Dedup, fetch metadata, publish   |
-              |                 | check request to runway          |
-              |                 +----------------+-----------------+
-               |                           MergeRequest
-               |                                  v
-               |                 ####################################
-               |                 # runway  (separate service)       #
-               |                 # Dry-run merge, emit result       #
-               |                 ####################+###############
-               |                           MergeResult
-               |                                  v
-               |                 +----------------------------------+
-               |                 | landconflictsignal               |
-               |                 | Correlate result, gate request   |
-               |                 +----------------+-----------------+
-              |                                  | RequestID
-              |                                  v
-              |                 +----------------------------------+
-              |                 | batch                            |
-              |                 | Group request into a Batch       |
-              |                 +----------------+-----------------+
-              |                                  | BatchID
-              |                                  v
-              |            +----------------------------------+
-              |       +--->| speculate  (stub)                |<----+
-              |       |    | Decide CI verify vs. land        |     |
-              |       |    +------+-----------------+---------+     |
-              |       |  BatchID  |                 | BatchID       |
-              |       |           v                 v               |
-               |       |  +------------------+  +------------------+ |
-               |       |  | build            |  | land             | |
-               |       |  | Trigger CI build |  | Publish to runway| |
-               |       |  +--------+---------+  +--------+---------+ |
-               |       |   Build   |            MergeRequest         |
-               |       |           v                     v           |
-               |       |  +------------------+  #################### |
-               |       +--| buildsignal      |  # runway (sep.)    # |
-               |  BatchID | Feed CI result   |  # Merge, emit res. # |
-               |          | back to spec.    |  ########+########### |
-               |          +------------------+      MergeResult       |
-               |                  ^                      v           |
-               |   Build (ext.CI) |            +------------------+  |
-               |                  |            | landsignal       |--+
-              |                  |            | Gate batch + fan |  |
-              |                  |            +--------+---------+  |
-              |                  |                     | BatchID    |
-              |                  |            +------------------+  |
-              |                  |            | conclude         |  |
-              |                  |            | Map batch state  |  |
-              |                  |            | -> request state |  |
-              |                  |            +------------------+  |
-              |                                                     |
-              +--- any controller via submitqueue/core/request.PublishLog ------+
+[View Diagram](https://gitdiagram.com/uber/submitqueue)
+
+
+```mermaid
+flowchart TD
+
+subgraph group_gateway["Gateway API"]
+  node_gateway["Gateway<br/>[land.go]"]
+end
+
+subgraph group_orchestration["Queue Orchestration"]
+  node_orchestrator["Orchestrator Service<br/>[main.go]"]
+  node_pipeline["Pipeline Engine<br/>[pipeline.go]"]
+  node_start["Start Requests<br/>[start.go]"]
+  node_validate["Validate Changes<br/>[validate.go]"]
+  node_runway["Runway Merge<br/>[merge.go]"]
+  node_conflictsignal["Conflict Signal"]
+  node_batch["Batch Changes<br/>[batch.go]"]
+  node_speculate["Speculate States<br/>[speculate.go]"]
+  node_build["Run Builds<br/>[buildsignal.go]"]
+  node_buildsignal["Build Results<br/>[buildsignal.go]"]
+  node_land["Land Changes<br/>[land.go]"]
+  node_conclude["Conclude Requests<br/>[conclude.go]"]
+end
+
+subgraph group_integrations["External Integrations"]
+  node_changeproviders["Change Providers<br/>[change_provider.go]"]
+  node_buildrunner["Build Runner<br/>[build_runner.go]"]
+  node_gitrepository["Git Repository"]
+  node_github["GitHub"]
+  node_buildkite["Buildkite"]
+end
+
+subgraph group_platform["Platform State"]
+  node_storagecontract["Storage Contract<br/>[storage.go]"]
+  node_queuestorage[("Queue State<br/>[storage.go]")]
+  node_requestlog["Request Log<br/>[log.go]"]
+  node_messagequeue["Message Queue<br/>[queue.go]"]
+end
+
+node_submitter(("Submitter"))
+
+node_submitter -->|"submits changes"| node_gateway
+node_gateway -->|"dispatches requests"| node_orchestrator
+node_orchestrator -->|"starts pipeline"| node_pipeline
+node_pipeline -->|"constructs consumers"| node_messagequeue
+node_pipeline -->|"injects storage"| node_storagecontract
+node_start -->|"starts validation"| node_validate
+node_validate -->|"checks merges"| node_runway
+node_runway -->|"emits signal"| node_conflictsignal
+node_conflictsignal -->|"signals batching"| node_batch
+node_batch -->|"dispatches batches"| node_speculate
+node_speculate -->|"dispatches builds"| node_build
+node_build -->|"runs builds"| node_buildrunner
+node_buildrunner -.->|"runs CI"| node_buildkite
+node_buildrunner -.->|"runs workflows"| node_github
+node_build -->|"reports results"| node_buildsignal
+node_buildsignal -->|"polls outcomes"| node_speculate
+node_speculate -->|"lands passing batch"| node_land
+node_land -->|"lands changes"| node_changeproviders
+node_changeproviders -.->|"updates branches"| node_gitrepository
+node_changeproviders -.->|"updates pull requests"| node_github
+node_land -->|"concludes landing"| node_conclude
+node_conclude -->|"records history"| node_requestlog
+node_storagecontract -->|"persists state"| node_queuestorage
+node_orchestrator -->|"reads and writes"| node_queuestorage
+
+click node_gateway "https://github.com/uber/submitqueue/blob/main/submitqueue/gateway/controller/land.go"
+click node_orchestrator "https://github.com/uber/submitqueue/blob/main/service/submitqueue/orchestrator/server/main.go"
+click node_pipeline "https://github.com/uber/submitqueue/blob/main/platform/pipeline/pipeline.go"
+click node_start "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/start/start.go"
+click node_validate "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/validate/validate.go"
+click node_runway "https://github.com/uber/submitqueue/blob/main/runway/controller/merge/merge.go"
+click node_conflictsignal "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/landconflictsignal/landconflictsignal.go"
+click node_batch "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/batch/batch.go"
+click node_speculate "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/speculate/speculate.go"
+click node_build "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/buildsignal/buildsignal.go"
+click node_buildsignal "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/buildsignal/buildsignal.go"
+click node_land "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/land/land.go"
+click node_conclude "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/controller/conclude/conclude.go"
+click node_changeproviders "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/changeprovider/change_provider.go"
+click node_buildrunner "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/buildrunner/build_runner.go"
+click node_storagecontract "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/storage/storage.go"
+click node_queuestorage "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/storage/mysql/storage.go"
+click node_requestlog "https://github.com/uber/submitqueue/blob/main/submitqueue/core/request/log.go"
+click node_messagequeue "https://github.com/uber/submitqueue/blob/main/platform/extension/messagequeue/queue.go"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_gateway toneBlue
+class node_orchestrator,node_pipeline,node_start,node_validate,node_runway,node_conflictsignal,node_batch,node_speculate,node_build,node_buildsignal,node_land,node_conclude toneAmber
+class node_changeproviders,node_buildrunner,node_gitrepository,node_github,node_buildkite toneMint
+class node_storagecontract,node_queuestorage,node_requestlog,node_messagequeue toneRose
+class node_submitter toneIndigo
 ```
 
 ## Per-controller summary
