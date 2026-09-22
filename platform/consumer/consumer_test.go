@@ -35,7 +35,9 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const (
@@ -627,6 +629,123 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestConsumer_ProcessDelivery_LogsLeasedBy(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	core, logs := observer.New(zap.DebugLevel)
+	logger := zap.New(core).Sugar()
+
+	deliveryChan := make(chan extqueue.Delivery, 1)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+	c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
+
+	handler := &testController{}
+	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
+		func(ctx context.Context, delivery Delivery) error {
+			return fmt.Errorf("bad payload")
+		},
+	)
+	require.NoError(t, c.Register(handler))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, c.Start(ctx))
+
+	msg := entityqueue.NewMessage("poison-msg", []byte("bad"), "partition1", nil)
+	msg.Tenant = testTenant
+	done := make(chan struct{})
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	mockDel.EXPECT().Message().Return(msg).AnyTimes()
+	mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+	mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	mockDel.EXPECT().Metadata().Return(map[string]string{
+		"leased_by":      "host-1",
+		"consumer_group": "test-group",
+	}).AnyTimes()
+	mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+	mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
+		close(done)
+		return nil
+	})
+
+	deliveryChan <- mockDel
+	<-done
+	require.NoError(t, c.Stop(30000))
+
+	processLogs := logs.FilterMessage("processing delivery").All()
+	require.NotEmpty(t, processLogs)
+	assert.Equal(t, "host-1", processLogs[0].ContextMap()["leased_by"])
+	assert.Equal(t, "test-group", processLogs[0].ContextMap()["consumer_group"])
+
+	rejectLogs := logs.FilterMessage("non-retryable controller error, rejecting message").All()
+	require.NotEmpty(t, rejectLogs)
+	assert.Equal(t, "host-1", rejectLogs[0].ContextMap()["leased_by"])
+	assert.Equal(t, "partition1", rejectLogs[0].ContextMap()["partition_key"])
+}
+
+func TestConsumer_ProcessDelivery_HoldIgnoredLogsLeasedBy(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	core, logs := observer.New(zap.DebugLevel)
+	logger := zap.New(core).Sugar()
+
+	deliveryChan := make(chan extqueue.Delivery, 1)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+	c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
+
+	deliveryMetadata := map[string]string{
+		"leased_by":      "host-1",
+		"consumer_group": "test-group",
+	}
+	handler := &testController{}
+	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
+		func(ctx context.Context, delivery Delivery) error {
+			delivery.Metadata()["leased_by"] = "mutated-host"
+			delivery.Metadata()["consumer_group"] = "mutated-group"
+			delivery.Hold(5000)
+			return errs.NewRetryableError(fmt.Errorf("processing failed"))
+		},
+	)
+	require.NoError(t, c.Register(handler))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, c.Start(ctx))
+
+	msg := entityqueue.NewMessage("held-msg", []byte("payload"), "partition1", nil)
+	msg.Tenant = testTenant
+	done := make(chan struct{})
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	mockDel.EXPECT().Message().Return(msg).AnyTimes()
+	mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+	mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	mockDel.EXPECT().Metadata().Return(deliveryMetadata).AnyTimes()
+	mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+	mockDel.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
+		close(done)
+		return nil
+	})
+
+	deliveryChan <- mockDel
+	<-done
+	require.NoError(t, c.Stop(30000))
+
+	holdLogs := logs.FilterMessage("hold recorded but controller returned error, failure outcome wins").All()
+	require.Len(t, holdLogs, 1)
+	assert.Equal(t, "host-1", holdLogs[0].ContextMap()["leased_by"])
+	assert.Equal(t, "test-group", holdLogs[0].ContextMap()["consumer_group"])
+}
+
 // The failure handed to the queue is built from whatever the controller
 // attributed, and a controller that attributes nothing must still produce
 // exactly what callers sent before failures carried structure: the error text
@@ -1176,6 +1295,7 @@ func TestConsumer_SamePartitionKeyAcrossTenantsProcessesIndependently(t *testing
 	delA := queuemock.NewMockDelivery(ctrl)
 	delA.EXPECT().Message().Return(msgA).AnyTimes()
 	delA.EXPECT().Attempt().Return(1).AnyTimes()
+	delA.EXPECT().Metadata().Return(nil).AnyTimes()
 	delA.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
 	deliveryChan <- delA
 	<-tenantABlocked
@@ -1185,6 +1305,7 @@ func TestConsumer_SamePartitionKeyAcrossTenantsProcessesIndependently(t *testing
 	delB := queuemock.NewMockDelivery(ctrl)
 	delB.EXPECT().Message().Return(msgB).AnyTimes()
 	delB.EXPECT().Attempt().Return(1).AnyTimes()
+	delB.EXPECT().Metadata().Return(nil).AnyTimes()
 	delB.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
 	deliveryChan <- delB
 	<-tenantBProcessed
