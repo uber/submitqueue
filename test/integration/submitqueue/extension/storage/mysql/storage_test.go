@@ -25,6 +25,8 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
+	gwmysqlstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mysql"
 	storagesuite "github.com/uber/submitqueue/test/integration/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
 )
@@ -69,8 +71,8 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	require.NoError(t, err, "failed to connect to MySQL")
 
 	// Apply schemas programmatically from directory
-	schemaDir := testutil.SchemaDir("submitqueue/extension/storage/mysql/schema")
-	testutil.ApplySchema(t, s.log, s.db, schemaDir)
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/gateway/extension/storage/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
 
@@ -78,10 +80,14 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 
+	gwStore, err := gwmysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err, "failed to create gateway storage")
+
 	// Provide the storage backend to the contract suite through the
 	// queue-scoped factory adapter.
 	s.SetContext(ctx)
 	s.SetFactory(mysqlFactory{backend: store})
+	s.SetGatewayFactory(gatewayMySQLFactory{backend: gwStore})
 	s.SetLogger(s.log)
 
 	t.Cleanup(func() {
@@ -107,5 +113,16 @@ type mysqlFactory struct {
 
 // For returns the queue-scoped store aggregate bound to the queue named in config.
 func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
+}
+
+// gatewayMySQLFactory adapts the gateway's MySQL storage backend to the
+// gateway storage.Factory seam for the contract suite.
+type gatewayMySQLFactory struct {
+	backend *gwmysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f gatewayMySQLFactory) For(config gwstorage.Config) (gwstorage.Storage, error) {
 	return f.backend.For(config.QueueName)
 }

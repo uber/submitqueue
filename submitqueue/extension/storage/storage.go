@@ -94,16 +94,4 @@ type Storage interface {
 
 	// GetPathBuildStore returns the PathBuildStore instance.
 	GetPathBuildStore() PathBuildStore
-
-	// GetRequestQueueSummaryStore returns the RequestQueueSummaryStore instance.
-	GetRequestQueueSummaryStore() RequestQueueSummaryStore
-
-	// GetRequestSummaryStore returns the RequestSummaryStore instance.
-	GetRequestSummaryStore() RequestSummaryStore
-
-	// GetRequestLogStore returns the RequestLogStore instance.
-	GetRequestLogStore() RequestLogStore
-
-	// GetRequestURIStore returns the RequestURIStore instance.
-	GetRequestURIStore() RequestURIStore
 }

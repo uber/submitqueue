@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -35,7 +36,7 @@ import (
 // newUnusedMaterializer returns a materializer whose stores expect no calls,
 // for cases that fail before any persistence.
 func newUnusedMaterializer(ctrl *gomock.Controller) *requestcore.Materializer {
-	return requestcore.NewMaterializer(storagemock.NewMockFactory(ctrl))
+	return requestcore.NewMaterializer(gwstoragemock.NewMockFactory(ctrl))
 }
 
 func TestController_Process(t *testing.T) {
@@ -136,7 +137,7 @@ func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 }
 
 func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr, queueErr error) *requestcore.Materializer {
-	store := storagemock.NewMockStorage(ctrl)
+	store := gwstoragemock.NewMockStorage(ctrl)
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
@@ -145,7 +146,7 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
-	factory := storagemock.NewMockFactory(ctrl)
+	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	materializer := requestcore.NewMaterializer(factory)
 	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(insertErr)

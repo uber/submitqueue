@@ -27,7 +27,8 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -98,7 +99,7 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 		return entity.ListResult{}, fmt.Errorf("failed to resolve storage for queue %q: %w", req.Queue, err)
 	}
 
-	query := storage.RequestQueueSummaryQuery{
+	query := basestorage.RequestQueueSummaryQuery{
 		ReceivedAtOrAfterMs: req.ReceivedAtOrAfterMs,
 		ReceivedBeforeMs:    req.ReceivedBeforeMs,
 		Limit:               pageSize + 1,
@@ -112,7 +113,7 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 			return entity.ListResult{}, fmt.Errorf("page token does not match query: %w", ErrInvalidRequest)
 		}
 		query.HasCursor = true
-		query.Cursor = storage.RequestQueueSummaryCursor{ReceivedAtMs: token.LastReceivedAtMs, RequestID: token.LastRequestID}
+		query.Cursor = basestorage.RequestQueueSummaryCursor{ReceivedAtMs: token.LastReceivedAtMs, RequestID: token.LastRequestID}
 	}
 
 	summaries, err := store.GetRequestQueueSummaryStore().List(ctx, query)

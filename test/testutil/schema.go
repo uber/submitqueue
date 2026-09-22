@@ -46,6 +46,29 @@ func SchemaDir(relativePath string) string {
 	return Runfile(relativePath)
 }
 
+// SubmitQueueStorageSchemaDirs returns every directory making up the
+// SubmitQueue storage schema, in the order they must be applied.
+//
+// The schema is split per service: each owns the tables it reads. A deployment
+// that colocates the services on one database applies all of them, and callers
+// that do — the end-to-end tests, the local compose stack — take this rather
+// than naming each service's directory and going stale when one is added.
+func SubmitQueueStorageSchemaDirs() []string {
+	return []string{
+		"submitqueue/gateway/extension/storage/mysql/schema",
+		"submitqueue/extension/storage/mysql/schema",
+	}
+}
+
+// ApplySubmitQueueStorageSchema applies every directory named by
+// SubmitQueueStorageSchemaDirs.
+func ApplySubmitQueueStorageSchema(t *testing.T, log *TestLogger, db *sql.DB) {
+	t.Helper()
+	for _, dir := range SubmitQueueStorageSchemaDirs() {
+		ApplySchema(t, log, db, SchemaDir(dir))
+	}
+}
+
 // ApplySchema reads all .sql files from the schema directory and executes them on the database.
 func ApplySchema(t *testing.T, log *TestLogger, db *sql.DB, schemaDirectory string) {
 	t.Helper()

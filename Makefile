@@ -390,6 +390,10 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
+	@for file in submitqueue/gateway/extension/storage/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
 	@echo "Applying counter schema to mysql-app..."
 	@for file in platform/extension/counter/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
@@ -579,7 +583,7 @@ local-stovepipe-stop: ## Stop the Stovepipe service
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./runway/extension/merger/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/... ./stovepipe/extension/projectresult/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/gateway/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./runway/extension/merger/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/... ./stovepipe/extension/projectresult/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions

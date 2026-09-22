@@ -26,18 +26,20 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
+	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
 // listFactoryFor wraps a queue-summary store in a storage.Factory that
 // resolves every queue to an aggregate exposing it.
-func listFactoryFor(ctrl *gomock.Controller, store storage.RequestQueueSummaryStore) storage.Factory {
-	agg := storagemock.NewMockStorage(ctrl)
+func listFactoryFor(ctrl *gomock.Controller, store basestorage.RequestQueueSummaryStore) storage.Factory {
+	agg := gwstoragemock.NewMockStorage(ctrl)
 	agg.EXPECT().GetRequestQueueSummaryStore().Return(store).AnyTimes()
-	f := storagemock.NewMockFactory(ctrl)
+	f := gwstoragemock.NewMockFactory(ctrl)
 	f.EXPECT().For(gomock.Any()).Return(agg, nil).AnyTimes()
 	return f
 }
@@ -45,7 +47,7 @@ func listFactoryFor(ctrl *gomock.Controller, store storage.RequestQueueSummarySt
 func TestList_ReturnsPageAndCursor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockRequestQueueSummaryStore(ctrl)
-	store.EXPECT().List(gomock.Any(), storage.RequestQueueSummaryQuery{
+	store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{
 		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 3,
 	}).Return([]entity.RequestQueueSummary{
 		{RequestID: "q/3", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 190, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
@@ -71,9 +73,9 @@ func TestList_UsesCursor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockRequestQueueSummaryStore(ctrl)
 	token := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 180, LastRequestID: "q/2"})
-	store.EXPECT().List(gomock.Any(), storage.RequestQueueSummaryQuery{
+	store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{
 		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 51,
-		HasCursor: true, Cursor: storage.RequestQueueSummaryCursor{ReceivedAtMs: 180, RequestID: "q/2"},
+		HasCursor: true, Cursor: basestorage.RequestQueueSummaryCursor{ReceivedAtMs: 180, RequestID: "q/2"},
 	}).Return([]entity.RequestQueueSummary{}, nil)
 	controller := newConfiguredListController(ctrl, store)
 
@@ -109,7 +111,7 @@ func TestList_Errors(t *testing.T) {
 			name:    "store failure",
 			request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2},
 			setup: func(store *storagemock.MockRequestQueueSummaryStore) {
-				store.EXPECT().List(gomock.Any(), storage.RequestQueueSummaryQuery{ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, Limit: 51}).Return(nil, backendErr)
+				store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, Limit: 51}).Return(nil, backendErr)
 			},
 		},
 	}
@@ -140,7 +142,7 @@ func TestList_Errors(t *testing.T) {
 	}
 }
 
-func newConfiguredListController(ctrl *gomock.Controller, store storage.RequestQueueSummaryStore) ListController {
+func newConfiguredListController(ctrl *gomock.Controller, store basestorage.RequestQueueSummaryStore) ListController {
 	queueConfigs := qcmock.NewMockStore(ctrl)
 	queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
 	return NewListController(zap.NewNop().Sugar(), tally.NoopScope, listFactoryFor(ctrl, store), queueConfigs)

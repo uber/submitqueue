@@ -44,8 +44,8 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+	"github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
+	mysqlstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -104,7 +104,7 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 	require.NoError(t, err, "failed to connect to queue MySQL")
 
 	// Apply schemas programmatically to application database
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/gateway/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database

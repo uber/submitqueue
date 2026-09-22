@@ -21,14 +21,16 @@ import (
 
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
+	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 )
 
 // controllerStorageFixture provides shared stateful storage behavior for gateway controller tests.
 type controllerStorageFixture struct {
-	storage        *storagemock.MockStorage
+	storage        *gwstoragemock.MockStorage
 	summaryStore   *storagemock.MockRequestSummaryStore
 	queueStore     *storagemock.MockRequestQueueSummaryStore
 	uriStore       *storagemock.MockRequestURIStore
@@ -42,7 +44,7 @@ type controllerStorageFixture struct {
 
 func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixture {
 	fixture := &controllerStorageFixture{
-		storage:        storagemock.NewMockStorage(ctrl),
+		storage:        gwstoragemock.NewMockStorage(ctrl),
 		summaryStore:   storagemock.NewMockRequestSummaryStore(ctrl),
 		queueStore:     storagemock.NewMockRequestQueueSummaryStore(ctrl),
 		uriStore:       storagemock.NewMockRequestURIStore(ctrl),
@@ -59,7 +61,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
 		if _, ok := fixture.summaries[summary.RequestID]; ok {
-			return storage.ErrAlreadyExists
+			return basestorage.ErrAlreadyExists
 		}
 		fixture.summaries[summary.RequestID] = summary
 		return nil
@@ -69,7 +71,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		defer fixture.mu.Unlock()
 		summary, ok := fixture.summaries[requestID]
 		if !ok {
-			return entity.RequestSummary{}, storage.ErrNotFound
+			return entity.RequestSummary{}, basestorage.ErrNotFound
 		}
 		return summary, nil
 	}).AnyTimes()
@@ -78,10 +80,10 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		defer fixture.mu.Unlock()
 		current, ok := fixture.summaries[summary.RequestID]
 		if !ok {
-			return storage.ErrNotFound
+			return basestorage.ErrNotFound
 		}
 		if current.Version != oldVersion {
-			return storage.ErrVersionMismatch
+			return basestorage.ErrVersionMismatch
 		}
 		summary.Version = newVersion
 		fixture.summaries[summary.RequestID] = summary
@@ -93,7 +95,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		defer fixture.mu.Unlock()
 		key := queueSummaryTestKey(summary.Queue, summary.ReceivedAtMs, summary.RequestID)
 		if _, ok := fixture.queueSummaries[key]; ok {
-			return storage.ErrAlreadyExists
+			return basestorage.ErrAlreadyExists
 		}
 		fixture.queueSummaries[key] = summary
 		return nil
@@ -106,7 +108,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 				return summary, nil
 			}
 		}
-		return entity.RequestQueueSummary{}, storage.ErrNotFound
+		return entity.RequestQueueSummary{}, basestorage.ErrNotFound
 	}).AnyTimes()
 	fixture.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.RequestQueueSummary, oldVersion, newVersion int32) error {
 		fixture.mu.Lock()
@@ -114,10 +116,10 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		key := queueSummaryTestKey(summary.Queue, summary.ReceivedAtMs, summary.RequestID)
 		current, ok := fixture.queueSummaries[key]
 		if !ok {
-			return storage.ErrNotFound
+			return basestorage.ErrNotFound
 		}
 		if current.Version != oldVersion {
-			return storage.ErrVersionMismatch
+			return basestorage.ErrVersionMismatch
 		}
 		summary.Version = newVersion
 		fixture.queueSummaries[key] = summary
@@ -164,16 +166,16 @@ func (f *controllerStorageFixture) newFactory(ctrl *gomock.Controller) storage.F
 }
 
 // factoryForStorage returns a storage.Factory resolving every queue to store.
-func factoryForStorage(ctrl *gomock.Controller, store *storagemock.MockStorage) storage.Factory {
-	factory := storagemock.NewMockFactory(ctrl)
+func factoryForStorage(ctrl *gomock.Controller, store *gwstoragemock.MockStorage) storage.Factory {
+	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	return factory
 }
 
 // storageWithSummaryStore returns a queue-scoped aggregate whose summary store is
 // the given mock; the other read-model stores accept any call and do nothing.
-func storageWithSummaryStore(ctrl *gomock.Controller, summaries *storagemock.MockRequestSummaryStore) *storagemock.MockStorage {
-	store := storagemock.NewMockStorage(ctrl)
+func storageWithSummaryStore(ctrl *gomock.Controller, summaries *storagemock.MockRequestSummaryStore) *gwstoragemock.MockStorage {
+	store := gwstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
 	return store
 }
@@ -187,7 +189,7 @@ func readModelFactory(
 	logs *storagemock.MockRequestLogStore,
 	uris *storagemock.MockRequestURIStore,
 ) storage.Factory {
-	store := storagemock.NewMockStorage(ctrl)
+	store := gwstoragemock.NewMockStorage(ctrl)
 	if summaries != nil {
 		store.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
 	}

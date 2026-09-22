@@ -133,7 +133,7 @@ func (s *GitMergeSuite) SetupSuite() {
 	s.queueDB, err = s.stack.ConnectMySQLService("mysql-queue")
 	require.NoError(t, err)
 
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
+	testutil.ApplySubmitQueueStorageSchema(t, s.log, s.db)
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 

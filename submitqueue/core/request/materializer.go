@@ -22,7 +22,8 @@ import (
 	"slices"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 )
 
 // Materializer appends request logs and projects the winning public request state.
@@ -70,7 +71,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			updated.Metadata = cloneMetadata(log.Metadata)
 
 			if err := summaries.Update(ctx, updated, oldVersion, newVersion); err != nil {
-				if errors.Is(err, storage.ErrVersionMismatch) {
+				if errors.Is(err, basestorage.ErrVersionMismatch) {
 					continue
 				}
 				return fmt.Errorf("failed to update request summary request_id=%s: %w", log.RequestID, err)
@@ -93,12 +94,12 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, stores stora
 	queueSummaries := stores.GetRequestQueueSummaryStore()
 	for {
 		current, err := queueSummaries.Get(ctx, desired.ReceivedAtMs, desired.RequestID)
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, basestorage.ErrNotFound) {
 			if err := m.createURIMappings(ctx, stores, authoritative); err != nil {
 				return err
 			}
 			if err := queueSummaries.Create(ctx, desired); err != nil {
-				if errors.Is(err, storage.ErrAlreadyExists) {
+				if errors.Is(err, basestorage.ErrAlreadyExists) {
 					continue
 				}
 				return fmt.Errorf("failed to recreate queue summary request_id=%s: %w", desired.RequestID, err)
@@ -116,7 +117,7 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, stores stora
 			return nil
 		}
 		if err := queueSummaries.Update(ctx, desired, current.Version, desired.Version); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, basestorage.ErrVersionMismatch) {
 				continue
 			}
 			return fmt.Errorf("failed to update queue summary request_id=%s: %w", desired.RequestID, err)
@@ -134,7 +135,7 @@ func (m *Materializer) createURIMappings(ctx context.Context, stores storage.Sto
 			ReceivedAtMs: summary.ReceivedAtMs,
 			RequestID:    summary.RequestID,
 		}
-		if err := uris.Create(ctx, mapping); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		if err := uris.Create(ctx, mapping); err != nil && !errors.Is(err, basestorage.ErrAlreadyExists) {
 			return fmt.Errorf("failed to create request URI mapping request_id=%s change_uri=%s: %w", summary.RequestID, changeURI, err)
 		}
 	}
