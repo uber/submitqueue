@@ -8,6 +8,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Message Queue Tenant Sharding](messagequeue-tenant-sharding.md) - Per-tenant shard key on the platform MySQL message queue; SubmitQueue maps `queueName` to `tenant` at wiring
 - [Message Queue Contract](messagequeue-contract.md) - How queue payloads are defined (Protobuf, serialized as protobuf JSON), located by audience (external in `api/{domain}/messagequeue/`, internal in `{domain}/core/messagequeue/`), bound to topics (the `topics` proto option), and enforced by Bazel visibility
 - [Consumer Gate](consumer-gate.md) - Stopping and starting individual queue controllers at runtime via a consumer-side check: blocked deliveries are recorded as parked and postponed back to the queue (re-checked on redelivery), gate state as a separate extension with a file-based first implementation shared by tests and operators
+- [Admission Gates](admission-gate.md) - Shared, typed contract for queue-scoped logical admission decisions, with Stovepipe's build gate as the first implementation
 - [Consumer Hold](consumer-hold.md) - Fourth delivery outcome letting a controller postpone its delivery: the message becomes a partition barrier that pauses consumption for a chosen delay, redelivers in order, and does not count as a failure toward dead-lettering
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
 - [Hooks Framework](hook-framework.md) - Fire-and-forget side effects off pipeline lifecycle events: one shared `HookEvent` contract (`api/base/hook/`) published to a durable per-domain hook topic, dispatched by a per-domain stage to a pluggable hook extension (`platform/extension/hook/`) for integrations like warehouse export and code-review notifications
@@ -27,7 +28,6 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 ## Stovepipe
 
 - [Stovepipe Workflow](stovepipe/workflow.md) - Post-land validation pipeline overview: ingest, process, build, record greenness, analyze projects, notify downstream
-- [Admission Gates](stovepipe/admission-gate.md) - Extensible, queue-scoped logical admission decisions with atomic policy composition, opaque versioned state, optimistic locking, and reconciliation from durable request outcomes
 - [Process stage](stovepipe/steps/process.md) - Build-strategy decision, per-queue concurrency gate, backlog coalescing, entity model, platform prerequisites
 - [Build stage](stovepipe/steps/build.md) - Trigger-only stage and Stovepipe's URI-based BuildRunner contract
 - [Buildsignal stage](stovepipe/steps/buildsignal.md) - Build polling, terminal status persistence, and the handoff to record

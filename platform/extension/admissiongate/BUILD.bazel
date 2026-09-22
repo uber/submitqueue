@@ -3,7 +3,6 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "go_default_library",
     srcs = ["admissiongate.go"],
-    importpath = "github.com/uber/submitqueue/stovepipe/extension/admissiongate",
+    importpath = "github.com/uber/submitqueue/platform/extension/admissiongate",
     visibility = ["//visibility:public"],
-    deps = ["//stovepipe/entity:go_default_library"],
 )
