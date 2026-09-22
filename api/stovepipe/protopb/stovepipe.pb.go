@@ -709,9 +709,13 @@ type ProjectValidation struct {
 	// Stable consumer-defined project identifier.
 	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	// Breakage degree on [0.0, 1.0]. Zero is green; absence means no result is recorded yet.
-	BreakageDegree *float64 `protobuf:"fixed64,2,opt,name=breakage_degree,json=breakageDegree,proto3,oneof" json:"breakage_degree,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	//
+	// Types that are valid to be assigned to Result:
+	//
+	//	*ProjectValidation_BreakageDegree
+	Result        isProjectValidation_Result `protobuf_oneof:"result"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProjectValidation) Reset() {
@@ -751,12 +755,31 @@ func (x *ProjectValidation) GetProject() string {
 	return ""
 }
 
+func (x *ProjectValidation) GetResult() isProjectValidation_Result {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
 func (x *ProjectValidation) GetBreakageDegree() float64 {
-	if x != nil && x.BreakageDegree != nil {
-		return *x.BreakageDegree
+	if x != nil {
+		if x, ok := x.Result.(*ProjectValidation_BreakageDegree); ok {
+			return x.BreakageDegree
+		}
 	}
 	return 0
 }
+
+type isProjectValidation_Result interface {
+	isProjectValidation_Result()
+}
+
+type ProjectValidation_BreakageDegree struct {
+	BreakageDegree float64 `protobuf:"fixed64,2,opt,name=breakage_degree,json=breakageDegree,proto3,oneof"`
+}
+
+func (*ProjectValidation_BreakageDegree) isProjectValidation_Result() {}
 
 // GetProjectStatusByURIResponse contains the selected validation's current projection.
 type GetProjectStatusByURIResponse struct {
@@ -774,7 +797,11 @@ type GetProjectStatusByURIResponse struct {
 	// Unix millisecond timestamp of the newest durable lifecycle or result record.
 	UpdatedAtMs int64 `protobuf:"varint,10,opt,name=updated_at_ms,json=updatedAtMs,proto3" json:"updated_at_ms,omitempty"`
 	// Whole-repository breakage degree. Absent until the result is durable.
-	RepositoryBreakageDegree *float64 `protobuf:"fixed64,6,opt,name=repository_breakage_degree,json=repositoryBreakageDegree,proto3,oneof" json:"repository_breakage_degree,omitempty"`
+	//
+	// Types that are valid to be assigned to RepositoryResult:
+	//
+	//	*GetProjectStatusByURIResponse_RepositoryBreakageDegree
+	RepositoryResult isGetProjectStatusByURIResponse_RepositoryResult `protobuf_oneof:"repository_result"`
 	// True after the implementation has durably finished producing relevant project results.
 	ProjectResultsComplete bool `protobuf:"varint,7,opt,name=project_results_complete,json=projectResultsComplete,proto3" json:"project_results_complete,omitempty"`
 	// Recorded results for requested projects.
@@ -857,9 +884,18 @@ func (x *GetProjectStatusByURIResponse) GetUpdatedAtMs() int64 {
 	return 0
 }
 
+func (x *GetProjectStatusByURIResponse) GetRepositoryResult() isGetProjectStatusByURIResponse_RepositoryResult {
+	if x != nil {
+		return x.RepositoryResult
+	}
+	return nil
+}
+
 func (x *GetProjectStatusByURIResponse) GetRepositoryBreakageDegree() float64 {
-	if x != nil && x.RepositoryBreakageDegree != nil {
-		return *x.RepositoryBreakageDegree
+	if x != nil {
+		if x, ok := x.RepositoryResult.(*GetProjectStatusByURIResponse_RepositoryBreakageDegree); ok {
+			return x.RepositoryBreakageDegree
+		}
 	}
 	return 0
 }
@@ -883,6 +919,17 @@ func (x *GetProjectStatusByURIResponse) GetNextPageToken() string {
 		return x.NextPageToken
 	}
 	return ""
+}
+
+type isGetProjectStatusByURIResponse_RepositoryResult interface {
+	isGetProjectStatusByURIResponse_RepositoryResult()
+}
+
+type GetProjectStatusByURIResponse_RepositoryBreakageDegree struct {
+	RepositoryBreakageDegree float64 `protobuf:"fixed64,6,opt,name=repository_breakage_degree,json=repositoryBreakageDegree,proto3,oneof"`
+}
+
+func (*GetProjectStatusByURIResponse_RepositoryBreakageDegree) isGetProjectStatusByURIResponse_RepositoryResult() {
 }
 
 var File_stovepipe_proto protoreflect.FileDescriptor
@@ -931,11 +978,11 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\bprojects\x18\x03 \x03(\tR\bprojects\x12\x1b\n" +
 	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x05 \x01(\tR\tpageToken\"o\n" +
+	"page_token\x18\x05 \x01(\tR\tpageToken\"b\n" +
 	"\x11ProjectValidation\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\x12,\n" +
-	"\x0fbreakage_degree\x18\x02 \x01(\x01H\x00R\x0ebreakageDegree\x88\x01\x01B\x12\n" +
-	"\x10_breakage_degree\"\xe6\x03\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12)\n" +
+	"\x0fbreakage_degree\x18\x02 \x01(\x01H\x00R\x0ebreakageDegreeB\b\n" +
+	"\x06result\"\xd9\x03\n" +
 	"\x1dGetProjectStatusByURIResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
@@ -945,12 +992,12 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\bbase_uri\x18\x04 \x01(\tR\abaseUri\x12#\n" +
 	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12\"\n" +
 	"\rupdated_at_ms\x18\n" +
-	" \x01(\x03R\vupdatedAtMs\x12A\n" +
-	"\x1arepository_breakage_degree\x18\x06 \x01(\x01H\x00R\x18repositoryBreakageDegree\x88\x01\x01\x128\n" +
+	" \x01(\x03R\vupdatedAtMs\x12>\n" +
+	"\x1arepository_breakage_degree\x18\x06 \x01(\x01H\x00R\x18repositoryBreakageDegree\x128\n" +
 	"\x18project_results_complete\x18\a \x01(\bR\x16projectResultsComplete\x12I\n" +
 	"\bprojects\x18\b \x03(\v2-.uber.submitqueue.stovepipe.ProjectValidationR\bprojects\x12&\n" +
-	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageTokenB\x1d\n" +
-	"\x1b_repository_breakage_degree2\x81\x05\n" +
+	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageTokenB\x13\n" +
+	"\x11repository_result2\x81\x05\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
 	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
@@ -1018,8 +1065,12 @@ func file_stovepipe_proto_init() {
 		(*HistoryEvent_RequestState)(nil),
 		(*HistoryEvent_Event)(nil),
 	}
-	file_stovepipe_proto_msgTypes[11].OneofWrappers = []any{}
-	file_stovepipe_proto_msgTypes[12].OneofWrappers = []any{}
+	file_stovepipe_proto_msgTypes[11].OneofWrappers = []any{
+		(*ProjectValidation_BreakageDegree)(nil),
+	}
+	file_stovepipe_proto_msgTypes[12].OneofWrappers = []any{
+		(*GetProjectStatusByURIResponse_RepositoryBreakageDegree)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

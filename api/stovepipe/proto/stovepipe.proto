@@ -126,7 +126,9 @@ message ProjectValidation {
     // Stable consumer-defined project identifier.
     string project = 1;
     // Breakage degree on [0.0, 1.0]. Zero is green; absence means no result is recorded yet.
-    optional double breakage_degree = 2;
+    oneof result {
+        double breakage_degree = 2;
+    }
 }
 
 // GetProjectStatusByURIResponse contains the selected validation's current projection.
@@ -144,7 +146,9 @@ message GetProjectStatusByURIResponse {
     // Unix millisecond timestamp of the newest durable lifecycle or result record.
     int64 updated_at_ms = 10;
     // Whole-repository breakage degree. Absent until the result is durable.
-    optional double repository_breakage_degree = 6;
+    oneof repository_result {
+        double repository_breakage_degree = 6;
+    }
     // True after the implementation has durably finished producing relevant project results.
     bool project_results_complete = 7;
     // Recorded results for requested projects.

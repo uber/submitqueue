@@ -40,12 +40,32 @@ func TestProjectStatusRequestAndResponseMapping(t *testing.T) {
 	})
 	assert.Equal(t, "request/1", response.GetRequestId())
 	assert.Equal(t, "succeeded", response.GetRequestState())
-	assert.Equal(t, &degree, response.RepositoryBreakageDegree)
+	assert.Equal(t, degree, response.GetRepositoryBreakageDegree())
+	assert.IsType(t, &pb.GetProjectStatusByURIResponse_RepositoryBreakageDegree{}, response.GetRepositoryResult())
 	assert.False(t, response.GetProjectResultsComplete())
 	if !assert.Len(t, response.GetProjects(), 1) {
 		return
 	}
 	assert.Equal(t, "project-a", response.GetProjects()[0].GetProject())
 	assert.Equal(t, entity.DegreeBroken, response.GetProjects()[0].GetBreakageDegree())
+	assert.IsType(t, &pb.ProjectValidation_BreakageDegree{}, response.GetProjects()[0].GetResult())
 	assert.Equal(t, "next-token", response.GetNextPageToken())
+}
+
+func TestProjectStatusMappingPreservesExplicitGreenResults(t *testing.T) {
+	response := GetProjectStatusByURIResultToProto(entity.GetProjectStatusByURIResult{
+		HasRepositoryValidationFact: true,
+		RepositoryValidationFact: entity.ValidationFact{
+			Degree: entity.DegreeGreen,
+		},
+		ProjectValidationFacts: []entity.ValidationFact{{
+			Project: "project-a",
+			Degree:  entity.DegreeGreen,
+		}},
+	})
+
+	assert.IsType(t, &pb.GetProjectStatusByURIResponse_RepositoryBreakageDegree{}, response.GetRepositoryResult())
+	if assert.Len(t, response.GetProjects(), 1) {
+		assert.IsType(t, &pb.ProjectValidation_BreakageDegree{}, response.GetProjects()[0].GetResult())
+	}
 }

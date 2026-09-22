@@ -44,14 +44,18 @@ func GetProjectStatusByURIResultToProto(result entity.GetProjectStatusByURIResul
 		NextPageToken:          result.NextPageToken,
 	}
 	if result.HasRepositoryValidationFact {
-		response.RepositoryBreakageDegree = &result.RepositoryValidationFact.Degree
+		response.RepositoryResult = &pb.GetProjectStatusByURIResponse_RepositoryBreakageDegree{
+			RepositoryBreakageDegree: result.RepositoryValidationFact.Degree,
+		}
 	}
 	response.Projects = make([]*pb.ProjectValidation, 0, len(result.ProjectValidationFacts))
 	for _, fact := range result.ProjectValidationFacts {
 		degree := fact.Degree
 		response.Projects = append(response.Projects, &pb.ProjectValidation{
-			Project:        fact.Project,
-			BreakageDegree: &degree,
+			Project: fact.Project,
+			Result: &pb.ProjectValidation_BreakageDegree{
+				BreakageDegree: degree,
+			},
 		})
 	}
 	return response
