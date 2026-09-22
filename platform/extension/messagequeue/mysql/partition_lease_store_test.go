@@ -17,9 +17,11 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
@@ -99,9 +101,10 @@ func TestPartitionLeaseStore_TryAcquireLease(t *testing.T) {
 
 func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 	tests := []struct {
-		name    string
-		setup   func(mock sqlmock.Sqlmock)
-		wantErr bool
+		name     string
+		setup    func(mock sqlmock.Sqlmock)
+		wantRows int64
+		wantErr  bool
 	}{
 		{
 			name: "successfully release lease",
@@ -110,7 +113,8 @@ func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
-			wantErr: false,
+			wantRows: 1,
+			wantErr:  false,
 		},
 		{
 			name: "idempotent - already released",
@@ -119,7 +123,18 @@ func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
-			wantErr: false,
+			wantRows: 0,
+			wantErr:  false,
+		},
+		{
+			name: "rows affected unavailable",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_partition_leases").
+					WithArgs(testTenant, testConsumerGroup, "test_topic", "part1", testSubscriberName).
+					WillReturnResult(sqlmock.NewErrorResult(errors.New("rows affected unsupported")))
+			},
+			wantRows: 0,
+			wantErr:  false,
 		},
 	}
 
@@ -134,12 +149,13 @@ func TestPartitionLeaseStore_ReleaseLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.ReleaseLease(ctx, testTenant, topic, partitionKey, testSubscriberName, testConsumerGroup)
+			rows, err := store.ReleaseLease(ctx, testTenant, topic, partitionKey, testSubscriberName, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
+			assert.Equal(t, tt.wantRows, rows)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
@@ -231,8 +247,12 @@ func TestPartitionLeaseStore_RenewAndReleaseOwnedLeases(t *testing.T) {
 		WithArgs("alpha", "beta", testConsumerGroup, "test_topic", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	require.NoError(t, store.RenewOwnedLeases(context.Background(), tenants, "test_topic", testSubscriberName, testConsumerGroup))
-	require.NoError(t, store.ReleaseOwnedLeases(context.Background(), tenants, "test_topic", testSubscriberName, testConsumerGroup))
+	renewed, err := store.RenewOwnedLeases(context.Background(), tenants, "test_topic", testSubscriberName, testConsumerGroup)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), renewed)
+	released, err := store.ReleaseOwnedLeases(context.Background(), tenants, "test_topic", testSubscriberName, testConsumerGroup)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), released)
 	require.NoError(t, store.PurgeStaleForTenants(context.Background(), tenants, "test_topic", testConsumerGroup, 300_000))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

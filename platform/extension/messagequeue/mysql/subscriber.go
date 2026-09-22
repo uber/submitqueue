@@ -72,6 +72,10 @@ const (
 	// refresh or remove) a stale lease on a partition with no messages.
 	leasePurgeAfterLeaseDurations = 10
 
+	leaseReasonRebalance = "rebalance"
+	leaseReasonIdle      = "idle"
+	leaseReasonShutdown  = "shutdown"
+
 	// maxRetryBackoffMs bounds how long one failed message can pin its
 	// partition's contiguous ack watermark. Callers may choose a lower cap;
 	// this ceiling also applies when MaxBackoffMs is unset.
@@ -627,9 +631,9 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	cfg := sub.config
 	// Common log fields for all operations in this subscription's lifecycle.
 	logFields := []interface{}{
-		"topic", sub.topic,
-		"consumer_group", cfg.ConsumerGroup,
-		"subscriber_name", cfg.SubscriberName,
+		logTopic, sub.topic,
+		logConsumerGroup, cfg.ConsumerGroup,
+		logLeasedBy, cfg.SubscriberName,
 	}
 
 	discoveryTicker := time.NewTicker(time.Duration(cfg.PartitionDiscoveryIntervalMs) * time.Millisecond)
@@ -764,6 +768,7 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 			if len(acquired) > 0 {
 				leasedByTenant[tenant] = append(append([]string{}, leased...), acquired...)
 			}
+			s.observeOwnedPartitions(sub, tenant, len(leasedByTenant[tenant]))
 		}
 	}
 
@@ -814,7 +819,8 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 		for _, partition := range expired {
 			tenant := partition.Tenant
 			pk := partition.PartitionKey
-			if err := s.leaseStore.ReleaseLease(ctx, tenant, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+			rows, err := s.leaseStore.ReleaseLease(ctx, tenant, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup)
+			if err != nil {
 				s.logger.Errorw("release lease for drained partition failed",
 					"tenant", tenant,
 					"topic", sub.topic,
@@ -825,6 +831,12 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 			}
 			released[partition] = struct{}{}
 			s.stopPartitionWorker(sub, partition)
+			if rows > 0 {
+				s.recordLeaseReleased(sub, tenant, leaseReasonIdle, rows)
+				s.logger.Infow("released idle partition lease",
+					append(leaseLogFields(sub, tenant, pk), logReason, leaseReasonIdle)...,
+				)
+			}
 
 			if err := s.offsetStore.DeleteOffset(ctx, tenant, sub.topic, pk, cfg.ConsumerGroup); err != nil {
 				s.logger.Errorw("delete offsets for drained partition failed",
@@ -836,14 +848,6 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 				continue
 			}
 			delete(sub.drainedSince, partition)
-
-			metrics.NamedCounter(s.scope, "idle_lease", "released", 1, metrics.NewTag("topic", sub.topic))
-			s.logger.Infow("released idle partition lease",
-				"tenant", tenant,
-				"topic", sub.topic,
-				"consumer_group", cfg.ConsumerGroup,
-				"partition_key", pk,
-			)
 		}
 		if len(released) > 0 {
 			kept := make([]entityqueue.PartitionIdentity, 0, len(allLeased))
@@ -853,6 +857,13 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 				}
 			}
 			allLeased = kept
+			ownedAfter := make(map[string]int, len(s.tenants))
+			for _, partition := range allLeased {
+				ownedAfter[partition.Tenant]++
+			}
+			for _, tenant := range s.tenants {
+				s.observeOwnedPartitions(sub, tenant, ownedAfter[tenant])
+			}
 		}
 	}
 
@@ -872,6 +883,7 @@ func (s *subscriber) acquireUnownedPartitions(ctx context.Context, sub *subscrip
 	ownedCount := 0
 	ownedSet := make(map[string]struct{})
 	heldByOther := make(map[string]struct{})
+	previousOwner := make(map[string]string)
 	for _, lease := range leases {
 		switch {
 		case lease.LeasedBy == cfg.SubscriberName:
@@ -879,6 +891,8 @@ func (s *subscriber) acquireUnownedPartitions(ctx context.Context, sub *subscrip
 			ownedCount++
 		case lease.LeaseRenewedAt >= staleThreshold:
 			heldByOther[lease.PartitionKey] = struct{}{}
+		default:
+			previousOwner[lease.PartitionKey] = lease.LeasedBy // pre-acquire snapshot, not the SQL winner
 		}
 	}
 
@@ -896,19 +910,93 @@ func (s *subscriber) acquireUnownedPartitions(ctx context.Context, sub *subscrip
 		ok, err := s.leaseStore.TryAcquireLease(ctx, tenant, sub.topic, partitionKey, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs)
 		if err != nil {
 			s.logger.Errorw("failed to acquire lease for partition",
-				"tenant", tenant,
-				"topic", sub.topic,
-				"partition_key", partitionKey,
-				"error", err,
+				append(leaseLogFields(sub, tenant, partitionKey), logError, err)...,
 			)
 			continue
 		}
 		if ok {
 			acquired = append(acquired, partitionKey)
 			ownedCount++
+			if prior, stolen := previousOwner[partitionKey]; stolen && prior != "" && prior != cfg.SubscriberName {
+				s.recordLeaseCounter(sub, tenant, "stolen", 1)
+				s.logger.Infow("lease stolen",
+					append(leaseLogFields(sub, tenant, partitionKey), logPreviousOwner, prior)...,
+				)
+			} else {
+				s.recordLeaseCounter(sub, tenant, "acquired", 1)
+				s.logger.Debugw("lease acquired", leaseLogFields(sub, tenant, partitionKey)...)
+			}
 		}
 	}
 	return acquired
+}
+
+func leaseLogFields(sub *subscription, tenant, partitionKey string) []any {
+	fields := []any{
+		logTenant, tenant,
+		logTopic, sub.topic,
+		logConsumerGroup, sub.config.ConsumerGroup,
+		logLeasedBy, sub.config.SubscriberName,
+	}
+	if partitionKey != "" {
+		fields = append(fields, logPartitionKey, partitionKey)
+	}
+	return fields
+}
+
+func (s *subscriber) leaseTags(sub *subscription, tenant string) []metrics.Tag {
+	tags := []metrics.Tag{
+		metrics.NewTag(logLeasedBy, sub.config.SubscriberName),
+		metrics.NewTag("topic", sub.topic),
+		metrics.NewTag(logConsumerGroup, sub.config.ConsumerGroup),
+	}
+	if tenant != "" {
+		tags = append(tags, metrics.NewTag(logTenant, tenant))
+	}
+	return tags
+}
+
+func (s *subscriber) recordLeaseCounter(sub *subscription, tenant, counter string, n int64) {
+	metrics.NamedCounter(s.scope, "lease", counter, n, s.leaseTags(sub, tenant)...)
+}
+
+func (s *subscriber) recordLeaseReleased(sub *subscription, tenant, reason string, n int64) {
+	tags := append(s.leaseTags(sub, tenant), metrics.NewTag(logReason, reason))
+	metrics.NamedCounter(s.scope, "lease", "released", n, tags...)
+}
+
+func (s *subscriber) observeOwnedPartitions(sub *subscription, tenant string, owned int) {
+	metrics.NamedGauge(s.scope, "lease", "partitions_owned", float64(owned), s.leaseTags(sub, tenant)...)
+}
+
+func (s *subscriber) observeLeaseShare(sub *subscription, tenant string, active, cap int) {
+	tags := s.leaseTags(sub, tenant)
+	metrics.NamedGauge(s.scope, "lease", "active_subscribers", float64(active), tags...)
+	metrics.NamedGauge(s.scope, "lease", "fair_share_cap", float64(cap), tags...)
+}
+
+// reportedFairShareCap maps unlimited (shareCap 0) to owned ∪ discovered so partitions_owned > fair_share_cap stays false for a lone replica.
+func reportedFairShareCap(shareCap int, owned, discovered []string) int {
+	if shareCap > 0 {
+		return shareCap
+	}
+	return partitionUniverseSize(owned, discovered)
+}
+
+func partitionUniverseSize(owned, discovered []string) int {
+	set := make(map[string]struct{}, len(owned)+len(discovered))
+	for _, pk := range owned {
+		set[pk] = struct{}{}
+	}
+	for _, pk := range discovered {
+		set[pk] = struct{}{}
+	}
+	return len(set)
+}
+
+func (s *subscriber) observeLeaseOwnership(sub *subscription, tenant string, owned, active, cap int) {
+	s.observeOwnedPartitions(sub, tenant, owned)
+	s.observeLeaseShare(sub, tenant, active, cap)
 }
 
 // updateDrainedTracking recomputes, for every owned partition absent from
@@ -1236,9 +1324,11 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 
 		// Create delivery metadata
 		deliveryMetadata := map[string]string{
-			"topic":         sub.topic,
-			"partition_key": partitionKey,
-			"offset":        deliveryID,
+			"topic":          sub.topic,
+			"partition_key":  partitionKey,
+			"offset":         deliveryID,
+			logLeasedBy:      cfg.SubscriberName,
+			logConsumerGroup: cfg.ConsumerGroup,
 		}
 
 		// Add DLQ-specific metadata if this is a DLQ message
@@ -1364,24 +1454,68 @@ func (s *subscriber) runLeaseTick(ctx context.Context, sub *subscription, timeou
 	tickCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	ownedPartitions := 0
+	activeSubscribers := 0
+	fairShareCap := 0
+	shareObserved := false
+	var remainingByTenant map[string]int
 	leasedByTenant, err := s.leaseStore.GetLeasedPartitionsForTenants(tickCtx, s.tenants, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
 	if err != nil {
 		s.logger.Errorw("get leased partitions failed", append(logFields, "error", err)...)
 	} else {
+		remainingByTenant = make(map[string]int, len(s.tenants))
+		for _, tenant := range s.tenants {
+			n := len(leasedByTenant[tenant])
+			ownedPartitions += n
+			remainingByTenant[tenant] = n
+		}
 		activeByTenant, err := s.heartbeatStore.ActiveSubscribersForTenants(tickCtx, s.tenants, sub.topic, cfg.ConsumerGroup, cfg.LeaseDurationMs)
 		if err != nil {
 			s.logger.Errorw("active subscribers failed", append(logFields, "error", err)...)
 		} else {
+			shareObserved = true
+			sub.workersMu.Lock()
+			discovered := append([]entityqueue.PartitionIdentity(nil), sub.lastDiscoveredPartitions...)
+			sub.workersMu.Unlock()
 			for _, tenant := range s.tenants {
-				if _, err := s.rebalance(tickCtx, sub, tenant, leasedByTenant[tenant], activeByTenant[tenant]); err != nil {
+				owned := leasedByTenant[tenant]
+				active := activeByTenant[tenant]
+				discoveredKeys := partitionKeysForTenant(discovered, tenant)
+				shareCap := s.fairShareCap(sub, owned, discoveredKeys, active)
+				cap := reportedFairShareCap(shareCap, owned, discoveredKeys)
+				activeSubscribers += len(active)
+				fairShareCap += cap
+				s.observeLeaseOwnership(sub, tenant, len(owned), len(active), cap)
+				released, err := s.rebalance(tickCtx, sub, tenant, owned, active)
+				if err != nil {
 					s.logger.Errorw("rebalance failed", append(logFields, "tenant", tenant, "error", err)...)
+					continue
+				}
+				if n := len(released); n > 0 {
+					ownedPartitions -= n
+					remainingByTenant[tenant] = len(owned) - n
+					s.observeLeaseOwnership(sub, tenant, remainingByTenant[tenant], len(active), cap)
 				}
 			}
 		}
 	}
-	if err := s.leaseStore.RenewOwnedLeases(tickCtx, s.tenants, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+	renewed, err := s.leaseStore.RenewOwnedLeases(tickCtx, s.tenants, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
+	if err != nil {
 		s.logger.Errorw("lease renewal failed", append(logFields, "error", err)...)
+	} else {
+		s.recordLeaseRenewed(sub, remainingByTenant, renewed)
 	}
+	tickFields := append(append([]any{}, logFields...),
+		logOwnedPartitions, ownedPartitions,
+		logRenewed, renewed,
+	)
+	if len(s.tenants) == 1 && shareObserved {
+		tickFields = append(tickFields,
+			"active_subscribers", activeSubscribers,
+			"fair_share_cap", fairShareCap,
+		)
+	}
+	s.logger.Infow("lease tick", tickFields...)
 	if err := s.sendHeartbeats(tickCtx, sub); err != nil {
 		s.logger.Errorw("periodic heartbeat failed", append(logFields, "error", err)...)
 	}
@@ -1393,9 +1527,58 @@ func (s *subscriber) runLeaseTick(ctx context.Context, sub *subscription, timeou
 	}
 }
 
+func (s *subscriber) recordLeaseRenewed(sub *subscription, remainingByTenant map[string]int, renewed int64) {
+	if renewed <= 0 {
+		return
+	}
+	if remainingByTenant != nil {
+		var sum int64
+		for _, tenant := range s.tenants {
+			sum += int64(remainingByTenant[tenant])
+		}
+		if sum == renewed {
+			for _, tenant := range s.tenants {
+				if n := remainingByTenant[tenant]; n > 0 {
+					s.recordLeaseCounter(sub, tenant, "renewed", int64(n))
+				}
+			}
+			return
+		}
+	}
+	metrics.NamedCounter(s.scope, "lease", "renewed", renewed,
+		metrics.NewTag(logLeasedBy, sub.config.SubscriberName),
+		metrics.NewTag("topic", sub.topic),
+		metrics.NewTag(logConsumerGroup, sub.config.ConsumerGroup),
+	)
+}
+
 func (s *subscriber) releaseAllLeases(ctx context.Context, sub *subscription) error {
 	cfg := sub.config
-	return s.leaseStore.ReleaseOwnedLeases(ctx, s.tenants, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
+	var released int64
+	var firstErr error
+	for _, tenant := range s.tenants {
+		n, err := s.leaseStore.ReleaseOwnedLeases(ctx, []string{tenant}, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("release owned leases tenant=%s: %w", tenant, err)
+			}
+			continue
+		}
+		if n > 0 {
+			released += n
+			s.recordLeaseReleased(sub, tenant, leaseReasonShutdown, n)
+		}
+	}
+	if released > 0 {
+		s.logger.Infow("released leases on shutdown",
+			"topic", sub.topic,
+			logConsumerGroup, cfg.ConsumerGroup,
+			logLeasedBy, cfg.SubscriberName,
+			logReason, leaseReasonShutdown,
+			"released", released,
+		)
+	}
+	return firstErr
 }
 
 func (s *subscriber) sendHeartbeats(ctx context.Context, sub *subscription) error {
@@ -1437,21 +1620,23 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription, tenant st
 	sort.Strings(sortedOwned)
 
 	for _, pk := range sortedOwned[maxPart:] {
-		if err := s.leaseStore.ReleaseLease(ctx, tenant, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+		rows, err := s.leaseStore.ReleaseLease(ctx, tenant, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup)
+		if err != nil {
 			return released, fmt.Errorf("release partition %s during rebalance: %w", pk, err)
 		}
 		released = append(released, pk)
-
 		s.stopPartitionWorker(sub, entityqueue.PartitionIdentity{Tenant: tenant, PartitionKey: pk})
 
-		s.logger.Infow("released partition for rebalance",
-			"tenant", tenant,
-			"topic", sub.topic,
-			"consumer_group", cfg.ConsumerGroup,
-			"partition_key", pk,
-			"owned", len(owned),
-			"max_partitions", maxPart,
-		)
+		if rows > 0 {
+			s.recordLeaseReleased(sub, tenant, leaseReasonRebalance, rows)
+			s.logger.Infow("released partition for rebalance",
+				append(leaseLogFields(sub, tenant, pk),
+					logReason, leaseReasonRebalance,
+					"owned", len(owned),
+					"max_partitions", maxPart,
+				)...,
+			)
+		}
 	}
 	return released, nil
 }

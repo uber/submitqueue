@@ -130,6 +130,7 @@ func TestPrimaryConsumer_GitFailureDisposition(t *testing.T) {
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(message).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+			delivery.EXPECT().Metadata().Return(nil).AnyTimes()
 			done := make(chan struct{})
 			if tt.wantOutcome == "nack" {
 				delivery.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, failure.Failure) error {

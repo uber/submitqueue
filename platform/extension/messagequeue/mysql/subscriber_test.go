@@ -28,6 +28,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
@@ -66,8 +67,8 @@ func allowSupervisorLeaseCalls(mockLeaseStore *MockpartitionLeaseStore) {
 	mockLeaseStore.EXPECT().GetLeasedPartitionsForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]string{}, nil).AnyTimes()
 	mockLeaseStore.EXPECT().DiscoverPartitions(gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]string{}, nil).AnyTimes()
 	mockLeaseStore.EXPECT().GetAllLeasesForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(map[string][]leaseInfo{}, nil).AnyTimes()
-	mockLeaseStore.EXPECT().RenewOwnedLeases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockLeaseStore.EXPECT().ReleaseOwnedLeases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockLeaseStore.EXPECT().RenewOwnedLeases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mockLeaseStore.EXPECT().ReleaseOwnedLeases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 	mockLeaseStore.EXPECT().PurgeStaleForTenants(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockLeaseStore.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 }
@@ -1260,6 +1261,17 @@ func TestSubscriber_AcquireUnownedPartitions(t *testing.T) {
 			},
 			want: nil,
 		},
+		{
+			name:       "stale lease held by other is stolen",
+			discovered: []string{"part1"},
+			leases: []leaseInfo{
+				{PartitionKey: "part1", LeasedBy: "other-worker", LeaseRenewedAt: staleMs},
+			},
+			setup: func(mockLeaseStore *MockpartitionLeaseStore) {
+				expectAcquire(mockLeaseStore, "part1", true)
+			},
+			want: []string{"part1"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1301,7 +1313,7 @@ func TestSubscriber_LeaseTickRenewsWhenActiveSubscribersFails(t *testing.T) {
 		Return(nil, activeErr)
 	mockLeaseStore.EXPECT().
 		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil)
+		Return(int64(0), nil)
 	mockHeartbeatStore.EXPECT().
 		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
 		Return(nil)
@@ -1344,7 +1356,7 @@ func TestSubscriber_LeaseTickRenewsWhenGetLeasedPartitionsFails(t *testing.T) {
 		Return(nil, leasedErr)
 	mockLeaseStore.EXPECT().
 		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(nil)
+		Return(int64(0), nil)
 	mockHeartbeatStore.EXPECT().
 		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
 		Return(nil)
@@ -1553,7 +1565,7 @@ func TestSubscriber_DrainedPartitionKeepsOffsetWhenLeaseReleaseFails(t *testing.
 		Return(map[string][]leaseInfo{}, nil)
 	mockLeaseStore.EXPECT().
 		ReleaseLease(gomock.Any(), testTenant, "test-topic", partition.PartitionKey, cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(errors.New("release failed"))
+		Return(int64(0), errors.New("release failed"))
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(),
@@ -1592,8 +1604,14 @@ func TestSubscriber_ReleaseAllLeasesContinuesAfterErrors(t *testing.T) {
 	tenants := []string{"tenant-1", "tenant-2", "tenant-3"}
 
 	mockLeaseStore.EXPECT().
-		ReleaseOwnedLeases(gomock.Any(), tenants, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
-		Return(releaseErr)
+		ReleaseOwnedLeases(gomock.Any(), []string{"tenant-1"}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(0), releaseErr)
+	mockLeaseStore.EXPECT().
+		ReleaseOwnedLeases(gomock.Any(), []string{"tenant-2"}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(0), nil)
+	mockLeaseStore.EXPECT().
+		ReleaseOwnedLeases(gomock.Any(), []string{"tenant-3"}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(0), nil)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
@@ -1701,6 +1719,8 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 	select {
 	case del := <-deliveryCh:
 		assert.Equal(t, "msg-1", del.Message().ID)
+		assert.Equal(t, cfg.SubscriberName, del.Metadata()[logLeasedBy])
+		assert.Equal(t, cfg.ConsumerGroup, del.Metadata()[logConsumerGroup])
 	default:
 		t.Fatal("expected delivery but channel was empty")
 	}
@@ -2204,6 +2224,14 @@ func TestSubscriber_FairShareCap(t *testing.T) {
 	})
 }
 
+func TestReportedFairShareCap(t *testing.T) {
+	assert.Equal(t, 2, reportedFairShareCap(2, []string{"a"}, []string{"b", "c"}))
+	assert.Equal(t, 2, reportedFairShareCap(0, []string{"a"}, []string{"a", "b"}))
+	owned, cap := 1, reportedFairShareCap(0, []string{"part-1"}, []string{"part-1"})
+	assert.Equal(t, 1, cap)
+	assert.LessOrEqual(t, owned, cap)
+}
+
 // partitionKeysN generates n distinct partition keys.
 func partitionKeysN(n int) []string {
 	keys := make([]string, n)
@@ -2228,10 +2256,10 @@ func TestSubscriber_RebalanceReleasesExcess(t *testing.T) {
 	mockLease := NewMockpartitionLeaseStore(ctrl)
 	mockLease.EXPECT().
 		ReleaseLease(gomock.Any(), testTenant, "test-topic", "pk-c", "s1", "test-cg").
-		Return(nil)
+		Return(int64(1), nil)
 	mockLease.EXPECT().
 		ReleaseLease(gomock.Any(), testTenant, "test-topic", "pk-d", "s1", "test-cg").
-		Return(nil)
+		Return(int64(1), nil)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
@@ -2341,4 +2369,599 @@ func TestUpdateDrainedTracking(t *testing.T) {
 			assert.Equal(t, tt.wantExpired, expired)
 		})
 	}
+}
+
+func TestSubscriber_AcquireUnownedPartitions_LeaseEvents(t *testing.T) {
+	cfg := testSubscriptionConfig()
+	staleMs := time.Now().UnixMilli() - cfg.LeaseDurationMs - 60_000
+
+	tests := []struct {
+		name       string
+		leases     []leaseInfo
+		wantMsg    string
+		wantLevel  zapcore.Level
+		wantStolen bool
+		wantPrior  string
+	}{
+		{
+			name:      "first claim",
+			wantMsg:   "lease acquired",
+			wantLevel: zapcore.DebugLevel,
+		},
+		{
+			name: "steal stale owner",
+			leases: []leaseInfo{
+				{PartitionKey: "part1", LeasedBy: "other-worker", LeaseRenewedAt: staleMs},
+			},
+			wantMsg:    "lease stolen",
+			wantLevel:  zapcore.InfoLevel,
+			wantStolen: true,
+			wantPrior:  "other-worker",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			mockLeaseStore.EXPECT().
+				TryAcquireLease(gomock.Any(), testTenant, "test-topic", "part1", cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs).
+				Return(true, nil)
+
+			core, logs := observer.New(zap.DebugLevel)
+			scope := tally.NewTestScope("test", nil)
+			s := NewSubscriber(
+				zap.New(core).Sugar(),
+				scope,
+				NewMockmessageStore(ctrl),
+				NewMockoffsetStore(ctrl),
+				mockLeaseStore,
+				NewMocksubscriberHeartbeatStore(ctrl),
+				NewMockdeliveryStateStore(ctrl),
+				[]string{testTenant},
+			)
+			sub := &subscription{topic: "test-topic", config: cfg}
+			got := s.acquireUnownedPartitions(context.Background(), sub, testTenant, []string{"part1"}, tt.leases, 0)
+			assert.Equal(t, []string{"part1"}, got)
+
+			entries := logs.FilterMessage(tt.wantMsg).All()
+			require.Len(t, entries, 1)
+			assert.Equal(t, tt.wantLevel, entries[0].Level)
+			assert.Equal(t, testTenant, entries[0].ContextMap()[logTenant])
+			assert.Equal(t, "test-topic", entries[0].ContextMap()[logTopic])
+			assert.Equal(t, cfg.ConsumerGroup, entries[0].ContextMap()[logConsumerGroup])
+			assert.Equal(t, cfg.SubscriberName, entries[0].ContextMap()[logLeasedBy])
+			assert.Equal(t, "part1", entries[0].ContextMap()[logPartitionKey])
+			if tt.wantStolen {
+				assert.Equal(t, tt.wantPrior, entries[0].ContextMap()[logPreviousOwner])
+			}
+
+			snapshot := scope.Snapshot()
+			counter := "test.subscriber.lease.acquired"
+			if tt.wantStolen {
+				counter = "test.subscriber.lease.stolen"
+			}
+			assert.Equal(t, int64(1), testCounterValue(t, snapshot, counter, map[string]string{
+				logLeasedBy:      cfg.SubscriberName,
+				"topic":          "test-topic",
+				logTenant:        testTenant,
+				logConsumerGroup: cfg.ConsumerGroup,
+			}))
+			for _, c := range snapshot.Counters() {
+				assert.NotContains(t, c.Tags(), "partition_key")
+			}
+		})
+	}
+}
+
+func TestSubscriber_LeaseTick_OwnershipSummary(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(map[string][]string{testTenant: {cfg.SubscriberName, "other-subscriber"}}, nil)
+	mockLeaseStore.EXPECT().
+		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(1), nil)
+	mockHeartbeatStore.EXPECT().
+		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+	mockLeaseStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+
+	core, logs := observer.New(zap.InfoLevel)
+	scope := tally.NewTestScope("test", nil)
+	s := NewSubscriber(
+		zap.New(core).Sugar(),
+		scope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:                    "test-topic",
+		config:                   cfg,
+		deliveryCh:               make(chan extqueue.Delivery, 1),
+		workers:                  make(map[entityqueue.PartitionIdentity]*partitionWorker),
+		lastDiscoveredPartitions: tenantPartitionKeys(testTenant, []string{"part-1"}),
+	}
+
+	s.runLeaseTick(context.Background(), sub, time.Second, []any{logTopic, sub.topic, logLeasedBy, cfg.SubscriberName})
+
+	entries := logs.FilterMessage("lease tick").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	assert.Equal(t, int64(1), fields[logOwnedPartitions])
+	assert.Equal(t, int64(1), fields[logRenewed])
+	assert.Equal(t, int64(2), fields["active_subscribers"])
+	assert.Equal(t, int64(1), fields["fair_share_cap"])
+	assert.Equal(t, cfg.SubscriberName, fields[logLeasedBy])
+
+	snapshot := scope.Snapshot()
+	assert.Equal(t, int64(1), testCounterValue(t, snapshot, "test.subscriber.lease.renewed", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        testTenant,
+		logConsumerGroup: cfg.ConsumerGroup,
+	}))
+	assert.Equal(t, float64(1), testGaugeValue(t, snapshot, "test.subscriber.lease.partitions_owned", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        testTenant,
+		logConsumerGroup: cfg.ConsumerGroup,
+	}))
+	assert.Equal(t, float64(2), testGaugeValue(t, snapshot, "test.subscriber.lease.active_subscribers", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        testTenant,
+		logConsumerGroup: cfg.ConsumerGroup,
+	}))
+	assert.Equal(t, float64(1), testGaugeValue(t, snapshot, "test.subscriber.lease.fair_share_cap", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        testTenant,
+		logConsumerGroup: cfg.ConsumerGroup,
+	}))
+}
+
+func TestSubscriber_RebalanceReleasesExcess_RecordsReason(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLease := NewMockpartitionLeaseStore(ctrl)
+	mockLease.EXPECT().
+		ReleaseLease(gomock.Any(), testTenant, "test-topic", "pk-c", "s1", "test-cg").
+		Return(int64(1), nil)
+	mockLease.EXPECT().
+		ReleaseLease(gomock.Any(), testTenant, "test-topic", "pk-d", "s1", "test-cg").
+		Return(int64(1), nil)
+
+	core, logs := observer.New(zap.InfoLevel)
+	scope := tally.NewTestScope("test", nil)
+	s := NewSubscriber(
+		zap.New(core).Sugar(), scope,
+		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
+		mockLease, NewMocksubscriberHeartbeatStore(ctrl), NewMockdeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:   "test-topic",
+		config:  extqueue.DefaultSubscriptionConfig("s1", "test-cg"),
+		workers: make(map[entityqueue.PartitionIdentity]*partitionWorker),
+	}
+
+	released, err := s.rebalance(context.Background(), sub, testTenant, []string{"pk-d", "pk-a", "pk-c", "pk-b"}, []string{"s1", "s2"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pk-c", "pk-d"}, released)
+
+	entries := logs.FilterMessage("released partition for rebalance").All()
+	require.Len(t, entries, 2)
+	for _, entry := range entries {
+		assert.Equal(t, leaseReasonRebalance, entry.ContextMap()[logReason])
+		assert.Equal(t, "s1", entry.ContextMap()[logLeasedBy])
+		assert.Contains(t, []string{"pk-c", "pk-d"}, entry.ContextMap()[logPartitionKey])
+	}
+	assert.Equal(t, int64(2), testCounterValue(t, scope.Snapshot(), "test.subscriber.lease.released", map[string]string{
+		logLeasedBy:      "s1",
+		"topic":          "test-topic",
+		logTenant:        testTenant,
+		logConsumerGroup: "test-cg",
+		logReason:        leaseReasonRebalance,
+	}))
+}
+
+func TestSubscriber_UncappedDiscoverDoesNotZeroShareGauges(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	cfg := testSubscriptionConfig()
+	cfg.PollIntervalMs = int64(time.Hour / time.Millisecond)
+
+	mockLeaseStore.EXPECT().
+		DiscoverPartitions(gomock.Any(), []string{testTenant}, "test-topic").
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockLeaseStore.EXPECT().
+		GetAllLeasesForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup).
+		Return(map[string][]leaseInfo{
+			testTenant: {{PartitionKey: "part-1", LeasedBy: cfg.SubscriberName, LeaseRenewedAt: time.Now().UnixMilli()}},
+		}, nil)
+
+	scope := tally.NewTestScope("test", nil)
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		scope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		newTestHeartbeatStore(ctrl),
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:      "test-topic",
+		config:     cfg,
+		deliveryCh: make(chan extqueue.Delivery, 1),
+		workers: map[entityqueue.PartitionIdentity]*partitionWorker{
+			{Tenant: testTenant, PartitionKey: "part-1"}: {
+				cancelFunc: func() {},
+				done:       make(chan struct{}),
+			},
+		},
+	}
+	s.observeLeaseShare(sub, testTenant, 3, 2)
+
+	require.NoError(t, s.discoverAndReconcileWorkers(context.Background(), sub, true))
+	s.stopAllWorkers(sub)
+
+	snapshot := scope.Snapshot()
+	assert.Equal(t, float64(1), testGaugeValue(t, snapshot, "test.subscriber.lease.partitions_owned", leaseMetricTags(cfg, testTenant)))
+	assert.Equal(t, float64(3), testGaugeValue(t, snapshot, "test.subscriber.lease.active_subscribers", leaseMetricTags(cfg, testTenant)))
+	assert.Equal(t, float64(2), testGaugeValue(t, snapshot, "test.subscriber.lease.fair_share_cap", leaseMetricTags(cfg, testTenant)))
+}
+
+func TestSubscriber_LeaseTick_SingleSubscriberWritesUniverseCap(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(map[string][]string{testTenant: {cfg.SubscriberName}}, nil)
+	mockLeaseStore.EXPECT().
+		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(1), nil)
+	mockHeartbeatStore.EXPECT().
+		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+	mockLeaseStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+
+	scope := tally.NewTestScope("test", nil)
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		scope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:                    "test-topic",
+		config:                   cfg,
+		deliveryCh:               make(chan extqueue.Delivery, 1),
+		workers:                  make(map[entityqueue.PartitionIdentity]*partitionWorker),
+		lastDiscoveredPartitions: tenantPartitionKeys(testTenant, []string{"part-1"}),
+	}
+	s.observeLeaseShare(sub, testTenant, 2, 4)
+
+	s.runLeaseTick(context.Background(), sub, time.Second, []any{logTopic, sub.topic, logLeasedBy, cfg.SubscriberName})
+
+	snapshot := scope.Snapshot()
+	owned := testGaugeValue(t, snapshot, "test.subscriber.lease.partitions_owned", leaseMetricTags(cfg, testTenant))
+	cap := testGaugeValue(t, snapshot, "test.subscriber.lease.fair_share_cap", leaseMetricTags(cfg, testTenant))
+	assert.Equal(t, float64(1), cap)
+	assert.LessOrEqual(t, owned, cap)
+	assert.Equal(t, float64(1), testGaugeValue(t, snapshot, "test.subscriber.lease.active_subscribers", leaseMetricTags(cfg, testTenant)))
+}
+
+func TestSubscriber_IdleReleaseRecordsTenant(t *testing.T) {
+	tests := []struct {
+		name         string
+		releasedRows int64
+		offsetErr    error
+		wantReleased int64
+	}{
+		{name: "offset deleted", releasedRows: 1, wantReleased: 1},
+		{name: "offset delete fails after release", releasedRows: 1, offsetErr: errors.New("delete offset failed"), wantReleased: 1},
+		{name: "lease already gone", releasedRows: 0, wantReleased: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			mockOffsetStore := NewMockoffsetStore(ctrl)
+			cfg := testSubscriptionConfig()
+			partition := entityqueue.PartitionIdentity{Tenant: testTenant, PartitionKey: "drained"}
+
+			mockLeaseStore.EXPECT().
+				DiscoverPartitions(gomock.Any(), []string{testTenant}, "test-topic").
+				Return(map[string][]string{}, nil)
+			mockLeaseStore.EXPECT().
+				GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+				Return(map[string][]string{testTenant: {partition.PartitionKey}}, nil)
+			mockLeaseStore.EXPECT().
+				GetAllLeasesForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup).
+				Return(map[string][]leaseInfo{}, nil)
+			mockLeaseStore.EXPECT().
+				ReleaseLease(gomock.Any(), testTenant, "test-topic", partition.PartitionKey, cfg.SubscriberName, cfg.ConsumerGroup).
+				Return(tt.releasedRows, nil)
+			mockOffsetStore.EXPECT().
+				DeleteOffset(gomock.Any(), testTenant, "test-topic", partition.PartitionKey, cfg.ConsumerGroup).
+				Return(tt.offsetErr)
+
+			scope := tally.NewTestScope("test", nil)
+			s := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				scope,
+				NewMockmessageStore(ctrl),
+				mockOffsetStore,
+				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				newTestDeliveryStateStore(ctrl),
+				[]string{testTenant},
+			)
+			workerDone := make(chan struct{})
+			close(workerDone)
+			sub := &subscription{
+				topic:      "test-topic",
+				config:     cfg,
+				deliveryCh: make(chan extqueue.Delivery),
+				workers: map[entityqueue.PartitionIdentity]*partitionWorker{
+					partition: {cancelFunc: func() {}, done: workerDone},
+				},
+				drainedSince: map[entityqueue.PartitionIdentity]time.Time{partition: time.Now().Add(-time.Hour)},
+			}
+
+			require.NoError(t, s.discoverAndReconcileWorkers(context.Background(), sub, true))
+			snapshot := scope.Snapshot()
+			released, emitted := lookupCounter(snapshot, "test.subscriber.lease.released", map[string]string{
+				logLeasedBy:      cfg.SubscriberName,
+				"topic":          "test-topic",
+				logTenant:        testTenant,
+				logConsumerGroup: cfg.ConsumerGroup,
+				logReason:        leaseReasonIdle,
+			})
+			assert.Equal(t, tt.wantReleased > 0, emitted)
+			assert.Equal(t, tt.wantReleased, released)
+			assert.Equal(t, float64(0), testGaugeValue(t, snapshot, "test.subscriber.lease.partitions_owned", leaseMetricTags(cfg, testTenant)))
+			_, tracked := sub.drainedSince[partition]
+			assert.Equal(t, tt.offsetErr != nil, tracked)
+		})
+	}
+}
+
+func TestSubscriber_ReleaseAllLeases_PerTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	cfg := testSubscriptionConfig()
+	tenants := []string{"tenant-a", "tenant-b"}
+
+	mockLeaseStore.EXPECT().
+		ReleaseOwnedLeases(gomock.Any(), []string{"tenant-a"}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(2), nil)
+	mockLeaseStore.EXPECT().
+		ReleaseOwnedLeases(gomock.Any(), []string{"tenant-b"}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(1), nil)
+
+	scope := tally.NewTestScope("test", nil)
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(), scope,
+		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
+		mockLeaseStore, NewMocksubscriberHeartbeatStore(ctrl),
+		NewMockdeliveryStateStore(ctrl),
+		tenants,
+	)
+	sub := &subscription{topic: "test-topic", config: cfg}
+
+	require.NoError(t, s.releaseAllLeases(context.Background(), sub))
+	snapshot := scope.Snapshot()
+	assert.Equal(t, int64(2), testCounterValue(t, snapshot, "test.subscriber.lease.released", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        "tenant-a",
+		logConsumerGroup: cfg.ConsumerGroup,
+		logReason:        leaseReasonShutdown,
+	}))
+	assert.Equal(t, int64(1), testCounterValue(t, snapshot, "test.subscriber.lease.released", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        "tenant-b",
+		logConsumerGroup: cfg.ConsumerGroup,
+		logReason:        leaseReasonShutdown,
+	}))
+}
+
+func TestSubscriber_LeaseTick_LogsOnRenewError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+	renewErr := errors.New("renew failed")
+
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(map[string][]string{testTenant: {cfg.SubscriberName, "other"}}, nil)
+	mockLeaseStore.EXPECT().
+		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(0), renewErr)
+	mockHeartbeatStore.EXPECT().
+		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+	mockLeaseStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+
+	core, logs := observer.New(zap.InfoLevel)
+	s := NewSubscriber(
+		zap.New(core).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:                    "test-topic",
+		config:                   cfg,
+		deliveryCh:               make(chan extqueue.Delivery, 1),
+		workers:                  make(map[entityqueue.PartitionIdentity]*partitionWorker),
+		lastDiscoveredPartitions: tenantPartitionKeys(testTenant, []string{"part-1"}),
+	}
+
+	s.runLeaseTick(context.Background(), sub, time.Second, []any{logTopic, sub.topic, logLeasedBy, cfg.SubscriberName})
+
+	entries := logs.FilterMessage("lease tick").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, int64(1), entries[0].ContextMap()[logOwnedPartitions])
+	assert.Equal(t, int64(2), entries[0].ContextMap()["active_subscribers"])
+}
+
+func TestSubscriber_LeaseTick_RenewMismatchOmitsTenant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockHeartbeatStore := NewMocksubscriberHeartbeatStore(ctrl)
+	cfg := testSubscriptionConfig()
+
+	mockLeaseStore.EXPECT().
+		GetLeasedPartitionsForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(map[string][]string{testTenant: {"part-1"}}, nil)
+	mockHeartbeatStore.EXPECT().
+		ActiveSubscribersForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, cfg.LeaseDurationMs).
+		Return(map[string][]string{testTenant: {cfg.SubscriberName, "other"}}, nil)
+	mockLeaseStore.EXPECT().
+		RenewOwnedLeases(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(int64(2), nil)
+	mockHeartbeatStore.EXPECT().
+		HeartbeatForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.SubscriberName, cfg.ConsumerGroup).
+		Return(nil)
+	mockHeartbeatStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+	mockLeaseStore.EXPECT().
+		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
+		Return(nil)
+
+	scope := tally.NewTestScope("test", nil)
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		scope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		mockLeaseStore,
+		mockHeartbeatStore,
+		newTestDeliveryStateStore(ctrl),
+		[]string{testTenant},
+	)
+	sub := &subscription{
+		topic:                    "test-topic",
+		config:                   cfg,
+		deliveryCh:               make(chan extqueue.Delivery, 1),
+		workers:                  make(map[entityqueue.PartitionIdentity]*partitionWorker),
+		lastDiscoveredPartitions: tenantPartitionKeys(testTenant, []string{"part-1"}),
+	}
+
+	s.runLeaseTick(context.Background(), sub, time.Second, []any{logTopic, sub.topic, logLeasedBy, cfg.SubscriberName})
+
+	snapshot := scope.Snapshot()
+	assert.Equal(t, int64(2), testCounterValue(t, snapshot, "test.subscriber.lease.renewed", map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logConsumerGroup: cfg.ConsumerGroup,
+	}))
+	for _, c := range snapshot.Counters() {
+		if c.Name() == "test.subscriber.lease.renewed" {
+			assert.Empty(t, c.Tags()[logTenant])
+		}
+	}
+}
+
+func leaseMetricTags(cfg extqueue.SubscriptionConfig, tenant string) map[string]string {
+	return map[string]string{
+		logLeasedBy:      cfg.SubscriberName,
+		"topic":          "test-topic",
+		logTenant:        tenant,
+		logConsumerGroup: cfg.ConsumerGroup,
+	}
+}
+
+func testCounterValue(t *testing.T, snapshot tally.Snapshot, name string, tags map[string]string) int64 {
+	t.Helper()
+	value, found := lookupCounter(snapshot, name, tags)
+	if !found {
+		t.Fatalf("counter %s %+v not found", name, tags)
+	}
+	return value
+}
+
+func lookupCounter(snapshot tally.Snapshot, name string, tags map[string]string) (int64, bool) {
+	for _, c := range snapshot.Counters() {
+		if c.Name() != name || !tagsMatch(c.Tags(), tags) {
+			continue
+		}
+		return c.Value(), true
+	}
+	return 0, false
+}
+
+func testGaugeValue(t *testing.T, snapshot tally.Snapshot, name string, tags map[string]string) float64 {
+	t.Helper()
+	for _, g := range snapshot.Gauges() {
+		if g.Name() != name || !tagsMatch(g.Tags(), tags) {
+			continue
+		}
+		return g.Value()
+	}
+	t.Fatalf("gauge %s %+v not found", name, tags)
+	return 0
+}
+
+func tagsMatch(got, want map[string]string) bool {
+	for k, v := range want {
+		if got[k] != v {
+			return false
+		}
+	}
+	return true
 }

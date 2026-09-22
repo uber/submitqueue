@@ -296,11 +296,12 @@ func (mr *MockpartitionLeaseStoreMockRecorder) PurgeStaleForTenants(ctx, tenants
 }
 
 // ReleaseLease mocks base method.
-func (m *MockpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant, topic, partitionKey, subscriberName, consumerGroup string) error {
+func (m *MockpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant, topic, partitionKey, subscriberName, consumerGroup string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ReleaseLease", ctx, tenant, topic, partitionKey, subscriberName, consumerGroup)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // ReleaseLease indicates an expected call of ReleaseLease.
@@ -310,11 +311,12 @@ func (mr *MockpartitionLeaseStoreMockRecorder) ReleaseLease(ctx, tenant, topic, 
 }
 
 // ReleaseOwnedLeases mocks base method.
-func (m *MockpartitionLeaseStore) ReleaseOwnedLeases(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) error {
+func (m *MockpartitionLeaseStore) ReleaseOwnedLeases(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ReleaseOwnedLeases", ctx, tenants, topic, subscriberName, consumerGroup)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // ReleaseOwnedLeases indicates an expected call of ReleaseOwnedLeases.
@@ -324,11 +326,12 @@ func (mr *MockpartitionLeaseStoreMockRecorder) ReleaseOwnedLeases(ctx, tenants, 
 }
 
 // RenewOwnedLeases mocks base method.
-func (m *MockpartitionLeaseStore) RenewOwnedLeases(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) error {
+func (m *MockpartitionLeaseStore) RenewOwnedLeases(ctx context.Context, tenants []string, topic, subscriberName, consumerGroup string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RenewOwnedLeases", ctx, tenants, topic, subscriberName, consumerGroup)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RenewOwnedLeases indicates an expected call of RenewOwnedLeases.

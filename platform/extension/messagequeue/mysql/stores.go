@@ -116,8 +116,11 @@ type partitionLeaseStore interface {
 	// TryAcquireLease attempts to acquire or renew a lease for a partition
 	TryAcquireLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (bool, error)
 
-	// ReleaseLease releases the lease for a partition owned by this worker
-	ReleaseLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string) error
+	// ReleaseLease releases the lease for a partition owned by this worker.
+	// The int64 is rows deleted; 0 means the lease was already gone (stolen or
+	// purged) or the backend could not report a count, neither of which is an
+	// error. Callers must treat the partition as released regardless.
+	ReleaseLease(ctx context.Context, tenant string, topic string, partitionKey string, subscriberName string, consumerGroup string) (int64, error)
 
 	// GetLeasedPartitionsForTenants returns partitions leased by this worker
 	// across the given tenants, keyed by tenant. Tenants with no leases are absent.
@@ -129,10 +132,12 @@ type partitionLeaseStore interface {
 
 	// RenewOwnedLeases refreshes lease_renewed_at on every row this subscriber
 	// still holds across tenants. Stolen leases are ignored; discovery drops them.
-	RenewOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) error
+	// The int64 is rows updated.
+	RenewOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (int64, error)
 
 	// ReleaseOwnedLeases deletes every lease row this subscriber holds across tenants.
-	ReleaseOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) error
+	// The int64 is rows deleted.
+	ReleaseOwnedLeases(ctx context.Context, tenants []string, topic string, subscriberName string, consumerGroup string) (int64, error)
 
 	// PurgeStaleForTenants deletes lease rows not renewed within olderThanMs
 	// across the given tenants.

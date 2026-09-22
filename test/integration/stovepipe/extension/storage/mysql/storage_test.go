@@ -102,6 +102,16 @@ func TestMySQLStorage(t *testing.T) {
 		testSuite.SetFactory(factory)
 		suite.Run(t, testSuite)
 	})
+
+	t.Run("RequestSummaryStore", func(t *testing.T) {
+		resetStorage(t, db)
+		bound, err := backend.For("monorepo/main")
+		require.NoError(t, err)
+		suite.Run(t, &MySQLRequestSummaryStoreSuite{
+			ctx:   ctx,
+			store: bound.GetRequestSummaryStore(),
+		})
+	})
 }
 
 func resetStorage(t *testing.T, db *sql.DB) {
@@ -109,6 +119,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 
 	for _, statement := range []string{
 		"TRUNCATE TABLE request_log",
+		"TRUNCATE TABLE request_summary",
 		"TRUNCATE TABLE request_uri",
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
@@ -118,6 +129,43 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		_, err := db.ExecContext(context.Background(), statement)
 		require.NoError(t, err)
 	}
+}
+
+// MySQLRequestSummaryStoreSuite exercises summary projection storage against MySQL.
+type MySQLRequestSummaryStoreSuite struct {
+	suite.Suite
+	ctx   context.Context
+	store storage.RequestSummaryStore
+}
+
+func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
+	summary := entity.RequestSummary{
+		RequestID: "request/monorepo/main/summary", Queue: "monorepo/main", URI: "git://repo/head",
+		State: entity.RequestStateAccepted, RequestVersion: 1, StateTimestampMs: 1000, Version: 1,
+	}
+	require.NoError(s.T(), s.store.Create(s.ctx, summary))
+
+	got, err := s.store.Get(s.ctx, summary.RequestID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), summary, got)
+
+	updated := summary
+	updated.BaseURI = "git://repo/base"
+	updated.State = entity.RequestStateProcessing
+	updated.RequestVersion = 2
+	updated.StateTimestampMs = 2000
+	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))
+	updated.Version = 2
+
+	got, err = s.store.Get(s.ctx, summary.RequestID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), updated, got)
+	require.ErrorIs(s.T(), s.store.Update(s.ctx, updated, 1, 2), storage.ErrVersionMismatch)
+}
+
+func (s *MySQLRequestSummaryStoreSuite) TestGetNotFound() {
+	_, err := s.store.Get(s.ctx, "request/monorepo/main/missing-summary")
+	require.True(s.T(), storage.IsNotFound(err))
 }
 
 // MySQLRequestStoreSuite exercises the MySQL-backed RequestStore against a real MySQL instance.
