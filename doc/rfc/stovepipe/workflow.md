@@ -177,5 +177,5 @@ Callers gate deployments on greenness, so the dangerous failure is a Request tha
 
 - **Greenness degree semantics.** The endpoints (`0` green, `1` fully broken) are fixed; the meaning of intermediate values once projects exist (fraction of projects broken? weighted severity?) is deferred until project analysis is concrete.
 - **Poller vs. webhook ingestion.** Only the external poller is in scope now. The dedup key is designed so a webhook producer can be added later without changing identity, but that producer is out of scope for this RFC.
-- **Project mapping contract.** The exact shape of the target-graph→project mapping behind `analyze` (and whether it is a Stovepipe extension or an external service) is left to the project-analysis design.
+- **Project mapping implementation.** `targetimpact.Mapper` maps opaque validation-target identifiers at an exact head URI to affected projects. How an integration obtains the target graph and drives the deferred `analyze` stage remains outside this contract.
 </content>

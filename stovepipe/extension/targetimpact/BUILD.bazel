@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["targetimpact.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/targetimpact",
+    visibility = ["//visibility:public"],
+)
