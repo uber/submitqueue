@@ -18,12 +18,13 @@ import (
 	"context"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +47,7 @@ import (
 type batchController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -60,7 +61,7 @@ var _ consumer.Controller = (*batchController)(nil)
 func NewDLQBatchController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -96,7 +97,7 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		return fmt.Errorf("dlq payload decoded to empty batch id")
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.

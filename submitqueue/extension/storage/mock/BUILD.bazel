@@ -16,7 +16,6 @@ go_library(
         "request_summary_store_mock.go",
         "request_uri_store_mock.go",
         "speculation_path_set_store_mock.go",
-        "storage_mock.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/storage/mock",
     visibility = ["//visibility:public"],

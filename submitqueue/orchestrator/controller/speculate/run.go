@@ -25,7 +25,8 @@ import (
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // run re-plans a whole queue from a single read of its state, in the six
@@ -34,7 +35,7 @@ import (
 // The batch on the triggering message only says which queue woke up; nothing
 // about the plan depends on which batch it was, or on any earlier run. Its
 // identity is carried through only for crash recovery — see snapshot.trigger.
-func (c *Controller) run(ctx context.Context, store storage.Storage, trigger entity.Batch) error {
+func (c *Controller) run(ctx context.Context, store orchstorage.Storage, trigger entity.Batch) error {
 	snap, err := c.read(ctx, store, trigger.Queue)
 	if err != nil {
 		return err
@@ -114,7 +115,7 @@ func (c *Controller) admitCreated(ctx context.Context, snap *snapshot) {
 // read builds the run's snapshot. Batches come first because their dependency
 // lists say which finalized batches still have to be resolved, and their IDs
 // say which path sets to load.
-func (c *Controller) read(ctx context.Context, store storage.Storage, queue string) (snapshot, error) {
+func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue string) (snapshot, error) {
 	inFlight, err := corebatch.ListByStates(ctx, store, entity.ActiveBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -193,7 +194,7 @@ func (c *Controller) read(ctx context.Context, store storage.Storage, queue stri
 // the run makes later, which keeps this controller the path set's single
 // writer: the build stages record what CI did on per-build records, and the
 // run alone decides when that becomes the path's status.
-func (c *Controller) updatePathsFromBuilds(ctx context.Context, store storage.Storage, set *entity.SpeculationPathSet) (bool, error) {
+func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorage.Storage, set *entity.SpeculationPathSet) (bool, error) {
 	changed := false
 	for i := range set.Paths {
 		entry := &set.Paths[i]

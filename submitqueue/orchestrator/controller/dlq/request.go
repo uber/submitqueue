@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -74,7 +76,7 @@ func DecodeRequestID(primary consumer.TopicKey) RequestIDDecoder {
 type requestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	decode        RequestIDDecoder
 	topicKey      consumer.TopicKey
@@ -90,7 +92,7 @@ var _ consumer.Controller = (*requestController)(nil)
 func NewDLQRequestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	decode RequestIDDecoder,
 	topicKey consumer.TopicKey,
@@ -132,7 +134,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		return fmt.Errorf("dlq payload decoded to empty request id")
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: rid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -193,7 +195,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 // mid-promotion and owns it, and any other request state means the claim never
 // landed. A request that has since disappeared is left to failRequest, which
 // reports the missing row.
-func owningBatch(ctx context.Context, store storage.Storage, requestID string) (string, error) {
+func owningBatch(ctx context.Context, store orchstorage.Storage, requestID string) (string, error) {
 	batches, _, err := corebatch.FindByRequestID(ctx, store, requestID)
 	if err != nil {
 		return "", err

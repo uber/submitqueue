@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -70,7 +71,7 @@ func (m updateTo) String() string {
 
 type runHarness struct {
 	controller *Controller
-	store      *storagemock.MockStorage
+	store      *orchstoragemock.MockStorage
 	batches    *storagemock.MockBatchStore
 	pathSets   *storagemock.MockSpeculationPathSetStore
 	pathBuilds *storagemock.MockPathBuildStore
@@ -158,7 +159,7 @@ func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculat
 	h.pathBuilds = storagemock.NewMockPathBuildStore(ctrl)
 	h.builds = storagemock.NewMockBuildStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	h.store = store
 	store.EXPECT().GetQueueBatchStateStore().Return(queueStates).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(h.batches).AnyTimes()
@@ -1101,7 +1102,7 @@ func TestFanout_MintsADistinctMessageIDPerPublish(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: storagemock.NewMockStorage(ctrl)},
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: orchstoragemock.NewMockStorage(ctrl)},
 		staticSpeculatorFactory{}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate",
 	)
 
@@ -1134,7 +1135,7 @@ func TestDispatchLand_ReusesOneMessageIDPerBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: storagemock.NewMockStorage(ctrl)},
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: orchstoragemock.NewMockStorage(ctrl)},
 		staticSpeculatorFactory{}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate",
 	)
 	batch := entity.Batch{ID: head, Queue: "q"}

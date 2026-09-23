@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
@@ -34,8 +36,8 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -59,10 +61,10 @@ func newSequentialCounter(ctrl *gomock.Controller) *countermock.MockCounter {
 	return cnt
 }
 
-// storageFactoryFor returns a storage.Factory mock that resolves any queue to
+// storageFactoryFor returns a orchstorage.Factory mock that resolves any queue to
 // the given queue-scoped store aggregate.
-func storageFactoryFor(ctrl *gomock.Controller, store storage.Storage) *storagemock.MockFactory {
-	f := storagemock.NewMockFactory(ctrl)
+func storageFactoryFor(ctrl *gomock.Controller, store orchstorage.Storage) *orchstoragemock.MockFactory {
+	f := orchstoragemock.NewMockFactory(ctrl)
 	f.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	return f
 }
@@ -101,7 +103,7 @@ func newTestRegistry(t *testing.T, publisher *queuemock.MockPublisher, ctrl *gom
 // newTestController creates a controller with test dependencies.
 // If mockStorage is nil, a default MockStorage accepting any batch write is created.
 // handoffPublishErr, if non-nil, is returned for the hand-off publish.
-func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, handoffPublishErr error) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *orchstoragemock.MockStorage, handoffPublishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -113,7 +115,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		mockReqStore := storagemock.NewMockRequestStore(ctrl)
 		mockReqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil).AnyTimes()
 
-		mockStorage = storagemock.NewMockStorage(ctrl)
+		mockStorage = orchstoragemock.NewMockStorage(ctrl)
 		mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 		mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	}
@@ -165,7 +167,7 @@ func TestController_Process_Success(t *testing.T) {
 
 func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), storagemock.NewMockStorage(ctrl), nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), orchstoragemock.NewMockStorage(ctrl), nil)
 	request := testRequest()
 	payload := requestIDPayload(t, request.ID, request.Queue)
 	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
@@ -185,7 +187,7 @@ func TestController_Process_QueueMismatchRejected(t *testing.T) {
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 
-	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage := orchstoragemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchStore().Return(storagemock.NewMockBatchStore(ctrl)).AnyTimes()
 
@@ -216,7 +218,7 @@ func TestController_Process_StampsQueueOnHandoffPayload(t *testing.T) {
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -241,7 +243,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(entity.Request{}, fmt.Errorf("db connection lost"))
 
-	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage := orchstoragemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchStore().Return(storagemock.NewMockBatchStore(ctrl)).AnyTimes()
 
@@ -258,7 +260,7 @@ func TestController_Process_BatchStoreFailure(t *testing.T) {
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -303,7 +305,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			mockReqStore := storagemock.NewMockRequestStore(ctrl)
 			mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 
-			mockStorage := storagemock.NewMockStorage(ctrl)
+			mockStorage := orchstoragemock.NewMockStorage(ctrl)
 			mockStorage.EXPECT().GetBatchStore().Return(storagemock.NewMockBatchStore(ctrl)).AnyTimes()
 			mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
@@ -344,7 +346,7 @@ func TestController_Process_WritesBatchBeforeHandoff(t *testing.T) {
 		publisher.EXPECT().Publish(gomock.Any(), "dependency-analysis", gomock.Any()).Return(nil),
 	)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
@@ -377,7 +379,7 @@ func TestController_Process_CreatesBatchInCreatingWithoutDependencies(t *testing
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
@@ -403,7 +405,7 @@ func TestController_Process_PublishesBatchingStatus(t *testing.T) {
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 

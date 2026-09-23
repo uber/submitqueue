@@ -18,12 +18,13 @@ import (
 	"context"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -34,7 +35,7 @@ import (
 type landSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -47,7 +48,7 @@ var _ consumer.Controller = (*landSignalController)(nil)
 func NewDLQLandSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -79,7 +80,7 @@ func (c *landSignalController) Process(ctx context.Context, delivery consumer.De
 		return nil
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})
+	store, err := c.stores.For(orchstorage.Config{QueueName: result.GetQueueName()})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.

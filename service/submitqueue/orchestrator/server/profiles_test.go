@@ -19,6 +19,8 @@ import (
 	"errors"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -28,7 +30,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
 // recorder captures the queue name each seam's factory was handed, so a test
@@ -66,7 +67,7 @@ func profileRecording(rec *recorder) Profile {
 			rec.analyzer = c.QueueName
 			return nil, nil
 		}),
-		Storage: storageFunc(func(c storage.Config) (storage.Storage, error) {
+		Storage: storageFunc(func(c orchstorage.Config) (orchstorage.Storage, error) {
 			rec.storage = c.QueueName
 			return nil, nil
 		}),
@@ -109,7 +110,7 @@ func TestProfilesForwardQueueNameToFactories(t *testing.T) {
 			require.NoError(t, err)
 			_, err = profiles.AnalyzerFactory().For(conflict.Config{QueueName: tt.queue})
 			require.NoError(t, err)
-			_, err = profiles.StorageFactory().For(storage.Config{QueueName: tt.queue})
+			_, err = profiles.StorageFactory().For(orchstorage.Config{QueueName: tt.queue})
 			require.NoError(t, err)
 			_, err = profiles.ScorerFactory().For(scorer.Config{QueueName: tt.queue})
 			require.NoError(t, err)

@@ -21,7 +21,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // mysqlErrDuplicateEntry is MySQL error code 1062 ("Duplicate entry"), returned on a unique or primary key violation.
@@ -69,61 +70,61 @@ func (s *Storage) Close() error {
 
 // boundStorage is the queue-scoped store aggregate returned by For.
 type boundStorage struct {
-	requestStore            storage.RequestStore
-	requestBatchStore       storage.RequestBatchStore
-	changeStore             storage.ChangeStore
-	batchStore              storage.BatchStore
-	batchDependentStore     storage.BatchDependentStore
-	queueBatchStateStore    storage.QueueBatchStateStore
-	buildStore              storage.BuildStore
-	speculationPathSetStore storage.SpeculationPathSetStore
-	pathBuildStore          storage.PathBuildStore
+	requestStore            basestorage.RequestStore
+	requestBatchStore       basestorage.RequestBatchStore
+	changeStore             basestorage.ChangeStore
+	batchStore              basestorage.BatchStore
+	batchDependentStore     basestorage.BatchDependentStore
+	queueBatchStateStore    basestorage.QueueBatchStateStore
+	buildStore              basestorage.BuildStore
+	speculationPathSetStore basestorage.SpeculationPathSetStore
+	pathBuildStore          basestorage.PathBuildStore
 }
 
 // Verify boundStorage implements the queue-scoped aggregate at compile time.
 var _ storage.Storage = (*boundStorage)(nil)
 
 // GetRequestStore returns the bound MySQL-backed RequestStore.
-func (f *boundStorage) GetRequestStore() storage.RequestStore {
+func (f *boundStorage) GetRequestStore() basestorage.RequestStore {
 	return f.requestStore
 }
 
 // GetRequestBatchStore returns the bound MySQL-backed RequestBatchStore.
-func (f *boundStorage) GetRequestBatchStore() storage.RequestBatchStore {
+func (f *boundStorage) GetRequestBatchStore() basestorage.RequestBatchStore {
 	return f.requestBatchStore
 }
 
 // GetChangeStore returns the bound MySQL-backed ChangeStore.
-func (f *boundStorage) GetChangeStore() storage.ChangeStore {
+func (f *boundStorage) GetChangeStore() basestorage.ChangeStore {
 	return f.changeStore
 }
 
 // GetBatchStore returns the bound MySQL-backed BatchStore.
-func (f *boundStorage) GetBatchStore() storage.BatchStore {
+func (f *boundStorage) GetBatchStore() basestorage.BatchStore {
 	return f.batchStore
 }
 
 // GetBatchDependentStore returns the bound MySQL-backed BatchDependentStore.
-func (f *boundStorage) GetBatchDependentStore() storage.BatchDependentStore {
+func (f *boundStorage) GetBatchDependentStore() basestorage.BatchDependentStore {
 	return f.batchDependentStore
 }
 
 // GetQueueBatchStateStore returns the bound MySQL-backed QueueBatchStateStore.
-func (f *boundStorage) GetQueueBatchStateStore() storage.QueueBatchStateStore {
+func (f *boundStorage) GetQueueBatchStateStore() basestorage.QueueBatchStateStore {
 	return f.queueBatchStateStore
 }
 
 // GetBuildStore returns the bound MySQL-backed BuildStore.
-func (f *boundStorage) GetBuildStore() storage.BuildStore {
+func (f *boundStorage) GetBuildStore() basestorage.BuildStore {
 	return f.buildStore
 }
 
 // GetSpeculationPathSetStore returns the bound MySQL-backed SpeculationPathSetStore.
-func (f *boundStorage) GetSpeculationPathSetStore() storage.SpeculationPathSetStore {
+func (f *boundStorage) GetSpeculationPathSetStore() basestorage.SpeculationPathSetStore {
 	return f.speculationPathSetStore
 }
 
 // GetPathBuildStore returns the bound MySQL-backed PathBuildStore.
-func (f *boundStorage) GetPathBuildStore() storage.PathBuildStore {
+func (f *boundStorage) GetPathBuildStore() basestorage.PathBuildStore {
 	return f.pathBuildStore
 }

@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -27,7 +29,6 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -51,7 +52,7 @@ import (
 type speculateController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -65,7 +66,7 @@ var _ consumer.Controller = (*speculateController)(nil)
 func NewDLQSpeculateController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -101,7 +102,7 @@ func (c *speculateController) Process(ctx context.Context, delivery consumer.Del
 		return fmt.Errorf("dlq payload decoded to empty batch id")
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -179,7 +180,7 @@ func (c *speculateController) blame(delivery consumer.Delivery, payloadBatchID s
 // run, so a queue that is genuinely broken drains to empty — every batch
 // recorded with a reason — instead of stranding, while a queue whose failure
 // was transient or queue-wide simply recovers on the next run.
-func (c *speculateController) retrigger(ctx context.Context, store storage.Storage, queue string) error {
+func (c *speculateController) retrigger(ctx context.Context, store orchstorage.Storage, queue string) error {
 	const opName = "process"
 
 	live, err := corebatch.ListByStates(ctx, store, entity.ActiveBatchStates())

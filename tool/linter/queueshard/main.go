@@ -34,16 +34,16 @@ import (
 
 // schemaShardColumns identifies the allowed shard columns for each schema root.
 var schemaShardColumns = map[string]map[string]bool{
-	"submitqueue/extension/storage/mysql/schema":         {"queue": true, "name": true},
-	"submitqueue/gateway/extension/storage/mysql/schema": {"queue": true, "name": true},
-	"stovepipe/extension/storage/mysql/schema":           {"queue": true, "name": true},
-	"platform/extension/counter/mysql/schema":            {"queue": true, "name": true},
-	"platform/extension/messagequeue/mysql/schema":       {"tenant": true},
+	"submitqueue/orchestrator/extension/storage/mysql/schema": {"queue": true, "name": true},
+	"submitqueue/gateway/extension/storage/mysql/schema":      {"queue": true, "name": true},
+	"stovepipe/extension/storage/mysql/schema":                {"queue": true, "name": true},
+	"platform/extension/counter/mysql/schema":                 {"queue": true, "name": true},
+	"platform/extension/messagequeue/mysql/schema":            {"tenant": true},
 }
 
 // schemaRoots are the directories scanned for table definitions.
 var schemaRoots = []string{
-	"submitqueue/extension/storage/mysql/schema",
+	"submitqueue/orchestrator/extension/storage/mysql/schema",
 	"submitqueue/gateway/extension/storage/mysql/schema",
 	"stovepipe/extension/storage/mysql/schema",
 	"platform/extension/counter/mysql/schema",

@@ -21,7 +21,8 @@ import (
 	"sort"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // FindByRequestID resolves every batch attempt associated with a request,
@@ -35,7 +36,7 @@ import (
 //
 // Unlike ListByStates, which treats a dangling membership record as store
 // corruption, a dangling association is an expected retry artifact.
-func FindByRequestID(ctx context.Context, store storage.Storage, requestID string) ([]entity.Batch, int, error) {
+func FindByRequestID(ctx context.Context, store orchstorage.Storage, requestID string) ([]entity.Batch, int, error) {
 	associations, err := store.GetRequestBatchStore().GetByRequestID(ctx, requestID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get batch associations for request %s: %w", requestID, err)

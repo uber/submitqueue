@@ -35,19 +35,23 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	validatormock "github.com/uber/submitqueue/submitqueue/extension/validator/mock"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 func TestToProtoStrategy(t *testing.T) {
 	tests := []struct {
@@ -103,11 +107,11 @@ func (m *mockChangeProvider) Get(ctx context.Context, request entity.Request) ([
 
 // newMockStorage creates a MockStorage with a MockRequestStore that returns the given request on Get.
 // The returned MockRequestStore is exposed so individual tests can layer additional Get expectations.
-func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemock.MockStorage, *storagemock.MockRequestStore) {
+func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*orchstoragemock.MockStorage, *storagemock.MockRequestStore) {
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	return store, mockReqStore
 }
@@ -126,7 +130,7 @@ func newMockChangeStore(ctrl *gomock.Controller) *storagemock.MockChangeStore {
 func newTestController(
 	t *testing.T,
 	ctrl *gomock.Controller,
-	store *storagemock.MockStorage,
+	store *orchstoragemock.MockStorage,
 	cs *storagemock.MockChangeStore,
 	publishErr error,
 ) *Controller {
@@ -204,7 +208,7 @@ func TestController_Process_Success(t *testing.T) {
 
 func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	controller := newTestController(t, ctrl, store, storagemock.NewMockChangeStore(ctrl), nil)
 	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
 	msg.Tenant = "other-queue"
@@ -337,7 +341,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(entity.Request{}, fmt.Errorf("db connection lost"))
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
@@ -532,7 +536,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 				// dead-lettered, then the delivery is acked.
 				mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 			}
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 			cs := storagemock.NewMockChangeStore(ctrl)

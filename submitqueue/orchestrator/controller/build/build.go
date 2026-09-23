@@ -33,6 +33,8 @@ import (
 	"errors"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -51,7 +53,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -68,7 +70,7 @@ const opName = "process"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -111,7 +113,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -217,7 +219,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // BuildRunner.Trigger accepts one, so a retry re-attaches to the existing build
 // instead of orphaning it. Only the runner can close this window, because the
 // build exists before anything here can write it down.
-func (c *Controller) startPath(ctx context.Context, store storage.Storage, batch entity.Batch, entry entity.SpeculationPathEntry) error {
+func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, batch entity.Batch, entry entity.SpeculationPathEntry) error {
 	existing, err := store.GetPathBuildStore().Get(ctx, entry.ID, entry.Attempt)
 	switch {
 	case err == nil:
@@ -324,7 +326,7 @@ func (c *Controller) startPath(ctx context.Context, store storage.Storage, batch
 // the queue's GC of consumed rows, which is why this runs only on redelivery:
 // scattered over every ordinary dispatch, late republishes would now and then
 // slip past dedup and fork a second, redundant poll chain for a healthy build.
-func (c *Controller) ensureSignal(ctx context.Context, store storage.Storage, batch entity.Batch, entry entity.SpeculationPathEntry) error {
+func (c *Controller) ensureSignal(ctx context.Context, store orchstorage.Storage, batch entity.Batch, entry entity.SpeculationPathEntry) error {
 	link, err := store.GetPathBuildStore().Get(ctx, entry.ID, entry.Attempt)
 	if errors.Is(err, storage.ErrNotFound) {
 		// Nothing was dispatched for this attempt; there is no build to watch.
@@ -350,7 +352,7 @@ func (c *Controller) ensureSignal(ctx context.Context, store storage.Storage, ba
 // Which dependencies those are is the path's own to say — see
 // SpeculationPath.Base — so this only resolves the IDs it is
 // given. Nothing about assumptions is interpreted here.
-func (c *Controller) loadBase(ctx context.Context, store storage.Storage, path entity.SpeculationPath) ([]entity.Batch, error) {
+func (c *Controller) loadBase(ctx context.Context, store orchstorage.Storage, path entity.SpeculationPath) ([]entity.Batch, error) {
 	deps := path.Base()
 	if len(deps) == 0 {
 		return nil, nil

@@ -33,7 +33,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batch"
@@ -49,6 +48,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/validate"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -64,7 +64,7 @@ type Deps struct {
 	Scope tally.Scope
 
 	// Storage resolves the queue-scoped store aggregate per queue.
-	Storage storage.Factory
+	Storage orchstorage.Factory
 
 	// Counter resolves the queue-scoped batch counter per queue.
 	Counter counter.Factory

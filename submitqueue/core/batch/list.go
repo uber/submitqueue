@@ -21,7 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // hydrateConcurrency bounds the parallel per-key batch reads a single
@@ -39,7 +39,7 @@ const hydrateConcurrency = 16
 // A candidate ID whose batch does not exist is returned as an error rather than
 // skipped: batch rows are never deleted, so a dangling record means the store is
 // inconsistent, not that the batch concluded.
-func ListByStates(ctx context.Context, store storage.Storage, states []entity.BatchState) ([]entity.Batch, error) {
+func ListByStates(ctx context.Context, store orchstorage.Storage, states []entity.BatchState) ([]entity.Batch, error) {
 	wanted := make(map[entity.BatchState]bool, len(states))
 	seen := make(map[string]bool)
 	var ids []string

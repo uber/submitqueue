@@ -21,7 +21,8 @@ import (
 
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // TerminationOutcome describes what TerminateRequest did to the request.
@@ -91,7 +92,7 @@ type TerminationResult struct {
 // intrinsically retryable) so the caller's next attempt re-reads and re-evaluates.
 func TerminateRequest(
 	ctx context.Context,
-	store storage.Storage,
+	store orchstorage.Storage,
 	registry consumer.TopicRegistry,
 	requestID string,
 	targetState entity.RequestState,

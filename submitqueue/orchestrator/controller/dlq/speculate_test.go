@@ -28,11 +28,12 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
-func newSpeculateController(registry consumer.TopicRegistry, store *storagemock.MockStorage, t *testing.T) consumer.Controller {
+func newSpeculateController(registry consumer.TopicRegistry, store *orchstoragemock.MockStorage, t *testing.T) consumer.Controller {
 	return NewDLQSpeculateController(
 		zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
 		registry, TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq",
@@ -139,7 +140,7 @@ func TestDLQSpeculateController_Process_Attribution(t *testing.T) {
 			queueBatchState.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 			queueBatchState.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 			store.EXPECT().GetQueueBatchStateStore().Return(queueBatchState).AnyTimes()
@@ -194,7 +195,7 @@ func TestDLQSpeculateController_Process_RetriggersQueue(t *testing.T) {
 	}, nil).AnyTimes()
 	queueBatchState.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetQueueBatchStateStore().Return(queueBatchState).AnyTimes()
 
@@ -233,7 +234,7 @@ func TestDLQSpeculateController_Process_NoRetriggerWithoutProgress(t *testing.T)
 	}, nil).AnyTimes()
 	queueBatchState.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetQueueBatchStateStore().Return(queueBatchState).AnyTimes()
 
@@ -252,7 +253,7 @@ func TestDLQSpeculateController_Process_NoRetriggerWithoutProgress(t *testing.T)
 
 func TestDLQSpeculateController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 
@@ -263,7 +264,7 @@ func TestDLQSpeculateController_InterfaceAndAccessors(t *testing.T) {
 
 func TestDLQSpeculateController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 
@@ -273,7 +274,7 @@ func TestDLQSpeculateController_Process_MalformedPayloadFails(t *testing.T) {
 
 func TestDLQSpeculateController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 
 	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/named", "q")
@@ -284,7 +285,7 @@ func TestDLQSpeculateController_Process_TenantPayloadQueueMismatchAcks(t *testin
 
 func TestDLQSpeculateController_Process_EmptyIDFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 
 	c := newSpeculateController(consumer.TopicRegistry{}, store, t)
 

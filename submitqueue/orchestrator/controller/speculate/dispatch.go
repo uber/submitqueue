@@ -24,7 +24,8 @@ import (
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // dispatch saves what finalize left over and hands the build stage its work.
@@ -120,7 +121,7 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 // persist writes a head's path set, creating it if this run is the first to
 // fund the head. It returns the set as stored, with its version advanced, so
 // a caller that keeps the set around goes on holding a current copy.
-func (c *Controller) persist(ctx context.Context, store storage.Storage, set entity.SpeculationPathSet, exists bool) (entity.SpeculationPathSet, error) {
+func (c *Controller) persist(ctx context.Context, store orchstorage.Storage, set entity.SpeculationPathSet, exists bool) (entity.SpeculationPathSet, error) {
 	pathSets := store.GetSpeculationPathSetStore()
 
 	if !exists {

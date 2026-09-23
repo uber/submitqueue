@@ -16,7 +16,7 @@ package speculate
 
 import (
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // snapshot is one run's working state: the queue as it was read, plus the
@@ -27,7 +27,7 @@ import (
 type snapshot struct {
 	// store is the queue-scoped store aggregate this run reads and writes
 	// through, resolved once from the triggering message's queue.
-	store storage.Storage
+	store orchstorage.Storage
 	// batches is every batch the run can reason about, by ID: the queue's
 	// in-flight batches plus any finalized batch still named as a dependency
 	// of one of them.

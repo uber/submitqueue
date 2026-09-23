@@ -26,6 +26,8 @@ import (
 	"syscall"
 	"time"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/uber-go/tally"
@@ -44,11 +46,10 @@ import (
 	"github.com/uber/submitqueue/platform/pipeline"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator"
+	mysqlstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -438,7 +439,7 @@ func getEnv(key, defaultVal string) string {
 }
 
 // storageFactory adapts the MySQL storage backend's queue binding to the
-// storage.Factory seam. Routing every queue to the single shared backend is
+// orchstorage.Factory seam. Routing every queue to the single shared backend is
 // this host's policy; a deployment that splits queues across backends swaps
 // this adapter for a routing one.
 type storageFactory struct {
@@ -446,7 +447,7 @@ type storageFactory struct {
 }
 
 // For returns the queue-scoped store aggregate bound to the queue named in config.
-func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
+func (f storageFactory) For(config orchstorage.Config) (orchstorage.Storage, error) {
 	return f.backend.For(config.QueueName)
 }
 

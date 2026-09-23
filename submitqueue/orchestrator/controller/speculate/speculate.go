@@ -31,7 +31,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +41,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	speculators   speculator.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -58,7 +58,7 @@ const opName = "process"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	speculators speculator.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -105,7 +105,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -167,7 +167,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // in between re-publishes under the same occurrence and dedupes. The cost is
 // that a transition which then loses its compare-and-swap leaves one entry for
 // a batch that never speculated, superseded by whatever the winner wrote.
-func (c *Controller) admit(ctx context.Context, store storage.Storage, batch entity.Batch) (entity.Batch, error) {
+func (c *Controller) admit(ctx context.Context, store orchstorage.Storage, batch entity.Batch) (entity.Batch, error) {
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
 		entity.RequestStatusSpeculating, batch.ID, map[string]string{"batch_id": batch.ID},
 	); err != nil {

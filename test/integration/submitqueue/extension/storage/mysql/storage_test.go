@@ -19,14 +19,15 @@ import (
 	"database/sql"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	gwmysqlstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mysql"
+	mysqlstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	storagesuite "github.com/uber/submitqueue/test/integration/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
 )
@@ -71,7 +72,7 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	require.NoError(t, err, "failed to connect to MySQL")
 
 	// Apply schemas programmatically from directory
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/orchestrator/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/gateway/extension/storage/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
@@ -106,18 +107,18 @@ func (s *MySQLStorageIntegrationSuite) TearDownSuite() {
 }
 
 // mysqlFactory adapts the MySQL storage backend's queue binding to the
-// storage.Factory seam for the contract suite, mirroring the host wiring.
+// orchstorage.Factory seam for the contract suite, mirroring the host wiring.
 type mysqlFactory struct {
 	backend *mysqlstorage.Storage
 }
 
 // For returns the queue-scoped store aggregate bound to the queue named in config.
-func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
+func (f mysqlFactory) For(config orchstorage.Config) (orchstorage.Storage, error) {
 	return f.backend.For(config.QueueName)
 }
 
 // gatewayMySQLFactory adapts the gateway's MySQL storage backend to the
-// gateway storage.Factory seam for the contract suite.
+// gateway orchstorage.Factory seam for the contract suite.
 type gatewayMySQLFactory struct {
 	backend *gwmysqlstorage.Storage
 }

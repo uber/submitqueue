@@ -41,7 +41,7 @@ func Runfile(relativePath string) string {
 
 // SchemaDir returns the path to a schema directory.
 // It checks for both Bazel runfiles and direct go test paths.
-// relativePath should be like "submitqueue/extension/storage/mysql/schema" or "platform/extension/messagequeue/mysql/schema"
+// relativePath should be like "submitqueue/orchestrator/extension/storage/mysql/schema" or "platform/extension/messagequeue/mysql/schema"
 func SchemaDir(relativePath string) string {
 	return Runfile(relativePath)
 }
@@ -56,7 +56,7 @@ func SchemaDir(relativePath string) string {
 func SubmitQueueStorageSchemaDirs() []string {
 	return []string{
 		"submitqueue/gateway/extension/storage/mysql/schema",
-		"submitqueue/extension/storage/mysql/schema",
+		"submitqueue/orchestrator/extension/storage/mysql/schema",
 	}
 }
 

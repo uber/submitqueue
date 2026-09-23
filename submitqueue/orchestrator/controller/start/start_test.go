@@ -32,23 +32,27 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 // newTestController creates a controller with test dependencies.
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 func newTestController(
 	t *testing.T,
 	ctrl *gomock.Controller,
-	store *storagemock.MockStorage,
+	store *orchstoragemock.MockStorage,
 	publishErr error,
 ) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
@@ -76,11 +80,11 @@ func newTestController(
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
-func newMockStorage(ctrl *gomock.Controller) *storagemock.MockStorage {
+func newMockStorage(ctrl *gomock.Controller) *orchstoragemock.MockStorage {
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	return store
 }
@@ -165,7 +169,7 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 			return nil
 		},
 	)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -234,7 +238,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(fmt.Errorf("database connection failed"))
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -256,7 +260,7 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(fmt.Errorf("duplicate: %w", storage.ErrAlreadyExists))
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)

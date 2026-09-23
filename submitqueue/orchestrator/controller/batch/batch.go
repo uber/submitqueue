@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -28,7 +30,6 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +41,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
 	counters      counter.Factory
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -61,7 +62,7 @@ func NewController(
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
 	counters counter.Factory,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -92,7 +93,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: rid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.

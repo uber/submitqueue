@@ -29,8 +29,10 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -38,10 +40,12 @@ import (
 // newQueueBatchStateStore returns a QueueBatchStateStore mock that accepts any
 // membership-record write; cancel never lists record buckets.
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 func newQueueBatchStateStore(ctrl *gomock.Controller) *storagemock.MockQueueBatchStateStore {
 	s := storagemock.NewMockQueueBatchStateStore(ctrl)
@@ -86,7 +90,7 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegistry,
 	return reg, pub
 }
 
-func newController(t *testing.T, store storage.Storage, registry consumer.TopicRegistry) *Controller {
+func newController(t *testing.T, store orchstorage.Storage, registry consumer.TopicRegistry) *Controller {
 	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeyCancel, "orchestrator-cancel")
 }
 
@@ -101,7 +105,7 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitio
 
 func expectBatchLookup(
 	ctrl *gomock.Controller,
-	store *storagemock.MockStorage,
+	store *orchstoragemock.MockStorage,
 	batchStore *storagemock.MockBatchStore,
 	requestID string,
 	batches ...entity.Batch,
@@ -126,7 +130,7 @@ func TestNewController(t *testing.T) {
 	registry, pub := newRegistry(t, ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	controller := newController(t, store, registry)
 
@@ -140,7 +144,7 @@ func TestNewController(t *testing.T) {
 
 func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newController(t, storagemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
+	controller := newController(t, orchstoragemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
 	msg := entityqueue.NewMessage("cancel-msg", cancelPayload(t, "q/1", ""), "q", nil)
 	msg.Tenant = "other-queue"
 	d := consumermock.NewMockDelivery(ctrl)
@@ -160,7 +164,7 @@ func TestProcess_AlreadyTerminal_NoOp(t *testing.T) {
 		ID: "q/1", Queue: "q", State: entity.RequestStateCancelled, Version: 5,
 	}, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -176,7 +180,7 @@ func TestProcess_RequestNotFound_Retryable(t *testing.T) {
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	reqStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{}, storage.ErrNotFound)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -211,7 +215,7 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -244,7 +248,7 @@ func TestProcess_AlreadyCancelling_SkipsMarkCancelling(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -273,7 +277,7 @@ func TestProcess_MarkCancellingVersionMismatch_Retryable(t *testing.T) {
 	reqStore.EXPECT().Update(gomock.Any(), requestWithState(started, entity.RequestStateCancelling), int32(2), int32(3)).
 		Return(storage.ErrVersionMismatch)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -303,7 +307,7 @@ func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -331,7 +335,7 @@ func TestProcess_UnbatchedRequestDiverged_Acks(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -357,7 +361,7 @@ func TestProcess_UnbatchedRequestDisappears_Retryable(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -416,7 +420,7 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	// Single batch CAS: intent only. No terminal CAS.
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelling), int32(3), int32(4)).Return(nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -473,7 +477,7 @@ func TestProcess_CancelsEveryApplicableBatch(t *testing.T) {
 		},
 	).Times(2)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -514,7 +518,7 @@ func TestProcess_BatchFailureDoesNotPreventLaterCancellation(t *testing.T) {
 		},
 	)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -550,7 +554,7 @@ func TestProcess_NonCancellableBatchSuppressesRequestCancellation(t *testing.T) 
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -580,7 +584,7 @@ func TestProcess_BatchedWithoutMatchCancelsRequest(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -615,7 +619,7 @@ func TestProcess_CreatingBatchDoesNotSuppressRequestCancellation(t *testing.T) {
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -660,7 +664,7 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	// No batch Update — already in Cancelling.
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -692,7 +696,7 @@ func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelling), int32(1), int32(2)).
 		Return(storage.ErrVersionMismatch)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -708,7 +712,7 @@ func TestProcess_DeserializeError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, _ := newRegistry(t, ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, []byte("not json"), "q/1"))
@@ -722,7 +726,7 @@ func TestProcess_RequestStoreError(t *testing.T) {
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	reqStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{}, fmt.Errorf("db down"))
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -794,7 +798,7 @@ func TestFindBatches(t *testing.T) {
 			requestBatchStore := storagemock.NewMockRequestBatchStore(ctrl)
 			tt.mockFunc(requestBatchStore, batchStore)
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetRequestBatchStore().Return(requestBatchStore)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
