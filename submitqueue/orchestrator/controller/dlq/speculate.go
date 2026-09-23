@@ -25,10 +25,10 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
-	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
 	"go.uber.org/zap"
 )
 

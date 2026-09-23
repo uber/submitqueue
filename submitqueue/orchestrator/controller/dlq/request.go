@@ -25,10 +25,10 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
-	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
 	"go.uber.org/zap"
 )
 

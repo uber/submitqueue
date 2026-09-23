@@ -22,10 +22,10 @@ import (
 	"slices"
 
 	"github.com/uber/submitqueue/platform/metrics"
-	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 

@@ -23,7 +23,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
-	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
+	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	"go.uber.org/zap"
 )
 

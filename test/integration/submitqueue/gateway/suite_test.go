@@ -41,11 +41,12 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
-	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	corerequest "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	"github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mysql"
+	orchrequest "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -253,7 +254,7 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 // TestRequestLogConsumer verifies the gateway's log-topic consumer in isolation:
 // no orchestrator runs in this stack, so the test itself publishes a request log
 // entry to the log topic exactly as the orchestrator does in production (via
-// submitqueue/core/request.PublishLog). The gateway is the sole writer of the
+// submitqueue/orchestrator/core/request.PublishLog). The gateway is the sole writer of the
 // request log; this asserts its consumer drains the log topic and persists the
 // entry to storage, observable through the request-summary RPC.
 func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
@@ -288,7 +289,7 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	}
 	require.NoError(t, logQueueStore.GetRequestSummaryStore().Create(s.ctx, summary))
 	logEntry := entity.NewRequestStatusLog(logQueue, sqid, entity.RequestStatusStarted, 1, "", nil)
-	require.NoError(t, corerequest.PublishLog(entityqueue.WithQueueName(s.ctx, logQueue), registry, logEntry, sqid, ""),
+	require.NoError(t, orchrequest.PublishLog(entityqueue.WithQueueName(s.ctx, logQueue), registry, logEntry, sqid, ""),
 		"failed to publish request log to log topic")
 
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)

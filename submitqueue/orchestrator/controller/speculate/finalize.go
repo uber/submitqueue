@@ -22,11 +22,11 @@ import (
 
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
-	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
-	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
+	corerequest "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 

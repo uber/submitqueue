@@ -25,10 +25,10 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
-	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	corerequest "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )

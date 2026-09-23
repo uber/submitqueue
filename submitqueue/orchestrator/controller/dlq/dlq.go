@@ -42,10 +42,10 @@ import (
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 
 	"github.com/uber/submitqueue/platform/consumer"
-	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
-	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
+	requestcore "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
 	"go.uber.org/zap"
 )
 
