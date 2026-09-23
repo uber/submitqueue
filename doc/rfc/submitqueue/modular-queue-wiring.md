@@ -338,7 +338,7 @@ import (
     "github.com/uber/submitqueue/platform/lifecycle"
     "github.com/uber/submitqueue/platform/pipeline"
     "github.com/uber/submitqueue/submitqueue/orchestrator"
-    storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+    storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
     mqmysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 )
 
@@ -433,7 +433,7 @@ import (
     "os/signal"
 
     "github.com/uber/submitqueue/submitqueue"
-    storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+    storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
     mqmysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 )
 

@@ -48,10 +48,12 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 │   └── extension/                  # SHARED extension contracts + backends (counter/, messagequeue/, …)
 ├── submitqueue/                    # SubmitQueue domain
 │   ├── gateway/                    # Gateway service (port 8081) - entry point
+│   │   └── extension/              # Aggregates/backends only the gateway resolves (storage/)
 │   ├── orchestrator/               # Orchestrator service (port 8082) - coordinates jobs
+│   │   └── extension/              # Aggregates/backends only the orchestrator resolves (storage/)
 │   ├── entity/                     # SubmitQueue-specific domain entities
 │   ├── extension/                  # SubmitQueue-specific extension contracts and implementations
-│   └── core/                       # SubmitQueue-internal shared infra (batch, changeset, request, topickey)
+│   └── core/                       # SubmitQueue-internal shared infra (changeset, messagequeue, topickey)
 ├── stovepipe/                      # Stovepipe domain (single service)
 │   ├── controller/                 # RPC and queue-stage business logic
 │   ├── entity/                     # Stovepipe domain entities
@@ -131,7 +133,10 @@ Domain objects live under each domain's `entity/` tree, or under `platform/base/
 Vendor-agnostic, pluggable interfaces with implementations in subdirectories:
 1. **Shared across domains** — define interfaces at `platform/extension/{ext}/`, implementations at `platform/extension/{ext}/{impl}/`.
 2. **Domain-specific** — define at `{domain}/extension/{ext}/`, implementations at `{domain}/extension/{ext}/{impl}/`.
-3. Factory interface for dependency injection and lifecycle management (constructed in wiring, not inside `platform/extension` packages).
+3. **Service-scoped resolution** — when only one service of a multi-service domain resolves an extension, its `Factory`, its aggregate, its implementations, its mocks and its schema live at `{domain}/{service}/extension/{ext}/`. The behavioural contracts stay at `{domain}/extension/{ext}/`.
+4. Factory interface for dependency injection and lifecycle management (constructed in wiring, not inside `platform/extension` packages).
+
+**Split on reachability, not on declaration.** What a service may resolve is decided by the accessors on its aggregate, so that is the part worth scoping to a service — a gateway holding a four-accessor `Storage` cannot obtain an orchestrator store whatever else it can name. The contracts stay shared because moving them adds no enforcement and costs every domain-level caller a dependency on a service package. `submitqueue/extension/storage` is the worked example: thirteen store contracts, their mocks and the error vocabulary shared, while each service owns its own aggregate, MySQL implementation and schema.
 
 **Extensions hold contracts and implementations only — not factories or routing.**
 
@@ -167,7 +172,8 @@ Paths follow the directory layout: shared packages live under `platform/` at the
 - Proto (generated): `github.com/uber/submitqueue/api/{domain}/{service}/protopb` (single-service: `.../api/{domain}/protopb`, e.g. `.../api/runway/protopb`)
 - Queue contracts: external `github.com/uber/submitqueue/api/{domain}/messagequeue`; internal `github.com/uber/submitqueue/{domain}/core/messagequeue`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
-- Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
+- Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage`)
+- Service-scoped extensions: `github.com/uber/submitqueue/{domain}/{service}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/orchestrator/extension/storage/mysql`)
 - Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; internal topic keys live with the owning domain contract (for example `submitqueue/core/messagequeue` and `stovepipe/core/messagequeue`); external queue topic keys live with their published contract (for example `api/runway/messagequeue`)
 - Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/request`)
 - Shared entities: `github.com/uber/submitqueue/platform/base/{pkg}` (e.g. `.../platform/base/messagequeue`)
@@ -255,7 +261,7 @@ make clean              # Clean Bazel cache
 2. Add it to the owning service's pipeline topology when one exists (for example `submitqueue/orchestrator/pipeline.go`); otherwise wire it in `service/{domain}/{service}/server/main.go`
 
 **Add new extension:**
-1. Define the interface, config, and `Factory` interface under `{domain}/extension/{ext}/` or `platform/extension/{ext}/`, and put implementation constructors under the `{impl}/` subdirectory. Keep concrete factory adapters and per-queue routing in service wiring.
+1. Define the behavioural interface and config under `{domain}/extension/{ext}/` or `platform/extension/{ext}/`. Put the `Factory`, the aggregate and the implementation constructors alongside them, or under `{domain}/{service}/extension/{ext}/` when a single service resolves it. Keep concrete factory adapters and per-queue routing in service wiring.
 2. Add `BUILD.bazel`, tests, and README.md
 
 **Add new entity:**

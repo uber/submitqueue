@@ -231,7 +231,7 @@ func run() error {
 		pipeline.PublishOnly(orchestrator.PublishOnlyTopics...),
 		pipeline.Classifiers(
 			genericerrs.Classifier,
-			// Storage (submitqueue/extension/storage/mysql) and queue
+			// Storage (submitqueue/orchestrator/extension/storage/mysql) and queue
 			// (platform/extension/messagequeue/mysql) both run on the same
 			// MySQL driver, so a single classifier covers errors surfaced
 			// from either backend.
