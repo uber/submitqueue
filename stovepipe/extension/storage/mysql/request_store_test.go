@@ -260,6 +260,58 @@ func TestRequestStore_Update(t *testing.T) {
 	}
 }
 
+func TestRequestStore_FinalizeOutcome(t *testing.T) {
+	request := entity.Request{
+		ID:      "request/monorepo/main/1",
+		Queue:   "monorepo/main",
+		URI:     "git://remote/monorepo/main/deadbeef",
+		State:   entity.RequestStateFailed,
+		Version: 2,
+	}
+	log := entity.RequestLog{
+		ID:             "state/2",
+		Queue:          request.Queue,
+		RequestID:      request.ID,
+		TimestampMs:    1,
+		State:          request.State,
+		RequestVersion: request.Version,
+		OutcomeReason:  entity.RequestOutcomeReasonBuildFailed,
+		Metadata:       map[string]string{"build_id": "bk-1"},
+	}
+
+	t.Run("commits request and terminal log together", func(t *testing.T) {
+		db, mock, store := setupRequestStoreTest(t)
+		defer db.Close()
+
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE request").
+			WithArgs(request.URI, request.State, request.BuildStrategy, request.BaseURI, int32(2), request.Queue, request.ID, int32(1)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO request_log").
+			WithArgs(log.Queue, log.RequestID, log.ID, log.TimestampMs, log.State, log.Event, log.RequestVersion, log.OutcomeReason, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		require.NoError(t, store.FinalizeOutcome(context.Background(), request, 1, 2, log))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("rolls back when another build won", func(t *testing.T) {
+		db, mock, store := setupRequestStoreTest(t)
+		defer db.Close()
+
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE request").
+			WithArgs(request.URI, request.State, request.BuildStrategy, request.BaseURI, int32(2), request.Queue, request.ID, int32(1)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectRollback()
+
+		err := store.FinalizeOutcome(context.Background(), request, 1, 2, log)
+		require.ErrorIs(t, err, storage.ErrVersionMismatch)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestIsDuplicateEntry(t *testing.T) {
 	tests := []struct {
 		name string

@@ -55,6 +55,20 @@ func (mr *MockRequestStoreMockRecorder) Create(ctx, request any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockRequestStore)(nil).Create), ctx, request)
 }
 
+// FinalizeOutcome mocks base method.
+func (m *MockRequestStore) FinalizeOutcome(ctx context.Context, request entity.Request, oldVersion, newVersion int32, log entity.RequestLog) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FinalizeOutcome", ctx, request, oldVersion, newVersion, log)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FinalizeOutcome indicates an expected call of FinalizeOutcome.
+func (mr *MockRequestStoreMockRecorder) FinalizeOutcome(ctx, request, oldVersion, newVersion, log any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinalizeOutcome", reflect.TypeOf((*MockRequestStore)(nil).FinalizeOutcome), ctx, request, oldVersion, newVersion, log)
+}
+
 // Get mocks base method.
 func (m *MockRequestStore) Get(ctx context.Context, id string) (entity.Request, error) {
 	m.ctrl.T.Helper()

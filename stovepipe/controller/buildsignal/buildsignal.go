@@ -177,10 +177,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.persistBuildFinishedLog(ctx, store, request, build.ID); err != nil {
 			return err
 		}
-		if err := c.finishRequest(ctx, store, &request, effective); err != nil {
+		terminalStateLog, err := c.finishRequest(ctx, store, &request, effective, build.ID)
+		if err != nil {
 			return err
 		}
-		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
+		if err := c.materializeTerminalStateLog(ctx, store, terminalStateLog); err != nil {
 			return err
 		}
 		if err := c.publishRecord(ctx, request.ID, request.Queue); err != nil {
@@ -234,40 +235,29 @@ func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.
 // the request non-terminal, so redelivery re-runs both steps and decrements again
 // — transiently over-admitting by one until releaseBuildSlot's zero clamp
 // reconverges, which is the failure mode this pipeline prefers.
-func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, status entity.BuildStatus) error {
+func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, status entity.BuildStatus, buildID string) (entity.RequestLog, error) {
 	if request.State.HasBuildOutcome() {
-		return nil
+		return c.existingOutcomeLog(ctx, store, *request)
 	}
 
 	if err := c.releaseBuildSlot(ctx, store, request.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return err
+		return entity.RequestLog{}, err
 	}
 
-	if err := c.markOutcome(ctx, store, request, outcomeState(status)); err != nil {
+	log, err := c.markOutcome(ctx, store, request, outcomeState(status), buildID)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return err
+		return entity.RequestLog{}, err
 	}
-	return nil
+	return log, nil
 }
 
-func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) error {
-	var reason entity.RequestOutcomeReason
-	// The durable request is authoritative when duplicate builds race to record different outcomes.
-	switch request.State {
-	case entity.RequestStateSucceeded:
-		reason = entity.RequestOutcomeReasonBuildSucceeded
-	case entity.RequestStateFailed:
-		reason = entity.RequestOutcomeReasonBuildFailed
-	case entity.RequestStateCancelled:
-		reason = entity.RequestOutcomeReasonBuildCancelled
-	default:
-		return fmt.Errorf("request %s has no build outcome to record", request.ID)
-	}
-
-	log := requestlog.NewRequestStateLog(request, reason)
+// materializeTerminalStateLog reconciles the state entry the outcome transaction
+// already retained and updates its derived read models.
+func (c *Controller) materializeTerminalStateLog(ctx context.Context, store storage.Storage, log entity.RequestLog) error {
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("failed to record %s state for request %s: %w", request.State, request.ID, err)
+		return fmt.Errorf("failed to materialize terminal state for request %s: %w", log.RequestID, err)
 	}
 	return nil
 }
@@ -286,38 +276,69 @@ func outcomeState(status entity.BuildStatus) entity.RequestState {
 	}
 }
 
-// markOutcome CAS-transitions request from processing to state, retrying on version
-// conflicts. First writer wins: once any outcome is recorded a later caller leaves it
-// alone, so duplicate builds for one request (which build.md accepts) cannot flip the
-// verdict back and forth.
-func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, request *entity.Request, state entity.RequestState) error {
+// markOutcome CAS-transitions request from processing to state and atomically
+// retains the corresponding state entry. First writer wins: duplicate builds cannot
+// flip the verdict or replace the build identity retained by that entry.
+func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, request *entity.Request, state entity.RequestState, buildID string) (entity.RequestLog, error) {
 	reqStore := store.GetRequestStore()
 
 	for {
 		if request.State != entity.RequestStateProcessing {
-			return nil
+			return c.existingOutcomeLog(ctx, store, *request)
 		}
 
 		updated := *request
 		updated.State = state
 		newVersion := request.Version + 1
-		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
+		updated.Version = newVersion
+		log := newTerminalStateLog(updated, buildID)
+		if err := reqStore.FinalizeOutcome(ctx, updated, request.Version, newVersion, log); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
-					return fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
+					return entity.RequestLog{}, fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
 				}
 				*request = got
 				continue
 			}
-			return fmt.Errorf("failed to mark request %s %s: %w", request.ID, state, err)
+			return entity.RequestLog{}, fmt.Errorf("failed to mark request %s %s: %w", request.ID, state, err)
 		}
-		updated.Version = newVersion
 		*request = updated
 		metrics.NamedCounter(c.metricsScope, _opName, "outcomes", 1,
 			metrics.TagsFromContext(ctx, metrics.NewTag("state", string(state)))...,
 		)
-		return nil
+		return log, nil
+	}
+}
+
+func (c *Controller) existingOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) (entity.RequestLog, error) {
+	if !request.State.HasBuildOutcome() {
+		return entity.RequestLog{}, fmt.Errorf("request %s has no build outcome", request.ID)
+	}
+	logID := requestlog.NewRequestStateLog(request, outcomeReason(request.State)).ID
+	log, err := store.GetRequestLogStore().Get(ctx, request.ID, logID)
+	if err != nil {
+		return entity.RequestLog{}, fmt.Errorf("failed to load terminal state for request %s: %w", request.ID, err)
+	}
+	return log, nil
+}
+
+func newTerminalStateLog(request entity.Request, buildID string) entity.RequestLog {
+	log := requestlog.NewRequestStateLog(request, outcomeReason(request.State))
+	log.Metadata[requestlog.MetadataKeyBuildID] = buildID
+	return log
+}
+
+func outcomeReason(state entity.RequestState) entity.RequestOutcomeReason {
+	switch state {
+	case entity.RequestStateSucceeded:
+		return entity.RequestOutcomeReasonBuildSucceeded
+	case entity.RequestStateFailed:
+		return entity.RequestOutcomeReasonBuildFailed
+	case entity.RequestStateCancelled:
+		return entity.RequestOutcomeReasonBuildCancelled
+	default:
+		return entity.RequestOutcomeReasonUnknown
 	}
 }
 

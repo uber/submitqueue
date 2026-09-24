@@ -41,4 +41,10 @@ type RequestStore interface {
 	// and only assigns request.Version = newVersion after this call succeeds. The store performs
 	// a pure conditional write and does not read request.Version.
 	Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) error
+
+	// FinalizeOutcome atomically writes a terminal request state and its matching
+	// request-history state entry. The log records the winning build id, so a
+	// later reader can identify the build that established the terminal outcome.
+	// Returns ErrVersionMismatch if the request was changed first.
+	FinalizeOutcome(ctx context.Context, request entity.Request, oldVersion, newVersion int32, log entity.RequestLog) error
 }
