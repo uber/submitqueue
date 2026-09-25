@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"sync"
 
-	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"

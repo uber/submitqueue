@@ -197,7 +197,9 @@ func run() error {
 		subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
 	}
 
-	profiles, err := newProfiles(ctx, logger, scope, changeset.New(storageFty), storageFty, profilesCfg)
+	profiles, err := newProfiles(ctx, logger, scope, changeset.New(func(queue string) (changeset.Stores, error) {
+		return storageFty.For(orchstorage.Config{QueueName: queue})
+	}), storageFty, profilesCfg)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}

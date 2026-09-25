@@ -27,18 +27,24 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
-	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 )
 
-// newTestResolver builds a Resolver over mock stores exposed through a mock
-// storage factory that resolves every queue to the same aggregate.
-func newTestResolver(ctrl *gomock.Controller, reqs storage.RequestStore, changes storage.ChangeStore) Resolver {
-	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(reqs).AnyTimes()
-	store.EXPECT().GetChangeStore().Return(changes).AnyTimes()
-	f := orchstoragemock.NewMockFactory(ctrl)
-	f.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
-	return New(f)
+// stubStores is the two-accessor slice of an aggregate this package needs,
+// which is all Stores asks for — no service aggregate is involved.
+type stubStores struct {
+	reqs    storage.RequestStore
+	changes storage.ChangeStore
+}
+
+func (s stubStores) GetRequestStore() storage.RequestStore { return s.reqs }
+
+func (s stubStores) GetChangeStore() storage.ChangeStore { return s.changes }
+
+// newTestResolver builds a Resolver that binds every queue to the same stores.
+func newTestResolver(_ *gomock.Controller, reqs storage.RequestStore, changes storage.ChangeStore) Resolver {
+	return New(func(string) (Stores, error) {
+		return stubStores{reqs: reqs, changes: changes}, nil
+	})
 }
 
 func req(id string, uris ...string) entity.Request {

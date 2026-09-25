@@ -40,11 +40,11 @@ import (
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	queuemysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/publish"
-	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
 	"go.uber.org/zap"
 )
 
@@ -338,7 +338,7 @@ func (s *E2EIntegrationSuite) seedPassedPath(queue string, path entity.Speculati
 	pathSets := store.GetSpeculationPathSetStore()
 
 	set, err := pathSets.Get(s.ctx, path.Head)
-	if storage.IsNotFound(err) {
+	if basestorage.IsNotFound(err) {
 		set = entity.SpeculationPathSet{Queue: queue, Head: path.Head}
 	} else {
 		require.NoError(t, err, "failed to read path set for %s", path.Head)
