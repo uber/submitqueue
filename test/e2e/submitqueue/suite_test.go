@@ -43,7 +43,7 @@ import (
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+	storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

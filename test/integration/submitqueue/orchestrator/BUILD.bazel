@@ -8,7 +8,7 @@ go_test(
         "//platform/extension/messagequeue/mysql/schema",
         "//service/submitqueue/orchestrator/server:docker-compose.yml",
         "//service/submitqueue/orchestrator/server:docker_test_context",
-        "//submitqueue/extension/storage/mysql/schema",
+        "//submitqueue/orchestrator/extension/storage/mysql/schema",
     ],
     tags = [
         "integration",

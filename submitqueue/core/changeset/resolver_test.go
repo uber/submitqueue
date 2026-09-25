@@ -27,15 +27,16 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 )
 
 // newTestResolver builds a Resolver over mock stores exposed through a mock
 // storage factory that resolves every queue to the same aggregate.
 func newTestResolver(ctrl *gomock.Controller, reqs storage.RequestStore, changes storage.ChangeStore) Resolver {
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqs).AnyTimes()
 	store.EXPECT().GetChangeStore().Return(changes).AnyTimes()
-	f := storagemock.NewMockFactory(ctrl)
+	f := orchstoragemock.NewMockFactory(ctrl)
 	f.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	return New(f)
 }

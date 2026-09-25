@@ -26,13 +26,14 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 func TestDLQBuildSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
@@ -70,7 +71,7 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -87,7 +88,7 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 
 func TestDLQBuildSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := sqmq.MarshalID(sqmq.TopicKeyBuildSignal, "build-1", "q")
@@ -102,7 +103,7 @@ func TestDLQBuildSignalController_Process_BuildNotFoundIsNoOp(t *testing.T) {
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{}, storage.ErrNotFound)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
@@ -123,7 +124,7 @@ func TestDLQBuildSignalController_Process_BuildMissingBatchIsNoOp(t *testing.T) 
 		ID: "build-1", BatchID: "", Status: entity.BuildStatusRunning,
 	}, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
@@ -139,7 +140,7 @@ func TestDLQBuildSignalController_Process_BuildMissingBatchIsNoOp(t *testing.T) 
 func TestDLQBuildSignalController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 

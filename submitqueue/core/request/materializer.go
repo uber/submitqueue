@@ -23,7 +23,7 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
-	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
+	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 )
 
 // Materializer appends request logs and projects the winning public request state.
@@ -31,11 +31,11 @@ import (
 // Every store it touches is queue-scoped, so each call resolves the aggregate once
 // from the queue carried on the log being persisted.
 type Materializer struct {
-	stores storage.Factory
+	stores gwstorage.Factory
 }
 
 // NewMaterializer creates a request read-model materializer.
-func NewMaterializer(stores storage.Factory) *Materializer {
+func NewMaterializer(stores gwstorage.Factory) *Materializer {
 	return &Materializer{stores: stores}
 }
 
@@ -43,7 +43,7 @@ func NewMaterializer(stores storage.Factory) *Materializer {
 // Projection errors are returned so queue deliveries are retried rather than silently dropping the side write.
 // Because the append happens first, retrying after a projection failure may retain another copy of the event in History.
 func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) error {
-	stores, err := m.stores.For(storage.Config{QueueName: log.Queue})
+	stores, err := m.stores.For(gwstorage.Config{QueueName: log.Queue})
 	if err != nil {
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", log.Queue, err)
 	}
@@ -89,7 +89,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 
 // repairPublicProjections activates and repairs the public query projections.
 // URI mappings are created before the queue summary, which acts as the marker that activation completed.
-func (m *Materializer) repairPublicProjections(ctx context.Context, stores storage.Storage, authoritative entity.RequestSummary) error {
+func (m *Materializer) repairPublicProjections(ctx context.Context, stores gwstorage.Storage, authoritative entity.RequestSummary) error {
 	desired := queueSummaryFromSummary(authoritative)
 	queueSummaries := stores.GetRequestQueueSummaryStore()
 	for {
@@ -126,7 +126,7 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, stores stora
 	}
 }
 
-func (m *Materializer) createURIMappings(ctx context.Context, stores storage.Storage, summary entity.RequestSummary) error {
+func (m *Materializer) createURIMappings(ctx context.Context, stores gwstorage.Storage, summary entity.RequestSummary) error {
 	uris := stores.GetRequestURIStore()
 	for _, changeURI := range summary.ChangeURIs {
 		mapping := entity.RequestURI{

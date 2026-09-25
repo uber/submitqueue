@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
@@ -32,6 +34,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -56,10 +59,12 @@ func (f staticSpeculatorFactory) For(speculator.Config) (speculator.Speculator, 
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 // listsInFlight makes the queue read return exactly these batches: each is
 // filed under its state's membership bucket and hydrated back through the
@@ -128,7 +133,7 @@ func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *pr
 	h.pathBuilds = storagemock.NewMockPathBuildStore(ctrl)
 	h.builds = storagemock.NewMockBuildStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(h.batches).AnyTimes()
 	store.EXPECT().GetQueueBatchStateStore().Return(h.queueStates).AnyTimes()
 	store.EXPECT().GetSpeculationPathSetStore().Return(h.pathSets).AnyTimes()

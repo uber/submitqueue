@@ -33,8 +33,9 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +47,7 @@ import (
 type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
-	stores          storage.Factory
+	stores          orchstorage.Factory
 	registry        consumer.TopicRegistry
 	changeProviders changeprovider.Factory
 	validators      validator.Factory
@@ -65,7 +66,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	changeProviders changeprovider.Factory,
 	validators validator.Factory,
@@ -102,7 +103,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: rid.Queue})
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -261,7 +262,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // Only an infra failure while terminating (storage/publish) is returned as an
 // error so the delivery is retried; the request itself is never re-queued for
 // validation once rejected.
-func (c *Controller) reject(ctx context.Context, store storage.Storage, requestID, reason string) error {
+func (c *Controller) reject(ctx context.Context, store orchstorage.Storage, requestID, reason string) error {
 	if _, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, entity.RequestStateError, reason, nil); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1)
 		return fmt.Errorf("failed to terminate rejected request %s: %w", requestID, err)
@@ -280,7 +281,7 @@ func (c *Controller) reject(ctx context.Context, store storage.Storage, requestI
 //
 // Per-URI / per-record reads keep the contract backend-agnostic; the typical request
 // has 1-5 URIs, so the loop is cheap.
-func (c *Controller) checkDuplicate(ctx context.Context, store storage.Storage, request entity.Request) (string, error) {
+func (c *Controller) checkDuplicate(ctx context.Context, store orchstorage.Storage, request entity.Request) (string, error) {
 	seenOwners := make(map[string]struct{})
 	for _, uri := range request.Change.URIs {
 		records, err := store.GetChangeStore().GetByURI(ctx, uri)
@@ -360,7 +361,7 @@ func toProtoStrategy(s mergestrategy.MergeStrategy) mergestrategypb.Strategy {
 // and its Details are written together in a single immutable Create — there is no
 // later mutation. Create is idempotent on its primary key, so a redelivery (or a
 // prior partial attempt) is a no-op and the first write wins.
-func (c *Controller) claimChanges(ctx context.Context, store storage.Storage, request entity.Request, infos []entity.ChangeInfo) error {
+func (c *Controller) claimChanges(ctx context.Context, store orchstorage.Storage, request entity.Request, infos []entity.ChangeInfo) error {
 	now := time.Now().UnixMilli()
 	for _, info := range infos {
 		record := entity.ChangeRecord{

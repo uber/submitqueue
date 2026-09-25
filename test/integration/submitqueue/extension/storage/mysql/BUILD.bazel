@@ -5,18 +5,18 @@ go_test(
     srcs = ["storage_test.go"],
     data = [
         "docker-compose.yml",
-        "//submitqueue/extension/storage/mysql/schema",
         "//submitqueue/gateway/extension/storage/mysql/schema",
+        "//submitqueue/orchestrator/extension/storage/mysql/schema",
     ],
     tags = [
         "integration",
         "requires-network",
     ],
     deps = [
-        "//submitqueue/extension/storage:go_default_library",
-        "//submitqueue/extension/storage/mysql:go_default_library",
         "//submitqueue/gateway/extension/storage:go_default_library",
         "//submitqueue/gateway/extension/storage/mysql:go_default_library",
+        "//submitqueue/orchestrator/extension/storage:go_default_library",
+        "//submitqueue/orchestrator/extension/storage/mysql:go_default_library",
         "//test/integration/submitqueue/extension/storage:go_default_library",
         "//test/testutil:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",

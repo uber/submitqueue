@@ -37,15 +37,18 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 )
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 func batchIDPayload(t *testing.T, id, queue string) []byte {
 	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, id, queue)
@@ -82,7 +85,7 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey st
 	return delivery
 }
 
-func newController(t *testing.T, store *storagemock.MockStorage, registry consumer.TopicRegistry) *Controller {
+func newController(t *testing.T, store *orchstoragemock.MockStorage, registry consumer.TopicRegistry) *Controller {
 	return NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
@@ -133,7 +136,7 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller, failTopic string) (consu
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	q := queuemock.NewMockQueue(ctrl)
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
@@ -151,7 +154,7 @@ func TestNewController(t *testing.T) {
 
 func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	c := newController(t, storagemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
+	c := newController(t, orchstoragemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1", "test-queue"), "test-queue", nil)
 	msg.Tenant = "other-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -190,7 +193,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	reqStore.EXPECT().Get(gomock.Any(), req1.ID).Return(req1, nil)
 	reqStore.EXPECT().Get(gomock.Any(), req2.ID).Return(req2, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -257,7 +260,7 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 
 			// No request-store reads and no publish for a halted batch: the
 			// members are told nothing and runway is not asked to land.
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 			registry, rec := newRegistry(t, ctrl, "")
@@ -292,7 +295,7 @@ func TestProcess_ReportsLandingBeforeDispatch(t *testing.T) {
 	reqStore.EXPECT().Get(gomock.Any(), req1.ID).Return(req1, nil)
 	reqStore.EXPECT().Get(gomock.Any(), req2.ID).Return(req2, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -340,7 +343,7 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 			reqStore := storagemock.NewMockRequestStore(ctrl)
 			reqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil).AnyTimes()
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 			store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
@@ -366,7 +369,7 @@ func TestProcess_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(entity.Batch{}, fmt.Errorf("db connection lost"))
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	q := queuemock.NewMockQueue(ctrl)

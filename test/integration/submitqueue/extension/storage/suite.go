@@ -20,6 +20,8 @@ import (
 	"sort"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -32,13 +34,13 @@ import (
 )
 
 // StorageContractSuite defines the contract tests for the storage extension:
-// the queue-scoped aggregate resolved through storage.Factory. All storage
+// the queue-scoped aggregate resolved through orchstorage.Factory. All storage
 // implementations must pass these tests. Implementation-specific tests should
 // embed this suite and call SetFactory().
 type StorageContractSuite struct {
 	suite.Suite
 	ctx            context.Context
-	factory        storage.Factory
+	factory        orchstorage.Factory
 	gatewayFactory gwstorage.Factory
 	log            *testutil.TestLogger
 }
@@ -50,7 +52,7 @@ func (s *StorageContractSuite) SetContext(ctx context.Context) {
 
 // SetFactory is called by implementation tests to provide the queue-scoped
 // storage factory under test.
-func (s *StorageContractSuite) SetFactory(factory storage.Factory) {
+func (s *StorageContractSuite) SetFactory(factory orchstorage.Factory) {
 	s.factory = factory
 }
 
@@ -70,8 +72,8 @@ func (s *StorageContractSuite) forGatewayQueue(queue string) gwstorage.Storage {
 
 // forQueue resolves the queue-scoped store aggregate for a queue, failing the
 // test on resolution errors.
-func (s *StorageContractSuite) forQueue(queue string) storage.Storage {
-	store, err := s.factory.For(storage.Config{QueueName: queue})
+func (s *StorageContractSuite) forQueue(queue string) orchstorage.Storage {
+	store, err := s.factory.For(orchstorage.Config{QueueName: queue})
 	s.Require().NoError(err)
 	return store
 }

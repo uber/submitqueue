@@ -55,7 +55,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -82,7 +83,7 @@ const opName = "process"
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -96,7 +97,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -149,7 +150,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: buildID.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: buildID.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -361,7 +362,7 @@ func (c *Controller) publishBuildLogs(
 // therefore indicate store corruption, and since a cancel is irreversible, a
 // corrupt kill list keeps the build rather than killing it; a halted batch is
 // still caught by the first check, which needs none of those records.
-func (c *Controller) unwanted(ctx context.Context, store storage.Storage, batch entity.Batch, build entity.Build) (bool, error) {
+func (c *Controller) unwanted(ctx context.Context, store orchstorage.Storage, batch entity.Batch, build entity.Build) (bool, error) {
 	if entity.IsBatchStateHalted(batch.State) {
 		return true, nil
 	}

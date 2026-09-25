@@ -31,8 +31,10 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -64,10 +66,12 @@ type testHarness struct {
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 // testRequestID is the one member of the batch under test, so the request-log
 // fan-out has somebody to report to.
@@ -120,7 +124,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller, batchState entity.Bat
 	pathSets := storagemock.NewMockSpeculationPathSetStore(ctrl)
 	pathBuilds := storagemock.NewMockPathBuildStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBuildStore().Return(builds).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetSpeculationPathSetStore().Return(pathSets).AnyTimes()

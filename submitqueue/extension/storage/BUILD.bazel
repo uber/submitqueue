@@ -43,8 +43,8 @@ go_test(
 filegroup(
     name = "schema",
     srcs = [
-        "//submitqueue/extension/storage/mysql/schema",
         "//submitqueue/gateway/extension/storage/mysql/schema",
+        "//submitqueue/orchestrator/extension/storage/mysql/schema",
     ],
     visibility = ["//visibility:public"],
 )

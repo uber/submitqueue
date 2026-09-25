@@ -64,7 +64,8 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -72,7 +73,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -87,7 +88,7 @@ const opName = "process"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -116,7 +117,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: cancelReq.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: cancelReq.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -211,7 +212,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // observing a batch transition) is returned as-is; its declaration makes it
 // retryable, and the next attempt re-fetches and re-evaluates (it may now
 // be terminal, in which case the top-level terminal-check acks).
-func (c *Controller) markCancelling(ctx context.Context, store storage.Storage, request entity.Request) (entity.Request, error) {
+func (c *Controller) markCancelling(ctx context.Context, store orchstorage.Storage, request entity.Request) (entity.Request, error) {
 	if request.State == entity.RequestStateCancelling {
 		// Idempotent re-delivery: prior pass already recorded intent.
 		metrics.NamedCounter(c.metricsScope, opName, "already_cancelling", 1)
@@ -230,7 +231,7 @@ func (c *Controller) markCancelling(ctx context.Context, store storage.Storage, 
 
 // findBatches resolves every batch attempt associated with the request.
 // Associations whose batch was never persisted are stale retry artifacts and are ignored.
-func (c *Controller) findBatches(ctx context.Context, store storage.Storage, request entity.Request) ([]entity.Batch, error) {
+func (c *Controller) findBatches(ctx context.Context, store orchstorage.Storage, request entity.Request) ([]entity.Batch, error) {
 	batches, stale, err := corebatch.FindByRequestID(ctx, store, request.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1)
@@ -255,7 +256,7 @@ func (c *Controller) findBatches(ctx context.Context, store storage.Storage, req
 // concurrent writer already reached a *different* terminal state, the helper
 // reports TerminationDiverged and we simply ack — the other writer owns the
 // terminal log for the state it wrote.
-func (c *Controller) cancelRequest(ctx context.Context, store storage.Storage, request entity.Request, reason string) error {
+func (c *Controller) cancelRequest(ctx context.Context, store orchstorage.Storage, request entity.Request, reason string) error {
 	metadata := map[string]string{}
 	if reason != "" {
 		metadata["reason"] = reason
@@ -303,7 +304,7 @@ func (c *Controller) cancelRequest(ctx context.Context, store storage.Storage, r
 // (a prior pass wrote the intent but the publish failed). In that case the
 // intent CAS is skipped and we just re-publish — speculate absorbs the
 // duplicate as a cheap no-op nudge.
-func (c *Controller) cancelBatch(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+func (c *Controller) cancelBatch(ctx context.Context, store orchstorage.Storage, batch entity.Batch) error {
 	c.logger.Infow("handing batch cancellation off to speculate",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,

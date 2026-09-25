@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 )
 
 const testRequestID = "monorepo/4"
@@ -36,11 +37,11 @@ func association(batchID string) entity.RequestBatch {
 }
 
 // findStores wires a MockStorage over a batch store and a request-batch store.
-func findStores(t *testing.T) (*storagemock.MockStorage, *storagemock.MockBatchStore, *storagemock.MockRequestBatchStore) {
+func findStores(t *testing.T) (*orchstoragemock.MockStorage, *storagemock.MockBatchStore, *storagemock.MockRequestBatchStore) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
-	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage := orchstoragemock.NewMockStorage(ctrl)
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockAssociationStore := storagemock.NewMockRequestBatchStore(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()

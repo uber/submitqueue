@@ -64,7 +64,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -73,7 +74,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	analyzers     conflict.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -88,7 +89,7 @@ const opName = "process"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	analyzers conflict.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -120,7 +121,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -252,7 +253,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // partitioned by queue and consumed in order, so the first hand-off through
 // here enrols the request and the second finds it and stops. Without the check
 // the same change would end up in two live batches, both admitted, both landed.
-func (c *Controller) requestEnrolledInAnotherBatch(ctx context.Context, store storage.Storage, batch entity.Batch) (bool, error) {
+func (c *Controller) requestEnrolledInAnotherBatch(ctx context.Context, store orchstorage.Storage, batch entity.Batch) (bool, error) {
 	for _, requestID := range batch.Contains {
 		existing, stale, err := corebatch.FindByRequestID(ctx, store, requestID)
 		if err != nil {
@@ -280,7 +281,7 @@ func (c *Controller) requestEnrolledInAnotherBatch(ctx context.Context, store st
 
 // associateRequestsWithBatch links the batch to its requests. This is the record that makes the
 // batch findable from a request, so writing it is what enrols them.
-func (c *Controller) associateRequestsWithBatch(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+func (c *Controller) associateRequestsWithBatch(ctx context.Context, store orchstorage.Storage, batch entity.Batch) error {
 	for _, requestID := range batch.Contains {
 		association := entity.RequestBatch{RequestID: requestID, BatchID: batch.ID, Version: 1}
 		if err := store.GetRequestBatchStore().Create(ctx, association); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
@@ -305,7 +306,7 @@ func (c *Controller) associateRequestsWithBatch(ctx context.Context, store stora
 //
 // A redelivery re-applies Batched → Batched as a version-only bump, which keeps
 // both guards in force on every attempt.
-func (c *Controller) claimRequestsForBatch(ctx context.Context, store storage.Storage, batch entity.Batch) (bool, error) {
+func (c *Controller) claimRequestsForBatch(ctx context.Context, store orchstorage.Storage, batch entity.Batch) (bool, error) {
 	for _, requestID := range batch.Contains {
 		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
@@ -344,7 +345,7 @@ func (c *Controller) claimRequestsForBatch(ctx context.Context, store storage.St
 
 // firstHaltedRequestID returns the first request in the batch the user has given up
 // on, or the empty string if every member is still live.
-func (c *Controller) firstHaltedRequestID(ctx context.Context, store storage.Storage, batch entity.Batch) (string, error) {
+func (c *Controller) firstHaltedRequestID(ctx context.Context, store orchstorage.Storage, batch entity.Batch) (string, error) {
 	for _, requestID := range batch.Contains {
 		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
@@ -362,7 +363,7 @@ func (c *Controller) firstHaltedRequestID(ctx context.Context, store storage.Sto
 // batch must serialize behind. The read goes through the queue's per-state
 // membership records; classification uses each batch's own hydrated state, so
 // a stale record can never misreport a batch.
-func (c *Controller) resolveDependencies(ctx context.Context, store storage.Storage, batch entity.Batch) ([]string, error) {
+func (c *Controller) resolveDependencies(ctx context.Context, store orchstorage.Storage, batch entity.Batch) ([]string, error) {
 	inFlight, err := corebatch.ListByStates(ctx, store, entity.DependencyBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
@@ -401,7 +402,7 @@ func (c *Controller) resolveDependencies(ctx context.Context, store storage.Stor
 // Both writes are idempotent on their own: a failure part-way through the loop
 // leaves the batch in Creating, so the retry re-enters here and would
 // otherwise duplicate whatever the first pass already wrote.
-func (c *Controller) writeDependentIndexes(ctx context.Context, store storage.Storage, batch entity.Batch, dependencies []string) error {
+func (c *Controller) writeDependentIndexes(ctx context.Context, store orchstorage.Storage, batch entity.Batch, dependencies []string) error {
 	own := entity.BatchDependent{
 		BatchID:    batch.ID,
 		Dependents: []string{},

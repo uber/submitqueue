@@ -34,7 +34,7 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -42,7 +42,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -55,7 +55,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -94,7 +94,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})
+	store, err := c.stores.For(orchstorage.Config{QueueName: result.GetQueueName()})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -173,7 +173,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // in Error skips the state CAS but still publishes the log (so a prior attempt
 // that flipped the state but failed before logging is repaired); a request that
 // reached a different terminal state (e.g. a racing cancel) is left untouched.
-func (c *Controller) failRequest(ctx context.Context, store storage.Storage, request entity.Request, reason string) error {
+func (c *Controller) failRequest(ctx context.Context, store orchstorage.Storage, request entity.Request, reason string) error {
 	switch {
 	case request.State == entity.RequestStateError:
 		// Idempotent retry: a prior delivery already wrote Error. Fall through to

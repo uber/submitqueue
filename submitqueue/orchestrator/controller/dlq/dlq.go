@@ -39,6 +39,8 @@ import (
 	"fmt"
 	"strings"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber/submitqueue/platform/consumer"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
@@ -142,7 +144,7 @@ func flattenDetail(prefix string, detail map[string]any, out map[string]string) 
 // left in place: DLQ means the pipeline failed to converge, so we cannot
 // confirm the cancel completed cleanly. Writing Error is the honest signal and
 // keeps the request from being stuck in a non-terminal state forever.
-func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string, metadata map[string]string) error {
+func failRequest(ctx context.Context, store orchstorage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string, metadata map[string]string) error {
 	res, err := requestcore.TerminateRequest(ctx, store, registry, requestID, entity.RequestStateError, lastError, metadata)
 	if err != nil {
 		return fmt.Errorf("dlq reconcile request %s failed: %w", requestID, err)
@@ -188,7 +190,7 @@ func failRequest(ctx context.Context, store storage.Storage, registry consumer.T
 // on real progress — republishing to wake the queue, say — can then tell a
 // first reconcile from a redelivery of one already done, and avoid doing it
 // again forever.
-func failBatch(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string, metadata map[string]string) (bool, error) {
+func failBatch(ctx context.Context, store orchstorage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string, metadata map[string]string) (bool, error) {
 	batch, err := store.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {

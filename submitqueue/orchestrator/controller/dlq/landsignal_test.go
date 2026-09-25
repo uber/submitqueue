@@ -25,13 +25,14 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 func TestDLQLandSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
 	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
@@ -65,7 +66,7 @@ func TestDLQLandSignalController_Process_ReconcilesBatch(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -81,7 +82,7 @@ func TestDLQLandSignalController_Process_ReconcilesBatch(t *testing.T) {
 
 func TestDLQLandSignalController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", QueueName: "q", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
@@ -93,7 +94,7 @@ func TestDLQLandSignalController_Process_TenantPayloadQueueMismatchAcks(t *testi
 func TestDLQLandSignalController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	c := NewDLQLandSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-landsignal-dlq")
 

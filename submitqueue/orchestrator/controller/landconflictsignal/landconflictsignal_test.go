@@ -31,17 +31,20 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
@@ -72,7 +75,7 @@ const (
 
 func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
@@ -92,7 +95,7 @@ func TestProcess_LandablePublishesToBatch(t *testing.T) {
 	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
 	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateValidated), int32(1), int32(2)).Return(nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
 	var gotTopics []string
@@ -147,7 +150,7 @@ func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 	// The request is driven to terminal Error inline (version 1 -> 2).
 	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
 	// One publish is expected — the terminal log entry to the log topic. A publish
@@ -196,7 +199,7 @@ func TestFailRequest_UpdateFailureLeavesRequestUnchanged(t *testing.T) {
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(fmt.Errorf("db down"))
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore)
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
@@ -215,7 +218,7 @@ func TestProcess_HaltedRequestSkips(t *testing.T) {
 	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(
 		entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateCancelled, Version: 4}, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
 	// No publish: gomock fails if a batch publish runs for a halted request.

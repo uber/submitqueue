@@ -36,7 +36,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // Transition moves a batch to newState: it performs the optimistic-locking CAS on
@@ -52,7 +52,7 @@ import (
 // applied — the CAS may have committed with the record move incomplete — and the
 // caller is expected to let redelivery retry; the retry's already-in-target-state
 // branch repairs the record via EnsureRecord.
-func Transition(ctx context.Context, store storage.Storage, batch entity.Batch, newState entity.BatchState) (entity.Batch, error) {
+func Transition(ctx context.Context, store orchstorage.Storage, batch entity.Batch, newState entity.BatchState) (entity.Batch, error) {
 	oldState := batch.State
 	newVersion := batch.Version + 1
 	updated := batch
@@ -78,7 +78,7 @@ func Transition(ctx context.Context, store storage.Storage, batch entity.Batch, 
 // the repair half of the transition protocol: idempotent redelivery branches that
 // skip the CAS because the batch is already in the target state call this instead,
 // covering a prior attempt that crashed between the CAS and the record move.
-func EnsureRecord(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+func EnsureRecord(ctx context.Context, store orchstorage.Storage, batch entity.Batch) error {
 	record := entity.QueueBatchState{Queue: batch.Queue, State: batch.State, BatchID: batch.ID}
 	if err := store.GetQueueBatchStateStore().Put(ctx, record); err != nil {
 		return fmt.Errorf("failed to put queue batch state record for batch %s under state %s: %w", batch.ID, batch.State, err)

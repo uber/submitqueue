@@ -28,13 +28,14 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 func TestDLQRequestController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
@@ -59,7 +60,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -75,7 +76,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 
 func TestDLQRequestController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	payload, err := sqmq.MarshalID(sqmq.TopicKeyValidate, "q/1", "q")
@@ -98,7 +99,7 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -127,7 +128,7 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -149,7 +150,7 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 		ID: "q/1", Queue: "q", Version: 5, State: entity.RequestStateLanded,
 	}, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -166,7 +167,7 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	// no store calls expected
@@ -181,7 +182,7 @@ func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {
 func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	// no store calls expected
@@ -249,7 +250,7 @@ func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T)
 				ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: state, Version: 1,
 			}, nil)
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -288,7 +289,7 @@ func TestDLQRequestController_Process_FailsWhenEveryBatchIsTerminal(t *testing.T
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error { return nil })
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -332,7 +333,7 @@ func TestDLQRequestController_Process_FailsWhenCreatingBatchNeverClaimed(t *test
 
 			registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error { return nil })
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -370,7 +371,7 @@ func TestDLQRequestController_Process_SkipsWhenCreatingBatchAlreadyClaimed(t *te
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: entity.BatchStateCreating, Version: 1,
 	}, nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()

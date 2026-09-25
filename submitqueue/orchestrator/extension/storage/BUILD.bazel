@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["storage.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage",
+    visibility = ["//visibility:public"],
+    deps = ["//submitqueue/extension/storage:go_default_library"],
+)

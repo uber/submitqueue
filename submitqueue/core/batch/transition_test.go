@@ -26,15 +26,16 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 )
 
 // testStores wires a MockStorage whose batch and queue-batch-state accessors
 // return the two mocks the tests set expectations on.
-func testStores(t *testing.T) (*storagemock.MockStorage, *storagemock.MockBatchStore, *storagemock.MockQueueBatchStateStore) {
+func testStores(t *testing.T) (*orchstoragemock.MockStorage, *storagemock.MockBatchStore, *storagemock.MockQueueBatchStateStore) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
-	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage := orchstoragemock.NewMockStorage(ctrl)
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockRecordStore := storagemock.NewMockQueueBatchStateStore(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()

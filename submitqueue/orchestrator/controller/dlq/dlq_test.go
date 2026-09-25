@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
@@ -27,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -34,10 +37,12 @@ import (
 // newQueueBatchStateStore returns a QueueBatchStateStore mock that accepts any
 // membership-record write; these tests never list record buckets.
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 // noBatchAssociations answers the owning-batch lookup with nothing, i.e. no
 // batch ever enrolled the request.
@@ -85,7 +90,7 @@ func TestFailRequest_TerminalStates(t *testing.T) {
 				ID: "q/1", Queue: "q", Version: 5, State: tt.state,
 			}, nil)
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 			registry := consumer.TopicRegistry{}
@@ -126,7 +131,7 @@ func TestFailRequest_CancellingTransitionsToError(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -151,7 +156,7 @@ func TestFailRequest_TransitionsToError(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -176,7 +181,7 @@ func TestFailRequest_LogPublishErrorPropagates(t *testing.T) {
 		return fmt.Errorf("publish boom")
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -190,7 +195,7 @@ func TestFailRequest_NotFoundIsNoOp(t *testing.T) {
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{}, storage.ErrNotFound)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -204,7 +209,7 @@ func TestFailRequest_GenericGetErrorIsNonRetryable(t *testing.T) {
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{}, fmt.Errorf("boom"))
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
@@ -242,7 +247,7 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -272,7 +277,7 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -290,7 +295,7 @@ func TestFailBatch_DifferentTerminalOutcomeSkipsFanOut(t *testing.T) {
 				ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: state, Version: 5,
 			}, nil)
 
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
@@ -328,7 +333,7 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 		return nil
 	})
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
@@ -343,7 +348,7 @@ func TestFailBatch_NotFoundIsNoOp(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{}, storage.ErrNotFound)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 

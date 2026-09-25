@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -39,7 +41,7 @@ import (
 type buildSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
+	stores        orchstorage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -52,7 +54,7 @@ var _ consumer.Controller = (*buildSignalController)(nil)
 func NewDLQBuildSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -88,7 +90,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return fmt.Errorf("dlq payload decoded to empty build id")
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: buildID.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: buildID.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.

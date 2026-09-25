@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"testing"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
@@ -33,15 +35,18 @@ import (
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
-type staticStorageFactory struct{ store storage.Storage }
+type staticStorageFactory struct{ store orchstorage.Storage }
 
 // For returns the fixed store aggregate for any queue.
-func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, error) {
+	return f.store, nil
+}
 
 const (
 	headID = "test-queue/batch/head"
@@ -97,7 +102,7 @@ func pathEntry(status entity.SpeculationPathStatus, attempt int) entity.Speculat
 
 // testDeps holds the mocks a test may want to set expectations on.
 type testDeps struct {
-	store      *storagemock.MockStorage
+	store      *orchstoragemock.MockStorage
 	batches    *storagemock.MockBatchStore
 	pathSets   *storagemock.MockSpeculationPathSetStore
 	builds     *storagemock.MockBuildStore
@@ -122,7 +127,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, batch entity.Batch
 	builds := storagemock.NewMockBuildStore(ctrl)
 	pathBuilds := storagemock.NewMockPathBuildStore(ctrl)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batches).AnyTimes()
 	store.EXPECT().GetSpeculationPathSetStore().Return(pathSets).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(builds).AnyTimes()

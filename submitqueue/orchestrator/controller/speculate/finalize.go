@@ -26,7 +26,8 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // finalize reaches and enacts every outcome this run can conclude, and leaves
@@ -303,7 +304,7 @@ func (c *Controller) recordOutcome(snap *snapshot, batchID string, decision outc
 // consumer can act on an outcome a lost compare-and-swap refused to write. The
 // cost is a dispatch that fails on a batch finalize no longer walks, which the
 // recovery message and Process's self-heal exist to repair.
-func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, batch entity.Batch, decision outcome, isTriggerBatch bool) (bool, error) {
+func (c *Controller) applyOutcome(ctx context.Context, store orchstorage.Storage, batch entity.Batch, decision outcome, isTriggerBatch bool) (bool, error) {
 	var state entity.BatchState
 
 	switch decision {
@@ -413,7 +414,7 @@ func (c *Controller) dispatchLand(ctx context.Context, batch entity.Batch) error
 // decision from unchanged state. A duplicate is harmless — Speculate
 // tolerates any batch state, and if the write never lands the message is just
 // a nudge that re-plans a queue nothing has changed.
-func (c *Controller) recoverable(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+func (c *Controller) recoverable(ctx context.Context, store orchstorage.Storage, batch entity.Batch) error {
 	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, publish.UniqueID(batch.ID), batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish recovery signal for batch %s: %w", batch.ID, err)

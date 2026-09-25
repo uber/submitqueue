@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package storage holds SubmitQueue's persistence contracts: the store
+// interfaces both services are written against, the error vocabulary their
+// implementations return, and the queue config their factories resolve
+// against. Which stores a service may reach is decided by its own aggregate —
+// see submitqueue/gateway/extension/storage and
+// submitqueue/orchestrator/extension/storage.
 package storage
-
-//go:generate mockgen -source=storage.go -destination=mock/storage_mock.go -package=mock
 
 import (
 	"errors"
@@ -52,46 +56,4 @@ type Config struct {
 	// QueueName is the name of the queue whose data the resolved Storage is
 	// scoped to.
 	QueueName string
-}
-
-// Factory resolves the queue-scoped Storage aggregate for a queue. Mirrors the
-// extension contract: the host wiring decides which backend serves which
-// queue; implementations bind the queue over their backend so a resolved
-// instance can only read and write that queue's data.
-type Factory interface {
-	// For returns the Storage aggregate bound to the queue named in config.
-	For(config Config) (Storage, error)
-}
-
-// Storage aggregates the queue-scoped entity stores into a single injectable
-// dependency. An instance is resolved per queue through Factory and is bound
-// to that queue: entity arguments whose Queue field disagrees with the
-// binding are rejected, and reads never surface another queue's records.
-type Storage interface {
-	// GetRequestStore returns the RequestStore instance.
-	GetRequestStore() RequestStore
-
-	// GetRequestBatchStore returns the RequestBatchStore instance.
-	GetRequestBatchStore() RequestBatchStore
-
-	// GetChangeStore returns the ChangeStore instance.
-	GetChangeStore() ChangeStore
-
-	// GetBatchStore returns the BatchStore instance.
-	GetBatchStore() BatchStore
-
-	// GetBatchDependentStore returns the BatchDependentStore instance.
-	GetBatchDependentStore() BatchDependentStore
-
-	// GetQueueBatchStateStore returns the QueueBatchStateStore instance.
-	GetQueueBatchStateStore() QueueBatchStateStore
-
-	// GetBuildStore returns the BuildStore instance.
-	GetBuildStore() BuildStore
-
-	// GetSpeculationPathSetStore returns the SpeculationPathSetStore instance.
-	GetSpeculationPathSetStore() SpeculationPathSetStore
-
-	// GetPathBuildStore returns the PathBuildStore instance.
-	GetPathBuildStore() PathBuildStore
 }

@@ -18,6 +18,8 @@ import (
 	"fmt"
 	nethttp "net/http"
 
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -54,7 +56,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	specstandard "github.com/uber/submitqueue/submitqueue/extension/speculation/speculator/standard"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
 // Profile holds the per-queue extension implementations. Grouping them per
@@ -74,7 +75,7 @@ type Profile struct {
 	// Storage resolves the queue-scoped store aggregate for this queue. Every
 	// profile points at the shared backend by default; a deployment that
 	// splits queues across storage backends overrides this per queue.
-	Storage storage.Factory
+	Storage orchstorage.Factory
 
 	// Scorer holds this queue's ranking profile. There is no scoring stage: the
 	// scorer feeds the queue's speculator, which ranks candidate paths by how
@@ -143,10 +144,10 @@ func (p Profiles) ScorerFactory() scorer.Factory {
 	})
 }
 
-// StorageFactory returns a storage.Factory that routes each queue to its
+// StorageFactory returns a orchstorage.Factory that routes each queue to its
 // profile's storage backend before binding the queue-scoped store aggregate.
-func (p Profiles) StorageFactory() storage.Factory {
-	return storageFunc(func(c storage.Config) (storage.Storage, error) {
+func (p Profiles) StorageFactory() orchstorage.Factory {
+	return storageFunc(func(c orchstorage.Config) (orchstorage.Storage, error) {
 		return p.For(c.QueueName).Storage.For(c)
 	})
 }
@@ -169,9 +170,9 @@ type analyzerFunc func(conflict.Config) (conflict.Analyzer, error)
 
 func (f analyzerFunc) For(c conflict.Config) (conflict.Analyzer, error) { return f(c) }
 
-type storageFunc func(storage.Config) (storage.Storage, error)
+type storageFunc func(orchstorage.Config) (orchstorage.Storage, error)
 
-func (f storageFunc) For(c storage.Config) (storage.Storage, error) { return f(c) }
+func (f storageFunc) For(c orchstorage.Config) (orchstorage.Storage, error) { return f(c) }
 
 type scorerFunc func(scorer.Config) (scorer.Scorer, error)
 
@@ -192,7 +193,7 @@ func newProfiles(
 	logger *zap.Logger,
 	scope tally.Scope,
 	resolver changeset.Resolver,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	cfg profilesConfig,
 ) (Profiles, error) {
 	b := &profileBuilder{
@@ -245,7 +246,7 @@ type profileBuilder struct {
 	logger   *zap.Logger
 	scope    tally.Scope
 	resolver changeset.Resolver
-	stores   storage.Factory
+	stores   orchstorage.Factory
 	built    map[string]any
 }
 

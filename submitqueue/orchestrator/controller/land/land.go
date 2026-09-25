@@ -39,7 +39,7 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // Controller handles land queue messages. Implements consumer.Controller.
@@ -53,7 +53,7 @@ import (
 type Controller struct {
 	logger         *zap.SugaredLogger
 	metricsScope   tally.Scope
-	stores         storage.Factory
+	stores         orchstorage.Factory
 	registry       consumer.TopicRegistry
 	runwayTopicKey consumer.TopicKey
 	topicKey       consumer.TopicKey
@@ -69,7 +69,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	stores orchstorage.Factory,
 	registry consumer.TopicRegistry,
 	runwayTopicKey consumer.TopicKey,
 	topicKey consumer.TopicKey,
@@ -107,7 +107,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
@@ -186,7 +186,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // buildLandRequest loads the batch's member requests and assembles the runway
 // MergeRequest: one MergeStep per request, in Contains order, attributed by
 // request id and carrying that request's change and land strategy.
-func (c *Controller) buildLandRequest(ctx context.Context, store storage.Storage, batch entity.Batch) (*runwaymq.MergeRequest, error) {
+func (c *Controller) buildLandRequest(ctx context.Context, store orchstorage.Storage, batch entity.Batch) (*runwaymq.MergeRequest, error) {
 	steps := make([]*runwaymq.MergeStep, 0, len(batch.Contains))
 	for _, requestID := range batch.Contains {
 		request, err := store.GetRequestStore().Get(ctx, requestID)

@@ -83,7 +83,7 @@ func (s *OrchestratorIntegrationSuite) SetupSuite() {
 	require.NoError(t, err, "failed to connect to queue MySQL")
 
 	// Apply schemas programmatically to application database
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/orchestrator/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database

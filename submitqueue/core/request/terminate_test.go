@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 )
 
@@ -186,7 +187,7 @@ func TestTerminateRequest(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			requestStore := storagemock.NewMockRequestStore(ctrl)
-			store := storagemock.NewMockStorage(ctrl)
+			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 			tc.mockFunc(requestStore)
 

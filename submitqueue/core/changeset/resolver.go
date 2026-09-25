@@ -20,25 +20,25 @@ import (
 
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 )
 
 // resolver is the store-backed Resolver. It holds the storage factory and
 // resolves the batch's queue-scoped request and change stores per call, since
 // every resolution is for exactly one batch and the batch names its queue.
 type resolver struct {
-	stores storage.Factory
+	stores orchstorage.Factory
 }
 
 // New returns a Resolver backed by the given storage factory.
-func New(stores storage.Factory) Resolver {
+func New(stores orchstorage.Factory) Resolver {
 	return resolver{stores: stores}
 }
 
 // ChangesForBatch resolves a batch's requests to their raw changes, in
 // batch.Contains order.
 func (r resolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]change.Change, error) {
-	store, err := r.stores.For(storage.Config{QueueName: batch.Queue})
+	store, err := r.stores.For(orchstorage.Config{QueueName: batch.Queue})
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve storage for queue %q: %w", batch.Queue, err)
 	}
@@ -57,7 +57,7 @@ func (r resolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]ch
 // ChangeInfo per claimed URI, owned by the requesting request, aggregated across
 // the whole batch.
 func (r resolver) DetailedForBatch(ctx context.Context, batch entity.Batch) (entity.BatchChanges, error) {
-	store, err := r.stores.For(storage.Config{QueueName: batch.Queue})
+	store, err := r.stores.For(orchstorage.Config{QueueName: batch.Queue})
 	if err != nil {
 		return entity.BatchChanges{}, fmt.Errorf("failed to resolve storage for queue %q: %w", batch.Queue, err)
 	}
