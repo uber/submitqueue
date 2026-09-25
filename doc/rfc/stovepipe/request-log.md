@@ -191,7 +191,7 @@ Metadata is serialized as a JSON object and normalized to an empty map on write 
 
 ## Write and Repair Protocol
 
-Request-log durability is part of completing a pipeline transition. The source write succeeds first, the required log record is retained second, and a dependent handoff is published only after log creation or identical-existing reconciliation succeeds.
+Request-log durability is part of completing a pipeline transition. The source write succeeds first, the required log record is retained second, and a dependent handoff is published only after log creation or identical-existing reconciliation succeeds. The terminal build outcome is the exception: its Request transition and terminal state entry commit atomically, because that entry selects the winning build.
 
 For a Request transition, the controller:
 
@@ -211,7 +211,7 @@ Request creation, Build changes, and fact creation use the same source-write, lo
 | Ingest | Create accepted Request, then retain accepted. | An existing Request ensures accepted before process publication. |
 | Process | CAS to superseded or processing, then retain that state. | An existing state is reconstructed from Request context before ack or build publication. |
 | Build | Create Build after runner acceptance, then retain `build_triggered`. | An identical existing Build ensures the event before buildsignal publication. |
-| Buildsignal | Persist terminal Build and retain `build_finished`; CAS the Request outcome and retain its terminal state. | Existing terminal Build and Request outcome each ensure their own entry before record publication. |
+| Buildsignal | Persist terminal Build and retain `build_finished`; atomically CAS the Request outcome and its terminal state entry, including the winning `build_id`. | Existing terminal Build and Request outcome each ensure their own entry before record publication. |
 | Record | Create or verify the whole-repository fact, then retain `validation_fact_recorded`; after recording project facts, retain one `project_facts_recorded` event. | An identical whole-repository fact and project-fact batch ensure their events before bookmark or promotion work. |
 | Record DLQ | Retain `record_abandoned`, then acknowledge the remaining record work. | The stable event ID makes history retention idempotent without replaying facts, bookmarks, promotion, or hooks. |
 | Reconciler | CAS an unrecoverable non-terminal Request to failed, then retain failed. | An existing terminal Request is repaired from its persisted outcome without relabeling it. |

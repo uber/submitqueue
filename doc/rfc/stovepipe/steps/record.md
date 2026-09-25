@@ -206,7 +206,7 @@ Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describe
 
 ## Request lifecycle
 
-Phase 1 uses the states in [stovepipe/entity/request.go](../../../../stovepipe/entity/request.go). `record` runs *after* the Request is terminal: `buildsignal` projects the build's terminal status onto it as `succeeded`, `failed`, or `cancelled` (`RequestState.HasBuildOutcome()`), and only then publishes. So `record` reads an outcome and writes no state. `superseded` is terminal without an outcome.
+Phase 1 uses the states in [stovepipe/entity/request.go](../../../../stovepipe/entity/request.go). `record` runs *after* the Request is terminal: `buildsignal` projects the build's terminal status onto it as `succeeded`, `failed`, or `cancelled` (`RequestState.HasBuildOutcome()`), atomically retaining the matching terminal request-history state entry with the winning build id, and only then publishes. So `record` reads an outcome and writes no state. `superseded` is terminal without an outcome.
 
 Phase 2 broadens "complete" to "all planned facts recorded", which needs a marker this stage does not own; see [Completion marker: open](#completion-marker-open).
 

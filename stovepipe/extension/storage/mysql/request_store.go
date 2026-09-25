@@ -17,8 +17,10 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
@@ -105,7 +107,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	return req, nil
 }
 
-// Update persists the mutable fields of request (uri, state, build_strategy, base_uri) if the
+// Update persists the mutable fields of request (uri, state, build strategy, base uri) if the
 // oldVersion, writing newVersion. Returns ErrVersionMismatch if the stored version does not match
 // (including when the request does not exist). This is a pure conditional write; the caller owns
 // version arithmetic.
@@ -152,6 +154,68 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 		)
 	}
 
+	return nil
+}
+
+// FinalizeOutcome atomically advances a Request to its terminal state and retains
+// the matching state entry. Keeping the winning build id in that immutable entry
+// means a crash cannot leave a terminal request without its selected build.
+func (r *requestStore) FinalizeOutcome(ctx context.Context, request entity.Request, oldVersion, newVersion int32, log entity.RequestLog) (retErr error) {
+	op := metrics.Begin(r.scope, "finalize_outcome", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	if request.Queue != r.queue || log.Queue != r.queue || log.RequestID != request.ID {
+		return fmt.Errorf("request outcome queue or request binding does not match store")
+	}
+	if log.TimestampMs == 0 {
+		log.TimestampMs = time.Now().UnixMilli()
+	}
+	if err := log.Validate(); err != nil {
+		return fmt.Errorf("invalid terminal request log: %w", err)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin request outcome transaction: %w", err)
+	}
+	defer func() {
+		if retErr != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE request SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, version = ?
+		 WHERE queue = ? AND id = ? AND version = ?`,
+		request.URI, request.State, request.BuildStrategy, request.BaseURI, newVersion,
+		request.Queue, request.ID, oldVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to finalize request outcome: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to inspect finalized request outcome: %w", err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("version mismatch for request outcome: id=%q expected_version=%d: %w", request.ID, oldVersion, storage.ErrVersionMismatch)
+	}
+
+	metadata, err := json.Marshal(log.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal terminal request log metadata: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO request_log (
+		queue, request_id, log_id, timestamp_ms, state, event, request_version, outcome_reason, metadata
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		log.Queue, log.RequestID, log.ID, log.TimestampMs, log.State, log.Event, log.RequestVersion, log.OutcomeReason, metadata,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to retain terminal request log: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit request outcome: %w", err)
+	}
 	return nil
 }
 

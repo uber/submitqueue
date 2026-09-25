@@ -54,15 +54,16 @@ func queueContext() context.Context {
 // buildsignalMocks bundles the mocks a buildsignal controller test case wires
 // expectations on.
 type buildsignalMocks struct {
-	reqStore      *storagemock.MockRequestStore
-	buildStore    *storagemock.MockBuildStore
-	queueStore    *storagemock.MockQueueStore
-	store         *storagemock.MockStorage
-	materializer  *requestlogmock.MockMaterializer
-	runnerFactory *buildrunnermock.MockFactory
-	runner        *buildrunnermock.MockBuildRunner
-	publisher     *mqmock.MockPublisher
-	metricsScope  tally.TestScope
+	reqStore        *storagemock.MockRequestStore
+	requestLogStore *storagemock.MockRequestLogStore
+	buildStore      *storagemock.MockBuildStore
+	queueStore      *storagemock.MockQueueStore
+	store           *storagemock.MockStorage
+	materializer    *requestlogmock.MockMaterializer
+	runnerFactory   *buildrunnermock.MockFactory
+	runner          *buildrunnermock.MockBuildRunner
+	publisher       *mqmock.MockPublisher
+	metricsScope    tally.TestScope
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -76,18 +77,20 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 
 	scope := tally.NewTestScope("test", nil)
 	m := buildsignalMocks{
-		reqStore:      storagemock.NewMockRequestStore(ctrl),
-		buildStore:    storagemock.NewMockBuildStore(ctrl),
-		queueStore:    storagemock.NewMockQueueStore(ctrl),
-		store:         storagemock.NewMockStorage(ctrl),
-		materializer:  requestlogmock.NewMockMaterializer(ctrl),
-		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
-		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
-		publisher:     mqmock.NewMockPublisher(ctrl),
-		metricsScope:  scope,
+		reqStore:        storagemock.NewMockRequestStore(ctrl),
+		requestLogStore: storagemock.NewMockRequestLogStore(ctrl),
+		buildStore:      storagemock.NewMockBuildStore(ctrl),
+		queueStore:      storagemock.NewMockQueueStore(ctrl),
+		store:           storagemock.NewMockStorage(ctrl),
+		materializer:    requestlogmock.NewMockMaterializer(ctrl),
+		runnerFactory:   buildrunnermock.NewMockFactory(ctrl),
+		runner:          buildrunnermock.NewMockBuildRunner(ctrl),
+		publisher:       mqmock.NewMockPublisher(ctrl),
+		metricsScope:    scope,
 	}
 
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetRequestLogStore().Return(m.requestLogStore).AnyTimes()
 	m.store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
@@ -147,12 +150,13 @@ func buildSignalPayload(t *testing.T, id string) []byte {
 
 // requestWithState returns a Request past process's admit, in the given state.
 func requestWithState(state entity.RequestState) entity.Request {
-	return entity.Request{
+	request := entity.Request{
 		ID:      testID,
 		Queue:   testQueue,
 		State:   state,
 		Version: 1,
 	}
+	return request
 }
 
 // build returns a Build with the given status/version, tied to testID.
@@ -178,7 +182,9 @@ func expectFinishWrites(m buildsignalMocks, state entity.RequestState) *gomock.C
 	eventCall := expectBuildFinished(m)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall)
 	m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
-	return m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(state), int32(1), int32(2)).Return(nil)
+	request := requestWithState(state)
+	request.Version = 2
+	return m.reqStore.EXPECT().FinalizeOutcome(gomock.Any(), request, int32(1), int32(2), newTerminalStateLog(request, testBuildID)).Return(nil)
 }
 
 func expectBuildFinished(m buildsignalMocks) *gomock.Call {
@@ -196,7 +202,9 @@ func expectBuildFinished(m buildsignalMocks) *gomock.Call {
 }
 
 func expectFinish(m buildsignalMocks, state entity.RequestState) *gomock.Call {
-	return expectOutcomeLog(m, state, 2).After(expectFinishWrites(m, state))
+	request := requestWithState(state)
+	request.Version = 2
+	return m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, newTerminalStateLog(request, testBuildID)).Return(nil).After(expectFinishWrites(m, state))
 }
 
 func expectOutcomeLog(m buildsignalMocks, state entity.RequestState, version int32) *gomock.Call {
@@ -207,11 +215,32 @@ func expectOutcomeLog(m buildsignalMocks, state entity.RequestState, version int
 	}[state]
 	request := requestWithState(state)
 	request.Version = version
+	log := requestlog.NewRequestStateLog(request, reason)
+	log.Metadata[requestlog.MetadataKeyBuildID] = testBuildID
+	getCall := m.requestLogStore.EXPECT().Get(gomock.Any(), request.ID, log.ID).Return(log, nil)
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
 		m.store,
-		requestlog.NewRequestStateLog(request, reason),
-	).Return(nil)
+		log,
+	).Return(nil).After(getCall)
+}
+
+func TestMarkOutcomePreservesFirstBuildIdentity(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := requestWithState(entity.RequestStateProcessing)
+	winner := requestWithState(entity.RequestStateSucceeded)
+	winner.Version = 2
+	winnerLog := newTerminalStateLog(winner, "winning-build")
+
+	m.reqStore.EXPECT().FinalizeOutcome(gomock.Any(), gomock.Any(), int32(1), int32(2), gomock.Any()).Return(storage.ErrVersionMismatch)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(winner, nil)
+	m.requestLogStore.EXPECT().Get(gomock.Any(), testID, winnerLog.ID).Return(winnerLog, nil)
+
+	gotLog, err := c.markOutcome(context.Background(), m.store, &request, entity.RequestStateFailed, "losing-build")
+	require.NoError(t, err)
+	assert.Equal(t, winner, request)
+	assert.Equal(t, winnerLog, gotLog)
 }
 
 func TestProcess(t *testing.T) {
@@ -403,11 +432,13 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				eventCall := expectBuildFinished(m)
+				terminalStateLog := newTerminalStateLog(request, testBuildID)
+				m.requestLogStore.EXPECT().Get(gomock.Any(), testID, terminalStateLog.ID).Return(terminalStateLog, nil).After(eventCall)
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded),
-				).Return(errors.New("db down")).After(eventCall)
+					newTerminalStateLog(request, testBuildID),
+				).Return(errors.New("db down"))
 			},
 		},
 		{
@@ -459,7 +490,7 @@ func TestProcess(t *testing.T) {
 				eventCall := expectBuildFinished(m)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall)
 				m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
-				m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(errors.New("db down"))
+				m.reqStore.EXPECT().FinalizeOutcome(gomock.Any(), gomock.Any(), int32(1), int32(2), gomock.Any()).Return(errors.New("db down"))
 			},
 		},
 		{
@@ -492,7 +523,7 @@ func TestProcess(t *testing.T) {
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded),
+					newTerminalStateLog(request, testBuildID),
 				).Return(errors.New("db down")).After(updateCall)
 			},
 		},
