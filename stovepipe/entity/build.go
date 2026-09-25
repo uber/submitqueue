@@ -14,6 +14,11 @@
 
 package entity
 
+const (
+	// BuildMetadataKeyRequestID identifies the Stovepipe request associated with a build.
+	BuildMetadataKeyRequestID = "request_id"
+)
+
 // BuildStatus defines the possible states of a build. Shaped the same as
 // SubmitQueue's own BuildStatus (submitqueue/entity/build.go), but defined
 // locally rather than shared — see build.md's "Alternatives considered for
@@ -80,8 +85,5 @@ type BuildID struct {
 }
 
 // BuildMetadata carries caller-supplied, provider-echoed free-form metadata
-// about a build. The runner must not depend on its contents. Empty today;
-// expected to carry real data eventually (e.g. conflict-graph info, or other
-// upstream decisions relevant to the build) once a concrete need lands in
-// either domain — the shape is deferred until then, not decided here.
+// about a build. The runner must not require any key to trigger a build.
 type BuildMetadata map[string]string
