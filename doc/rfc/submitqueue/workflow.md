@@ -89,7 +89,7 @@ click node_conclude "https://github.com/uber/submitqueue/blob/main/submitqueue/o
 click node_changeproviders "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/changeprovider/change_provider.go"
 click node_buildrunner "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/buildrunner/build_runner.go"
 click node_storagecontract "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/storage/storage.go"
-click node_queuestorage "https://github.com/uber/submitqueue/blob/main/submitqueue/extension/storage/mysql/storage.go"
+click node_queuestorage "https://github.com/uber/submitqueue/blob/main/submitqueue/orchestrator/extension/storage/mysql/storage.go"
 click node_requestlog "https://github.com/uber/submitqueue/blob/main/submitqueue/core/request/log.go"
 click node_messagequeue "https://github.com/uber/submitqueue/blob/main/platform/extension/messagequeue/queue.go"
 
