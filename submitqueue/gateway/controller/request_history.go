@@ -25,7 +25,8 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -71,7 +72,7 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 
 	logs, err = stores.GetRequestLogStore().List(ctx, req.ID)
 	if err != nil {
-		if storage.IsNotFound(err) {
+		if basestorage.IsNotFound(err) {
 			return nil, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return nil, fmt.Errorf("GetRequestHistoryByID failed to list request logs sqid=%s: %w", req.ID, err)
@@ -117,7 +118,7 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 	for _, mapping := range mappings {
 		logs, err := logStore.List(ctx, mapping.RequestID)
 		if err != nil {
-			if storage.IsNotFound(err) {
+			if basestorage.IsNotFound(err) {
 				continue
 			}
 			return nil, fmt.Errorf("GetRequestHistoryByChangeURI failed to list request logs change_uri=%s sqid=%s: %w", req.ChangeURI, mapping.RequestID, err)

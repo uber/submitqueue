@@ -59,10 +59,6 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		buildStore:              NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
 		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store"), queueName),
 		pathBuildStore:          NewPathBuildStore(s.db, s.scope.SubScope("path_build_store"), queueName),
-		requestQueueStore:       NewRequestQueueSummaryStore(s.db, s.scope.SubScope("request_queue_summary_store"), queueName),
-		requestSummaryStore:     NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
-		requestLogStore:         NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
-		requestURIStore:         NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
 	}, nil
 }
 
@@ -82,10 +78,6 @@ type boundStorage struct {
 	buildStore              storage.BuildStore
 	speculationPathSetStore storage.SpeculationPathSetStore
 	pathBuildStore          storage.PathBuildStore
-	requestQueueStore       storage.RequestQueueSummaryStore
-	requestSummaryStore     storage.RequestSummaryStore
-	requestLogStore         storage.RequestLogStore
-	requestURIStore         storage.RequestURIStore
 }
 
 // Verify boundStorage implements the queue-scoped aggregate at compile time.
@@ -134,24 +126,4 @@ func (f *boundStorage) GetSpeculationPathSetStore() storage.SpeculationPathSetSt
 // GetPathBuildStore returns the bound MySQL-backed PathBuildStore.
 func (f *boundStorage) GetPathBuildStore() storage.PathBuildStore {
 	return f.pathBuildStore
-}
-
-// GetRequestQueueSummaryStore returns the bound MySQL-backed RequestQueueSummaryStore.
-func (f *boundStorage) GetRequestQueueSummaryStore() storage.RequestQueueSummaryStore {
-	return f.requestQueueStore
-}
-
-// GetRequestSummaryStore returns the bound MySQL-backed RequestSummaryStore.
-func (f *boundStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
-	return f.requestSummaryStore
-}
-
-// GetRequestLogStore returns the bound MySQL-backed RequestLogStore.
-func (f *boundStorage) GetRequestLogStore() storage.RequestLogStore {
-	return f.requestLogStore
-}
-
-// GetRequestURIStore returns the bound MySQL-backed RequestURIStore.
-func (f *boundStorage) GetRequestURIStore() storage.RequestURIStore {
-	return f.requestURIStore
 }

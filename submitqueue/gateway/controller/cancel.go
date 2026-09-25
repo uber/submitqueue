@@ -27,7 +27,8 @@ import (
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -97,7 +98,7 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", req.Queue, err)
 	}
 	if _, err := stores.GetRequestSummaryStore().Get(ctx, req.ID); err != nil {
-		if storage.IsNotFound(err) {
+		if basestorage.IsNotFound(err) {
 			metrics.NamedCounter(c.metricsScope, opName, "not_found", 1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}

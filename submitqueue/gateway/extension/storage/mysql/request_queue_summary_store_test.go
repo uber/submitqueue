@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
 func setupRequestQueueSummaryStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.RequestQueueSummaryStore) {

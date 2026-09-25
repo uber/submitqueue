@@ -38,14 +38,10 @@ func TestNewStorage(t *testing.T) {
 
 	bound, err := s.For("monorepo")
 	require.NoError(t, err)
-	assert.NotNil(t, bound.GetRequestStore())
-	assert.NotNil(t, bound.GetRequestBatchStore())
-	assert.NotNil(t, bound.GetChangeStore())
-	assert.NotNil(t, bound.GetBatchStore())
-	assert.NotNil(t, bound.GetBatchDependentStore())
-	assert.NotNil(t, bound.GetQueueBatchStateStore())
-	assert.NotNil(t, bound.GetBuildStore())
-	assert.NotNil(t, bound.GetSpeculationPathSetStore())
+	assert.NotNil(t, bound.GetRequestLogStore())
+	assert.NotNil(t, bound.GetRequestSummaryStore())
+	assert.NotNil(t, bound.GetRequestQueueSummaryStore())
+	assert.NotNil(t, bound.GetRequestURIStore())
 
 	_, err = s.For("")
 	assert.Error(t, err, "resolving an empty queue name must fail")
@@ -55,11 +51,10 @@ func TestMysqlStorage_Close(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	mock.ExpectClose()
-
 	s, err := NewStorage(db, testMetrics())
 	require.NoError(t, err)
 
+	mock.ExpectClose()
 	require.NoError(t, s.Close())
 	require.NoError(t, mock.ExpectationsWereMet())
 }

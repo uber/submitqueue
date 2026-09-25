@@ -16,7 +16,7 @@ go_test(
         "//service/submitqueue/demo/provider/git:config",
         "//service/submitqueue/gateway/server:docker_test_context",
         "//service/submitqueue/orchestrator/server:docker_test_context",
-        "//submitqueue/extension/storage/mysql/schema",
+        "//submitqueue/extension/storage:schema",
         "@git",
         "@git//:git_receive_pack",
         "@git//:git_upload_archive",

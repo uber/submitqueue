@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
 )
 
@@ -36,9 +37,10 @@ import (
 // embed this suite and call SetFactory().
 type StorageContractSuite struct {
 	suite.Suite
-	ctx     context.Context
-	factory storage.Factory
-	log     *testutil.TestLogger
+	ctx            context.Context
+	factory        storage.Factory
+	gatewayFactory gwstorage.Factory
+	log            *testutil.TestLogger
 }
 
 // SetContext sets the context for tests
@@ -50,6 +52,20 @@ func (s *StorageContractSuite) SetContext(ctx context.Context) {
 // storage factory under test.
 func (s *StorageContractSuite) SetFactory(factory storage.Factory) {
 	s.factory = factory
+}
+
+// SetGatewayFactory is called by implementation tests to provide the
+// queue-scoped gateway storage factory under test.
+func (s *StorageContractSuite) SetGatewayFactory(factory gwstorage.Factory) {
+	s.gatewayFactory = factory
+}
+
+// forGatewayQueue resolves the gateway's queue-scoped store aggregate, failing
+// the test on resolution errors.
+func (s *StorageContractSuite) forGatewayQueue(queue string) gwstorage.Storage {
+	store, err := s.gatewayFactory.For(gwstorage.Config{QueueName: queue})
+	s.Require().NoError(err)
+	return store
 }
 
 // forQueue resolves the queue-scoped store aggregate for a queue, failing the
@@ -672,7 +688,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 		Status: entity.RequestStatusAccepted, RequestVersion: 1, StatusTimestampMs: 100, Version: 1,
 		LastError: "", Metadata: nil,
 	}
-	store := s.forQueue(queue).GetRequestSummaryStore()
+	store := s.forGatewayQueue(queue).GetRequestSummaryStore()
 
 	require.NoError(t, store.Create(ctx, summary))
 	require.ErrorIs(t, store.Create(ctx, summary), storage.ErrAlreadyExists)
@@ -753,7 +769,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	t := s.T()
 	ctx := s.ctx
-	store := s.forQueue("queue-summary").GetRequestQueueSummaryStore()
+	store := s.forGatewayQueue("queue-summary").GetRequestQueueSummaryStore()
 	rows := []entity.RequestQueueSummary{
 		{RequestID: "queue-summary/1", Queue: "queue-summary", ChangeURIs: nil, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, Version: 1, Metadata: nil},
 		{RequestID: "queue-summary/2", Queue: "queue-summary", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, Version: 1, Metadata: map[string]string{}},
@@ -851,7 +867,7 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	t := s.T()
 	ctx := s.ctx
 	const queue = "uri-q"
-	store := s.forQueue(queue).GetRequestURIStore()
+	store := s.forGatewayQueue(queue).GetRequestURIStore()
 	rows := []entity.RequestURI{
 		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 100, RequestID: "uri/1"},
 		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "uri/2"},
@@ -872,7 +888,7 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	assert.Empty(t, empty)
 
 	// The same change URI in another queue is a distinct mapping set.
-	otherStore := s.forQueue("uri-q-other").GetRequestURIStore()
+	otherStore := s.forGatewayQueue("uri-q-other").GetRequestURIStore()
 	require.NoError(t, otherStore.Create(ctx, entity.RequestURI{
 		ChangeURI: "uri/shared", Queue: "uri-q-other", ReceivedAtMs: 100, RequestID: "other/1",
 	}), "the same change URI in another queue is a distinct row")
@@ -889,7 +905,7 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 	t := s.T()
 	ctx := s.ctx
 	const queue = "log-q"
-	store := s.forQueue(queue).GetRequestLogStore()
+	store := s.forGatewayQueue(queue).GetRequestLogStore()
 
 	_, err := store.List(ctx, "log/missing")
 	require.ErrorIs(t, err, storage.ErrNotFound)
@@ -914,7 +930,7 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 	}))
 
 	// The same request ID in another queue is an independent history.
-	otherStore := s.forQueue("log-q-other").GetRequestLogStore()
+	otherStore := s.forGatewayQueue("log-q-other").GetRequestLogStore()
 	require.NoError(t, otherStore.Insert(ctx, entity.RequestLog{
 		RequestID: "log/1", Queue: "log-q-other", TimestampMs: 150, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
 	}))

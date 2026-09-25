@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 )
 
@@ -316,12 +317,12 @@ func materializerStores(ctrl *gomock.Controller) (*Materializer, *storagemock.Mo
 	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
-	queueScoped := storagemock.NewMockStorage(ctrl)
+	queueScoped := gwstoragemock.NewMockStorage(ctrl)
 	queueScoped.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
 	queueScoped.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	queueScoped.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
 	queueScoped.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
-	factory := storagemock.NewMockFactory(ctrl)
+	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(queueScoped, nil).AnyTimes()
 	return NewMaterializer(factory), summaryStore, queueStore, uriStore, logStore
 }

@@ -45,10 +45,10 @@ import (
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
 	logctrl "github.com/uber/submitqueue/submitqueue/gateway/controller/log"
+	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
+	mysqlstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mysql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -375,7 +375,7 @@ func run() error {
 	// directly so reconciliation does not depend on another asynchronous path.
 	logConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
-			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
+			// Storage (submitqueue/gateway/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
 			// both run on the same MySQL driver, so a single classifier covers
 			// errors surfaced from either backend.
 			genericerrs.Classifier,

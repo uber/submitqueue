@@ -37,8 +37,9 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
@@ -342,7 +343,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(123), nil)
 
-	store := storagemock.NewMockStorage(ctrl)
+	store := gwstoragemock.NewMockStorage(ctrl)
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
@@ -351,7 +352,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
-	factory := storagemock.NewMockFactory(ctrl)
+	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	materializer := requestcore.NewMaterializer(factory)
 
@@ -390,7 +391,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		),
 		queueStore.EXPECT().Get(gomock.Any(), gomock.Any(), "test-queue/123").DoAndReturn(
 			func(context.Context, int64, string) (entity.RequestQueueSummary, error) {
-				return entity.RequestQueueSummary{}, storage.ErrNotFound
+				return entity.RequestQueueSummary{}, basestorage.ErrNotFound
 			},
 		),
 		uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(

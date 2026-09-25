@@ -35,3 +35,16 @@ go_test(
         "@com_github_stretchr_testify//assert:go_default_library",
     ],
 )
+
+# The whole SubmitQueue storage schema. Each service owns the tables it reads,
+# so a deployment that separates them depends on the service package it runs;
+# one that colocates them — the end-to-end tests, the local compose stack —
+# takes this and does not have to track which services exist.
+filegroup(
+    name = "schema",
+    srcs = [
+        "//submitqueue/extension/storage/mysql/schema",
+        "//submitqueue/gateway/extension/storage/mysql/schema",
+    ],
+    visibility = ["//visibility:public"],
+)
