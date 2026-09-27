@@ -142,6 +142,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	updated.LastGreenRequestID = "request/contract/update-cas/41"
 	updated.LatestRequestID = "request/contract/update-cas/42"
 	updated.InFlightCount = 1
+	updated.BuildAdmissionNotBeforeMs = 123456789
 	require.NoError(t, s.storeFor(name).Update(s.ctx, updated, 1, 2))
 
 	got, err := s.storeFor(name).Get(s.ctx, name)
@@ -150,6 +151,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	assert.Equal(t, "request/contract/update-cas/41", got.LastGreenRequestID)
 	assert.Equal(t, "request/contract/update-cas/42", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
+	assert.Equal(t, int64(123456789), got.BuildAdmissionNotBeforeMs)
 	assert.Equal(t, int32(2), got.Version)
 
 	err = s.storeFor(name).Update(s.ctx, updated, 1, 2)
