@@ -100,7 +100,7 @@ type Stores interface {
 type Resolve func(queue string) (Stores, error)
 ```
 
-Each service's aggregate satisfies `Stores` structurally, so `changeset` names no service package. Once those extensions relocate under the orchestrator, `changeset`'s consumers are all orchestrator-side and it should relocate with them — at which point it can drop `Stores`/`Resolve` and take `orchstorage.Factory` directly, matching the other relocated packages rather than staying the one exception.
+The orchestrator aggregate exposes both accessors, so it satisfies `Stores` structurally and `changeset` names no service package. The gateway aggregate does not: it holds the request log and the public projections, and it has neither `GetRequestStore` nor `GetChangeStore`. Once those extensions relocate under the orchestrator, `changeset`'s consumers are all orchestrator-side and it should relocate with them — at which point it can drop `Stores`/`Resolve` and take `orchstorage.Factory` directly, matching the other relocated packages rather than staying the one exception.
 
 `submitqueue/core` now holds `changeset`, `messagequeue` and `topickey`, and nothing in it imports a service package.
 

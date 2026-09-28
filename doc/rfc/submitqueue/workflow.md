@@ -1,8 +1,8 @@
 # Orchestrator Workflow
 
-The orchestrator processes land requests through the queue-driven pipeline declared in [`submitqueue/orchestrator/pipeline.go`](../../../submitqueue/orchestrator/pipeline.go). The gateway accepts a land over RPC and publishes the full request to `start`; cancel is a separate RPC that publishes to `cancel`. Each controller consumes one topic, reloads what it needs, and publishes the next hop. Inside the orchestrator most hops carry only an ID. The hops that cross into Runway do not: `validate` and `land` publish a full `MergeRequest`, and `landconflictsignal` and `landsignal` consume the `MergeResult` Runway publishes back, because neither service can read the other's storage. Request-log entries are full payloads published with `submitqueue/orchestrator/core/request.PublishLog`; the gateway consumes that topic and is the only writer of the request log. `log`, Runway's `merge-conflict-check`, and Runway's `merge` are publish-only on the orchestrator. See the queue-payload-boundary rule in [AGENTS.md](../../../AGENTS.md).
+The orchestrator processes land requests through the queue-driven pipeline declared in [`submitqueue/orchestrator/pipeline.go`](../../../submitqueue/orchestrator/pipeline.go). The gateway accepts a land over RPC and publishes the full request to `start`; cancel is a separate RPC that persists `cancelling` and then publishes to `cancel`. Each controller consumes one topic, reloads what it needs, and publishes the next hop. Inside the orchestrator most hops carry only an ID. The hops that cross into Runway do not: `validate` and `land` publish a full `MergeRequest`, and `landconflictsignal` and `landsignal` consume the `MergeResult` Runway publishes back, because neither service can read the other's storage. Request-log entries are full payloads published with `submitqueue/orchestrator/core/request.PublishLog`; the gateway consumes that topic and is the only writer of the request log. `log`, Runway's `merge-conflict-check`, and Runway's `runway-merge` are publish-only on the orchestrator. See the queue-payload-boundary rule in [AGENTS.md](../../../AGENTS.md).
 
-Two cycles re-enter speculation. `speculate` dispatches funded paths to `build`; `build` starts each pending path and publishes the build id to `buildsignal`; `buildsignal` polls with `delivery.Hold` and, when the status changes, publishes the batch id back to `speculate`. A batch that can land is published to `land`, which sends the merge request to Runway; `landsignal` correlates the result, marks the batch Succeeded or Failed, and fans out to `conclude` and `speculate`. `speculate` also publishes Failed and Cancelled batches straight to `conclude`.
+Two cycles re-enter speculation. `speculate` dispatches funded paths to `build`; `build` starts each pending path and publishes the build id to `buildsignal`; `buildsignal` polls with `delivery.Hold` and, when the status changes, publishes the batch id back to `speculate`. A batch that can land is published to `submitqueue-land`, which sends the merge request to Runway; `landsignal` correlates the result, marks the batch Succeeded or Failed, and fans out to `conclude` and `speculate`. `speculate` also publishes Failed and Cancelled batches straight to `conclude`.
 
 Terminal request states are not `conclude`'s alone. `cancel` completes a request that has not been enrolled in a batch. `landconflictsignal` fails a request Runway reports as conflicted. `conclude` maps a terminal batch onto its member requests. The DLQ reconcilers force a failed terminal state when a consumed stage cannot finish.
 
@@ -26,7 +26,7 @@ subgraph group_orchestration["Queue Orchestration"]
   node_start["start<br/>[start.go]"]
   node_cancel["cancel<br/>[cancel.go]"]
   node_validate["validate<br/>[validate.go]"]
-  node_runwaycheck["Runway conflict check<br/>[merge.go]"]
+  node_runwaycheck["Runway conflict check<br/>[mergeconflictcheck.go]"]
   node_conflictsignal["landconflictsignal<br/>[landconflictsignal.go]"]
   node_batch["batch<br/>[batch.go]"]
   node_dependency["dependency-analysis<br/>[dependencyanalysis.go]"]
@@ -71,7 +71,7 @@ node_runwaycheck -->|"MergeResult"| node_conflictsignal
 node_conflictsignal -->|"request id"| node_batch
 node_batch -->|"batch id"| node_dependency
 node_dependency -->|"batch id"| node_speculate
-node_cancel -->|"batch id when enrolled"| node_speculate
+node_cancel -->|"batch id when cancellable"| node_speculate
 node_speculate -->|"batch id"| node_build
 node_speculate -->|"batch id"| node_land
 node_speculate -->|"failed or cancelled batch"| node_conclude
@@ -138,14 +138,14 @@ class node_submitter toneIndigo
 | Controller | In | Out | One-line role |
 |---|---|---|---|
 | **gateway/Land** | RPC | start | Mint the request id, persist an accepting receipt, publish the full land request, then persist Accepted |
-| **gateway/Cancel** | RPC | cancel | Publish a cancel request for an existing land |
+| **gateway/Cancel** | RPC | cancel | Persist `cancelling` for an existing land, then publish the cancel request |
 | **start** | LandRequest | validate, log | Persist the Request and publish it to validate |
 | **cancel** | CancelRequest | log, or speculate | Record Cancelling. Finish a request that has no applicable batch. Hand each cancellable batch attempt to speculate. Leave a Landing or already-terminal batch for conclude |
 | **validate** | RequestID | merge-conflict-check (Runway), log | Dedup, fetch change metadata, claim changes, then publish the full `MergeRequest` to Runway keyed by the request id |
 | **landconflictsignal** | MergeResult | batch, or log | Correlate Runway's check; advance a landable request to batch, or fail a conflicted request |
 | **batch** | RequestID | dependency-analysis, log | Mint a Creating batch for the request and hand that batch id onward |
 | **dependency-analysis** | BatchID | speculate, log | Enrol the request, resolve what the batch serializes behind, and promote it from Creating to Created |
-| **speculate** | BatchID | build, land, conclude | Treat the message as a dirty signal for the queue: admit Created batches, commit outcomes from facts already known, ask the speculator which paths to fund, and dispatch builds, a land, or conclude |
+| **speculate** | BatchID | build, submitqueue-land, conclude | Treat the message as a dirty signal for the queue: admit Created batches, commit outcomes from facts already known, ask the speculator which paths to fund, and dispatch builds, a land, or conclude |
 | **build** | BatchID | buildsignal | Start a build for each pending path on the head and publish that build id |
 | **buildsignal** | BuildID | speculate | Poll `BuildRunner.Status`, stop a build whose path no longer wants it, and wake speculate when the status changes. In-flight polls `Hold` the same delivery |
 | **land** | BatchID | runway-merge (Runway), log | Build the full land request from the batch's member requests, adapt it to `MergeRequest`, and publish it to Runway keyed by the batch id |
@@ -158,7 +158,7 @@ class node_submitter toneIndigo
 
 ## DLQ reconciliation
 
-Every consumed stage in `pipeline.go` is paired with a `{topic}_dlq` subscription. `pipeline.Construct` registers that companion with `errs.AlwaysRetryableProcessor` and `DLQSubscriptionConfig`, which disables a second-level DLQ and sets `Retry.MaxAttempts` to 0 (unlimited). The consumer moves a message to its DLQ once the primary controller returns a non-retryable error or exhausts retries on a retryable one. The publish-only topics — `log`, Runway `merge-conflict-check`, and Runway `merge` — have no orchestrator subscription and therefore no orchestrator DLQ. The gateway consumes `log`. Runway consumes the two merge request topics.
+Every consumed stage in `pipeline.go` is paired with a `{topic}_dlq` subscription. `pipeline.Construct` registers that companion with `errs.AlwaysRetryableProcessor` and `DLQSubscriptionConfig`, which disables a second-level DLQ and sets `Retry.MaxAttempts` to 0 (unlimited). The consumer moves a message to its DLQ once the primary controller returns a non-retryable error or exhausts retries on a retryable one. The publish-only topics — `log`, Runway `merge-conflict-check`, and Runway `runway-merge` — have no orchestrator subscription and therefore no orchestrator DLQ. The gateway consumes `log`. Runway consumes the two merge request topics.
 
 Most DLQ controllers do not re-attempt the failed work. They decode the payload to a `RequestID` or `BatchID` and drive that entity to a terminal failed state — `RequestStateError` for requests, `BatchStateFailed` for batches, with fan-out to the member requests. Topics that carry a full payload recover the id from it: the `landconflictsignal` DLQ reads the request id from Runway's `MergeResult`, and the `landsignal` DLQ reads the batch id. The `buildsignal` DLQ decodes a build id, loads that build, and fails the batch that owns it. A missing build or an empty batch id is acked: there is no batch to fail from this signal. State writes use the same optimistic-locking CAS as the primary pipeline, so a late primary-pipeline update wins cleanly and a version mismatch is asked back for redelivery.
 
