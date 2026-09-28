@@ -13,14 +13,14 @@ Hosts supply these deployment-specific inputs:
 | Concern | The host supplies | Wired with |
 |---|---|---|
 | Authentication and authorization | the caller session and allowed actions | host routes, server actions, and an optional optimistic `proxy.ts` redirect |
-| Logging | a `pino.Logger`, or any structurally compatible object | `pino` plus `pino-pretty`, `pino-opentelemetry-transport`, or another host-selected transport |
+| Logging | a logger matching the library's structural `Logger` type | `pino` plus `pino-pretty`, `pino-opentelemetry-transport`, or another host-selected transport |
 | Metrics | a registered global OpenTelemetry `MeterProvider`, or none | `@opentelemetry/sdk-metrics` plus a Prometheus or OTLP exporter |
-| Gateway transport | a generated gateway client for each queue | Connect transport configured for the host's gateway address, credentials, and edge |
+| Gateway transport | a generated gateway client for each queue | `@connectrpc/connect-node` `createGrpcTransport` against the grpc-go gateway |
 | Configuration | branding, external-host mappings, and internal path templates | a serializable `WebConfig` populated by the host |
 
 Keeping these inputs outside the library allows the same UX to run in multiple hosts. This also matches the gateway's existing security boundary: `submitqueue/client/conn.go` can send a bearer token, but this repository does not validate it. Authentication belongs to the proxy, sidecar, ingress, or host in front of the gateway.
 
-Change and build links are concrete helpers over gateway data. Change URIs use `scheme://{host[:port]}/{path}` with a mandatory host and must be interpretable without deployment wiring ([change URIs](change-uri.md)). Build runners already write the provider's web URL into request metadata. Every rendered external link is validated against an HTTP/HTTPS allowlist; `git://` and deployments with different browser hosts use explicit `WebConfig` mappings.
+Change and build links are concrete helpers over gateway data. Change URIs use `scheme://{host[:port]}/{path}` with a mandatory host and must be interpretable without deployment wiring ([change URIs](change-uri.md)). A rendered external link must match an explicit host mapping keyed by provider scheme and authority; an HTTP or HTTPS scheme alone is not enough, and an unmapped authority renders as text. Build URLs come from history occurrences, not from a single field on the request summary, because speculation can run several sibling builds for one request.
 
 ## Runtime boundary
 
@@ -69,10 +69,10 @@ web/                                  # pnpm workspace root
 ├── package.json
 ├── pnpm-lock.yaml
 ├── pnpm-workspace.yaml
-├── api/                              # committed protobuf-es/Connect output
-│   ├── base/change/
-│   ├── base/mergestrategy/
-│   └── submitqueue/gateway/          # @submitqueue/api-submitqueue-gateway
+├── api/                              # one package, @submitqueue/api
+│   ├── base/change/                  #   generated with the gateway stubs
+│   ├── base/mergestrategy/           #   so cross-file imports stay intra-package
+│   └── submitqueue/gateway/
 ├── submitqueue/                      # @submitqueue/web-submitqueue
 │   └── src/
 │       ├── gateway/                  #   server-only RPC helpers
@@ -87,7 +87,7 @@ web/                                  # pnpm workspace root
 
 `web/` contains the complete Node workspace, including committed Protobuf-ES/Connect output and the reference host; proto sources and Go output stay in the root `api/` tree. `web/go.mod` and repository exclusions keep Node dependencies outside Go and Gazelle traversal. The web library depends on the generated API package, not Go domain code.
 
-The package ships built ESM with default component exports plus `./server` and `./testing`. React, Next, Connect, Protobuf-ES, and optional pino types are peers so host and library share one runtime. `web/service/submitqueue/` demonstrates composition; deployers own their hosts.
+The package ships built ESM with an export map of the root, `./server`, and `./testing`. The root export is components and presentation types only: the build preserves `'use client'`, and nothing reachable from that export imports `server-only` or Node built-ins. `./server` is the only server entry, and `./testing` is test-only. React, Next, Connect, and Protobuf-ES are peers so host and library share one runtime. The logger parameter is a small structural type owned by the library, so pino is not a dependency or a peer. `web/service/submitqueue/` demonstrates composition; deployers own their hosts.
 
 Phase one contains SubmitQueue only. Stovepipe can later add `web/stovepipe/` against its published RPCs; Runway needs a read API beyond `Ping` before it can expose UX. Shared UI is promoted only after that second domain exists.
 
@@ -95,17 +95,17 @@ Phase one contains SubmitQueue only. Stovepipe can later add `web/stovepipe/` ag
 
 The generated gateway client is the library's only domain dependency. Concrete helpers map gateway responses into presentation models; there is no web-specific gateway interface.
 
-Gateway helpers take `Client<typeof SubmitQueueGateway>`, typed queries, and an optional `pino.Logger`; expected outcomes use result unions. The library obtains its meter through `metrics.getMeter("@submitqueue/web-submitqueue", version)` and never accepts an SDK or exporter.
+Gateway helpers take `Client<typeof SubmitQueueGateway>`, typed queries, and an optional structural `Logger`; expected outcomes use result unions. The library obtains its meter through `metrics.getMeter("@submitqueue/web-submitqueue", version)` and never accepts an SDK or exporter.
 
-The host constructs Node gRPC clients, supplies credentials and deadlines, and routes queues with a plain `(queue) => generated client` function. Cross-queue helpers take that function. The library supplies presentation/error mapping, tracing instrumentation, and a fake generated client for tests.
+The gateway serves native gRPC, so the host builds clients with `@connectrpc/connect-node` `createGrpcTransport` over HTTP/2. TLS is the default; plaintext h2c is an explicit host opt-in for a local stack, and an integration test dials the real gateway. The host supplies credentials and deadlines, caches transports, and routes queues with a plain `(queue) => generated client` function. Cross-queue helpers take that function. Helpers cannot attach interceptors to a client they receive already built, so the library exports a tracing interceptor for the host to install while constructing the transport. Tests use a fake generated client.
 
 If a view needs missing domain data, the gateway contract grows instead of adding a web-only backend. Phase one adds `ListQueues`, backed by `queueconfig.Store.List`; a multi-gateway host fans it out across configured endpoints and rejects its configuration at startup if two gateways report the same queue name.
 
 Phase one refreshes views with a small client component that calls `router.refresh()` on an interval, re-running the server loaders, matching `submitqueue/client/watch.go`. It presents the bounded receipt-history `List` without status filtering. Streaming or filtered gateway APIs require separate contract changes.
 
-Link helpers derive change and build URLs from gateway data and internal links from serializable `WebPaths` templates such as `/q/{queue}/r/{sqid}`. A missing template suppresses the link. `build_url` is added to `HistoryEvent`, where each build occurrence belongs, and may be mirrored on `RequestSummary` for the current build.
+Link helpers derive change URLs from gateway data through the trusted scheme-and-authority mapping, and internal links from serializable `WebPaths` templates such as `/q/{queue}/r/{sqid}`. Each substituted value is percent-encoded as one path segment: an sqid is `<queue>/<counter>`, so raw substitution would split the route, and queue names may contain `/`, `%`, `?`, `#`, `.`, or `..`. A missing template suppresses the link. Build URLs stay on history occurrences; `RequestSummary` does not carry one, because several sibling builds can be in flight for the same request.
 
-The library depends only on `@opentelemetry/api` and obtains its own meter. SDKs, exporters, collector addresses, and logger construction remain host concerns. A Connect interceptor nests gateway spans under the active Next request trace.
+The library depends only on `@opentelemetry/api` and obtains its own meter. SDKs, exporters, collector addresses, and logger construction remain host concerns. The exported tracing interceptor nests gateway spans under the active Next request trace.
 
 ### Host composition
 
@@ -139,7 +139,7 @@ Before implementation, additive gateway changes provide:
 
 - `ListQueues`
 - typed gRPC status details for known errors
-- typed `build_url` fields instead of an implicit metadata key
+- a typed build URL on history occurrences, not on `RequestSummary`
 - an actor field for audited mutations before web Cancel is enabled
 
 ### Error boundary
@@ -159,25 +159,27 @@ Unknown errors default to infrastructure errors, and raw gateway messages are ne
 - Host: routes, authorization, gateway construction/routing, telemetry SDKs, configuration, branding, process lifecycle, and deployment.
 - Library: gateway mapping, presentation models, components, capabilities, status display, safe links, and display errors.
 - `./server` imports `server-only`; library code never reads environment variables or chooses backends.
-- External links pass an HTTP/HTTPS allowlist; status fixtures prevent Go/TypeScript drift.
+- External links require a trusted scheme-and-authority mapping; status fixtures prevent Go/TypeScript drift.
+- Internal path substitutions encode each value as one segment, covering `/`, `%`, `?`, `#`, `.`, and `..`.
 - Committed Go and TypeScript proto outputs are regenerated in a clean-tree drift check.
 - Authorization is enforced and tested in host routes/actions. Capabilities only control presentation.
 
-The supported deployment is a long-running Node host with private gateway access. `web/` stays outside Bazel/Gazelle while remaining inside required checks.
+The supported deployment is a long-running Node host with private gateway access. `web/` stays outside Gazelle so the Go build graph does not index it. End-to-end coverage is a separate required check, not a Bazel test: a Node-owned job, pinned to the workspace Node version and lockfile, builds the host and runs Playwright against Compose using the domain-qualified `e2e-submitqueue-web` context ([testing guide](../howto/TESTING.md#container-naming)).
 
 ## UX testing strategy
 
 | Layer | Tool | What it verifies |
 |---|---|---|
-| Contract/model | Go tests + Vitest | Proto round trips and drift, status compatibility, `bigint` conversion, paging, href safety, error mapping, and client props containing no proto markers or `bigint` |
+| Contract/model | Go tests + Vitest | Proto round trips and drift, status compatibility, `bigint` conversion, paging, segment encoding, trusted-authority links, error mapping, and client props containing no proto markers or `bigint` |
 | Component behavior | Vitest + React Testing Library | Rendering states, interactions, resource capabilities, and keyboard/focus behavior |
 | Browser UX | Playwright + axe-core | Responsive and visual regression, real-browser accessibility/contrast, non-color-only statuses, navigation, loading/empty/error states, and stable focus/scroll during polling |
 | Host security | Route matrix generated from `app/` + action lint | Every discovered route has an authorization case and rejects missing/denied sessions without `proxy.ts`; a lint rule requires every `'use server'` export to call the authorization helper, and actions reject cross-resource arguments when called directly |
-| Host integration | Playwright + Docker Compose | Real gateway list/history flows, polling, transport failures, and later mutation authorization |
+| Host integration | Node-owned Playwright + Compose | Real grpc-go gateway list/history flows, TLS and explicit h2c, polling, transport failures, and later mutation authorization |
+| Published package | `pnpm pack` into an external Next app | The packed library and API tarballs install outside the workspace, their export maps match the root, `./server`, and `./testing`, the root stays free of `server-only`, and both supported Next/React bounds build |
 
 Browser UX tests use a separate build-time entry point that aliases the reference host's gateway and session providers to fakes; production builds contain neither fake, and a build check verifies the production artifact. Fixtures cover scripted status changes, unknown statuses, long and numerous URIs, long errors, full pages, omitted path templates, and per-row capabilities. Screenshots are deterministic, and the lowest and latest supported Next/React versions run the component and browser suites.
 
-End-to-end tests use the real gateway in the domain-qualified `e2e-submitqueue-web` context ([testing guide](../howto/TESTING.md#container-naming)). Storybook is not required initially because the fixture mode already renders deterministic browser states.
+Storybook is not required initially because the fixture build already renders deterministic browser states.
 
 ## Rejected
 
@@ -185,7 +187,7 @@ End-to-end tests use the real gateway in the domain-qualified `e2e-submitqueue-w
 - **One catch-all route.** `app/[[...slug]]/page.tsx` would replace Next routing and lose per-segment layouts, metadata, streaming, Suspense boundaries, and caching.
 - **Static export or embedding in a Go binary.** Dynamic request routes cannot be enumerated, server actions and authoritative route checks disappear, and the grpc-go gateway needs a browser-reachable proxy with its own resource authorization. Revisit only with a separate design.
 - **Web extensions, DI, or a generic platform engine.** The gateway and Next filesystem already provide domain and route boundaries. Extra interfaces or runtime assembly duplicate them; shared code is promoted only after another domain demonstrates reuse.
-- **Library-owned process infrastructure.** Auth SDKs, logger/metrics backends, environment defaults, token sources, clients, and registries belong to the host. OpenTelemetry and optional pino types already provide the needed contracts.
+- **Library-owned process infrastructure.** Auth SDKs, logger/metrics backends, environment defaults, token sources, clients, and registries belong to the host. OpenTelemetry supplies the metrics contract; logging uses a structural type the host's logger satisfies.
 - **GraphQL or REST BFF.** Server components already provide the BFF and the generated gateway client is the domain boundary; another wire contract adds no capability.
 - **Shared Go/TypeScript view model through WASM or code generation.** A cross-language status fixture catches drift; the remaining presentation code is cheaper than a cross-language runtime.
 - **Non-Next SPA.** Server components keep gateway access and authorization on the server; an SPA moves both into the browser.
