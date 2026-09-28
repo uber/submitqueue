@@ -531,7 +531,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   stovepipemq.TopicKeyBuildSignal,
 			Name:  "buildsignal",
 			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
+			Subscription: extqueue.ExtendedRetrySubscriptionConfig(
 				subscriberName, "stovepipe-buildsignal",
 			),
 		},
@@ -539,7 +539,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   stovepipemq.TopicKeyRecord,
 			Name:  "record",
 			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
+			Subscription: extqueue.ExtendedRetrySubscriptionConfig(
 				subscriberName, "stovepipe-record",
 			),
 		},

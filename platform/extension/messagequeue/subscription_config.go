@@ -102,6 +102,17 @@ func DLQSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionCon
 	return config
 }
 
+// ExtendedRetrySubscriptionConfig returns a subscription with a longer retry
+// window before dead-lettering. It is intended for idempotent stages where
+// transient dependency failures should have more time to recover.
+func ExtendedRetrySubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
+	config := DefaultSubscriptionConfig(subscriberName, consumerGroup)
+	config.Retry.MaxAttempts = 10
+	config.Retry.InitialBackoffMs = 5000
+	config.Retry.MaxBackoffMs = 60000
+	return config
+}
+
 // DefaultSubscriptionConfig returns a SubscriptionConfig with sensible defaults.
 func DefaultSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
 	return SubscriptionConfig{
