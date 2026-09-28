@@ -4,16 +4,16 @@ Design notes for what SubmitQueue's pluggable extensions accept: orchestrator **
 
 ## Status
 
-Implemented for the extensions named here. `changeprovider.Get` takes `entity.Request`. `conflict.Analyzer.Analyze` takes the batch under analysis and the in-flight batches. `buildrunner.Trigger` takes base `[]entity.Batch` and a head `entity.Batch`. `scorer.Score` takes `entity.Batch` and `entity.SpeculationPathSet`. There is no separate score stage; speculation asks the scorer. `changeset.Resolver` is the shared batch-to-changes reader and still declares its own `Stores` slice rather than importing an orchestrator aggregate. Runway still performs the asynchronous conflict check and the land. In the verdict table, the proposed inputs are these signatures, except the scorer, which also receives the path set.
+Implemented for the extensions named here. `changeprovider.Get` takes `entity.Request`. `conflict.Analyzer.Analyze` takes the batch under analysis and the in-flight batches. `buildrunner.Trigger` takes base `[]entity.Batch` and a head `entity.Batch`. `scorer.Score` takes `entity.Batch` and `entity.SpeculationPathSet`. There is no separate score stage; speculation asks the scorer. `changeset.Resolver` is the shared batch-to-changes reader and still declares its own `Stores` slice rather than importing an orchestrator aggregate. Runway still performs the asynchronous conflict check and the land. The verdict table's "Input now" column is these signatures.
 
 ## Problem
 
-Extension input granularity is inconsistent across the pipeline stages (see [workflow.md](workflow.md)). `conflict.Analyzer` takes identity (`entity.Batch`); `scorer`, `changeprovider`, and `buildrunner` take controller-resolved `entity.Change`. The split caps what an extension can do:
+Before this contract, extension input granularity was inconsistent across the pipeline stages (see [workflow.md](workflow.md)). `conflict.Analyzer` took identity (`entity.Batch`); `scorer`, `changeprovider`, and `buildrunner` took a controller-resolved `entity.Change`. That split capped what an extension could do:
 
-- `ConflictType` already names `target_overlap`, but a real target-overlap analyzer **cannot be written** — the dependency-analysis stage hands it identity-level batches (no changed targets) and the contract has nowhere to put them.
-- `scorer` gets a URIs-only `Change`, so a heuristic scorer **cannot see** lines-changed / file-count.
+- `ConflictType` already named `target_overlap`, but a real target-overlap analyzer could not be written: the dependency-analysis stage handed it identity-level batches, with no changed targets, and the contract had nowhere to put them.
+- `scorer` got a URIs-only `Change`, so a heuristic scorer could not see lines-changed or file-count.
 
-Both unblock with the shape `conflict` already uses: accept identity, resolve internally.
+Both unblock by taking the shape `conflict` already used: accept identity and resolve internally. The signatures in Status are that resolution.
 
 ## Principle
 
@@ -34,15 +34,15 @@ This grounds `conflict` as the baseline: it already resolves nothing because the
 
 ## Verdict
 
-| Extension | Stage | Input today | Proposed input | Output | Injected deps |
+| Extension | Stage | Input before | Input now | Output | Injected deps |
 |---|---|---|---|---|---|
 | `conflict.Analyzer` | batch | identity (`Batch`, `[]Batch`) | unchanged — **the baseline** | conflicting in-flight batches (`[]Conflict`, `BatchID`-tagged) — unchanged | request store + change provider |
-| `scorer.Scorer` | score | flat `Change`, per request | `entity.Batch` — resolve + reduce internally | one batch score (`float64`) — unchanged | request store + change provider |
+| `scorer.Scorer` | speculation | flat `Change`, per request | `entity.Batch` and `entity.SpeculationPathSet` — resolve + reduce internally | one batch score (`float64`) — unchanged | request store + change provider |
 | `changeprovider.ChangeProvider` | validate | `Change` | `entity.Request` | per-URI change info (`[]ChangeInfo`, `URI`-tagged) — unchanged | none — it *is* the resolver |
 | `buildrunner.BuildRunner` | build | base/head `[]Change` | base `[]entity.Batch` + head `entity.Batch` | build id, then status/cancel (`BuildID`, `BuildStatus`) — unchanged | request store + change provider |
 | `storage`, `changestore`, `queueconfig` | — | keys + entities | unchanged — resolution targets | entities | — |
 
-**Outputs are unchanged.** This RFC moves the *input* toward identity; the four live return contracts — conflicts, score, change info, build id/status — are exactly what they are today. No output shape changes.
+**Outputs are unchanged.** This RFC moved the input to identity. The four return contracts — conflicts, score, change info, and build id/status — kept their shapes.
 
 The validate-time landability **check** and the **land** itself both run **asynchronously and out-of-process** in Runway rather than as in-process extensions. SubmitQueue adapts its land request to Runway's shared `MergeRequest`/`MergeResult` contract, where a conflict check is a dry run of a merge. `validate` hands off directly to Runway (→ `merge-conflict-check`, result back via `landconflictsignal`); `land` hands the batch to Runway (→ `runway-merge`, result back via `landsignal`). See [workflow.md](workflow.md). SubmitQueue retains no parallel in-process checking or pushing contract.
 

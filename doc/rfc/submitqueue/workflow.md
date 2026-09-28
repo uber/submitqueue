@@ -140,7 +140,7 @@ class node_submitter toneIndigo
 | **gateway/Land** | RPC | start | Mint the request id, persist an accepting receipt, publish the full land request, then persist Accepted |
 | **gateway/Cancel** | RPC | cancel | Publish a cancel request for an existing land |
 | **start** | LandRequest | validate, log | Persist the Request and publish it to validate |
-| **cancel** | CancelRequest | log, or speculate | Record Cancelling; finish a request that is not in a batch, or hand each cancellable batch attempt to speculate |
+| **cancel** | CancelRequest | log, or speculate | Record Cancelling. Finish a request that has no applicable batch. Hand each cancellable batch attempt to speculate. Leave a Landing or already-terminal batch for conclude |
 | **validate** | RequestID | merge-conflict-check (Runway), log | Dedup, fetch change metadata, claim changes, then publish the full `MergeRequest` to Runway keyed by the request id |
 | **landconflictsignal** | MergeResult | batch, or log | Correlate Runway's check; advance a landable request to batch, or fail a conflicted request |
 | **batch** | RequestID | dependency-analysis, log | Mint a Creating batch for the request and hand that batch id onward |
