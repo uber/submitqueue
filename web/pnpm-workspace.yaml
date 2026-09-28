@@ -1,0 +1,8 @@
+packages:
+  - api
+  - submitqueue
+  - service/*
+
+onlyBuiltDependencies:
+  - '@bufbuild/buf'
+  - esbuild

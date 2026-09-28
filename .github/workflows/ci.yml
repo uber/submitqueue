@@ -104,6 +104,24 @@ jobs:
         if: ${{ failure() }}
         uses: ./.github/actions/upload-testlogs
 
+  web:
+    name: Web
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: web/.nvmrc
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install web dependencies
+        run: make web-install
+      - name: Run web checks
+        run: make web-check
+
   # ---------------------------------------------------------------------------
   # INTEGRATION TESTS (e2e, gateway, orchestrator)
   # ---------------------------------------------------------------------------
@@ -125,6 +143,27 @@ jobs:
       - name: Upload Bazel failure logs
         if: ${{ failure() }}
         uses: ./.github/actions/upload-testlogs
+
+  web-e2e:
+    name: Web E2E
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: web/.nvmrc
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install web dependencies
+        run: make web-install
+      - name: Install Playwright Chromium
+        run: corepack pnpm@10.17.1 --dir web exec playwright install --with-deps chromium
+      - name: Run real-stack web E2E
+        run: make web-e2e-test
 
   gateway-integration-test:
     name: Gateway Integration Test
@@ -310,6 +349,8 @@ jobs:
       - queue-integration-test
       - storage-integration-test
       - consumer-integration-test
+      - web
+      - web-e2e
       - workflow-security
     steps:
       - name: Fail if any required check did not succeed

@@ -30,9 +30,14 @@ Compose publishes each service on a **random** host port so several stacks can r
 ✅ Stack is running against provider 'fake'.
 
 Gateway gRPC port: 58537
+Web UX:            http://localhost:58538
+Web username:      submitqueue
+Web token:         submitqueue-local-demo-token-change-me
 ```
 
 You do not have to note it down. Every command below finds the running stack's port for itself, which matters because Compose picks a fresh one on every start — a number copied from an earlier run is the most common reason a demo command cannot connect. Set `GATEWAY_ADDR=host:port` only to reach a gateway this Makefile did not start.
+
+The Web UX is a read-only reference host for the same gateway. Open the printed URL and use the printed HTTP Basic credentials. It lists receipts from `demo-queue` in a fixed trailing 24-hour window; after `make demo-requests`, select any row to see its current status and retained lifecycle history. The host and its default credential are deliberately local-demo wiring, not a production authentication design. Override the token with `SUBMITQUEUE_WEB_TOKEN=<at-least-32-characters> make local-submitqueue-start` when desired.
 
 ## Put traffic through it
 
