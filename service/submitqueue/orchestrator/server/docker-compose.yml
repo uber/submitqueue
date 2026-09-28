@@ -1,7 +1,7 @@
 # Docker Compose for Orchestrator Manual Testing
 #
 # IMPORTANT: Before running docker-compose, build the Linux binary:
-#   make build-orchestrator-linux
+#   make build-submitqueue-orchestrator-linux
 #   OR
 #   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/orchestrator/server
 #

@@ -13,7 +13,7 @@ import (
 	reflect "reflect"
 
 	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
-	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
+	storage0 "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,10 +42,10 @@ func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
 }
 
 // For mocks base method.
-func (m *MockFactory) For(config orchstorage.Config) (orchstorage.Storage, error) {
+func (m *MockFactory) For(config storage0.Config) (storage0.Storage, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "For", config)
-	ret0, _ := ret[0].(orchstorage.Storage)
+	ret0, _ := ret[0].(storage0.Storage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

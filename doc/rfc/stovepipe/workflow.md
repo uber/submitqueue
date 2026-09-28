@@ -2,16 +2,18 @@
 
 Stovepipe answers one question for the rest of the company: **at which commit is this thing green?** It continuously polls a repository branch for its latest commit, validates that commit, works out which projects (if any) are broken at it, records the result, and notifies downstream systems so they can gate deployments on a known-good commit. It is a post-land service: code lands first, Stovepipe finds out whether it was good.
 
-The pipeline is a queue-driven chain of small, single-purpose controllers, in the same style as SubmitQueue (SQ). Each controller consumes one topic, advances one entity, and publishes to the next topic. Most hops carry only an **ID** and the controller reloads the entity from storage; the entry hop carries the caller's input because there is no row to load yet. The high-level shape is:
+The pipeline is a queue-driven chain of small, single-purpose controllers, in the same style as SubmitQueue (SQ). Each controller consumes one topic, advances one entity, and publishes to the next topic. Most hops carry only an **ID** and the controller reloads the entity from storage; the entry hop carries the caller's input because there is no row to load yet. What runs today is:
 
-> **poll for a new head → ingest → process the build strategy → build → record greenness → analyze projects → record per-project greenness → notify downstream.**
+> **poll for a new head → ingest → process the build strategy → build → buildsignal → record whole-repo greenness (and any project results the resolver returns) → hook.**
+
+There is no `analyze` controller and no `analyze` topic. A later project-analysis stage that would map a target graph onto another `build` pass is design only, described under [Designed, not built](#designed-not-built-project-analysis). `record` resolves project results inline on the same delivery that writes the repository fact.
 
 ## What Stovepipe is agnostic about
 
 Two deliberate abstractions keep Stovepipe from being a git tool or a Bazel tool:
 
 - **The VCS is behind a `SourceControl` extension.** Stovepipe never shells out to git. Every commit, ref, and branch head is an opaque **URI** that a `SourceControl` implementation produces and interprets. A ref is `git://remote/repo/ref/…`; a specific commit is `git://remote/repo/ref/…/<sha>`. The `git://` scheme is just the reference implementation — a Mercurial or Perforce backend would mint its own scheme behind the same contract. Nothing downstream of `SourceControl` parses a URI; it is a token you hand back to `SourceControl` to ask questions ("is A an ancestor of B?", "what is the head of this ref?").
-- **The build system is behind a build-runner extension** (see [build-runner.md](../submitqueue/build-runner.md)), which returns a pass/fail and a **target graph** that the project-analysis stage maps to projects.
+- **The build system is behind a build-runner extension** (see [build-runner.md](../submitqueue/build-runner.md)). `Trigger` starts a build at a head URI, optionally against a baseline URI, and `Status` returns pass/fail plus metadata. A target graph that a separate analyze stage would map to projects is part of the unbuilt design, not this contract.
 
 Designing to these contracts — not to git and Bazel specifically — is the whole point: the same pipeline should validate any branch in any VCS built by any build system.
 
@@ -41,7 +43,7 @@ Greenness is recorded as a **health degree** where **`0` means green** and **hig
 
 ### Project — greenness at a finer grain
 
-A **project** is a caller-defined slice of the repository. Whole-repo greenness answers "is the branch green at this URI"; project greenness answers the question deployments actually need — **"is *this project* green at this URI"**, and its dual, "what is the latest URI at which this project is green". Projects are derived from the build's **target graph**: analysis sees which targets broke and maps them to projects. How targets map to projects is implementer-specific (directory ownership, build metadata, an external service) and lives behind the project-analysis stage, not in the core pipeline.
+A **project** is a caller-defined slice of the repository. Whole-repo greenness answers "is the branch green at this URI"; project greenness answers the question deployments actually need — **"is *this project* green at this URI"**, and its dual, "what is the latest URI at which this project is green". The running pipeline does not derive projects from a target graph. On a succeeded or failed request, `record` calls `projectresult.Resolver` and writes one validation fact per result it returns. The example server wires the noop resolver, which returns no results. How a resolver chooses projects is implementer-specific. The separate analyze stage that would map a target graph to project-scoped builds is not built; see [Designed, not built](#designed-not-built-project-analysis).
 
 ### Promotion ref — the last green commit, by name
 
@@ -54,15 +56,15 @@ The ref is a *cache* of the last-green URI, not a second record of greenness. It
 | Extension | Responsibility |
 |---|---|
 | **SourceControl** | Resolve a Queue name to its current head URI; answer ancestry/comparison questions between two URIs (is the new head a fast-forward descendant of the last green, or was history rewritten?); enumerate commits in a range; advance the Queue's **promotion ref** to a commit. The sole owner of URI semantics, including which refs a Queue name resolves to. |
-| **build-runner** | Build a scope at a URI (optionally relative to a baseline URI), returning pass/fail and the target graph. See [build-runner.md](../submitqueue/build-runner.md). |
-| **Hooks** | Deliver Stovepipe's validation events to downstream systems — "validation of this URI has begun", "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. The shared cross-domain hook seam rather than a Stovepipe-specific extension. See [hook-framework.md](../hook-framework.md). |
+| **build-runner** | Build a scope at a URI, optionally relative to a baseline URI. `Trigger` returns a build id; `Status` returns pass/fail and the caller-supplied metadata it echoed. It does not return a target graph. See [build-runner.md](../submitqueue/build-runner.md). |
+| **Hooks** | Deliver Stovepipe's validation events to downstream systems. What is published today is repository-scoped: validation of this URI has begun, this URI is green or not green, and a cancelled validation ended without a fact. Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. The shared cross-domain hook seam rather than a Stovepipe-specific extension. See [hook-framework.md](../hook-framework.md). |
 | **Storage** | Persist Queues (incl. last-green URI), Requests, build records, and per-URI / per-project greenness. Key/value-shaped per the extension-design rules in [AGENTS.md](../../../AGENTS.md). |
 
-Hooks are the notification boundary. When validation of a commit begins, and when a validation fact is recorded — whole-repo green/not-green, or later a project green/not-green — the event reaches deployment systems, dashboards, and developer tooling without any of them polling Stovepipe's store, and each environment can route it to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline. The mechanism is the cross-domain hook framework rather than a call out of the pipeline stages: `process` and `record` publish a `HookEvent` to Stovepipe's `hook` topic, and a dispatcher stage consumes it and invokes the wired hooks, so a slow or failing downstream cannot add latency to the pipeline. Both halves exist; what a deployment supplies is the hooks themselves, since the example server resolves every event to `noop`. See [process.md](steps/process.md#hooks) for the start event and [record.md](steps/record.md#hooks) for the fact-to-event mapping.
+Hooks are the notification boundary. When validation of a commit begins, when a whole-repository validation fact is recorded, and when a cancelled validation ends without a fact, the event reaches deployment systems, dashboards, and developer tooling without any of them polling Stovepipe's store, and each environment can route it to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline. The mechanism is the cross-domain hook framework rather than a call out of the pipeline stages: `process` and `record` publish a repository-scoped `HookEvent` to Stovepipe's `hook` topic, and a dispatcher stage consumes it and invokes the wired hooks, so a slow or failing downstream cannot add latency to the pipeline. Both halves exist; what a deployment supplies is the hooks themselves, since the example server resolves every event to `noop`. Per-project hook events are not published. See [process.md](steps/process.md#hooks) for the start event and [record.md](steps/record.md#hooks) for the fact-to-event mapping.
 
 ## Workflow
 
-The pipeline runs in two phases against the same Request. **Phase 1** establishes whole-repo greenness. **Phase 2** refines it to per-project greenness. Both phases reuse the same `build` → `buildsignal` → `record` machinery; `record` is re-entrant and fans out, which is why it is not a terminal stage.
+What runs is one pass per Request. It establishes whole-repository greenness, and on a succeeded or failed outcome `record` also writes whatever project facts `projectresult.Resolver` returns. That call is inline on the record delivery. It does not publish to another stage, and it does not start another build.
 
 ```
  external poller ──(Queue name)──► ┌──────────────────────────────┐
@@ -82,68 +84,43 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
                                    │ else (history rewrite)       │
                                    │  → full monorepo             │
                                    └───────────────┬──────────────┘
-              ┌────────────────────────────────────┤ RequestID (+ strategy, baseline URI)
-              │ PHASE 1: whole-repo greenness       ▼
-              │                    ┌──────────────────────────────┐
-              │                    │ build                        │
-              │                    │ Run build-runner for the     │
-              │                    │ chosen scope; baseline =     │
-              │                    │ last-green URI iff incremental│
-              │                    └───────────────┬──────────────┘
-              │                                    │ BuildID
-              │                                    ▼
-              │                    ┌──────────────────────────────┐
-              │                    │ buildsignal                  │
-              │                    │ Await/record build status +  │
-              │                    │ target graph                 │
-              │                    └───────────────┬──────────────┘
-              │                                    │ BuildID
-              │                                    ▼
-              │                    ┌──────────────────────────────┐   Hooks
-              │                    │ record                       │┄┄┄┄┄►  "URI green /
-              │                    │ Write whole-repo greenness    │      not green"
-              │                    │ for URI; if green advance     │
-              │                    │ Queue's last-green URI; Hooks │
-              │                    └───────────────┬──────────────┘
-              │ PHASE 2: project greenness         │ RequestID
-              │                                    ▼
-              │                    ┌──────────────────────────────┐
-              │                    │ analyze                      │
-              │                    │ Map broken/at-risk targets   │
-              │                    │ → projects (impl-specific);  │
-              │                    │ decide project-scoped builds │
-              │                    └───────────────┬──────────────┘
-              │                                    │ RequestID (+ project)
-              │                                    ▼
-              │                    ┌──────────────────────────────┐
-              │                    │ build → buildsignal          │
-              │                    │ CI job runs; artifacts stored │
-              │                    │ in blob store; status read    │
-              │                    └───────────────┬──────────────┘
-              │                                    │ BuildID
-              │                                    ▼
-              │                    ┌──────────────────────────────┐   Hooks
-              └───────────────────►│ record                       │┄┄┄┄┄►  "project P
-                                   │ Capture per-project greenness │      green / not
-                                   │ for the URI; hook event       │      green at URI"
+                                                   │ RequestID (+ strategy, baseline URI)
+                                                   ▼
+                                   ┌──────────────────────────────┐
+                                   │ build                        │
+                                   │ Run build-runner for the     │
+                                   │ chosen scope; baseline =     │
+                                   │ last-green URI iff incremental│
+                                   └───────────────┬──────────────┘
+                                                   │ BuildID
+                                                   ▼
+                                   ┌──────────────────────────────┐
+                                   │ buildsignal                  │
+                                   │ Poll until terminal; record  │
+                                   │ status; release the slot;    │
+                                   │ project the outcome          │
+                                   └───────────────┬──────────────┘
+                                                   │ RequestID
+                                                   ▼
+                                   ┌──────────────────────────────┐   Hooks
+                                   │ record                       │┄┄┄┄┄►  "URI green,
+                                   │ Write whole-repo greenness;  │      not green, or
+                                   │ on green advance last-green  │      cancelled"
+                                   │ and the promotion ref;       │
+                                   │ resolve project results      │
+                                   │ inline                       │
                                    └──────────────────────────────┘
 ```
-
-### Phase 1 — whole-repo greenness
 
 1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward.
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, publishes a **hook event** announcing that validation of the commit has begun, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
-4. **buildsignal** — records the build's status and target graph when the build completes, then releases the Queue's `in_flight_count` slot, projects the terminal status onto the Request (`succeeded` / `failed` / `cancelled`), and publishes the RequestID to `record`.
-5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here, and asks `SourceControl` to advance the Queue's **promotion ref** to the same commit (see [Promotion ref](#promotion-ref--the-last-green-commit-by-name)). It publishes a **hook event** for the green/not-green transition, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
+4. **buildsignal** — polls until the build is terminal, records that status, releases the Queue's `in_flight_count` slot, projects the terminal status onto the Request (`succeeded` / `failed` / `cancelled`), and publishes the RequestID to `record`.
+5. **record** — for a succeeded or failed Request, writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here, and asks `SourceControl` to advance the Queue's **promotion ref** to the same commit (see [Promotion ref](#promotion-ref--the-last-green-commit-by-name)). It then calls `projectresult.Resolver` and writes one validation fact per returned result. The example server uses the noop resolver, so that list is empty unless a deployment supplies another. It publishes `validation.repository.recorded` for that fact. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal. A cancelled Request writes no fact and publishes `validation.repository.cancelled`, so a consumer can stop waiting on the commit.
 
-### Phase 2 — project greenness
+### Designed, not built: project analysis
 
-6. **analyze** (project-analysis) — takes the build's target graph and maps the relevant targets to **projects**, using whatever implementer-specific mapping is configured. It decides which project-scoped builds / CI jobs are needed to attribute breakage to specific projects, and publishes those builds.
-7. **build → buildsignal** — the project-scoped CI job runs; its artifacts are stored in a blob store (e.g. TerraBlob), and `buildsignal` reads back the status. This is the same machinery as Phase 1, reused at project granularity.
-8. **record** — captures **per-project greenness for the URI** — for each project, green or not at this commit — and publishes one hook event per project. This is what lets a caller ask "is project P green at URI U?" and "what is the latest URI where project P is green?".
-
-`record` appearing twice is intentional: it is one re-entrant stage that records greenness at whatever granularity the current phase produced and notifies downstream. The Request is *complete* when every planned granularity has been recorded, not at a single terminal hop.
+An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` has no analyze topic, and `stovepipe/controller` has no analyze package. The design, still only a design, is a stage that would take a build's target graph, map broken or at-risk targets to projects, and publish project-scoped builds back through `build` → `buildsignal` → `record`. That second pass, a per-project hook event, and intermediate greenness degrees are not what the controllers do. Open questions for that design stay at the bottom of this doc.
 
 ## Per-controller summary
 
@@ -152,9 +129,9 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 | **ingest** | Queue name (from poller) | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
 | **process** | RequestID | build, hook topic | Build strategy, concurrency gate, backlog coalescing; announce validation start on admit → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
-| **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; release `in_flight_count`; project the outcome onto the Request; signal completion |
-| **record** | RequestID | analyze (P1→P2), hook topic | Write greenness; on whole-repo green advance last-green URI and the promotion ref; publish the hook event |
-| **analyze** | RequestID | build | Map broken/at-risk targets → projects; decide project-scoped builds |
+| **buildsignal** | BuildID | record | Record terminal build status; release `in_flight_count`; project the outcome onto the Request; publish the request id |
+| **record** | RequestID | hook topic | Write whole-repo greenness; resolve project results inline; on green advance last-green URI and the promotion ref; publish the recorded or cancelled repository hook event |
+| **hook** | HookEvent | — | Invoke the hooks the resolver returns. The example server resolves every event to noop |
 
 ## Step RFCs
 
@@ -162,8 +139,8 @@ Per-stage design detail lives under `steps/` so this doc stays a pipeline overvi
 
 - [process.md](steps/process.md) — build-strategy decision, concurrency gate, backlog coalescing, [concurrency lifecycle](steps/process.md#concurrency-lifecycle), entity changes, [waiting for a slot](steps/process.md#waiting-for-a-slot)
 - [build.md](steps/build.md) — trigger-only stage: reads the decided scope off the Request, triggers the build-runner, hands off to buildsignal; the stovepipe `BuildRunner` contract and why it differs from SubmitQueue's
-- [buildsignal.md](steps/buildsignal.md) — the poll loop: hold-based re-poll cadence, target-graph return, per-build partitioning, and the fail-closed handoff to record
-- [record.md](steps/record.md) — turning a terminal build outcome into an immutable validation fact, monotonic last-green advancement and ref promotion, the hook event announcing the outcome, and the deferred analyze handoff
+- [buildsignal.md](steps/buildsignal.md) — the poll loop: hold-based re-poll cadence, per-build partitioning, and the fail-closed handoff to record
+- [record.md](steps/record.md) — turning a terminal build outcome into an immutable validation fact, monotonic last-green advancement and ref promotion, and the hook event announcing the outcome. Its Phase 2 / analyze handoff is the unbuilt design, not a topic `record` publishes
 
 ## Dedup, idempotency, and history rewrites
 
@@ -177,5 +154,4 @@ Callers gate deployments on greenness, so the dangerous failure is a Request tha
 
 - **Greenness degree semantics.** The endpoints (`0` green, `1` fully broken) are fixed; the meaning of intermediate values once projects exist (fraction of projects broken? weighted severity?) is deferred until project analysis is concrete.
 - **Poller vs. webhook ingestion.** Only the external poller is in scope now. The dedup key is designed so a webhook producer can be added later without changing identity, but that producer is out of scope for this RFC.
-- **Project mapping contract.** The exact shape of the target-graph→project mapping behind `analyze` (and whether it is a Stovepipe extension or an external service) is left to the project-analysis design.
-</content>
+- **Project mapping contract.** Not built. There is no analyze controller or topic. `record` already persists facts from `projectresult.Resolver` on the same delivery as the repository fact. The unbuilt analyze design — a target-graph mapping, project-scoped builds, and whether that mapping is an extension or an external service — is still open.

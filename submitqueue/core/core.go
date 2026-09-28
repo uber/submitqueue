@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package core groups infrastructure shared across SubmitQueue's own services
-// (gateway and orchestrator) — the SubmitQueue-scoped analogue of the repo-level
-// core/. Cross-domain infrastructure lives in the top-level core/; this package
-// is for plumbing private to SubmitQueue. Subpackages: core/consumer (queue
-// consumption framework) and core/request (request lifecycle shared by gateway
-// and orchestrator).
+// Package core groups infrastructure shared by SubmitQueue's gateway and
+// orchestrator. Cross-domain infrastructure lives under platform/. The
+// subpackages here are changeset (change-set resolution), messagequeue
+// (internal pipeline contracts), and topickey (topic-key constants). Request
+// materialization lives in gateway/core/request; publishing and termination
+// live in orchestrator/core/request; batch helpers live in
+// orchestrator/core/batch.
 package core

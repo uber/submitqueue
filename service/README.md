@@ -17,7 +17,7 @@ Each domain has its own subdirectory with a dedicated README:
 | **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes process, build, buildsignal, record, stovepipe-hook, and paired DLQ topics) | MySQL storage + queue |
 | **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & runway-merge topics) | MySQL queue |
 
-Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port (use `make local-*-ps` / `docker port` to discover it).
+Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port. `make local-submitqueue-ps` is the only status target, and it prints the SubmitQueue mappings. `make local-stovepipe-start` and `make local-runway-start` print their ports when those stacks come up.
 
 ## Directory Structure
 
@@ -63,11 +63,14 @@ make local-runway-start
 make local-submitqueue-logs
 make local-submitqueue-ps
 
-# Stop everything (SubmitQueue + Stovepipe + Runway)
+# Stop one stack, or every stack
+make local-submitqueue-stop
+make local-stovepipe-stop
+make local-runway-stop
 make local-stop
 ```
 
-`make local-stop` stops the SubmitQueue, Stovepipe, and Runway stacks; the per-domain `make local-stovepipe-stop` / `make local-runway-stop` targets stop just one. Each `build-*-linux` target copies a distinct Linux binary into `.docker-bin/` so the compose stacks don't clobber each other's artifacts.
+`make local-submitqueue-stop`, `make local-stovepipe-stop`, and `make local-runway-stop` each stop one stack. `make local-stop` stops all three. MySQL data sits on anonymous volumes, so a stop leaves those databases empty on the next start. `make local-submitqueue-stop` also names the provider overlay and leaves a `PROVIDER=git` sandbox in place; `make local-submitqueue-clean` removes that sandbox along with leftover volumes and images. Each `build-*-linux` target copies a distinct Linux binary into `.docker-bin/` so the compose stacks don't clobber each other's artifacts.
 
 ### Bazel
 

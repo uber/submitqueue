@@ -1,18 +1,22 @@
 # Modular Queue Wiring
 
-Design notes for making the orchestrator's per-queue extension wiring and topic-registry setup modular, reusable, and importable by external deployers. Decisions and rationale only; the code changes land after this RFC is reviewed.
+Design notes for making the orchestrator's per-queue extension wiring and topic-registry setup modular, reusable, and importable by external deployers.
+
+## Status
+
+Implemented for the SubmitQueue orchestrator. `submitqueue/orchestrator/pipeline.go` declares `Deps` and `Stages`. `service/submitqueue/orchestrator/server/main.go` fills `Deps` from `profiles.go` and calls `pipeline.Construct`. Stovepipe remains hand-wired in `service/stovepipe/server/main.go`. The gateway and Runway servers also register their consumers directly. This document is the design that orchestrator wiring follows. It is not a claim that every service in the repo uses the engine.
 
 ## Problem
 
-The orchestrator's example `main.go` (`example/submitqueue/orchestrator/server/main.go`) is ~950 lines that mixes three distinct concerns:
+Before `pipeline.Construct`, the orchestrator host (`service/submitqueue/orchestrator/server/main.go`, previously laid out under `example/submitqueue/orchestrator/server/main.go`) mixed three distinct concerns:
 
 1. **Infrastructure bootstrap** — DB connections, logger, metrics, gRPC server, signal handling (~200 lines of generic boilerplate, much of it duplicated between gateway and orchestrator).
 2. **Queue topology / topic registry** — `newTopicRegistry` is a static list of 12+ pipeline stages, each with a primary subscription and a mirrored DLQ subscription, plus publish-only topics. Adding or removing a pipeline stage requires editing this function in lockstep with controller registration.
 3. **Per-queue extension wiring** — `queueRegistry`, `newQueueRegistry`, and four thin `*Factory` adapter types. The only way to configure which scorer / analyzer / change-provider / build-runner a queue uses is to edit Go code in this file, recompile, and redeploy.
 
-Adding a new queue today requires changes in **three places**: YAML config (`queues.yaml`), Go code (`newQueueRegistry`), and a recompile. Adding a new pipeline stage requires **two coordinated edits** (topic list + controller registration). The topic → subscription → DLQ subscription → DLQ controller linkage is maintained by copy-paste across 12 stages, where forgetting any half creates a silent failure.
+Adding a new queue required changes in **three places**: YAML config (`queues.yaml`), Go code (`newQueueRegistry`), and a recompile. Adding a new pipeline stage required **two coordinated edits** (topic list + controller registration). The topic → subscription → DLQ subscription → DLQ controller linkage was maintained by copy-paste across the stages, where forgetting any half creates a silent failure.
 
-The queue-registry pattern is flagged as a candidate for promotion into the domain layer once a second consumer needs the same wiring, data-driven config, or lifecycle requirements. Today the orchestrator's `main.go` wires it inline.
+For the orchestrator, that assembly now lives in `pipeline.Construct` and the stage table. Per-queue implementation choice lives in `service/submitqueue/orchestrator/server/profiles.go`. Stovepipe's server still registers each controller by hand.
 
 ## Vocabulary
 
@@ -23,7 +27,7 @@ stage    one pipeline step: a topic being consumed + the controller consuming it
          (+ optionally its dead-letter reconciler)
 engine   pipeline.Construct — the ONE shared assembly routine
 profile  the host's per-queue choice of seam impls
-host     the deployer binary: our own example/ mains, or an external repo's fx/plain-main app
+host     the deployer binary: our own service/ mains, or an external repo's fx/plain-main app
 ```
 
 ## Principle
@@ -68,7 +72,7 @@ type Component interface {
 func NewGroup(ordered ...Component) *Group
 ```
 
-The engine uses Group internally; hosts can also nest Groups (e.g. two services in one process). This replaces the ad-hoc `sync.WaitGroup` + `chan` + manual error-joining in today's main.go.
+The engine uses Group internally; hosts can also nest Groups (e.g. two services in one process). This replaces the ad-hoc `sync.WaitGroup` + `chan` + manual error-joining the host used before `pipeline.Construct`.
 
 ### Step 2 · `platform/pipeline` — the engine
 
@@ -267,15 +271,17 @@ row appears on topic "start", partition key "monorepo/exp"
                deps.BuildRunner.For(Config{QueueName: "monorepo/exp"})
                 └─▶ Step 4's adapter → profiles.For("monorepo/exp").BuildRunner → local runner
                      (the SAME Deps field answers "monorepo/main" with buildkite
-                      on the next delivery — that's the Factory-as-resolver contract,
-                      identical to today's buildRunnerFactory{queues} in main.go)
+                      on the next delivery — that's the Factory-as-resolver contract
+                      the host's profiles satisfy)
       controller returns nil ⇒ ack
       controller returns err ⇒ Step 5's classifier decides: retry (nack) or not;
       after retry budget ⇒ row moves to "start_dlq" ⇒ Step 2's derived pairing
       guarantees the reconciler from Step 3's DLQ field is listening there
 ```
 
-## Generalizes across all four services
+## Shape across services
+
+Only the orchestrator column is assembled by `pipeline.Construct`. The gateway, Stovepipe, and Runway columns are the intended seams; those servers still register controllers by hand.
 
 ```
                  gateway              orchestrator          stovepipe            runway
@@ -640,7 +646,7 @@ Profile selection (which scorer/conflict/build-runner a queue uses) deserves sep
 
 ### Current role of QueueConfig
 
-`QueueConfig` today is a single-field entity (`Name string`). Its sole consumer is the gateway's `LandController`, which calls `queueconfig.Store.Get(ctx, queue)` to reject requests targeting unknown queues — a pure name-validation gate. The orchestrator does not import `queueconfig` at all; it maintains its own hardcoded `queueRegistry` with no programmatic link to the YAML config. The TODO on line 475 of the orchestrator example envisions bridging the two ("see also queueconfig.Store, which holds the per-queue data half"), but that bridge does not exist today.
+`QueueConfig` is a single-field entity (`Name string`). The gateway's `Land` and `List` controllers call `queueconfig.Store.Get` to reject unknown queues — a pure name-validation gate. The orchestrator host does not read that store. `service/submitqueue/orchestrator/server/profiles.go` chooses each queue's implementations, and the server passes the resulting factories into `orchestrator.Deps`.
 
 ### Three options for per-queue extension selection
 

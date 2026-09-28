@@ -1,7 +1,7 @@
 # Docker Compose for Full Stack (Gateway + Orchestrator + MySQL)
 #
 # IMPORTANT: Before running docker-compose, build the Linux binaries:
-#   make build-gateway-linux build-orchestrator-linux
+#   make build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux
 #   OR
 #   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/gateway/server //service/submitqueue/orchestrator/server
 #

@@ -2,13 +2,17 @@
 
 How queue payloads are defined, located, and bound to topics across domains.
 
+## Status
+
+Implemented. Queue payloads are proto3 messages serialized as protobuf JSON (`protojson`). External contracts live under `api/{domain}/messagequeue/`; internal contracts live under `{domain}/core/messagequeue/`. Each message binds the topic keys that carry it with the `topic_keys` option. The problem below is the pre-migration gap; the decisions are the rationale the migration followed and the contract the code uses now.
+
 ## Problem
 
-Queue payloads are Go structs serialized with `encoding/json` (`submitqueue/entity`, `runway/entity`), so the wire shape is defined only by Go source. Three gaps:
+Before this contract, queue payloads were Go structs serialized with `encoding/json` (`submitqueue/entity`, `runway/entity`), so the wire shape was defined only by Go source. Three gaps:
 
-- **No language-neutral contract.** Some payloads cross a domain boundary — a client written in another language has nothing to compile or validate against.
-- **No topic-to-payload binding.** `consumer.TopicRegistry` maps a `TopicKey` to a backend, topic name, and subscription — but not to the payload schema. That knowledge lives implicitly in whichever controller (de)serializes.
-- **No audience distinction.** Nothing separates private wiring between our own services from a published cross-domain contract.
+- **No language-neutral contract.** Some payloads cross a domain boundary — a client written in another language had nothing to compile or validate against.
+- **No topic-to-payload binding.** `consumer.TopicRegistry` maps a `TopicKey` to a backend, topic name, and subscription — but not to the payload schema. That knowledge lived implicitly in whichever controller (de)serialized.
+- **No audience distinction.** Nothing separated private wiring between our own services from a published cross-domain contract.
 
 ## Decisions
 
