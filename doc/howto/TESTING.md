@@ -144,6 +144,8 @@ Shared (cross-domain) suites carry no domain segment — e.g. the shared queue e
 | SubmitQueue consumer (core) | `core-submitqueue-consumer` | `sq-test-core-submitqueue-consumer-…-mysql-1` |
 | SubmitQueue e2e (full stack) | `e2e-submitqueue` | `sq-test-e2e-submitqueue-def456-gateway-service-1` |
 
+The same shape covers the other suites, including `e2e-stovepipe`, `e2e-runway`, `e2e-submitqueue-git`, and `ext-messagequeue-vitess`.
+
 ### Parallel execution
 
 Each suite normally gets a distinct project name (`{context}-{shortid}`), where the short suffix is derived from the low 24 bits of the current nanosecond timestamp. It is useful for separating concurrent runs but is not a guaranteed unique identifier. Every compose service publishes **ephemeral host ports** (`- "3306"`, `- "8080"`), so suites can run **in parallel**. `make integration-test` runs suites concurrently via `--test_output=errors` (`--test_output=streamed` would force Bazel to serialize them). The domain-qualified context keeps container names understandable when many run at once.
@@ -158,11 +160,11 @@ For additional manual inspection:
 # See what tests are currently running
 docker ps --format "table {{.Names}}\t{{.Status}}" | grep sq-test
 
-# Find all containers from gateway test
-docker ps | grep sq-test-gateway
+# Find all containers from the SubmitQueue gateway integration test
+docker ps | grep sq-test-svc-submitqueue-gateway
 
 # Inspect a specific test's MySQL
-docker exec -it sq-test-ext-counter-2ce1d0-mysql-1 \
+docker exec -it sq-test-ext-counter-mysql-2ce1d0-mysql-1 \
   mysql -uroot -proot submitqueue -e "SHOW TABLES;"
 ```
 
@@ -277,7 +279,8 @@ grpcurl -plaintext -import-path . -proto api/submitqueue/gateway/proto/gateway.p
 | `make local-submitqueue-ps` | Show running containers and ports |
 | `make local-submitqueue-logs` | Follow logs from all services |
 | `make local-submitqueue-restart` | Rebuild and restart all services |
-| `make local-stop` | Stop all services (keep data) |
+| `make local-submitqueue-stop` | Stop the SubmitQueue stack (MySQL data does not survive; a `PROVIDER=git` sandbox is left in place) |
+| `make local-stop` | Stop SubmitQueue, Stovepipe, and Runway |
 | `make local-submitqueue-gateway-stop` | Stop Gateway service |
 | `make local-submitqueue-orchestrator-stop` | Stop Orchestrator service |
 | `make local-submitqueue-clean` | Stop and remove all services, volumes, and images |
@@ -351,6 +354,10 @@ docker network ls | grep sq-test | awk '{print $1}' | xargs docker network rm
 ---
 
 ## Writing New Tests
+
+Integration tests under `test/integration/` use the directory name as the package (`package gateway`, `package orchestrator`, `package stovepipe`, `package mysql`), not an external `*_test` package.
+
+End-to-end tests under `test/e2e/` are the exception: every suite there is `package e2e_test`.
 
 ### Adding Unit Tests
 

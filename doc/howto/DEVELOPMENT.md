@@ -90,20 +90,33 @@ brew install grpcurl
 
 ## Common Make Targets
 
+`make help` lists every target. The table below is the day-to-day set.
+
+CI runs `make lint`, `make check-tidy`, and `make check-gazelle`. `make lint` includes the format check, license headers, the tracked-binary check, the message-ID check, and the queue-shard check. `make fmt`, `make tidy`, and `make gazelle` apply the corresponding fixes. `make mocks` regenerates the checked-in mockgen files; `make check-mocks` fails when that output differs from the tree. `make clean` removes the Bazel cache and `bin/`. Generated protobuf Go files stay in the source tree until `make clean-proto`; `make proto` writes them again.
+
 | Target | Description |
 |--------|-------------|
 | `make build` | Build all services |
 | `make test` | Run unit tests |
 | `make integration-test` | Run all integration tests (Docker-based) |
 | `make e2e-test` | Run end-to-end tests |
+| `make fmt` | Format Go and YAML |
+| `make lint` | Run the linters CI runs |
+| `make tidy` | Tidy `go.mod` and `MODULE.bazel` |
+| `make check-tidy` | Fail if `go.mod` or `MODULE.bazel` is untidy |
+| `make check-gazelle` | Fail if `BUILD.bazel` files are stale |
+| `make gazelle` | Update `BUILD.bazel` files |
+| `make mocks` | Regenerate mockgen files |
+| `make check-mocks` | Fail if generated mocks are stale |
 | `make proto` | Regenerate protobuf files |
-| `make gazelle` | Update BUILD.bazel files |
+| `make clean` | Remove the Bazel cache and `bin/` |
+| `make clean-proto` | Remove generated protobuf Go files |
 | `make local-submitqueue-start` | Start full workflow stack (Gateway + Orchestrator + Runway + two MySQL databases) |
-| `make local-submitqueue-ps` | Show running containers and ports |
-| `make local-submitqueue-logs` | View logs from all services |
-| `make local-stop` | Stop all services |
-| `make clean` | Clean generated files and binaries |
-| `make help` | Show all available targets with descriptions |
+| `make local-submitqueue-ps` | Show running SubmitQueue containers and ports |
+| `make local-submitqueue-logs` | View logs from all SubmitQueue services |
+| `make local-submitqueue-stop` | Stop the SubmitQueue stack |
+| `make local-stop` | Stop SubmitQueue, Stovepipe, and Runway |
+| `make help` | List every target |
 
 ## Running Specific Tests
 

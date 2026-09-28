@@ -38,42 +38,49 @@ request.Version = newVersion
 ```
 submitqueue/                        # repo root (Go module github.com/uber/submitqueue)
 ├── api/                            # Published wire contracts (cross-domain/external)
+│   ├── base/                       # Shared protos (change/, hook/, mergestrategy/, messagequeue/)
 │   ├── submitqueue/{gateway,orchestrator}/{proto,protopb}/   # RPC (proto)
 │   ├── stovepipe/{proto,protopb}/  # single-service RPC (proto) — no service segment yet
 │   ├── runway/{proto,protopb}/     # RPC (proto) — single-service domain, no service segment
 │   └── runway/messagequeue/        # external queue contracts (proto + protojson)
 ├── platform/                       # SHARED cross-domain packages — no domain deps
-│   ├── errs/, metrics/, consumer/, http/
+│   ├── errs/, metrics/, consumer/, http/, publish/
+│   ├── git/, hook/, lifecycle/, pipeline/
 │   ├── base/                       # SHARED entities (change/, messagequeue/, …)
 │   └── extension/                  # SHARED extension contracts + backends (counter/, messagequeue/, …)
 ├── submitqueue/                    # SubmitQueue domain
 │   ├── gateway/                    # Gateway service (port 8081) - entry point
-│   │   └── extension/              # Aggregates/backends only the gateway resolves (storage/)
+│   │   ├── core/request/           # Request-log materialization
+│   │   └── extension/storage/      # Aggregate, MySQL implementation, and schema
 │   ├── orchestrator/               # Orchestrator service (port 8082) - coordinates jobs
-│   │   └── extension/              # Aggregates/backends only the orchestrator resolves (storage/)
+│   │   ├── core/                   # request publish/terminate; batch helpers
+│   │   └── extension/storage/      # Aggregate, MySQL implementation, and schema
+│   ├── client/                     # Gateway client for CLIs and the demo
 │   ├── entity/                     # SubmitQueue-specific domain entities
 │   ├── extension/                  # SubmitQueue-specific extension contracts and implementations
-│   └── core/                       # SubmitQueue-internal shared infra (changeset, messagequeue, topickey)
+│   └── core/                       # Shared infra both services use (changeset, messagequeue, topickey)
 ├── stovepipe/                      # Stovepipe domain (single service)
 │   ├── controller/                 # RPC and queue-stage business logic
 │   ├── entity/                     # Stovepipe domain entities
 │   ├── extension/                  # Stovepipe-specific extension contracts and implementations
 │   └── core/                       # Stovepipe-internal queue contracts and shared infrastructure
 ├── runway/                         # Runway domain (single service — the domain *is* the service)
-│   └── controller/                 # Runway service controllers (consumes the merge queues; no gateway/orchestrator split)
+│   ├── controller/                 # Merge-queue controllers (no gateway/orchestrator split)
+│   └── extension/                  # Runway extensions (merger/)
 ├── tool/                           # Development and CI tooling
 ├── service/                        # Runnable server/client wiring (entry points + Docker Compose)
+│   ├── messagequeue/               # Shared queue MySQL pool and tenant configuration
 │   ├── submitqueue/                # Runnable SubmitQueue servers/clients + Docker Compose
 │   ├── stovepipe/                  # Runnable Stovepipe server/client + Docker Compose
 │   └── runway/                     # Runnable Runway server/client + Docker Compose
 ├── test/
-│   ├── e2e/submitqueue/            # End-to-end tests (full stack)
+│   ├── e2e/{submitqueue,stovepipe,runway}/  # End-to-end tests
 │   ├── integration/                # Integration tests (platform/, submitqueue/, stovepipe/, …)
 │   └── testutil/                   # Test utilities (ComposeStack, MySQL helpers)
 └── doc/                            # Documentation
 ```
 
-The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). A multi-service **domain** (e.g. `submitqueue/`) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services. A **single-service domain** collapses that split — the domain *is* the service, so its controllers live directly under the domain root (e.g. `runway/controller/`, `stovepipe/controller/`) with no `gateway/`/`orchestrator/` segment, and its wire contract is service-segment-free (`api/{domain}/`). `runway` is a consumer-only merge execution service with no gateway. `stovepipe` exposes ingestion RPC behavior and runs its own process, build, build-signal, record, hook, and DLQ queue stages.
+The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). A multi-service **domain** (e.g. `submitqueue/`) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared by that domain's services — SubmitQueue's is `changeset`, `messagequeue`, and `topickey`. Helpers that serve one service live under that service: `submitqueue/gateway/core/request` materializes request logs, `submitqueue/orchestrator/core/request` publishes and terminates them, and `submitqueue/orchestrator/core/batch` moves batches and their queue membership records. A **single-service domain** collapses that split — the domain *is* the service, so its controllers live directly under the domain root (e.g. `runway/controller/`, `stovepipe/controller/`) with no `gateway/`/`orchestrator/` segment, and its wire contract is service-segment-free (`api/{domain}/`). `runway` is a consumer-only merge execution service with no gateway; it publishes merge results on the signal queues. `stovepipe` exposes ingestion RPC behavior and runs its own process, build, build-signal, record, hook, and DLQ queue stages.
 
 The `api/` tree holds **published** wire contracts — those depended on from outside the owning domain. RPC contracts live at `api/{domain}/{service}/` (`proto/` for `.proto` sources, `protopb/` for committed generated Go); for a single-service domain the service segment is dropped, so the contract lives directly at `api/{domain}/` (e.g. `api/runway/{proto,protopb}/`). A service package may hold multiple `.proto` files, all generating into the same `protopb/`. External message-queue contracts live at `api/{domain}/messagequeue/` (see Message Queue Contracts below). Internal queue contracts do **not** go here — they live under `{domain}/core/messagequeue/`.
 
@@ -175,7 +182,8 @@ Paths follow the directory layout: shared packages live under `platform/` at the
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage`)
 - Service-scoped extensions: `github.com/uber/submitqueue/{domain}/{service}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/orchestrator/extension/storage/mysql`)
 - Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; internal topic keys live with the owning domain contract (for example `submitqueue/core/messagequeue` and `stovepipe/core/messagequeue`); external queue topic keys live with their published contract (for example `api/runway/messagequeue`)
-- Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/request`)
+- Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/changeset`, `.../submitqueue/core/messagequeue`)
+- Service-scoped infra: `github.com/uber/submitqueue/{domain}/{service}/core/{pkg}` (e.g. `.../submitqueue/gateway/core/request`, `.../submitqueue/orchestrator/core/request`, `.../submitqueue/orchestrator/core/batch`)
 - Shared entities: `github.com/uber/submitqueue/platform/base/{pkg}` (e.g. `.../platform/base/messagequeue`)
 - Shared extensions: `github.com/uber/submitqueue/platform/extension/{ext}[/{impl}]` (e.g. `.../platform/extension/messagequeue/mysql`)
 - Cross-domain infra: `github.com/uber/submitqueue/platform/{pkg}` (e.g. `.../platform/errs`, `.../platform/metrics`, `.../platform/http`)
@@ -246,7 +254,7 @@ make local-submitqueue-start        # Start full stack with Docker Compose
 make local-submitqueue-ps           # Show running containers and ports
 make local-submitqueue-logs         # View logs from all services
 make local-stop         # Stop all services
-make clean              # Clean Bazel cache
+make clean              # Clean Bazel cache and bin/
 ```
 
 ### Common Workflows

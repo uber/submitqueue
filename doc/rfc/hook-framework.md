@@ -2,9 +2,13 @@
 
 Fire-and-forget side effects for pipeline lifecycle events: one shared event contract, a durable hook topic per domain, pluggable hooks.
 
+## Status
+
+Implemented. The contract is `api/base/hook`, the dispatcher and DLQ reconciler are `platform/hook`, and the extension is `platform/extension/hook`. Stovepipe's `process` and `record` publish repository-scoped hook events, and `service/stovepipe/server` registers the stage. The SubmitQueue orchestrator pipeline registers a `submitqueue-hook` stage; no orchestrator controller publishes a hook event, and `service/submitqueue/orchestrator/server` resolves every event to noop. A deployment's real integrations are whatever its resolver returns.
+
 ## Problem
 
-The pipelines emit lifecycle transitions — a request lands or fails, a batch lands, a build finishes — but nothing can react outside pipeline state: no warehouse export, no PR comments or closes on land events, no notifications or audit trails. The log topic is not this seam: SubmitQueue request statuses only, consumed solely to build gateway read models.
+The pipelines emit lifecycle transitions — a request lands or fails, a batch lands, a build finishes — and a side effect needs a place outside pipeline state: warehouse export, PR comments or closes on land events, notifications, audit trails. The log topic is not this seam: SubmitQueue request statuses only, consumed solely to build gateway read models.
 
 Two requirements: side effects must never stall or fail the pipeline, and "fire and forget" must not mean lossy — a land-failure comment that silently never posts is a support ticket.
 

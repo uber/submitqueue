@@ -232,7 +232,7 @@ check-tidy: tidy ## Check that go.mod and MODULE.bazel are tidy
 	$(call assert_clean,make tidy)
 	@echo "Module files are up to date."
 
-clean: ## Clean generated files and binaries
+clean: ## Remove the Bazel cache and bin/ (generated proto: make clean-proto)
 	@echo "Cleaning with Bazel..."
 	@$(BAZEL) clean
 	@rm -rf bin/
@@ -485,7 +485,7 @@ local-submitqueue-ps: ## Show running containers and their ports
 	@echo "  mysql -h127.0.0.1 -P$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'PORT') -uroot -proot submitqueue"
 	@echo ""
 	@echo "  # Call Gateway gRPC"
-	@echo "  grpcurl -plaintext -d '{\"message\":\"test\"}' localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'PORT') submitqueue.SubmitQueueGateway/Ping"
+	@echo "  grpcurl -plaintext -d '{\"message\":\"test\"}' localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'PORT') uber.submitqueue.gateway.SubmitQueueGateway/Ping"
 	@echo ""
 	@echo "  # View logs"
 	@echo "  make local-submitqueue-logs"
@@ -541,12 +541,12 @@ local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sand
 		echo "Sandbox repository left at $(SQ_GIT_SANDBOX_DIR); remove it with 'make local-submitqueue-clean'."; \
 	fi
 
-local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway (keep data)
+local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(RUNWAY_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
-	@echo "Services stopped. Data volumes preserved."
+	@echo "Services stopped. Anonymous database volumes are not reused on the next start."
 
 local-stovepipe-debug-start: build-stovepipe-linux-debug ## Start Stovepipe under delve in Docker (attach IDE to :2345)
 	@echo "Starting Stovepipe service with compose (debug)..."
@@ -581,9 +581,34 @@ local-stovepipe-stop: ## Stop the Stovepipe service
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@echo "Stovepipe service stopped."
 
+# go generate does not walk the module; every tree with a //go:generate directive is listed here.
+GO_GENERATE_PACKAGES := \
+	./platform/consumer/... \
+	./platform/extension/consumergate/... \
+	./platform/extension/counter/... \
+	./platform/extension/hook/... \
+	./platform/extension/messagequeue/... \
+	./runway/extension/merger/... \
+	./stovepipe/core/requestlog/... \
+	./stovepipe/extension/buildrunner/... \
+	./stovepipe/extension/projectresult/... \
+	./stovepipe/extension/queueconfig/... \
+	./stovepipe/extension/sourcecontrol/... \
+	./stovepipe/extension/storage/... \
+	./submitqueue/core/changeset/... \
+	./submitqueue/extension/buildrunner/... \
+	./submitqueue/extension/changeprovider/... \
+	./submitqueue/extension/conflict/... \
+	./submitqueue/extension/queueconfig/... \
+	./submitqueue/extension/speculation/... \
+	./submitqueue/extension/storage/... \
+	./submitqueue/extension/validator/... \
+	./submitqueue/gateway/extension/storage/... \
+	./submitqueue/orchestrator/extension/storage/...
+
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/gateway/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/hook/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./runway/extension/merger/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/core/requestlog/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/... ./stovepipe/extension/projectresult/...
+	@$(BAZEL) run @rules_go//go -- generate $(GO_GENERATE_PACKAGES)
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions

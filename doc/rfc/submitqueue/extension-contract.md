@@ -1,6 +1,10 @@
 # Extension Contract
 
-Design notes for what SubmitQueue's pluggable extensions accept: orchestrator **identity** they resolve themselves, versus **controller-resolved data**. Decisions and rationale only; the code changes land after this RFC is reviewed.
+Design notes for what SubmitQueue's pluggable extensions accept: orchestrator **identity** they resolve themselves, versus **controller-resolved data**.
+
+## Status
+
+Implemented for the extensions named here. `changeprovider.Get` takes `entity.Request`. `conflict.Analyzer.Analyze` takes the batch under analysis and the in-flight batches. `buildrunner.Trigger` takes base `[]entity.Batch` and a head `entity.Batch`. `scorer.Score` takes `entity.Batch` and `entity.SpeculationPathSet`. There is no separate score stage; speculation asks the scorer. `changeset.Resolver` is the shared batch-to-changes reader and still declares its own `Stores` slice rather than importing an orchestrator aggregate. Runway still performs the asynchronous conflict check and the land. In the verdict table, the proposed inputs are these signatures, except the scorer, which also receives the path set.
 
 ## Problem
 
@@ -21,9 +25,9 @@ Both unblock with the shape `conflict` already uses: accept identity, resolve in
 
 | Stage | Loads | Resolves for the extension | Hands to the extension |
 |---|---|---|---|
-| `validate` | `entity.Request` | nothing — `request.Change` is already in hand (the change-store reads here serve duplicate detection) | `request.Change` → `changeprovider` |
+| `validate` | `entity.Request` | the provider reads `request.Change`; change-store reads here serve duplicate detection | `entity.Request` → `changeprovider` |
 | `dependency` | `entity.Batch` + active `[]entity.Batch` | **nothing** — the batch it analyzes is already persisted, with `Contains` set to `[requestID]` | `entity.Batch`, `[]entity.Batch` → `conflict` |
-| `score` | `entity.Batch`, then each `entity.Request` | batch → requests | `request.Change` per request, then multiplies the scores → `scorer` |
+| speculation | `entity.Batch` and its path set | the scorer does not receive a controller-resolved `Change` | `entity.Batch`, `entity.SpeculationPathSet` → `scorer` |
 | `build` | head `entity.Batch` + path base `[]entity.Batch` | **nothing** — the build runner resolves each batch through its injected `changeset.Resolver` | base `[]entity.Batch`, head `entity.Batch` → `buildrunner` |
 
 This grounds `conflict` as the baseline: it already resolves nothing because the controller passes the identity it needs.

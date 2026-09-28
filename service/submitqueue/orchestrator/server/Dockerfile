@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y ca-certificates git && rm -rf /var/lib/
 WORKDIR /app
 
 # Copy pre-built Linux binary
-# Built via: make build-orchestrator-linux
+# Built via: make build-submitqueue-orchestrator-linux
 COPY --chmod=0555 .docker-bin/orchestrator ./orchestrator
 
 EXPOSE 8080

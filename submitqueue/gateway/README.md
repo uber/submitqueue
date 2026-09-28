@@ -19,7 +19,7 @@ The materializer appends the log, chooses the winning current status, and activa
 The gateway owns the request log read model and is the only service that reads it.
 
 - `Land` publishes first and then attempts to materialize `accepted`; publication is its success boundary. `Cancel` materializes `cancelling` before publishing so the user's intent is visible when the RPC returns.
-- For statuses produced downstream, the orchestrator publishes entries to the `log` topic through `submitqueue/core/request.PublishLog`. The gateway consumes that topic and persists each entry through the same materializer.
+- For statuses produced downstream, the orchestrator publishes entries to the `log` topic through `submitqueue/orchestrator/core/request.PublishLog`. The gateway consumes that topic and persists each entry through the same materializer (`submitqueue/gateway/core/request`).
 - Orchestrator DLQ reconciliation transitions durable request state and publishes terminal log entries to the same `log` topic; the gateway remains the materializer.
 - `GetRequestHistoryByID` and `GetRequestHistoryByChangeURI` read retained request-log rows directly.
 

@@ -49,11 +49,14 @@ Both services handle `SIGINT` (Ctrl+C) and `SIGTERM` gracefully:
 2. The Gateway stops its request-log consumer, and the Orchestrator stops its complete queue pipeline (30-second limit for each).
 3. The process exits with a code reflecting the outcome (see below).
 
-To stop Docker Compose services:
+To stop the SubmitQueue Compose stack:
 
 ```bash
-make local-stop
+make local-submitqueue-stop   # this stack only
+make local-stop                # SubmitQueue, Stovepipe, and Runway
 ```
+
+`make local-submitqueue-stop` is the SubmitQueue stop. The databases do not survive it, and a `PROVIDER=git` sandbox is left in place until `make local-submitqueue-clean`. `make local-stop` is reserved for stopping every local stack.
 
 ## Exit Codes
 

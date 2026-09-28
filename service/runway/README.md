@@ -117,4 +117,3 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8086 uber.runway.Runway/P
 ## Shutdown
 
 The server handles `SIGINT` / `SIGTERM` gracefully: it drains in-flight RPCs, then stops the queue consumers — primary and DLQ, 30s timeout each. It exits `0` on clean shutdown, `143` (128 + SIGTERM) when stopped by signal, and `1` on startup/runtime errors (details on stderr). Shutdown errors override the signal exit code.
-</content>

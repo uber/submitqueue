@@ -1,5 +1,7 @@
 # Gateway List API
 
+**Superseded.** This design was not implemented. The gateway list and request-summary APIs that shipped are specified in [status-list-api.md](status-list-api.md). Read that document for the current contract, including receipt-time windows rather than the lifecycle-overlap window below. This file is kept only as the earlier proposal.
+
 Design notes for a gateway `List` API that powers a queue-scoped UX for
 observing SubmitQueue requests over a time window.
 
