@@ -10,11 +10,11 @@ py_binary(
 
 py_test(
     name = "review-scope-test",
+    size = "small",
     srcs = [
         "review-scope.py",
         "review_scope_test.py",
     ],
     legacy_create_init = 0,
     main = "review_scope_test.py",
-    size = "small",
 )
