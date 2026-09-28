@@ -118,7 +118,7 @@ func TestPipelineSubscriptionRetryPolicies(t *testing.T) {
 	require.NoError(t, err)
 
 	defaultRetry := extqueue.DefaultSubscriptionConfig("subscriber", "unused").Retry
-	extendedRetry := extqueue.ExtendedRetrySubscriptionConfig("subscriber", "unused").Retry
+	extendedRetry := extqueue.ExtendedSubscriptionConfig("subscriber", "unused").Retry
 
 	tests := []struct {
 		name          string

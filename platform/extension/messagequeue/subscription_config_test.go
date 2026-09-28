@@ -83,8 +83,8 @@ func TestDLQSubscriptionConfig(t *testing.T) {
 	assert.Positive(t, DefaultSubscriptionConfig("worker-1", "consumer-1").Retry.MaxAttempts)
 }
 
-func TestExtendedRetrySubscriptionConfig(t *testing.T) {
-	config := ExtendedRetrySubscriptionConfig("worker-1", "consumer-1")
+func TestExtendedSubscriptionConfig(t *testing.T) {
+	config := ExtendedSubscriptionConfig("worker-1", "consumer-1")
 
 	assert.Equal(t, "worker-1", config.SubscriberName)
 	assert.Equal(t, "consumer-1", config.ConsumerGroup)
