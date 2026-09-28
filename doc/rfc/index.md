@@ -13,6 +13,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Scoped Sequential Resource IDs](scoped-resource-ids.md) - Queue-scoped positive numeric IDs allocated by durable per-domain, per-kind counters, stored without queue/kind prefixes, and rendered directly in resource URL segments
 - [Hooks Framework](hook-framework.md) - Implemented fire-and-forget side effects: one shared `HookEvent` contract (`api/base/hook/`) on a durable per-domain hook topic, dispatched by `platform/hook` to `platform/extension/hook`. Stovepipe `process` and `record` publish repository events; the SubmitQueue orchestrator registers the stage and does not publish events yet
 - [Service-Scoped Extensions](service-scoped-extensions.md) - Implemented for SubmitQueue storage: gateway and orchestrator aggregates, schemas, and the core packages that serve one service have moved, while store contracts stay at `submitqueue/extension/storage`. Domain-level `buildrunner`, `conflict`, and `speculation` have not moved, and `changeset` still declares its own store slice
+- [Web as a Library](web-library.md) - Publishing gateway-backed components, presentation models, and server helpers as a reusable package while host-owned Next apps provide routes, authentication, telemetry, configuration, and gateway transport
 
 ## SubmitQueue
 
