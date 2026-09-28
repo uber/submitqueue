@@ -1,0 +1,8 @@
+filegroup(
+    name = "autoreview",
+    srcs = [
+        "SKILL.md",
+        "lenses.md",
+    ],
+    visibility = ["//visibility:public"],
+)
