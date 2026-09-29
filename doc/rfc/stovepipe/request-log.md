@@ -102,7 +102,7 @@ The core column shape follows SubmitQueue's `RequestLog`, except Stovepipe omits
 
 Metadata is never used for occurrence identity, filtering, or control flow. Nil and empty maps are equivalent. The initial entity and storage contract treats the map as opaque JSON; writer and projection work may later define and enforce keys such as `superseded_by_request_id`, `build_id`, and `fact_degree`. Producers must not store credentials, raw dependency errors, stack traces, or unbounded payloads. The initial public history API does not expose the raw map.
 
-Immutable Request context such as URI, build strategy, and base URI remains on `Request` and is resolved there rather than copied into log records or history responses. Build status and version remain on `Build`; the triggered and finished event kinds plus the terminal Request state describe the lifecycle without duplicating Build snapshots. Diagnostic error codes remain in structured logs until a concrete public vocabulary is required.
+Immutable Request context such as URI, build strategy, base URI, and terminal build id remains on `Request` and is resolved there rather than copied into log records or history responses. Build status and version remain on `Build`; the triggered and finished event kinds plus the terminal Request state describe the lifecycle without duplicating Build snapshots. When a build established the terminal state, that state entry records its id as occurrence context. Diagnostic error codes remain in structured logs until a concrete public vocabulary is required.
 
 ## Vocabularies
 
