@@ -3,6 +3,7 @@ filegroup(
     srcs = [
         "SKILL.md",
         "lenses.md",
+        "review.md",
     ],
     visibility = ["//visibility:public"],
 )
