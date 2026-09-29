@@ -1,0 +1,20 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+py_binary(
+    name = "review-scope",
+    srcs = ["review-scope.py"],
+    legacy_create_init = 0,
+    main = "review-scope.py",
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "review-scope-test",
+    size = "small",
+    srcs = [
+        "review-scope.py",
+        "review_scope_test.py",
+    ],
+    legacy_create_init = 0,
+    main = "review_scope_test.py",
+)

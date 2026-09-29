@@ -5,7 +5,10 @@ MODULE.bazel.lock
 .vscode/*
 !.vscode/launch.json
 .idea/
-.claude/
+# Local Claude Code state stays ignored. The autoreview skill symlink is shared.
+.claude/*
+!.claude/skills/
+!.claude/skills/autoreview
 .mcp.json
 .mcp.json.bak
 .ijwb/
