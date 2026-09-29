@@ -147,12 +147,16 @@ func buildSignalPayload(t *testing.T, id string) []byte {
 
 // requestWithState returns a Request past process's admit, in the given state.
 func requestWithState(state entity.RequestState) entity.Request {
-	return entity.Request{
+	request := entity.Request{
 		ID:      testID,
 		Queue:   testQueue,
 		State:   state,
 		Version: 1,
 	}
+	if state.HasBuildOutcome() {
+		request.TerminalBuildID = testBuildID
+	}
+	return request
 }
 
 // build returns a Build with the given status/version, tied to testID.
