@@ -266,6 +266,9 @@ func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storag
 	}
 
 	log := requestlog.NewRequestStateLog(request, reason)
+	if request.TerminalBuildID != "" {
+		log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
+	}
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("failed to record %s state for request %s: %w", request.State, request.ID, err)
 	}

@@ -211,10 +211,12 @@ func expectOutcomeLog(m buildsignalMocks, state entity.RequestState, version int
 	}[state]
 	request := requestWithState(state)
 	request.Version = version
+	log := requestlog.NewRequestStateLog(request, reason)
+	log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
 		m.store,
-		requestlog.NewRequestStateLog(request, reason),
+		log,
 	).Return(nil)
 }
 
@@ -407,10 +409,12 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				eventCall := expectBuildFinished(m)
+				log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded)
+				log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded),
+					log,
 				).Return(errors.New("db down")).After(eventCall)
 			},
 		},
@@ -493,10 +497,12 @@ func TestProcess(t *testing.T) {
 				updateCall := expectFinishWrites(m, entity.RequestStateSucceeded)
 				request := requestWithState(entity.RequestStateSucceeded)
 				request.Version = 2
+				log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded)
+				log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded),
+					log,
 				).Return(errors.New("db down")).After(updateCall)
 			},
 		},
