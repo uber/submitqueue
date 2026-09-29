@@ -188,7 +188,7 @@ func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Stora
 	if err != nil {
 		return fmt.Errorf("failed to resolve project result resolver for queue %q: %w", request.Queue, err)
 	}
-	results, err := resolver.Resolve(ctx, request)
+	results, err := resolver.Resolve(ctx, request, request.TerminalBuildID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve project results for request %q: %w", request.ID, err)
 	}

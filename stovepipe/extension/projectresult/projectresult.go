@@ -34,10 +34,12 @@ type Result struct {
 }
 
 // Resolver attributes one terminal validation request to named project
-// outcomes. Implementations may use any repository-specific analysis they need
-// to obtain those outcomes. Returning no results is valid.
+// outcomes. terminalBuildID identifies the build that established the request's
+// terminal state, or is empty when no build established it. Implementations may
+// use any repository-specific analysis they need to obtain those outcomes.
+// Returning no results is valid.
 type Resolver interface {
-	Resolve(ctx context.Context, request entity.Request) ([]Result, error)
+	Resolve(ctx context.Context, request entity.Request, terminalBuildID string) ([]Result, error)
 }
 
 // Config carries the queue identity handed to a Factory.

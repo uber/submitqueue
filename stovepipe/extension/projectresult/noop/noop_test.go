@@ -27,7 +27,7 @@ func TestFactory_ReturnsResolverWithoutProjectResults(t *testing.T) {
 	resolver, err := New().For(projectresult.Config{QueueName: "monorepo/main"})
 	require.NoError(t, err)
 
-	results, err := resolver.Resolve(context.Background(), entity.Request{})
+	results, err := resolver.Resolve(context.Background(), entity.Request{}, "bk-1")
 	require.NoError(t, err)
 	require.Empty(t, results)
 }

@@ -234,13 +234,17 @@ func recordPayload(t *testing.T, id string) []byte {
 
 // requestWithState returns a terminal-stage Request in the given state.
 func requestWithState(state entity.RequestState) entity.Request {
-	return entity.Request{
+	request := entity.Request{
 		ID:      testID,
 		Queue:   testQueue,
 		URI:     testURI,
 		State:   state,
 		Version: 2,
 	}
+	if state.HasBuildOutcome() {
+		request.TerminalBuildID = "bk-1"
+	}
+	return request
 }
 
 // failedRequest returns a failed request validated incrementally against
@@ -340,7 +344,9 @@ func TestProcess_RecordsNamedProjectResults(t *testing.T) {
 	c.projectResultFactory = projectResultFactory
 	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
 		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return([]projectresult.Result{
+	projectResultResolver.EXPECT().Resolve(
+		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
+	).Return([]projectresult.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
 		{Project: "project-b", Degree: entity.DegreeBroken},
 	}, nil)
@@ -377,6 +383,22 @@ func TestProcess_RecordsNamedProjectResults(t *testing.T) {
 	assert.Equal(t, "2", logs[1].Metadata[requestlog.MetadataKeyProjectFactCount])
 }
 
+func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := requestWithState(entity.RequestStateFailed)
+	request.TerminalBuildID = ""
+	projectResultFactory := projectresultmock.NewMockFactory(ctrl)
+	projectResultResolver := projectresultmock.NewMockResolver(ctrl)
+	c.projectResultFactory = projectResultFactory
+	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
+		Return(projectResultResolver, nil)
+	projectResultResolver.EXPECT().Resolve(gomock.Any(), request, "").Return(nil, nil)
+
+	err := c.recordProjectFacts(queueContext(), m.store, request)
+	require.NoError(t, err)
+}
+
 func TestProcess_RejectsInvalidProjectResultsBeforeWritingFacts(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
@@ -385,7 +407,7 @@ func TestProcess_RejectsInvalidProjectResultsBeforeWritingFacts(t *testing.T) {
 	c.projectResultFactory = projectResultFactory
 	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
 		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return([]projectresult.Result{
+	projectResultResolver.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return([]projectresult.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
 		{Project: "project-b", Degree: math.NaN()},
 	}, nil)
