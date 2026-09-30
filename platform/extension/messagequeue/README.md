@@ -70,7 +70,7 @@ cfg.DLQ.Enabled = true
 
 See `subscription_config.go` for all fields and defaults.
 
-`Retry.MaxAttempts` uses zero to mean unlimited attempts. `DLQSubscriptionConfig` selects this mode and disables a second-level DLQ so reconciliation messages remain retryable until they converge or an operator removes them.
+`Retry.MaxAttempts` uses zero to mean unlimited attempts. `ExtendedSubscriptionConfig` provides 10 attempts with a longer capped exponential backoff for idempotent stages that should tolerate transient dependency failures before dead-lettering. `DLQSubscriptionConfig` selects unlimited attempts and disables a second-level DLQ so reconciliation messages remain retryable until they converge or an operator removes them.
 
 ## Usage
 

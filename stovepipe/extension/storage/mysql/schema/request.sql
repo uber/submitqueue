@@ -2,12 +2,13 @@
 -- VCS-agnostic commit locator; it may be empty until SourceControl resolution is wired in.
 -- No timestamps: created/updated times are not part of the Request entity.
 CREATE TABLE IF NOT EXISTS request (
-    queue           VARCHAR(255) NOT NULL,
-    id              VARCHAR(255) NOT NULL,
-    uri             VARCHAR(255) NOT NULL,
-    state           VARCHAR(64)  NOT NULL,
-    build_strategy  VARCHAR(64)  NOT NULL DEFAULT '',
-    base_uri        VARCHAR(255) NOT NULL DEFAULT '',
-    version         INT          NOT NULL,
+    queue             VARCHAR(255) NOT NULL,
+    id                VARCHAR(255) NOT NULL,
+    uri               VARCHAR(255) NOT NULL,
+    state             VARCHAR(64)  NOT NULL,
+    build_strategy    VARCHAR(64)  NOT NULL DEFAULT '',
+    base_uri          VARCHAR(255) NOT NULL DEFAULT '',
+    version           INT          NOT NULL,
+    terminal_build_id VARCHAR(255) NULL,
     PRIMARY KEY (queue, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

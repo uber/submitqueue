@@ -43,18 +43,18 @@ func (m *MockResolver) EXPECT() *MockResolverMockRecorder {
 }
 
 // Resolve mocks base method.
-func (m *MockResolver) Resolve(ctx context.Context, request entity.Request) ([]projectresult.Result, error) {
+func (m *MockResolver) Resolve(ctx context.Context, request entity.Request, terminalBuildID string) ([]projectresult.Result, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Resolve", ctx, request)
+	ret := m.ctrl.Call(m, "Resolve", ctx, request, terminalBuildID)
 	ret0, _ := ret[0].([]projectresult.Result)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Resolve indicates an expected call of Resolve.
-func (mr *MockResolverMockRecorder) Resolve(ctx, request any) *gomock.Call {
+func (mr *MockResolverMockRecorder) Resolve(ctx, request, terminalBuildID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockResolver)(nil).Resolve), ctx, request)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockResolver)(nil).Resolve), ctx, request, terminalBuildID)
 }
 
 // MockFactory is a mock of Factory interface.

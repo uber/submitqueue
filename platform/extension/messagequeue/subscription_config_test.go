@@ -83,6 +83,20 @@ func TestDLQSubscriptionConfig(t *testing.T) {
 	assert.Positive(t, DefaultSubscriptionConfig("worker-1", "consumer-1").Retry.MaxAttempts)
 }
 
+func TestExtendedSubscriptionConfig(t *testing.T) {
+	config := ExtendedSubscriptionConfig("worker-1", "consumer-1")
+
+	assert.Equal(t, "worker-1", config.SubscriberName)
+	assert.Equal(t, "consumer-1", config.ConsumerGroup)
+	assert.Equal(t, RetryConfig{
+		MaxAttempts:       10,
+		InitialBackoffMs:  5000,
+		MaxBackoffMs:      60000,
+		BackoffMultiplier: 2.0,
+	}, config.Retry)
+	assert.True(t, config.DLQ.Enabled)
+}
+
 func TestSubscriptionConfig_DifferentConsumerGroups(t *testing.T) {
 	// Test that different consumer groups get independent configs
 	tests := []struct {

@@ -82,7 +82,9 @@ go_test(
     deps = [
         "//api/base/hook:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
         "//stovepipe/controller/dlq:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
