@@ -20,11 +20,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
+	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 )
 
-func TestFactory_ReturnsResolverWithoutProjectResults(t *testing.T) {
-	resolver, err := New().For(projectresult.Config{QueueName: "monorepo/main"})
+func TestResolverFactory_ReturnsResolverWithoutProjectStatusResults(t *testing.T) {
+	resolver, err := New().For(projectstatus.ResolverConfig{QueueName: "monorepo/main"})
 	require.NoError(t, err)
 
 	results, err := resolver.Resolve(context.Background(), entity.Request{}, "bk-1")

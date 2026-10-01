@@ -35,9 +35,9 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
-	projectresultmock "github.com/uber/submitqueue/stovepipe/extension/projectresult/mock"
-	projectresultnoop "github.com/uber/submitqueue/stovepipe/extension/projectresult/noop"
+	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
+	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
+	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -198,7 +198,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		scope,
 		staticStorageFactory{store: m.store},
 		m.materializer,
-		projectresultnoop.New(),
+		projectstatusnoop.New(),
 		staticSourceControlFactory{sourceControl: m.sourceControl},
 		registry,
 		topicKey,
@@ -334,19 +334,19 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 	}
 }
 
-func TestProcess_RecordsNamedProjectResults(t *testing.T) {
+func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
 	eventMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	c.materializer = eventMaterializer
-	projectResultFactory := projectresultmock.NewMockFactory(ctrl)
-	projectResultResolver := projectresultmock.NewMockResolver(ctrl)
-	c.projectResultFactory = projectResultFactory
-	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
-		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(
+	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = projectStatusResolverFactory
+	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		Return(projectStatusResolver, nil)
+	projectStatusResolver.EXPECT().Resolve(
 		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
-	).Return([]projectresult.Result{
+	).Return([]projectstatus.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
 		{Project: "project-b", Degree: entity.DegreeBroken},
 	}, nil)
@@ -388,26 +388,26 @@ func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 	c, m := newController(t, ctrl)
 	request := requestWithState(entity.RequestStateFailed)
 	request.TerminalBuildID = ""
-	projectResultFactory := projectresultmock.NewMockFactory(ctrl)
-	projectResultResolver := projectresultmock.NewMockResolver(ctrl)
-	c.projectResultFactory = projectResultFactory
-	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
-		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(gomock.Any(), request, "").Return(nil, nil)
+	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = projectStatusResolverFactory
+	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		Return(projectStatusResolver, nil)
+	projectStatusResolver.EXPECT().Resolve(gomock.Any(), request, "").Return(nil, nil)
 
 	err := c.recordProjectFacts(queueContext(), m.store, request)
 	require.NoError(t, err)
 }
 
-func TestProcess_RejectsInvalidProjectResultsBeforeWritingFacts(t *testing.T) {
+func TestProcess_RejectsInvalidProjectStatusResultsBeforeWritingFacts(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
-	projectResultFactory := projectresultmock.NewMockFactory(ctrl)
-	projectResultResolver := projectresultmock.NewMockResolver(ctrl)
-	c.projectResultFactory = projectResultFactory
-	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
-		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return([]projectresult.Result{
+	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = projectStatusResolverFactory
+	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		Return(projectStatusResolver, nil)
+	projectStatusResolver.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return([]projectstatus.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
 		{Project: "project-b", Degree: math.NaN()},
 	}, nil)

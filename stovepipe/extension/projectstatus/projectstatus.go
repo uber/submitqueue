@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package projectresult defines the optional integration that attributes a
-// completed validation to named projects.
-package projectresult
+// Package projectstatus defines the optional integration that resolves project
+// status results from a completed validation.
+package projectstatus
 
-//go:generate go run go.uber.org/mock/mockgen -source=projectresult.go -destination=mock/projectresult_mock.go -package=mock
+//go:generate go run go.uber.org/mock/mockgen -source=projectstatus.go -destination=mock/projectstatus_mock.go -package=mock
 
 import (
 	"context"
@@ -24,8 +24,8 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// Result is one project-scoped validation outcome. The record stage supplies
-// the request identity and recording timestamp when it persists this result.
+// Result is one project status result. The record stage supplies the request
+// identity and recording timestamp when it persists this result.
 type Result struct {
 	// Project identifies the project to which this result applies.
 	Project string
@@ -33,22 +33,22 @@ type Result struct {
 	Degree float64
 }
 
-// Resolver attributes one terminal validation request to named project
-// outcomes. terminalBuildID identifies the build that established the request's
-// terminal state, or is empty when no build established it. Implementations may
-// use any repository-specific analysis they need to obtain those outcomes.
+// Resolver resolves named project status results from one terminal validation.
+// terminalBuildID identifies the build that established the request's terminal
+// state, or is empty when no build established it. Implementations may use any
+// repository-specific analysis they need to obtain those results.
 // Returning no results is valid.
 type Resolver interface {
 	Resolve(ctx context.Context, request entity.Request, terminalBuildID string) ([]Result, error)
 }
 
-// Config carries the queue identity handed to a Factory.
-type Config struct {
+// ResolverConfig carries the queue identity handed to a ResolverFactory.
+type ResolverConfig struct {
 	// QueueName identifies the queue served by the resolver.
 	QueueName string
 }
 
-// Factory constructs a Resolver for one queue.
-type Factory interface {
-	For(cfg Config) (Resolver, error)
+// ResolverFactory constructs a Resolver for one queue.
+type ResolverFactory interface {
+	For(cfg ResolverConfig) (Resolver, error)
 }

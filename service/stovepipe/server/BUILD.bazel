@@ -33,7 +33,7 @@ go_library(
         "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/extension/buildrunner:go_default_library",
         "//stovepipe/extension/buildrunner/fake:go_default_library",
-        "//stovepipe/extension/projectresult/noop:go_default_library",
+        "//stovepipe/extension/projectstatus/noop:go_default_library",
         "//stovepipe/extension/queueconfig/default:go_default_library",
         "//stovepipe/extension/sourcecontrol:go_default_library",
         "//stovepipe/extension/sourcecontrol/fake:go_default_library",

@@ -48,7 +48,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
+	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -58,15 +58,15 @@ import (
 // when that fact is green advances the queue's last-green bookmark and promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	logger               *zap.SugaredLogger
-	metricsScope         tally.Scope
-	stores               storage.Factory
-	materializer         requestlog.Materializer
-	projectResultFactory projectresult.Factory
-	sourceControl        sourcecontrol.Factory
-	registry             consumer.TopicRegistry
-	topicKey             consumer.TopicKey
-	consumerGroup        string
+	logger                       *zap.SugaredLogger
+	metricsScope                 tally.Scope
+	stores                       storage.Factory
+	materializer                 requestlog.Materializer
+	projectStatusResolverFactory projectstatus.ResolverFactory
+	sourceControl                sourcecontrol.Factory
+	registry                     consumer.TopicRegistry
+	topicKey                     consumer.TopicKey
+	consumerGroup                string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -85,7 +85,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
-	projectResultFactory projectresult.Factory,
+	projectStatusResolverFactory projectstatus.ResolverFactory,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -93,15 +93,15 @@ func NewController(
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		logger:               logger.Named(name),
-		metricsScope:         scope.SubScope(name),
-		stores:               stores,
-		materializer:         materializer,
-		projectResultFactory: projectResultFactory,
-		sourceControl:        sourceControl,
-		registry:             registry,
-		topicKey:             topicKey,
-		consumerGroup:        consumerGroup,
+		logger:                       logger.Named(name),
+		metricsScope:                 scope.SubScope(name),
+		stores:                       stores,
+		materializer:                 materializer,
+		projectStatusResolverFactory: projectStatusResolverFactory,
+		sourceControl:                sourceControl,
+		registry:                     registry,
+		topicKey:                     topicKey,
+		consumerGroup:                consumerGroup,
 	}
 }
 
@@ -184,16 +184,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Storage, request entity.Request) error {
-	resolver, err := c.projectResultFactory.For(projectresult.Config{QueueName: request.Queue})
+	resolver, err := c.projectStatusResolverFactory.For(projectstatus.ResolverConfig{QueueName: request.Queue})
 	if err != nil {
-		return fmt.Errorf("failed to resolve project result resolver for queue %q: %w", request.Queue, err)
+		return fmt.Errorf("resolve project status resolver for queue %q: %w", request.Queue, err)
 	}
 	results, err := resolver.Resolve(ctx, request, request.TerminalBuildID)
 	if err != nil {
-		return fmt.Errorf("failed to resolve project results for request %q: %w", request.ID, err)
+		return fmt.Errorf("resolve project status results for request %q: %w", request.ID, err)
 	}
 
-	if err := validateProjectResults(request, results); err != nil {
+	if err := validateProjectStatusResults(request, results); err != nil {
 		return err
 	}
 	for _, result := range results {
@@ -214,18 +214,18 @@ func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Stora
 	return c.persistProjectFactsRecordedLog(ctx, store, request, len(results))
 }
 
-func validateProjectResults(request entity.Request, results []projectresult.Result) error {
+func validateProjectStatusResults(request entity.Request, results []projectstatus.Result) error {
 	seen := make(map[string]struct{}, len(results))
 	for _, result := range results {
 		if result.Project == "" {
-			return fmt.Errorf("project result for request %q has an empty project", request.ID)
+			return fmt.Errorf("project status result for request %q has an empty project", request.ID)
 		}
 		if _, ok := seen[result.Project]; ok {
-			return fmt.Errorf("project result for request %q contains duplicate project %q", request.ID, result.Project)
+			return fmt.Errorf("project status result for request %q contains duplicate project %q", request.ID, result.Project)
 		}
 		seen[result.Project] = struct{}{}
 		if math.IsNaN(result.Degree) || result.Degree < entity.DegreeGreen || result.Degree > entity.DegreeBroken {
-			return fmt.Errorf("project result for request %q and project %q has invalid degree %v", request.ID, result.Project, result.Degree)
+			return fmt.Errorf("project status result for request %q and project %q has invalid degree %v", request.ID, result.Project, result.Degree)
 		}
 	}
 	return nil

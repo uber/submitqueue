@@ -12,35 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package noop provides a projectresult.Factory that records no project
-// outcomes. Use it when a deployment has not configured project attribution.
+// Package noop provides a projectstatus.ResolverFactory that returns no
+// project status results. Use it when a deployment has not configured project
+// status resolution.
 package noop
 
 import (
 	"context"
 
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
+	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 )
 
 // Verify interface compliance at compile time.
-var _ projectresult.Factory = Factory{}
+var _ projectstatus.ResolverFactory = ResolverFactory{}
 
-// Factory returns a resolver that records no project outcomes.
-type Factory struct{}
+// ResolverFactory returns a resolver with no project status results.
+type ResolverFactory struct{}
 
-// New returns a no-op project-result Factory.
-func New() Factory {
-	return Factory{}
+// New returns a no-op project-status ResolverFactory.
+func New() ResolverFactory {
+	return ResolverFactory{}
 }
 
 // For returns the no-op resolver for a queue.
-func (Factory) For(projectresult.Config) (projectresult.Resolver, error) {
+func (ResolverFactory) For(projectstatus.ResolverConfig) (projectstatus.Resolver, error) {
 	return resolver{}, nil
 }
 
 type resolver struct{}
 
-func (resolver) Resolve(context.Context, entity.Request, string) ([]projectresult.Result, error) {
+func (resolver) Resolve(context.Context, entity.Request, string) ([]projectstatus.Result, error) {
 	return nil, nil
 }
