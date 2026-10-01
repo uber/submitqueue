@@ -8,8 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
 	gitworkspace "github.com/uber/submitqueue/platform/extension/gitworkspace"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockWorkspace is a mock of Workspace interface.
