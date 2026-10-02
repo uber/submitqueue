@@ -81,16 +81,16 @@ func (m *MockCounter) EXPECT() *MockCounterMockRecorder {
 }
 
 // Next mocks base method.
-func (m *MockCounter) Next(ctx context.Context, resourceType string) (int64, error) {
+func (m *MockCounter) Next(ctx context.Context, domain string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Next", ctx, resourceType)
+	ret := m.ctrl.Call(m, "Next", ctx, domain)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Next indicates an expected call of Next.
-func (mr *MockCounterMockRecorder) Next(ctx, resourceType any) *gomock.Call {
+func (mr *MockCounterMockRecorder) Next(ctx, domain any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Next", reflect.TypeOf((*MockCounter)(nil).Next), ctx, resourceType)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Next", reflect.TypeOf((*MockCounter)(nil).Next), ctx, domain)
 }

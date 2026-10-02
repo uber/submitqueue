@@ -52,8 +52,8 @@ var _ consumer.Controller = (*Controller)(nil)
 
 const opName = "process"
 
-// counterResourceTypeBatch names the per-queue sequence that mints batch IDs.
-const counterResourceTypeBatch = "batch"
+// counterDomainBatch names the per-queue sequence that mints batch IDs.
+const counterDomainBatch = "batch"
 
 // NewController creates a new batch controller for the orchestrator.
 func NewController(
@@ -143,7 +143,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to resolve counter for queue=%s: %w", request.Queue, err)
 	}
-	seq, err := queueCounter.Next(ctx, counterResourceTypeBatch)
+	seq, err := queueCounter.Next(ctx, counterDomainBatch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)

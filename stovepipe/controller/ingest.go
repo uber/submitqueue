@@ -33,8 +33,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// counterResourceTypeRequest names the per-queue sequence that mints request IDs.
-const counterResourceTypeRequest = "request"
+// counterDomainRequest names the per-queue sequence that mints request IDs.
+const counterDomainRequest = "request"
 
 // IngestController handles ingest business logic for stovepipe: it admits a queue's newly
 // observed commit into the validation pipeline.
@@ -187,7 +187,7 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
 	}
-	seq, err := queueCounter.Next(ctx, counterResourceTypeRequest)
+	seq, err := queueCounter.Next(ctx, counterDomainRequest)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}

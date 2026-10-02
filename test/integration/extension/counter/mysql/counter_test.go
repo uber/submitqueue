@@ -108,17 +108,17 @@ func (s *MySQLCounterIntegrationSuite) TearDownSuite() {
 
 func (s *MySQLCounterIntegrationSuite) TestCounter_Restart() {
 	const (
-		queue        = "restart"
-		resourceType = "request"
+		queue  = "restart"
+		domain = "request"
 	)
 
 	originalCounter := mysqlcounter.NewCounter(s.db, tally.NoopScope, queue)
-	firstID, err := originalCounter.Next(context.Background(), resourceType)
+	firstID, err := originalCounter.Next(context.Background(), domain)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), int64(1), firstID)
 
 	reopenedCounter := mysqlcounter.NewCounter(s.db, tally.NoopScope, queue)
-	nextID, err := reopenedCounter.Next(context.Background(), resourceType)
+	nextID, err := reopenedCounter.Next(context.Background(), domain)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), firstID+1, nextID)
 }

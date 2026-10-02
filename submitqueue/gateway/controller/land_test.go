@@ -157,17 +157,17 @@ func TestLand_ReturnsErrorOnNonPositiveCounterValue(t *testing.T) {
 }
 
 // TestLand_ResolvesCounterForRequestQueue pins that the queue reaches the counter
-// through the factory binding rather than through the resource-type string: the value is a
+// through the factory binding rather than through the domain name: the value is a
 // bare sequence name, and the sqid is the decimal counter value.
 func TestLand_ResolvesCounterForRequestQueue(t *testing.T) {
-	var capturedResourceType, capturedQueue string
+	var capturedDomain, capturedQueue string
 
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, resourceType string) (int64, error) {
-			capturedResourceType = resourceType
+		func(ctx context.Context, domain string) (int64, error) {
+			capturedDomain = domain
 			return 1, nil
 		},
 	)
@@ -186,7 +186,7 @@ func TestLand_ResolvesCounterForRequestQueue(t *testing.T) {
 	result, err := controller.Land(ctx, testLandRequest("my-queue"))
 
 	require.NoError(t, err)
-	assert.Equal(t, "request", capturedResourceType, "the resource type is a sequence name, not a queue-qualified key")
+	assert.Equal(t, "request", capturedDomain, "the domain is a sequence name, not a queue-qualified key")
 	assert.Equal(t, "my-queue", capturedQueue, "the queue reaches the counter through the factory binding")
 	assert.Equal(t, "1", result.ID)
 }

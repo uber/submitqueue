@@ -63,8 +63,8 @@ func IsUnrecognizedQueue(err error) bool {
 	return errors.As(err, &target)
 }
 
-// counterResourceTypeRequest names the per-queue sequence that mints request IDs.
-const counterResourceTypeRequest = "request"
+// counterDomainRequest names the per-queue sequence that mints request IDs.
+const counterDomainRequest = "request"
 
 // LandController handles land business logic for the gateway
 type LandController interface {
@@ -131,7 +131,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
 	}
-	seq, err := queueCounter.Next(ctx, counterResourceTypeRequest)
+	seq, err := queueCounter.Next(ctx, counterDomainRequest)
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}

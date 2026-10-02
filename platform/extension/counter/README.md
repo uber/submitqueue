@@ -1,8 +1,8 @@
 # Counter
 
-Vendor-agnostic interface for atomic sequential number generation, scoped by queue and resource type.
+Vendor-agnostic interface for atomic sequential number generation, scoped by queue and domain.
 
-SubmitQueue and Stovepipe use separate storage backends. The existing MySQL `domain` column names the resource type (`request` or `batch`); the schema and `(queue, domain)` key remain unchanged.
+The domain names a counter sequence (`request` or `batch`), not an application. SubmitQueue and Stovepipe use separate storage backends; the existing MySQL schema and `(queue, domain)` key remain unchanged.
 
 ## Interface
 
@@ -12,12 +12,12 @@ Resolves the Counter bound to one queue. The host wiring decides which backend s
 
 ### Counter
 
-Generates unique, sequential values scoped to a resource type within the bound queue.
+Generates unique, sequential values scoped to a domain within the bound queue.
 
-- **resource type**: A string key naming a sequence within the queue (max 255 characters). Each `(queue, resource type)` pair maintains its own independent sequence.
-- **Next**: Atomically increments and returns the next value. The first call for a new resource type returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
+- **domain**: A string key naming a sequence within the queue (max 255 characters). Each `(queue, domain)` pair maintains its own independent sequence.
+- **Next**: Atomically increments and returns the next value. The first call for a new domain returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
 
-The resource type is a sequence name, not an ID prefix. Callers pass `"request"` or `"batch"`; the returned number is formatted as a decimal string without embedding any scope.
+The domain is not an ID prefix. Callers pass `"request"` or `"batch"`; the returned number is formatted as a decimal string without embedding any scope.
 
 ## Usage
 

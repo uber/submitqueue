@@ -37,26 +37,26 @@ func NewCounter(db *sql.DB, scope tally.Scope, queue string) counter.Counter {
 	return &mysqlCounter{db: db, scope: scope, queue: queue}
 }
 
-// Next atomically increments the counter for the given resource type within the bound scope
+// Next atomically increments the counter for the given domain within the bound scope
 // and returns the new value.
 // Uses MySQL's LAST_INSERT_ID() to set the value atomically and read the incremented value.
-func (c *mysqlCounter) Next(ctx context.Context, resourceType string) (ret int64, retErr error) {
+func (c *mysqlCounter) Next(ctx context.Context, domain string) (ret int64, retErr error) {
 	op := metrics.Begin(c.scope, "next", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 	result, err := c.db.ExecContext(ctx,
 		"INSERT INTO counter (queue, domain, value) VALUES (?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)",
-		c.queue, resourceType,
+		c.queue, domain,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("failed to increment counter for queue=%s resource_type=%s: %w", c.queue, resourceType, err)
+		return 0, fmt.Errorf("failed to increment counter for queue=%s domain=%s: %w", c.queue, domain, err)
 	}
 
 	value, err := result.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get counter value for queue=%s resource_type=%s: %w", c.queue, resourceType, err)
+		return 0, fmt.Errorf("failed to get counter value for queue=%s domain=%s: %w", c.queue, domain, err)
 	}
 	if value <= 0 {
-		return 0, fmt.Errorf("counter returned non-positive value for queue=%s resource_type=%s", c.queue, resourceType)
+		return 0, fmt.Errorf("counter returned non-positive value for queue=%s domain=%s", c.queue, domain)
 	}
 
 	return value, nil
