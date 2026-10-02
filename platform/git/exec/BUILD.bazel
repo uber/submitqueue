@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "command_error.go",
         "gitexec.go",
+        "runtime.go",
     ],
     importpath = "github.com/uber/submitqueue/platform/git/exec",
     visibility = ["//visibility:public"],
@@ -12,7 +13,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["gitexec_test.go"],
+    srcs = [
+        "gitexec_test.go",
+        "runtime_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "@com_github_stretchr_testify//assert:go_default_library",

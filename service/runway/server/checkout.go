@@ -27,7 +27,6 @@ import (
 	"go.uber.org/zap"
 
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 )
 
 // credentialFile is the name, inside the checkout's .git directory, of the
@@ -50,7 +49,7 @@ const credentialFile = "submitqueue-credentials.config"
 // It is idempotent: an existing checkout has its remote URL and credential
 // brought back in line rather than being recreated, so a restart against a
 // persisted volume costs nothing and a rotated token takes effect.
-func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime gitmerger.GitRuntime, cfg mergerConfig) error {
+func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime gitexec.Runtime, cfg mergerConfig) error {
 	if err := os.MkdirAll(cfg.CheckoutPath, 0o755); err != nil {
 		return fmt.Errorf("create checkout dir %q: %w", cfg.CheckoutPath, err)
 	}
@@ -98,7 +97,7 @@ func provisionCheckout(ctx context.Context, logger *zap.SugaredLogger, runtime g
 // initRepository creates the repository if the path does not already hold one,
 // reporting whether it had to. An existing repository is left in place: it may
 // carry fetched objects worth keeping, and re-creating it would discard them.
-func initRepository(ctx context.Context, runtime gitmerger.GitRuntime, cfg mergerConfig) (bool, error) {
+func initRepository(ctx context.Context, runtime gitexec.Runtime, cfg mergerConfig) (bool, error) {
 	if info, err := os.Stat(filepath.Join(cfg.CheckoutPath, ".git")); err == nil && info.IsDir() {
 		return false, nil
 	}
@@ -110,7 +109,7 @@ func initRepository(ctx context.Context, runtime gitmerger.GitRuntime, cfg merge
 
 // configureRemote points the configured remote name at the configured URL,
 // adding it when absent and correcting it when it has drifted.
-func configureRemote(ctx context.Context, runtime gitmerger.GitRuntime, cfg mergerConfig) error {
+func configureRemote(ctx context.Context, runtime gitexec.Runtime, cfg mergerConfig) error {
 	out, err := runGit(ctx, runtime, cfg.CheckoutPath, "remote")
 	if err != nil {
 		return fmt.Errorf("list remotes in %q: %w", cfg.CheckoutPath, err)
@@ -194,7 +193,7 @@ func setLocalConfig(checkoutPath, key, value string) error {
 // configuration but retaining what is needed to reach a remote. It composes that
 // environment through gitexec.Env, the same source the merger uses, so
 // provisioning and merging authenticate — and behave — identically.
-func runGit(ctx context.Context, runtime gitmerger.GitRuntime, dir string, args ...string) ([]byte, error) {
+func runGit(ctx context.Context, runtime gitexec.Runtime, dir string, args ...string) ([]byte, error) {
 	full := append([]string{
 		"--exec-path=" + runtime.ExecPath,
 		"-c", "init.templateDir=" + runtime.TemplateDir,

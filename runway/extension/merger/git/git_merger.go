@@ -69,7 +69,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -97,23 +96,6 @@ const (
 	defaultCommitterEmail = "runway@submitqueue.invalid"
 )
 
-// GitRuntime identifies the explicitly provided Git runtime used by the Merger.
-type GitRuntime struct {
-	// Executable is the absolute path to the Git executable.
-	Executable string
-	// ExecPath is the absolute directory containing Git's helper executables.
-	ExecPath string
-	// TemplateDir is the absolute directory containing Git's repository
-	// templates.
-	TemplateDir string
-	// PassthroughEnv names additional environment variables to inherit from
-	// the parent process, on top of the auth and transport ones always passed
-	// through. For a deployment whose remote needs something unusual; leave
-	// empty otherwise. Names that could alter merge semantics do not belong
-	// here — the scrubbed environment is what keeps a merge reproducible.
-	PassthroughEnv []string
-}
-
 // Params holds the dependencies for the git Merger.
 type Params struct {
 	// CheckoutPath is the absolute path to an existing git checkout that the
@@ -128,7 +110,7 @@ type Params struct {
 	// concrete strategy (REBASE, SQUASH_REBASE, MERGE, or PROMOTE).
 	DefaultStrategy mergestrategypb.Strategy
 	// Runtime is the pinned Git runtime used for every invocation.
-	Runtime GitRuntime
+	Runtime gitexec.Runtime
 	// MaxPushAttempts caps how many times a committing merge retries the full
 	// reset/apply/push cycle when the remote tip moves under it. Defaults to
 	// defaultMaxPushAttempts when zero or negative.
@@ -166,7 +148,7 @@ type gitMerger struct {
 	remote          string
 	target          string
 	defaultStrategy mergestrategypb.Strategy
-	runtime         GitRuntime
+	runtime         gitexec.Runtime
 	maxPushAttempts int
 	fetchRefspecs   []string
 	checkStaleness  bool
@@ -201,7 +183,7 @@ type resolvedStep struct {
 // The checkout must already exist and have the configured remote. Runtime paths
 // must be absolute and DefaultStrategy must be a concrete strategy.
 func NewMerger(params Params) (merger.Merger, error) {
-	if err := params.Runtime.validate(); err != nil {
+	if err := params.Runtime.Validate(); err != nil {
 		return nil, err
 	}
 	if !isConcreteStrategy(params.DefaultStrategy) {
@@ -235,22 +217,6 @@ func NewMerger(params Params) (merger.Merger, error) {
 		logger:                  params.Logger.Named("git_merger"),
 		metricsScope:            params.MetricsScope.SubScope("git_merger"),
 	}, nil
-}
-
-func (r GitRuntime) validate() error {
-	for name, path := range map[string]string{
-		"executable":   r.Executable,
-		"exec path":    r.ExecPath,
-		"template dir": r.TemplateDir,
-	} {
-		if path == "" {
-			return fmt.Errorf("git runtime %s is required", name)
-		}
-		if !filepath.IsAbs(path) {
-			return fmt.Errorf("git runtime %s must be absolute: %q", name, path)
-		}
-	}
-	return nil
 }
 
 // CheckMergeability applies the request's steps as a dry run: it verifies each
@@ -1025,40 +991,8 @@ func (m *gitMerger) commandAs(ctx context.Context, author authorIdent, args ...s
 		"-c", "commit.gpgsign=false",
 	)
 	withIdentity = append(withIdentity, args...)
-	cmd := newGitCommand(ctx, m.runtime, m.checkoutPath, withIdentity...)
+	cmd := m.runtime.Command(ctx, m.checkoutPath, withIdentity...)
 	cmd.Env = append(cmd.Env, author.env()...)
-	return cmd
-}
-
-// newGitCommand constructs a Git command without inheriting the caller's
-// environment. The executable and helper paths come from the pinned runtime;
-// repository-local configuration remains an intentional input.
-func newGitCommand(ctx context.Context, runtime GitRuntime, dir string, args ...string) *exec.Cmd {
-	gitArgs := make([]string, 0, len(args)+3)
-	gitArgs = append(gitArgs,
-		"--exec-path="+runtime.ExecPath,
-		"-c", "init.templateDir="+runtime.TemplateDir,
-	)
-	gitArgs = append(gitArgs, args...)
-
-	cmd := exec.CommandContext(ctx, runtime.Executable, gitArgs...)
-	cmd.Dir = dir
-	// HOME and XDG_CONFIG_HOME are isolated to the checkout rather than inherited,
-	// so the runtime's literals — appended last — override any HOME a deployment
-	// passed through. The remaining literals pin git's runtime; the scrub set and
-	// transport variables come from the shared composer.
-	cmd.Env = gitexec.Env(gitexec.EnvOptions{
-		Transport:   true,
-		Passthrough: runtime.PassthroughEnv,
-		Literal: []string{
-			"HOME=" + filepath.Join(dir, ".submitqueue-git-home"),
-			"XDG_CONFIG_HOME=" + filepath.Join(dir, ".submitqueue-git-home", "xdg"),
-			"GIT_EXEC_PATH=" + runtime.ExecPath,
-			"GIT_TEMPLATE_DIR=" + runtime.TemplateDir,
-			"LC_ALL=C",
-			"LANG=C",
-		},
-	})
 	return cmd
 }
 

@@ -26,17 +26,17 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 )
 
 // testRuntime resolves the pinned git the Bazel target supplies. Provisioning
 // runs real git, so these tests use the same runtime the merger will.
-func testRuntime(t *testing.T) gitmerger.GitRuntime {
+func testRuntime(t *testing.T) gitexec.Runtime {
 	t.Helper()
 	executable := gitexectest.Git(t)
 	templateDescription := gitexectest.Runfile(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
-	return gitmerger.GitRuntime{
+	return gitexec.Runtime{
 		Executable:  executable,
 		ExecPath:    filepath.Dir(executable),
 		TemplateDir: filepath.Dir(templateDescription),
@@ -68,7 +68,7 @@ func seedBareRepo(t *testing.T, branch string) string {
 	return bare
 }
 
-func mustRunGit(t *testing.T, ctx context.Context, runtime gitmerger.GitRuntime, dir string, args ...string) string {
+func mustRunGit(t *testing.T, ctx context.Context, runtime gitexec.Runtime, dir string, args ...string) string {
 	t.Helper()
 	out, err := runGit(ctx, runtime, dir, args...)
 	require.NoError(t, err, "git %s", strings.Join(args, " "))
