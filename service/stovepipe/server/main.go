@@ -550,7 +550,7 @@ func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
 	return f.backend.For(config.QueueName)
 }
 
-// counterFactory binds Stovepipe's owner domain and a queue to the shared MySQL backend.
+// counterFactory binds a queue to Stovepipe's MySQL backend.
 type counterFactory struct {
 	db    *sql.DB
 	scope tally.Scope
@@ -561,5 +561,5 @@ func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
 	if config.QueueName == "" {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
-	return mysqlcounter.NewCounter(f.db, f.scope, "stovepipe", config.QueueName), nil
+	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
 }

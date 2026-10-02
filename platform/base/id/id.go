@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package resourceid validates and compares counter-generated resource IDs.
-package resourceid
+// Package id formats, validates, and compares counter-generated resource IDs.
+package id
 
 import (
 	"fmt"
@@ -46,11 +46,11 @@ func Validate(id string) error {
 
 // Compare compares two canonical resource IDs numerically.
 func Compare(a, b string) (int, error) {
-	aValue, err := parse(a)
+	aValue, err := parseResourceID(a)
 	if err != nil {
 		return 0, fmt.Errorf("invalid first resource ID %q: %w", a, err)
 	}
-	bValue, err := parse(b)
+	bValue, err := parseResourceID(b)
 	if err != nil {
 		return 0, fmt.Errorf("invalid second resource ID %q: %w", b, err)
 	}
@@ -64,7 +64,7 @@ func Compare(a, b string) (int, error) {
 	}
 }
 
-func parse(id string) (int64, error) {
+func parseResourceID(id string) (int64, error) {
 	if err := Validate(id); err != nil {
 		return 0, err
 	}

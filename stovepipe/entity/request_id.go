@@ -14,11 +14,11 @@
 
 package entity
 
-import "github.com/uber/submitqueue/platform/resourceid"
+import "github.com/uber/submitqueue/platform/base/id"
 
 // CompareRequestID compares ingest order of two request IDs in the same queue.
 // Returns -1 if a is older than b, 0 if equal, 1 if a is newer than b.
 // IDs are canonical decimal strings whose scope is carried separately.
 func CompareRequestID(a, b string) (int, error) {
-	return resourceid.Compare(a, b)
+	return id.Compare(a, b)
 }

@@ -2,26 +2,27 @@
 
 ## Decision
 
-A generated resource ID is the canonical decimal string for a positive value returned by a durable counter scoped to `(owner domain, queue, resource kind)`.
+A generated resource ID is the canonical decimal string for a positive value returned by a durable counter scoped to `(queue, resource type)` within an application's storage.
 
-| Resource | Current ID | Proposed ID | Complete identity |
+SubmitQueue and Stovepipe use separate storage backends. Resource type is `request` or `batch`; there is no additional application-domain key or schema change.
+
+| Resource | Current ID | Proposed ID | Identity within the application |
 |---|---:|---:|---|
-| SubmitQueue request | `demo-queue/42` | `"42"` | `(submitqueue, demo-queue, request, "42")` |
-| SubmitQueue batch | `demo-queue/batch/7` | `"7"` | `(submitqueue, demo-queue, batch, "7")` |
-| Stovepipe request | `request/monorepo/main/42` | `"42"` | `(stovepipe, monorepo/main, request, "42")` |
+| SubmitQueue request | `demo-queue/42` | `"42"` | `(demo-queue, request, "42")` |
+| SubmitQueue batch | `demo-queue/batch/7` | `"7"` | `(demo-queue, batch, "7")` |
+| Stovepipe request | `request/monorepo/main/42` | `"42"` | `(monorepo/main, request, "42")` |
 
-The decimal ID is unique only within its scope. The same value may appear in another queue, resource kind, or domain. APIs and messages therefore carry the queue separately; their typed field or message type supplies the resource kind.
+The decimal ID is unique only within its scope. The same value may appear in another queue, resource type, or application. APIs and messages therefore carry the queue separately; their typed field or message type supplies the resource type.
 
 Do not embed scope into the ID. Forms such as `demo-queue/42`, `demo-queue/batch/7`, `request.42`, and ARN-like resource names are not stored or accepted as IDs.
 
 ## Counter
 
-The counter backend persists one high-water mark per `(owner domain, queue, resource kind)`. For example:
+The counter backend persists one high-water mark per `(queue, resource type)`. MySQL keeps its existing `(queue, domain)` primary key; `domain` stores the resource type. For example:
 
 ```text
-(submitqueue, demo-queue, request) -> 42
-(submitqueue, demo-queue, batch)   -> 7
-(stovepipe, demo-queue, request)   -> 11
+(demo-queue, request) -> 42
+(demo-queue, batch)   -> 7
 ```
 
 Controllers allocate an ID before creating the resource; stores accept the caller-supplied ID and never generate one.
@@ -60,7 +61,7 @@ Both columns use the same queue prefix for comparison. The before batch/change r
 
 ## Rejected alternatives
 
-- **Queue or kind prefixes:** duplicate explicit context, lengthen keys, require parsing, and introduce URL separators.
+- **Queue or resource-type prefixes:** duplicate explicit context, lengthen keys, require parsing, and introduce URL separators.
 - **ARN-like names:** solve global lookup, which current APIs neither provide nor require.
 - **UUIDs or a global counter:** provide global uniqueness at the cost of unnecessary encoding or coordination.
 - **Integer resource fields:** couple the persisted and wire contracts to the current counter representation without adding identity semantics.

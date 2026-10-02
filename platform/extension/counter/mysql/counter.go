@@ -25,39 +25,38 @@ import (
 )
 
 type mysqlCounter struct {
-	db          *sql.DB
-	scope       tally.Scope
-	ownerDomain string
+	db    *sql.DB
+	scope tally.Scope
 	// queue is the queue name this counter instance is bound to; every sequence
 	// it advances is scoped to it.
 	queue string
 }
 
-// NewCounter creates a new MySQL-backed Counter bound to ownerDomain and queue.
-func NewCounter(db *sql.DB, scope tally.Scope, ownerDomain, queue string) counter.Counter {
-	return &mysqlCounter{db: db, scope: scope, ownerDomain: ownerDomain, queue: queue}
+// NewCounter creates a new MySQL-backed Counter bound to queue.
+func NewCounter(db *sql.DB, scope tally.Scope, queue string) counter.Counter {
+	return &mysqlCounter{db: db, scope: scope, queue: queue}
 }
 
-// Next atomically increments the counter for the given resource kind within the bound scope
+// Next atomically increments the counter for the given resource type within the bound scope
 // and returns the new value.
 // Uses MySQL's LAST_INSERT_ID() to set the value atomically and read the incremented value.
-func (c *mysqlCounter) Next(ctx context.Context, resourceKind string) (ret int64, retErr error) {
+func (c *mysqlCounter) Next(ctx context.Context, resourceType string) (ret int64, retErr error) {
 	op := metrics.Begin(c.scope, "next", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 	result, err := c.db.ExecContext(ctx,
-		"INSERT INTO counter (owner_domain, queue, resource_kind, value) VALUES (?, ?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)",
-		c.ownerDomain, c.queue, resourceKind,
+		"INSERT INTO counter (queue, domain, value) VALUES (?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)",
+		c.queue, resourceType,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("failed to increment counter for owner_domain=%s queue=%s resource_kind=%s: %w", c.ownerDomain, c.queue, resourceKind, err)
+		return 0, fmt.Errorf("failed to increment counter for queue=%s resource_type=%s: %w", c.queue, resourceType, err)
 	}
 
 	value, err := result.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get counter value for owner_domain=%s queue=%s resource_kind=%s: %w", c.ownerDomain, c.queue, resourceKind, err)
+		return 0, fmt.Errorf("failed to get counter value for queue=%s resource_type=%s: %w", c.queue, resourceType, err)
 	}
 	if value <= 0 {
-		return 0, fmt.Errorf("counter returned non-positive value for owner_domain=%s queue=%s resource_kind=%s", c.ownerDomain, c.queue, resourceKind)
+		return 0, fmt.Errorf("counter returned non-positive value for queue=%s resource_type=%s", c.queue, resourceType)
 	}
 
 	return value, nil

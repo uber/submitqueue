@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/uber/submitqueue/platform/resourceid"
+	"github.com/uber/submitqueue/platform/base/id"
 )
 
 const (
@@ -101,7 +101,7 @@ func validateStoredIdentifier(name, value string) error {
 }
 
 func validateResourceID(name, value string) error {
-	if err := resourceid.Validate(value); err != nil {
+	if err := id.Validate(value); err != nil {
 		return fmt.Errorf("invalid %s %q: %v: %w", name, value, err, ErrInvalidRequest)
 	}
 	return nil

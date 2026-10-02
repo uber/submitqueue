@@ -20,11 +20,11 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
-	"github.com/uber/submitqueue/platform/resourceid"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -33,8 +33,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// counterDomainRequest names the per-queue sequence that mints request IDs.
-const counterDomainRequest = "request"
+// counterResourceTypeRequest names the per-queue sequence that mints request IDs.
+const counterResourceTypeRequest = "request"
 
 // IngestController handles ingest business logic for stovepipe: it admits a queue's newly
 // observed commit into the validation pipeline.
@@ -187,16 +187,16 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
 	}
-	seq, err := queueCounter.Next(ctx, counterDomainRequest)
+	seq, err := queueCounter.Next(ctx, counterResourceTypeRequest)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
-	id, err := resourceid.FromCounter(seq)
+	requestID, err := id.FromCounter(seq)
 	if err != nil {
 		return "", fmt.Errorf("generated invalid request ID for queue=%s: %w", queue, err)
 	}
 
-	if err := uriStore.Create(ctx, uri, id); err != nil {
+	if err := uriStore.Create(ctx, uri, requestID); err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			existing, getErr := uriStore.GetIDByURI(ctx, uri)
 			if getErr != nil {
@@ -206,7 +206,7 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 		}
 		return "", fmt.Errorf("failed to map URI for queue=%s: %w", queue, err)
 	}
-	return id, nil
+	return requestID, nil
 }
 
 // ensureRequest returns the request for id, creating it in the Accepted state if it does not yet

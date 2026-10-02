@@ -21,12 +21,12 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
-	"github.com/uber/submitqueue/platform/resourceid"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -63,8 +63,8 @@ func IsUnrecognizedQueue(err error) bool {
 	return errors.As(err, &target)
 }
 
-// counterDomainRequest names the per-queue sequence that mints request IDs.
-const counterDomainRequest = "request"
+// counterResourceTypeRequest names the per-queue sequence that mints request IDs.
+const counterResourceTypeRequest = "request"
 
 // LandController handles land business logic for the gateway
 type LandController interface {
@@ -131,11 +131,11 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
 	}
-	seq, err := queueCounter.Next(ctx, counterDomainRequest)
+	seq, err := queueCounter.Next(ctx, counterResourceTypeRequest)
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
-	req.ID, err = resourceid.FromCounter(seq)
+	req.ID, err = id.FromCounter(seq)
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("generated invalid request ID for queue=%s: %w", queue, err)
 	}

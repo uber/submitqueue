@@ -343,7 +343,7 @@ func TestController_Process_WritesBatchBeforeHandoff(t *testing.T) {
 	}
 
 	cnt := countermock.NewMockCounter(ctrl)
-	cnt.EXPECT().Next(gomock.Any(), counterDomainBatch).Return(int64(7), nil)
+	cnt.EXPECT().Next(gomock.Any(), counterResourceTypeBatch).Return(int64(7), nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)

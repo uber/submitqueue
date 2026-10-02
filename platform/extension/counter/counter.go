@@ -37,14 +37,14 @@ type Factory interface {
 	For(config Config) (Counter, error)
 }
 
-// Counter provides atomic sequential number generation for a resource kind within
-// the owner domain and queue the instance is bound to.
-// Each call to Next returns the next value in the sequence for the specified resource kind.
-// The value is unique within the (owner domain, queue, resource kind) tuple.
+// Counter provides atomic sequential number generation for a resource type within
+// the queue the instance is bound to.
+// Each call to Next returns the next value in the sequence for the specified resource type.
+// The value is unique within the (queue, resource type) pair.
 type Counter interface {
-	// Next atomically increments the counter for the given resource kind and returns the new value.
-	// The first call for a new resource kind returns 1.
-	// The implementation should support resource kinds up to 255 bytes.
+	// Next atomically increments the counter for the given resource type and returns the new value.
+	// The first call for a new resource type returns 1.
+	// The implementation should support resource types up to 255 bytes.
 	// The function is safe to be called concurrently and will give unique results, but the order of the values is not guaranteed.
-	Next(ctx context.Context, resourceKind string) (int64, error)
+	Next(ctx context.Context, resourceType string) (int64, error)
 }

@@ -21,12 +21,12 @@ import (
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
-	"github.com/uber/submitqueue/platform/resourceid"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -52,8 +52,8 @@ var _ consumer.Controller = (*Controller)(nil)
 
 const opName = "process"
 
-// counterDomainBatch names the per-queue sequence that mints batch IDs.
-const counterDomainBatch = "batch"
+// counterResourceTypeBatch names the per-queue sequence that mints batch IDs.
+const counterResourceTypeBatch = "batch"
 
 // NewController creates a new batch controller for the orchestrator.
 func NewController(
@@ -143,12 +143,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to resolve counter for queue=%s: %w", request.Queue, err)
 	}
-	seq, err := queueCounter.Next(ctx, counterDomainBatch)
+	seq, err := queueCounter.Next(ctx, counterResourceTypeBatch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
 	}
-	batchID, err := resourceid.FromCounter(seq)
+	batchID, err := id.FromCounter(seq)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("generated invalid batch ID for queue=%s: %w", request.Queue, err)

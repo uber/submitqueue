@@ -174,7 +174,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			setup: func(m ingestMocks) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
-				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
+				m.counter.EXPECT().Next(gomock.Any(), counterResourceTypeRequest).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "7").Return(nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "7").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
@@ -217,7 +217,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			setup: func(m ingestMocks) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
-				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
+				m.counter.EXPECT().Next(gomock.Any(), counterResourceTypeRequest).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "7").Return(storage.ErrAlreadyExists)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(acceptedRequest("3"), nil)

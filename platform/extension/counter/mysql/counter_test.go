@@ -26,7 +26,7 @@ import (
 )
 
 func TestCounterNext(t *testing.T) {
-	const query = "INSERT INTO counter (owner_domain, queue, resource_kind, value) VALUES (?, ?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)"
+	const query = "INSERT INTO counter (queue, domain, value) VALUES (?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)"
 
 	tests := []struct {
 		name    string
@@ -44,7 +44,7 @@ func TestCounterNext(t *testing.T) {
 			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 			require.NoError(t, err)
 
-			expectation := mock.ExpectExec(query).WithArgs("submitqueue", "demo-queue", "request")
+			expectation := mock.ExpectExec(query).WithArgs("demo-queue", "request")
 			if tt.execErr != nil {
 				expectation.WillReturnError(tt.execErr)
 			} else {
@@ -52,7 +52,7 @@ func TestCounterNext(t *testing.T) {
 			}
 			mock.ExpectClose()
 
-			counter := NewCounter(db, tally.NoopScope, "submitqueue", "demo-queue")
+			counter := NewCounter(db, tally.NoopScope, "demo-queue")
 			got, err := counter.Next(context.Background(), "request")
 			if tt.wantErr {
 				require.Error(t, err)

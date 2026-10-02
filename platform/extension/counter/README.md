@@ -1,21 +1,23 @@
 # Counter
 
-Vendor-agnostic interface for atomic sequential number generation, scoped by owner domain, queue, and resource kind.
+Vendor-agnostic interface for atomic sequential number generation, scoped by queue and resource type.
+
+SubmitQueue and Stovepipe use separate storage backends. The existing MySQL `domain` column names the resource type (`request` or `batch`); the schema and `(queue, domain)` key remain unchanged.
 
 ## Interface
 
 ### Factory
 
-Resolves the Counter bound to one queue. The host wiring decides which backend serves which queue and injects the owner domain; a resolved instance can only advance that scope's sequences.
+Resolves the Counter bound to one queue. The host wiring decides which backend serves which queue; a resolved instance can only advance that queue's sequences.
 
 ### Counter
 
-Generates unique, sequential values scoped to a resource kind within the bound owner domain and queue.
+Generates unique, sequential values scoped to a resource type within the bound queue.
 
-- **resource kind**: A string key naming a sequence within the bound scope (max 255 characters). Each `(owner domain, queue, resource kind)` tuple maintains its own independent sequence.
-- **Next**: Atomically increments and returns the next value. The first call for a new resource kind returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
+- **resource type**: A string key naming a sequence within the queue (max 255 characters). Each `(queue, resource type)` pair maintains its own independent sequence.
+- **Next**: Atomically increments and returns the next value. The first call for a new resource type returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
 
-The resource kind is a sequence name, not an ID prefix. Callers pass `"request"` or `"batch"`; the returned number is formatted as a decimal string without embedding any scope.
+The resource type is a sequence name, not an ID prefix. Callers pass `"request"` or `"batch"`; the returned number is formatted as a decimal string without embedding any scope.
 
 ## Usage
 
@@ -33,6 +35,6 @@ val, err = other.Next(ctx, "request") // returns 1, isolated from my-queue
 ## Implementing a Backend
 
 1. Create `platform/extension/counter/{backend}/` directory
-2. Implement the `Counter` interface, binding the owner domain and queue at construction
-3. Add a schema file under `platform/extension/counter/{backend}/schema/` if the backend requires it. The persisted key must preserve the complete `(owner domain, queue, resource kind)` scope.
+2. Implement the `Counter` interface, binding the queue at construction
+3. Add a schema file under `platform/extension/counter/{backend}/schema/` if the backend requires it. The queue must lead the primary key so the table is shardable by queue.
 4. Adapt the constructor to the `Factory` interface in the wiring layer, not here

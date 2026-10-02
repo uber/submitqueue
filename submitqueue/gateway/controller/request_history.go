@@ -20,9 +20,9 @@ import (
 	"sort"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/platform/resourceid"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
@@ -115,7 +115,7 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 
 	histories := make([]entity.RequestHistory, 0, len(mappings))
 	for _, mapping := range mappings {
-		if err := resourceid.Validate(mapping.RequestID); err != nil {
+		if err := id.Validate(mapping.RequestID); err != nil {
 			return nil, &InternalConsistencyError{Message: fmt.Sprintf("invalid mapped sqid %q: %v", mapping.RequestID, err)}
 		}
 		logs, err := logStore.List(ctx, mapping.RequestID)
@@ -135,7 +135,7 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 	}
 
 	sort.Slice(histories, func(i, j int) bool {
-		comparison, _ := resourceid.Compare(histories[i].RequestID, histories[j].RequestID)
+		comparison, _ := id.Compare(histories[i].RequestID, histories[j].RequestID)
 		return comparison < 0
 	})
 
