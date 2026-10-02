@@ -160,6 +160,21 @@ func (s *StovepipeE2ESuite) TestIngest_Idempotent() {
 	assert.Equal(s.T(), id, id2, "re-ingest of the same head should dedup to the same id")
 }
 
+func (s *StovepipeE2ESuite) TestIngest_IndependentQueuesReuseIDs() {
+	queues := []string{"monorepo/main", "monorepo/release"}
+	ids := []string{s.ingest(queues[0]), s.ingest(queues[1])}
+	require.Equal(s.T(), ids[0], ids[1], "independent queues may share a resource ID")
+
+	for i, queue := range queues {
+		s.Run(queue, func() {
+			assert.Equal(s.T(), 1, s.requestRowCount(queue, ids[i]))
+			assert.Equal(s.T(), ids[i], s.uriMapping(queue))
+			s.awaitBuildStatus(queue, ids[i], "succeeded")
+			s.awaitRequestState(queue, ids[i], "succeeded")
+		})
+	}
+}
+
 func (s *StovepipeE2ESuite) TestIngest_RejectsUnconfiguredTenant() {
 	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: "monorepo/unconfigured"})
 	require.Error(s.T(), err)
@@ -187,11 +202,11 @@ func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
 	s.assertIngestPersisted(queue, id)
 
 	// Getting here at all means the held delivery redelivered and re-polled.
-	s.awaitBuildStatus(id, "succeeded")
+	s.awaitBuildStatus(queue, id, "succeeded")
 
 	// buildsignal projects the terminal build status onto the request and, in the
 	// same step, releases the build slot that reopens the process gate.
-	s.awaitRequestState(id, "succeeded")
+	s.awaitRequestState(queue, id, "succeeded")
 	assert.Equal(s.T(), int32(0), s.inFlightCount(queue),
 		"a terminal build should release the queue's build slot")
 }

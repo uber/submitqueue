@@ -540,7 +540,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_Match() {
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Equal(t, queue+"/1", got[0].RequestID)
+	assert.Equal(t, "1", got[0].RequestID)
 	assert.Equal(t, changeURI, got[0].URI)
 	assert.Equal(t, queue, got[0].Queue)
 	assert.Equal(t, int32(1), got[0].Version)
@@ -559,7 +559,7 @@ func (s *StorageContractSuite) TestStorage_ChangeGetByURI_DoesNotExcludeSelf() {
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "store returns the row even when caller might consider it self")
-	assert.Equal(t, queue+"/1", got[0].RequestID)
+	assert.Equal(t, "1", got[0].RequestID)
 }
 
 // TestStorage_ChangeGetByURI_QueueScoped verifies GetByURI never returns rows from another queue.
@@ -883,7 +883,7 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	got, err := store.ListByURI(ctx, "uri/shared", 2)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	assert.Equal(t, []string{"uri/3", "uri/2"}, []string{got[0].RequestID, got[1].RequestID})
+	assert.Equal(t, []string{"3", "2"}, []string{got[0].RequestID, got[1].RequestID})
 
 	empty, err := store.ListByURI(ctx, "uri/missing", 2)
 	require.NoError(t, err)
@@ -909,7 +909,7 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 	const queue = "log-q"
 	store := s.forGatewayQueue(queue).GetRequestLogStore()
 
-	_, err := store.List(ctx, "log/missing")
+	_, err := store.List(ctx, "999")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	entries := []entity.RequestLog{
@@ -920,7 +920,7 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 		require.NoError(t, store.Insert(ctx, entry))
 	}
 
-	got, err := store.List(ctx, "log/1")
+	got, err := store.List(ctx, "1")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, entity.RequestStatusAccepted, got[0].Status, "entries come back in timestamp order")
@@ -936,7 +936,7 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 	require.NoError(t, otherStore.Insert(ctx, entity.RequestLog{
 		RequestID: "1", Queue: "log-q-other", TimestampMs: 150, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
 	}))
-	otherGot, err := otherStore.List(ctx, "log/1")
+	otherGot, err := otherStore.List(ctx, "1")
 	require.NoError(t, err)
 	require.Len(t, otherGot, 1, "one queue's log must not surface through another's binding")
 	assert.Equal(t, entity.RequestStatusLanded, otherGot[0].Status)
