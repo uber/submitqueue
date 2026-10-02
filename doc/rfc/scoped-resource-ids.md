@@ -6,15 +6,15 @@ Proposed.
 
 ## Decision
 
-A generated resource ID is the positive `int64` returned by a durable counter scoped to `(owner domain, queue, resource kind)`.
+A generated resource ID is the canonical decimal string for a positive value returned by a durable counter scoped to `(owner domain, queue, resource kind)`.
 
 | Resource | Current ID | Proposed ID | Complete identity |
 |---|---:|---:|---|
-| SubmitQueue request | `demo-queue/42` | `42` | `(submitqueue, demo-queue, request, 42)` |
-| SubmitQueue batch | `demo-queue/batch/7` | `7` | `(submitqueue, demo-queue, batch, 7)` |
-| Stovepipe request | `request/monorepo/main/42` | `42` | `(stovepipe, monorepo/main, request, 42)` |
+| SubmitQueue request | `demo-queue/42` | `"42"` | `(submitqueue, demo-queue, request, "42")` |
+| SubmitQueue batch | `demo-queue/batch/7` | `"7"` | `(submitqueue, demo-queue, batch, "7")` |
+| Stovepipe request | `request/monorepo/main/42` | `"42"` | `(stovepipe, monorepo/main, request, "42")` |
 
-The numeric ID is unique only within its scope. The same value may appear in another queue, resource kind, or domain. APIs and messages therefore carry the queue separately; their typed field or message type supplies the resource kind.
+The decimal ID is unique only within its scope. The same value may appear in another queue, resource kind, or domain. APIs and messages therefore carry the queue separately; their typed field or message type supplies the resource kind.
 
 Do not embed scope into the ID. Forms such as `demo-queue/42`, `demo-queue/batch/7`, `request.42`, and ARN-like resource names are not stored or accepted as IDs.
 
@@ -40,14 +40,14 @@ The counter contract requires an atomic durable increment, not MySQL specificall
 
 ## Storage and contracts
 
-Resource tables store the numeric value directly. Queue remains the leading key:
+Resource tables keep IDs as strings. Queue remains the leading key:
 
 ```text
-request(queue, id BIGINT, ...) PRIMARY KEY (queue, id)
-batch(queue, id BIGINT, ...)   PRIMARY KEY (queue, id)
+request(queue, id VARCHAR(...), ...) PRIMARY KEY (queue, id)
+batch(queue, id VARCHAR(...), ...)   PRIMARY KEY (queue, id)
 ```
 
-Reference columns use the same numeric type. Domain entities use distinct named types such as `RequestID` and `BatchID`, and protobuf resource fields use `int64`.
+Reference columns use the same string type. Domain entities may use distinct named string types such as `RequestID` and `BatchID`; protobuf resource fields remain `string`. The counter backend may store its high-water marks as integers, and controllers convert allocated values to canonical decimal strings before creating resources.
 
 This proposal applies only to counter-generated resources. Provider build IDs, message and hook IDs, change URIs, and content hashes keep their existing contracts.
 
@@ -69,5 +69,6 @@ A UI may display `request.42`, `batch.7`, or `#42`, but those are derived labels
 - **Queue or kind prefixes:** duplicate explicit context, lengthen keys, require parsing, and introduce URL separators.
 - **ARN-like names:** solve global lookup, which current APIs neither provide nor require.
 - **UUIDs or a global counter:** provide global uniqueness at the cost of unnecessary encoding or coordination.
+- **Integer resource fields:** couple the persisted and wire contracts to the current counter representation without adding identity semantics.
 - **SQL auto-increment or `MAX(id) + 1`:** move allocation into one storage implementation or fail under concurrency.
 - **Process-local counters:** reuse IDs after restart and collide across replicas.
