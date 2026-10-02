@@ -133,7 +133,7 @@ func DependencyBatchStates() []BatchState {
 
 // Batch represents a group of requests to land on the source control repository's target branch.
 type Batch struct {
-	// ID is the globally unique identifier for the batch. Format: "<queue>/batch/<counter_value>".
+	// ID is the canonical decimal batch identifier, unique within Queue.
 	ID string
 
 	// Queue is the name of the queue processing the land request. Queue name is defined in the configuration and should be unique within the system.
@@ -142,7 +142,7 @@ type Batch struct {
 	// Contains is a list of land request IDs that are part of this batch.
 	// Request IDs will always be part of the same queue.
 	//
-	// For e.g. - [queueA/1, queueA/2, queueA/3].
+	// For example: [1, 2, 3] within Queue.
 	//
 	Contains []string
 
@@ -156,13 +156,13 @@ type Batch struct {
 	//
 	//This field is ok to be updated whether the state of the dependency graph changes. Update should use Version property for optimistic locking.
 	//
-	// Example: consider batches - queueA/batch/1, queueA/batch/2, queueA/batch/3
-	// such that - queueA/batch/2 and queueA/batch/3 have overlapping targets with requests in queueA/batch/1, but queueA/batch/2 and queueA/batch/3 do not have overlapping targets with each other.
+	// Example: consider batches 1, 2, and 3 in queueA such that batches 2 and 3
+	// have overlapping targets with requests in batch 1, but not with each other.
 	//
 	// In this case, the Dependencies field for -
-	// - queueA/batch/1 will be empty
-	// - queueA/batch/2 will contain queueA/batch/1
-	// - queueA/batch/3 will contain queueA/batch/1
+	// - batch 1 will be empty
+	// - batch 2 will contain batch 1
+	// - batch 3 will contain batch 1
 	//
 	// The list is empty while the batch is Creating and final from Created onwards.
 	Dependencies []string
@@ -189,7 +189,7 @@ func BatchFromBytes(data []byte) (Batch, error) {
 
 // BatchID is a lightweight entity for publishing and consuming just the batch identifier via the queue.
 type BatchID struct {
-	// ID is the globally unique identifier for the batch.
+	// ID is the queue-scoped identifier for the batch.
 	ID string `json:"id"`
 	// Queue is the name of the queue processing the batch. Empty on payloads written before the field existed.
 	Queue string `json:"queue"`

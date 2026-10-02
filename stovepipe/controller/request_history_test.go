@@ -37,7 +37,7 @@ import (
 func TestGetRequestHistoryByID(t *testing.T) {
 	const (
 		queue     = "monorepo/main"
-		requestID = "request/monorepo/main/42"
+		requestID = "42"
 	)
 	backendErr := errors.New("backend unavailable")
 	ordered := []entity.RequestLog{
@@ -69,6 +69,7 @@ func TestGetRequestHistoryByID(t *testing.T) {
 		{name: "empty queue", req: entity.GetRequestHistoryByIDRequest{ID: requestID}, wantInvalid: true, wantUser: true},
 		{name: "oversized queue", req: entity.GetRequestHistoryByIDRequest{Queue: strings.Repeat("q", maxHistoryIdentifierBytes+1), ID: requestID}, wantInvalid: true, wantUser: true},
 		{name: "empty request ID", req: entity.GetRequestHistoryByIDRequest{Queue: queue}, wantInvalid: true, wantUser: true},
+		{name: "composite request ID", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: "request/monorepo/main/42"}, wantInvalid: true, wantUser: true},
 		{name: "oversized request ID", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: strings.Repeat("r", maxHistoryIdentifierBytes+1)}, wantInvalid: true, wantUser: true},
 		{name: "storage factory failure", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: requestID}, factoryErr: backendErr, wantCause: backendErr},
 		{name: "history not found", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: requestID}, listErr: fmt.Errorf("query: %w", storage.ErrNotFound), wantNotFound: true, wantUser: true},
@@ -139,7 +140,7 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 	const (
 		queue     = "monorepo/main"
 		uri       = "git://example.com/repo.git/commit/deadbeef"
-		requestID = "request/monorepo/main/42"
+		requestID = "42"
 	)
 	backendErr := errors.New("backend unavailable")
 	logs := []entity.RequestLog{
@@ -248,11 +249,11 @@ func TestRequestHistoryNotFoundErrors(t *testing.T) {
 	}{
 		{
 			name: "request ID",
-			err:  fmt.Errorf("lookup failed: %w", &RequestHistoryByIDNotFoundError{RequestID: "request/queue/1"}),
+			err:  fmt.Errorf("lookup failed: %w", &RequestHistoryByIDNotFoundError{RequestID: "1"}),
 			assert: func(t *testing.T, err error) {
 				var notFound *RequestHistoryByIDNotFoundError
 				require.ErrorAs(t, err, &notFound)
-				assert.Equal(t, "request/queue/1", notFound.RequestID)
+				assert.Equal(t, "1", notFound.RequestID)
 			},
 		},
 		{

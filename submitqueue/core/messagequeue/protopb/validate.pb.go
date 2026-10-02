@@ -40,7 +40,7 @@ const (
 // Validate is the payload start publishes to the validate stage: only the request id travels. validate reloads the Request from storage.
 type Validate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the request id to validate. Format: "<queue>/<counter>".
+	// id is the request id to validate. Canonical positive decimal string; queue is carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

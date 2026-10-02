@@ -50,9 +50,9 @@ func TestList_ReturnsPageAndCursor(t *testing.T) {
 	store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{
 		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 3,
 	}).Return([]entity.RequestQueueSummary{
-		{RequestID: "q/3", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 190, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
-		{RequestID: "q/2", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 180, Status: entity.RequestStatusLanded, Metadata: map[string]string{}},
-		{RequestID: "q/1", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 170, Status: entity.RequestStatusError, Metadata: map[string]string{}},
+		{RequestID: "3", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 190, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
+		{RequestID: "2", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 180, Status: entity.RequestStatusLanded, Metadata: map[string]string{}},
+		{RequestID: "1", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 170, Status: entity.RequestStatusError, Metadata: map[string]string{}},
 	}, nil)
 	controller := newConfiguredListController(ctrl, store)
 
@@ -60,22 +60,22 @@ func TestList_ReturnsPageAndCursor(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, result.Requests, 2)
-	assert.Equal(t, []string{"q/3", "q/2"}, []string{result.Requests[0].RequestID, result.Requests[1].RequestID})
+	assert.Equal(t, []string{"3", "2"}, []string{result.Requests[0].RequestID, result.Requests[1].RequestID})
 	assert.Equal(t, int64(190), result.Requests[0].ReceivedAtMs)
 	require.NotEmpty(t, result.NextPageToken)
 	token, err := decodeListPageToken(result.NextPageToken)
 	require.NoError(t, err)
 	assert.Equal(t, int64(180), token.LastReceivedAtMs)
-	assert.Equal(t, "q/2", token.LastRequestID)
+	assert.Equal(t, "2", token.LastRequestID)
 }
 
 func TestList_UsesCursor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockRequestQueueSummaryStore(ctrl)
-	token := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 180, LastRequestID: "q/2"})
+	token := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 180, LastRequestID: "2"})
 	store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{
 		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 51,
-		HasCursor: true, Cursor: basestorage.RequestQueueSummaryCursor{ReceivedAtMs: 180, RequestID: "q/2"},
+		HasCursor: true, Cursor: basestorage.RequestQueueSummaryCursor{ReceivedAtMs: 180, RequestID: "2"},
 	}).Return([]entity.RequestQueueSummary{}, nil)
 	controller := newConfiguredListController(ctrl, store)
 
@@ -87,7 +87,7 @@ func TestList_UsesCursor(t *testing.T) {
 }
 
 func TestList_Errors(t *testing.T) {
-	validToken := encodeListPageToken(listPageToken{Queue: "other", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 150, LastRequestID: "other/1"})
+	validToken := encodeListPageToken(listPageToken{Queue: "other", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 150, LastRequestID: "1"})
 	invalidFieldsToken := base64.RawURLEncoding.EncodeToString([]byte("queue=q&received_at_or_after_ms=100&received_before_ms=200&last_received_at_ms=150"))
 	invalidNumberToken := base64.RawURLEncoding.EncodeToString([]byte("queue=q&received_at_or_after_ms=x&received_before_ms=200&last_received_at_ms=150&last_request_id=q%2F1"))
 	backendErr := fmt.Errorf("store down")

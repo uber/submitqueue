@@ -44,7 +44,7 @@ const (
 // from these fields; producer and consumer do not share a store at this seam.
 type Start struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the minted request id. Format: "<queue>/<counter>".
+	// id is the minted request id. Canonical positive decimal string; queue is carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing the land request.
 	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`

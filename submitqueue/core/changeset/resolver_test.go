@@ -60,7 +60,7 @@ func TestResolverChanges(t *testing.T) {
 	reqs.EXPECT().Get(gomock.Any(), "r2").Return(req("r2", "u2"), nil)
 	reqs.EXPECT().Get(gomock.Any(), "r3").Return(req("r3", "u3"), nil)
 
-	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/2", Contains: []string{"r2", "r3"}})
+	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "2", Contains: []string{"r2", "r3"}})
 	require.NoError(t, err)
 	// request order within the batch is preserved.
 	assert.Equal(t, []change.Change{{URIs: []string{"u2"}}, {URIs: []string{"u3"}}}, got)
@@ -70,7 +70,7 @@ func TestResolverChangesEmpty(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	r := newTestResolver(ctrl, storagemock.NewMockRequestStore(ctrl), storagemock.NewMockChangeStore(ctrl))
 
-	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/1"})
+	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "1"})
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -83,7 +83,7 @@ func TestResolverChangesRequestError(t *testing.T) {
 	sentinel := errors.New("not found")
 	reqs.EXPECT().Get(gomock.Any(), "r1").Return(entity.Request{}, sentinel)
 
-	_, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/1", Contains: []string{"r1"}})
+	_, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "1", Contains: []string{"r1"}})
 	require.ErrorIs(t, err, sentinel)
 }
 
@@ -93,7 +93,7 @@ func TestResolverDetailed(t *testing.T) {
 	changes := storagemock.NewMockChangeStore(ctrl)
 	r := newTestResolver(ctrl, reqs, changes)
 
-	batch := entity.Batch{ID: "q/batch/1", Queue: "q", Contains: []string{"r1", "r2"}}
+	batch := entity.Batch{ID: "1", Queue: "q", Contains: []string{"r1", "r2"}}
 	reqs.EXPECT().Get(gomock.Any(), "r1").Return(req("r1", "u1"), nil)
 	reqs.EXPECT().Get(gomock.Any(), "r2").Return(req("r2", "u2"), nil)
 
@@ -112,7 +112,7 @@ func TestResolverDetailed(t *testing.T) {
 	got, err := r.DetailedForBatch(context.Background(), batch)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BatchChanges{
-		BatchID: "q/batch/1",
+		BatchID: "1",
 		Queue:   "q",
 		Changes: []entity.ChangeInfo{{URI: "u1", Details: d1}, {URI: "u2", Details: d2}},
 	}, got)
@@ -128,6 +128,6 @@ func TestResolverDetailedChangeStoreError(t *testing.T) {
 	reqs.EXPECT().Get(gomock.Any(), "r1").Return(req("r1", "u1"), nil)
 	changes.EXPECT().GetByURI(gomock.Any(), "u1").Return(nil, sentinel)
 
-	_, err := r.DetailedForBatch(context.Background(), entity.Batch{ID: "q/batch/1", Queue: "q", Contains: []string{"r1"}})
+	_, err := r.DetailedForBatch(context.Background(), entity.Batch{ID: "1", Queue: "q", Contains: []string{"r1"}})
 	require.ErrorIs(t, err, sentinel)
 }

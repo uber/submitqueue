@@ -35,6 +35,6 @@ type QueueBatchState struct {
 	// the batch's authoritative state lives on the Batch entity and may differ transiently.
 	State BatchState
 
-	// BatchID is the globally unique identifier of the batch. Format: "<queue>/batch/<counter_value>".
+	// BatchID is the canonical decimal batch identifier, resolved within Queue.
 	BatchID string
 }

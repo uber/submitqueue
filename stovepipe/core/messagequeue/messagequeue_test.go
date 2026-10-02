@@ -23,7 +23,7 @@ import (
 )
 
 func TestProcessRequestRoundTrip(t *testing.T) {
-	req := &ProcessRequest{Id: "request/monorepo/main/42"}
+	req := &ProcessRequest{Id: "42"}
 
 	data, err := Marshal(req)
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func TestProcessRequestRoundTrip(t *testing.T) {
 }
 
 func TestBuildRequestRoundTrip(t *testing.T) {
-	req := &BuildRequest{Id: "request/monorepo/main/42"}
+	req := &BuildRequest{Id: "42"}
 
 	data, err := Marshal(req)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestRecordRoundTrip(t *testing.T) {
 // TestWireFormat locks the protojson encoding decision the contract relies on:
 // snake_case field names (UseProtoNames).
 func TestWireFormat(t *testing.T) {
-	data, err := Marshal(&ProcessRequest{Id: "request/monorepo/main/42"})
+	data, err := Marshal(&ProcessRequest{Id: "42"})
 	require.NoError(t, err)
 
 	assert.Contains(t, string(data), `"id"`, "fields must serialize as snake_case")

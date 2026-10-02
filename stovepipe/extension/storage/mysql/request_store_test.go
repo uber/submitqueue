@@ -43,7 +43,7 @@ func setupRequestStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.Requ
 
 func TestRequestStore_Create(t *testing.T) {
 	request := entity.Request{
-		ID:            "request/monorepo/main/1",
+		ID:            "1",
 		Queue:         "monorepo/main",
 		URI:           "git://remote/monorepo/main/deadbeef",
 		State:         entity.RequestStateAccepted,
@@ -110,7 +110,7 @@ func TestRequestStore_Create(t *testing.T) {
 
 func TestRequestStore_Get(t *testing.T) {
 	want := entity.Request{
-		ID:              "request/monorepo/main/1",
+		ID:              "1",
 		Queue:           "monorepo/main",
 		URI:             "git://remote/monorepo/main/deadbeef",
 		State:           entity.RequestStateProcessing,
@@ -187,7 +187,7 @@ func TestRequestStore_Get(t *testing.T) {
 
 func TestRequestStore_Update(t *testing.T) {
 	request := entity.Request{
-		ID:              "request/monorepo/main/1",
+		ID:              "1",
 		Queue:           "monorepo/main",
 		URI:             "git://remote/monorepo/main/deadbeef",
 		State:           entity.RequestStateProcessing,

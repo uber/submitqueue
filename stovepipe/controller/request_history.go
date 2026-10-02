@@ -70,7 +70,7 @@ func (c *requestHistoryController) readHistoryByID(ctx context.Context, req enti
 	if err := validateHistoryIdentifier("queue", req.Queue); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByID invalid queue=%q: %w", req.Queue, err)
 	}
-	if err := validateHistoryIdentifier("request ID", req.ID); err != nil {
+	if err := validateRequestID(req.ID); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByID invalid request_id=%q queue=%q: %w", req.ID, req.Queue, err)
 	}
 

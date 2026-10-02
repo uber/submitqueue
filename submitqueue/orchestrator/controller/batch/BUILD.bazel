@@ -11,6 +11,7 @@ go_library(
         "//platform/extension/counter:go_default_library",
         "//platform/metrics:go_default_library",
         "//platform/publish:go_default_library",
+        "//platform/resourceid:go_default_library",
         "//submitqueue/core/messagequeue:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",

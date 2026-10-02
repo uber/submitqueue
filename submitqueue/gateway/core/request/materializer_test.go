@@ -30,18 +30,18 @@ import (
 
 func TestMaterializer_PersistLog(t *testing.T) {
 	base := testRequestSummary()
-	log := entity.RequestLog{RequestID: "q/1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 2, Metadata: map[string]string{}}
+	log := entity.RequestLog{RequestID: "1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 2, Metadata: map[string]string{}}
 	t.Run("winning log updates both projections", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(base, nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(base, nil)
 		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
 			assert.Equal(t, entity.RequestStatusLanded, updated.Status)
 			assert.Equal(t, int32(2), updated.RequestVersion)
 			return nil
 		})
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(base), nil)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(base), nil)
 		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), log))
 	})
@@ -52,14 +52,14 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		current := base
 		current.Status = entity.RequestStatusLanded
 		current.RequestVersion = 0
-		incoming := entity.RequestLog{RequestID: "q/1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, Metadata: map[string]string{}}
+		incoming := entity.RequestLog{RequestID: "1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, Metadata: map[string]string{}}
 		logStore.EXPECT().Insert(gomock.Any(), incoming).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(current, nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(current, nil)
 		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
 			assert.Equal(t, entity.RequestStatusSpeculating, updated.Status)
 			return nil
 		})
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(current), nil)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(current), nil)
 		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), incoming))
 	})
@@ -74,17 +74,17 @@ func TestMaterializer_PersistLog(t *testing.T) {
 				current.StatusTimestampMs = 10
 				// Newer than the summary, so only the entry's type keeps it out.
 				event := entity.RequestLog{
-					RequestID: "q/1", TimestampMs: 20,
+					RequestID: "1", TimestampMs: 20,
 					Type: entity.RequestLogTypeEvent, Event: buildEvent,
 					Metadata: map[string]string{"build_id": "b/7"},
 				}
 
 				// Inserted: the entry is the request's history.
 				logStore.EXPECT().Insert(gomock.Any(), event).Return(nil)
-				summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(current, nil)
+				summaryStore.EXPECT().Get(gomock.Any(), "1").Return(current, nil)
 				// No summaryStore.Update expectation — gomock fails the test if
 				// the event moves the request's current status.
-				queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(current), nil)
+				queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(current), nil)
 
 				require.NoError(t, m.PersistLog(context.Background(), event))
 			})
@@ -95,15 +95,15 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(base, nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(base, nil)
 		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 		advanced := base
 		advanced.Status = entity.RequestStatusLanded
 		advanced.RequestVersion = 2
 		advanced.StatusTimestampMs = 20
 		advanced.Version = 2
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(advanced, nil)
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(base), nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(base), nil)
 		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), log))
 	})
@@ -117,8 +117,8 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		advanced.RequestVersion = 2
 		advanced.StatusTimestampMs = 20
 		advanced.Version = 2
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(advanced, nil)
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(base), nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(base), nil)
 		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), log))
 	})
@@ -127,16 +127,16 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		m, summaryStore, queueStore, uriStore, logStore := materializerStores(ctrl)
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(base, nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(base, nil)
 		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 		activated := base
 		activated.Status = entity.RequestStatusLanded
 		activated.RequestVersion = 2
 		activated.StatusTimestampMs = 20
 		activated.Version = 2
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(entity.RequestQueueSummary{}, storage.ErrNotFound)
-		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/1", Queue: "q", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
-		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/2", Queue: "q", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(entity.RequestQueueSummary{}, storage.ErrNotFound)
+		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/1", Queue: "q", ReceivedAtMs: 10, RequestID: "1"}).Return(nil)
+		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/2", Queue: "q", ReceivedAtMs: 10, RequestID: "1"}).Return(nil)
 		queueStore.EXPECT().Create(gomock.Any(), queueSummaryFromSummary(activated)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), log))
 	})
@@ -151,9 +151,9 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		advanced.StatusTimestampMs = 20
 		advanced.Version = 2
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil).Times(2)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(advanced, nil).Times(2)
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(entity.RequestQueueSummary{}, errors.New("queue store down"))
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(advanced), nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil).Times(2)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(entity.RequestQueueSummary{}, errors.New("queue store down"))
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(advanced), nil)
 
 		require.Error(t, materializer.PersistLog(context.Background(), log))
 		require.NoError(t, materializer.PersistLog(context.Background(), log))
@@ -163,7 +163,7 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		m, summaryStore, _, _, logStore := materializerStores(ctrl)
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, storage.ErrNotFound)
 		require.Error(t, m.PersistLog(context.Background(), log))
 	})
 
@@ -176,10 +176,10 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		advanced.RequestVersion = 2
 		advanced.StatusTimestampMs = 20
 		advanced.Version = 2
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(advanced, nil)
+		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil)
 		queueAhead := queueSummaryFromSummary(advanced)
 		queueAhead.Version = 3
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueAhead, nil)
+		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueAhead, nil)
 		require.NoError(t, m.PersistLog(context.Background(), log))
 	})
 }
@@ -329,7 +329,7 @@ func materializerStores(ctrl *gomock.Controller) (*Materializer, *storagemock.Mo
 
 func testRequestSummary() entity.RequestSummary {
 	return entity.RequestSummary{
-		RequestID: "q/1", Queue: "q", ChangeURIs: []string{"uri/1", "uri/2"}, ReceivedAtMs: 10,
+		RequestID: "1", Queue: "q", ChangeURIs: []string{"uri/1", "uri/2"}, ReceivedAtMs: 10,
 		Status: entity.RequestStatusAccepting, StatusTimestampMs: 10, Version: 1, Metadata: map[string]string{},
 	}
 }

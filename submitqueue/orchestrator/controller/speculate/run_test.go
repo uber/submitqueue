@@ -282,7 +282,7 @@ func TestRun_PassesSnapshotToSpeculator(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	spec := &scriptedSpeculator{}
 
-	landing := entity.Batch{ID: "q/batch/landing", Queue: "q", State: entity.BatchStateLanding, Version: 1}
+	landing := entity.Batch{ID: "100", Queue: "q", State: entity.BatchStateLanding, Version: 1}
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead(), landing})
 	h.noBuildsDispatched()
 	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
@@ -807,7 +807,7 @@ func TestRun_FailureCascadesWithinOneRun(t *testing.T) {
 	// dependent is listed first, so a single forward pass would evaluate it
 	// before the head it is stacked on has failed.
 	dependent := entity.Batch{
-		ID: "q/batch/dependent", Queue: "q", State: entity.BatchStateSpeculating,
+		ID: "101", Queue: "q", State: entity.BatchStateSpeculating,
 		Dependencies: []string{head}, Version: 1,
 	}
 	failing := entity.Batch{
@@ -1010,7 +1010,7 @@ func TestRun_SpeculatorSeesPathSetsOfNonOpenHeads(t *testing.T) {
 	spec := &scriptedSpeculator{}
 
 	landing := entity.Batch{
-		ID: "q/batch/landing", Queue: "q", State: entity.BatchStateLanding, Version: 1,
+		ID: "100", Queue: "q", State: entity.BatchStateLanding, Version: 1,
 	}
 	open := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 
@@ -1051,7 +1051,7 @@ func TestRun_PersistsObservationsWithNoOpenHead(t *testing.T) {
 	spec := &scriptedSpeculator{}
 
 	landing := entity.Batch{
-		ID: "q/batch/landing", Queue: "q", State: entity.BatchStateLanding, Version: 1,
+		ID: "100", Queue: "q", State: entity.BatchStateLanding, Version: 1,
 	}
 
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{landing})
@@ -1157,7 +1157,7 @@ func cascadePair(t *testing.T, ctrl *gomock.Controller, prerequisiteState entity
 
 	prerequisite := entity.Batch{ID: head, Queue: "q", State: prerequisiteState, Version: 1}
 	derived := entity.Batch{
-		ID: "q/batch/derived", Queue: "q", State: entity.BatchStateSpeculating,
+		ID: "102", Queue: "q", State: entity.BatchStateSpeculating,
 		Dependencies: []string{head}, Version: 1,
 	}
 
@@ -1230,7 +1230,7 @@ func TestRun_UnrelatedOutcomeStillCommitsAfterALostCAS(t *testing.T) {
 
 	losing := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateCancelling, Version: 1}
 	independent := entity.Batch{
-		ID: "q/batch/independent", Queue: "q", State: entity.BatchStateSpeculating, Version: 1,
+		ID: "103", Queue: "q", State: entity.BatchStateSpeculating, Version: 1,
 	}
 
 	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{losing, independent})
@@ -1296,7 +1296,7 @@ func TestRun_FinalizedBatchPathSetIsWrittenOnce(t *testing.T) {
 func TestRun_CascadeDerivedBatchIsGivenARecoverySignalBeforeItIsTerminal(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	failing := entity.Batch{ID: "q/batch/derived", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	failing := entity.Batch{ID: "102", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{failing})
 	h.noBuildsDispatched()
 
@@ -1351,7 +1351,7 @@ func TestRun_TriggerBatchNeedsNoRecoverySignal(t *testing.T) {
 func TestRun_CascadeDerivedBatchIsGivenARecoverySignalBeforeItLands(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	landing := entity.Batch{ID: "q/batch/derived", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	landing := entity.Batch{ID: "102", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{landing})
 	h.noBuildsDispatched()
 
@@ -1412,7 +1412,7 @@ func TestRun_CancellingPathWithALiveBuildStaysCancelling(t *testing.T) {
 // run's request-log fan-out has somebody to report to.
 func memberHead() entity.Batch {
 	h := speculatingHead()
-	h.Contains = []string{"q/1"}
+	h.Contains = []string{"1"}
 	return h
 }
 
@@ -1442,7 +1442,7 @@ func TestRun_ReportsPassedPathWhileWaiting(t *testing.T) {
 	assert.Empty(t, h.published, "an unsettled head lands nowhere")
 
 	require.Len(t, h.logs, 1)
-	assert.Equal(t, "q/1", h.logs[0].RequestID)
+	assert.Equal(t, "1", h.logs[0].RequestID)
 	assert.Equal(t, entity.RequestLogTypeEvent, h.logs[0].Type)
 	assert.Equal(t, entity.RequestEventWaiting, h.logs[0].Event)
 	assert.Equal(t, head, h.logs[0].Metadata["batch_id"])
@@ -1487,7 +1487,7 @@ func TestRun_ReportsInvalidatedWhenTheDependencyFailsInTheSameRun(t *testing.T) 
 
 	leader := entity.Batch{ID: dep1, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 	followerBatch := entity.Batch{
-		ID: head, Queue: "q", Contains: []string{"q/1"},
+		ID: head, Queue: "q", Contains: []string{"1"},
 		State: entity.BatchStateSpeculating, Dependencies: []string{dep1}, Version: 1,
 	}
 
@@ -1624,7 +1624,7 @@ func TestRun_AdmitsBatchLeftInCreated(t *testing.T) {
 
 	trigger := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 	straggler := entity.Batch{
-		ID: "q/batch/9", Queue: "q", Contains: []string{"q/9"},
+		ID: "9", Queue: "q", Contains: []string{"9"},
 		State: entity.BatchStateCreated, Version: 1,
 	}
 
@@ -1652,7 +1652,7 @@ func TestRun_AdmitLostRaceDoesNotFailRun(t *testing.T) {
 
 	trigger := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 	straggler := entity.Batch{
-		ID: "q/batch/9", Queue: "q", Contains: []string{"q/9"},
+		ID: "9", Queue: "q", Contains: []string{"9"},
 		State: entity.BatchStateCreated, Version: 1,
 	}
 
@@ -1674,7 +1674,7 @@ func TestRun_AdmitStorageErrorDoesNotFailRun(t *testing.T) {
 
 	trigger := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 	straggler := entity.Batch{
-		ID: "q/batch/9", Queue: "q", Contains: []string{"q/9"},
+		ID: "9", Queue: "q", Contains: []string{"9"},
 		State: entity.BatchStateCreated, Version: 1,
 	}
 

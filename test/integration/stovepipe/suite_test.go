@@ -83,6 +83,7 @@ func (s *StovepipeIntegrationSuite) SetupSuite() {
 
 	// Apply schemas after the stack is up; the service connects lazily and the
 	// consumer retries, so the boot ordering is tolerated.
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("stovepipe/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
@@ -158,7 +159,7 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAPIs() {
 	t := s.T()
 	const (
 		queue     = "history-api/main"
-		requestID = "request/history-api/main/7"
+		requestID = "7"
 		uri       = "git://history-api/main/abc123"
 	)
 
@@ -199,9 +200,9 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAbsence() {
 	t := s.T()
 	const (
 		queue      = "history-api-absence/main"
-		mappedID   = "request/history-api-absence/main/1"
+		mappedID   = "1"
 		mappedURI  = "git://history-api-absence/main/mapped"
-		scopedID   = "request/history-api-absence/main/2"
+		scopedID   = "2"
 		scopedURI  = "git://history-api-absence/main/scoped"
 		missingID  = "request/history-api-absence/main/missing"
 		missingURI = "git://history-api-absence/main/missing"

@@ -78,7 +78,7 @@ func (f staticCounterFactory) For(counter.Config) (counter.Counter, error) { ret
 // testRequest returns a standard test request for batch tests.
 func testRequest() entity.Request {
 	return entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -285,6 +285,16 @@ func TestController_Process_CounterFailure(t *testing.T) {
 	assert.Error(t, controller.Process(context.Background(), newDelivery(t, ctrl, testRequest(), "")))
 }
 
+func TestController_Process_NonPositiveCounterValue(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), nil)
+
+	controller := newTestController(t, ctrl, cnt, nil, nil)
+	assert.Error(t, controller.Process(context.Background(), newDelivery(t, ctrl, testRequest(), "")))
+}
+
 // A halted request must never spawn a batch. Cancelling is non-terminal but
 // still halts: cancel owns the request's outcome from that point.
 func TestController_Process_HaltedShortCircuit(t *testing.T) {
@@ -324,7 +334,7 @@ func TestController_Process_WritesBatchBeforeHandoff(t *testing.T) {
 
 	request := testRequest()
 	batch := entity.Batch{
-		ID:           "test-queue/batch/7",
+		ID:           "7",
 		Queue:        request.Queue,
 		Contains:     []string{request.ID},
 		Dependencies: []string{},
@@ -433,5 +443,5 @@ func TestController_Process_PublishesBatchingStatus(t *testing.T) {
 	require.Len(t, logs, 1)
 	assert.Equal(t, request.ID, logs[0].RequestID)
 	assert.Equal(t, entity.RequestStatusBatching, logs[0].Status)
-	assert.Equal(t, "test-queue/batch/1", logs[0].Metadata["batch_id"])
+	assert.Equal(t, "1", logs[0].Metadata["batch_id"])
 }

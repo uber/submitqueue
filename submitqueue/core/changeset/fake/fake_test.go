@@ -28,44 +28,44 @@ import (
 
 func TestResolverChanges(t *testing.T) {
 	r := New().
-		Set("q/batch/1", change.Change{URIs: []string{"u1"}}).
-		Set("q/batch/2", change.Change{URIs: []string{"u2"}}, change.Change{URIs: []string{"u3"}})
+		Set("1", change.Change{URIs: []string{"u1"}}).
+		Set("2", change.Change{URIs: []string{"u2"}}, change.Change{URIs: []string{"u3"}})
 
-	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/2"})
+	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "2"})
 	require.NoError(t, err)
 	assert.Equal(t, []change.Change{{URIs: []string{"u2"}}, {URIs: []string{"u3"}}}, got)
 
-	unseeded, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/unseeded"})
+	unseeded, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "999"})
 	require.NoError(t, err)
 	assert.Empty(t, unseeded)
 }
 
 func TestResolverDetailed(t *testing.T) {
 	want := entity.BatchChanges{
-		BatchID: "q/batch/1",
+		BatchID: "1",
 		Queue:   "q",
 		Changes: []entity.ChangeInfo{{URI: "u1"}},
 	}
-	r := New().SetDetailed("q/batch/1", want)
+	r := New().SetDetailed("1", want)
 
-	got, err := r.DetailedForBatch(context.Background(), entity.Batch{ID: "q/batch/1", Queue: "q"})
+	got, err := r.DetailedForBatch(context.Background(), entity.Batch{ID: "1", Queue: "q"})
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
 
 func TestResolverDetailedUnseeded(t *testing.T) {
-	got, err := New().DetailedForBatch(context.Background(), entity.Batch{ID: "q/batch/9", Queue: "q"})
+	got, err := New().DetailedForBatch(context.Background(), entity.Batch{ID: "9", Queue: "q"})
 	require.NoError(t, err)
-	assert.Equal(t, entity.BatchChanges{BatchID: "q/batch/9", Queue: "q"}, got)
+	assert.Equal(t, entity.BatchChanges{BatchID: "9", Queue: "q"}, got)
 }
 
 func TestResolverFailWith(t *testing.T) {
 	sentinel := errors.New("boom")
 	r := New().FailWith(sentinel)
 
-	_, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/1"})
+	_, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "1"})
 	require.ErrorIs(t, err, sentinel)
 
-	_, err = r.DetailedForBatch(context.Background(), entity.Batch{ID: "q/batch/1"})
+	_, err = r.DetailedForBatch(context.Background(), entity.Batch{ID: "1"})
 	require.ErrorIs(t, err, sentinel)
 }

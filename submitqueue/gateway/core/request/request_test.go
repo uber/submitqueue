@@ -37,58 +37,58 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 		{
 			name: "single record",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusStarted, LastError: "", Metadata: map[string]string{}},
 		},
 		{
 			name: "terminal status wins over later non-terminal",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 3, LastError: "", Metadata: map[string]string{"batch": "b1"}},
-				{RequestID: "q/1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 3, LastError: "", Metadata: map[string]string{"batch": "b1"}},
+				{RequestID: "1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusLanded, LastError: "", Metadata: map[string]string{"batch": "b1"}},
 		},
 		{
 			name: "terminal error status with last error",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "land"}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "land"}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusError, LastError: "merge conflict", Metadata: map[string]string{"step": "land"}},
 		},
 		{
 			name: "multiple terminal records picks highest version",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 2, LastError: "timeout", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 5, LastError: "", Metadata: map[string]string{"final": "true"}},
-				{RequestID: "q/1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "conflict", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 2, LastError: "timeout", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 5, LastError: "", Metadata: map[string]string{"final": "true"}},
+				{RequestID: "1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "conflict", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusLanded, LastError: "", Metadata: map[string]string{"final": "true"}},
 		},
 		{
 			name: "same version terminal records uses timestamp tiebreaker",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "first", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "second", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "first", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "second", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusError, LastError: "second", Metadata: map[string]string{}},
 		},
 		{
 			name: "terminal status without version is not terminal",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{"source": "gw"}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{"source": "gw"}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusSpeculating, LastError: "", Metadata: map[string]string{"source": "gw"}},
 		},
 		{
 			name: "no terminal records falls back to latest timestamp",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusValidated, RequestVersion: 2, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusValidated, RequestVersion: 2, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusValidated, LastError: "", Metadata: map[string]string{}},
 		},
@@ -98,9 +98,9 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockStore := storagemock.NewMockRequestLogStore(ctrl)
-			mockStore.EXPECT().List(gomock.Any(), "q/1").Return(tt.logs, nil)
+			mockStore.EXPECT().List(gomock.Any(), "1").Return(tt.logs, nil)
 
-			result, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "q/1")
+			result, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -110,9 +110,9 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 func TestGetCurrentStateFromRequestLog_NoRecords(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockStore := storagemock.NewMockRequestLogStore(ctrl)
-	mockStore.EXPECT().List(gomock.Any(), "q/1").Return(nil, storage.ErrNotFound)
+	mockStore.EXPECT().List(gomock.Any(), "1").Return(nil, storage.ErrNotFound)
 
-	_, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "q/1")
+	_, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "1")
 	assert.Error(t, err)
 	assert.True(t, storage.IsNotFound(err))
 }
@@ -120,8 +120,8 @@ func TestGetCurrentStateFromRequestLog_NoRecords(t *testing.T) {
 func TestGetCurrentStateFromRequestLog_StoreError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockStore := storagemock.NewMockRequestLogStore(ctrl)
-	mockStore.EXPECT().List(gomock.Any(), "q/1").Return(nil, fmt.Errorf("db connection lost"))
+	mockStore.EXPECT().List(gomock.Any(), "1").Return(nil, fmt.Errorf("db connection lost"))
 
-	_, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "q/1")
+	_, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "1")
 	assert.Error(t, err)
 }

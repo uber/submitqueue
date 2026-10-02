@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/resourceid"
 )
 
 const maxHistoryIdentifierBytes = 255
@@ -37,6 +38,13 @@ func validateHistoryIdentifier(name, value string) error {
 	}
 	if len(value) > maxHistoryIdentifierBytes {
 		return fmt.Errorf("%s exceeds %d bytes: %w", name, maxHistoryIdentifierBytes, ErrInvalidRequest)
+	}
+	return nil
+}
+
+func validateRequestID(value string) error {
+	if err := resourceid.Validate(value); err != nil {
+		return fmt.Errorf("invalid request ID %q: %v: %w", value, err, ErrInvalidRequest)
 	}
 	return nil
 }

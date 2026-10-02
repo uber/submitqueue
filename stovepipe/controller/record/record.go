@@ -623,7 +623,7 @@ func compareToBookmark(queue, candidate, current string) (int, error) {
 	if current == "" {
 		return 1, nil
 	}
-	cmp, err := entity.CompareRequestID(queue, candidate, current)
+	cmp, err := entity.CompareRequestID(candidate, current)
 	if err != nil {
 		return 0, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
 	}

@@ -155,7 +155,7 @@ func TestNewController(t *testing.T) {
 func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c := newController(t, orchstoragemock.NewMockStorage(ctrl), consumer.TopicRegistry{})
-	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1", "test-queue"), "test-queue", nil)
+	msg := entityqueue.NewMessage("1", batchIDPayload(t, "1", "test-queue"), "test-queue", nil)
 	msg.Tenant = "other-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
@@ -166,15 +166,15 @@ func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const batchID = "test-queue/batch/1"
+	const batchID = "1"
 	req1 := entity.Request{
-		ID:           "test-queue/1",
+		ID:           "1",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 	}
 	req2 := entity.Request{
-		ID:           "test-queue/2",
+		ID:           "2",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -280,9 +280,9 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 func TestProcess_ReportsLandingBeforeDispatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const batchID = "test-queue/batch/3"
-	req1 := entity.Request{ID: "test-queue/1", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
-	req2 := entity.Request{ID: "test-queue/2", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
+	const batchID = "3"
+	req1 := entity.Request{ID: "1", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
+	req2 := entity.Request{ID: "2", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
 	batch := entity.Batch{
 		ID: batchID, Queue: "test-queue",
 		Contains: []string{req1.ID, req2.ID},
@@ -334,8 +334,8 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
-			const batchID = "test-queue/batch/2"
-			req := entity.Request{ID: "test-queue/1", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
+			const batchID = "2"
+			req := entity.Request{ID: "1", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
 			batch := entity.Batch{ID: batchID, Queue: "test-queue", Contains: []string{req.ID}, State: entity.BatchStateLanding, Version: 1}
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -364,7 +364,7 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 func TestProcess_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const batchID = "test-queue/batch/3"
+	const batchID = "3"
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(entity.Batch{}, fmt.Errorf("db connection lost"))

@@ -35,7 +35,7 @@ type counterFactory struct{ db *sql.DB }
 
 // For returns the Counter bound to the queue named in config.
 func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
-	return mysqlcounter.NewCounter(f.db, tally.NoopScope, config.QueueName), nil
+	return mysqlcounter.NewCounter(f.db, tally.NoopScope, "counter-contract", config.QueueName), nil
 }
 
 // MySQLCounterIntegrationSuite tests the MySQL counter implementation
@@ -104,4 +104,26 @@ func (s *MySQLCounterIntegrationSuite) SetupSuite() {
 func (s *MySQLCounterIntegrationSuite) TearDownSuite() {
 	s.log.Logf("Tearing down MySQL Counter integration test suite")
 	// Cleanup handled automatically by testutil.ComposeStack
+}
+
+func (s *MySQLCounterIntegrationSuite) TestCounter_OwnerDomainIsolationAndRestart() {
+	const (
+		queue        = "owner-domain-isolation"
+		resourceKind = "request"
+	)
+
+	domainA := mysqlcounter.NewCounter(s.db, tally.NoopScope, "domain-a", queue)
+	domainB := mysqlcounter.NewCounter(s.db, tally.NoopScope, "domain-b", queue)
+
+	a1, err := domainA.Next(context.Background(), resourceKind)
+	require.NoError(s.T(), err)
+	b1, err := domainB.Next(context.Background(), resourceKind)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(1), a1)
+	require.Equal(s.T(), int64(1), b1)
+
+	reopenedDomainA := mysqlcounter.NewCounter(s.db, tally.NoopScope, "domain-a", queue)
+	a2, err := reopenedDomainA.Next(context.Background(), resourceKind)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(2), a2)
 }

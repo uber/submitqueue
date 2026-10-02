@@ -194,8 +194,8 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	queueStore, err := store.For("test-queue")
 	require.NoError(t, err)
 	for _, summary := range []entity.RequestSummary{
-		{RequestID: "test-queue/list-1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
-		{RequestID: "test-queue/list-2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
 	} {
 		publicStatus := summary.Status
 		summary.Status = entity.RequestStatusAccepting
@@ -226,7 +226,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	t := s.T()
 
-	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1", Queue: "missing"})
+	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "1", Queue: "missing"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
@@ -248,7 +248,7 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 			ChangeURI:    overflowChangeURI,
 			Queue:        "overflow",
 			ReceivedAtMs: int64(i),
-			RequestID:    fmt.Sprintf("overflow/%d", i),
+			RequestID:    fmt.Sprintf("%d", i),
 		}))
 	}
 
@@ -267,7 +267,7 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 		ChangeURI:    inconsistentChangeURI,
 		Queue:        "missing-summary",
 		ReceivedAtMs: 1,
-		RequestID:    "missing-summary/1",
+		RequestID:    "1",
 	}))
 	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI, Queue: "missing-summary"})
 	require.Error(t, err)

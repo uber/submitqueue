@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	"github.com/uber/submitqueue/platform/resourceid"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -62,9 +63,7 @@ func IsUnrecognizedQueue(err error) bool {
 	return errors.As(err, &target)
 }
 
-// counterDomainRequest names the per-queue sequence that mints request IDs. The
-// sqid is built independently as "<queue>/<counter_value>", so the domain is a
-// sequence name only and never appears in the ID.
+// counterDomainRequest names the per-queue sequence that mints request IDs.
 const counterDomainRequest = "request"
 
 // LandController handles land business logic for the gateway
@@ -122,7 +121,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 		return entity.LandResult{}, fmt.Errorf("failed to look up queue %q: %w", queue, err)
 	}
 
-	// Generate a globally unique request ID for the land request.
+	// Generate a queue-scoped request ID for the land request.
 	// The inbound entity arrives with an empty ID; the controller owns minting it.
 	stores, err := c.stores.For(storage.Config{QueueName: queue})
 	if err != nil {
@@ -136,8 +135,8 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
-	req.ID = fmt.Sprintf("%s/%d", queue, seq)
-	if err := validateStoredIdentifier("generated sqid", req.ID); err != nil {
+	req.ID, err = resourceid.FromCounter(seq)
+	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("generated invalid request ID for queue=%s: %w", queue, err)
 	}
 

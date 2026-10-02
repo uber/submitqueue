@@ -31,7 +31,7 @@ option java_package = "com.uber.submitqueue.submitqueue.messagequeue";
 message Start {
     option (uber.base.messagequeue.topic_keys) = "start";
 
-    // id is the minted request id. Format: "<queue>/<counter>".
+    // id is the minted request id. Canonical positive decimal string; queue is carried separately.
     string id = 1;
     // queue is the name of the queue processing the land request.
     string queue = 2;

@@ -1,21 +1,21 @@
 # Counter
 
-Vendor-agnostic interface for atomic sequential number generation, scoped per queue.
+Vendor-agnostic interface for atomic sequential number generation, scoped by owner domain, queue, and resource kind.
 
 ## Interface
 
 ### Factory
 
-Resolves the Counter bound to one queue. The host wiring decides which backend serves which queue; a resolved instance can only advance that queue's sequences.
+Resolves the Counter bound to one queue. The host wiring decides which backend serves which queue and injects the owner domain; a resolved instance can only advance that scope's sequences.
 
 ### Counter
 
-Generates unique, sequential values scoped to a domain string within the bound queue.
+Generates unique, sequential values scoped to a resource kind within the bound owner domain and queue.
 
-- **domain**: A string key naming a sequence within the queue (max 255 characters). Each `(queue, domain)` pair maintains its own independent sequence.
-- **Next**: Atomically increments and returns the next value. The first call for a new domain returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
+- **resource kind**: A string key naming a sequence within the bound scope (max 255 characters). Each `(owner domain, queue, resource kind)` tuple maintains its own independent sequence.
+- **Next**: Atomically increments and returns the next value. The first call for a new resource kind returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
 
-The domain is a sequence *name*, not a queue-qualified key — callers pass `"request"` or `"batch"`, never `"request/my-queue"`. Callers that embed the queue in a minted identifier build that string themselves, independently of the domain, so the two cannot drift into each other.
+The resource kind is a sequence name, not an ID prefix. Callers pass `"request"` or `"batch"`; the returned number is formatted as a decimal string without embedding any scope.
 
 ## Usage
 
@@ -33,6 +33,6 @@ val, err = other.Next(ctx, "request") // returns 1, isolated from my-queue
 ## Implementing a Backend
 
 1. Create `platform/extension/counter/{backend}/` directory
-2. Implement the `Counter` interface, binding the queue at construction
-3. Add a schema file under `platform/extension/counter/{backend}/schema/` if the backend requires it. The queue must lead the primary key so the table is shardable by queue.
+2. Implement the `Counter` interface, binding the owner domain and queue at construction
+3. Add a schema file under `platform/extension/counter/{backend}/schema/` if the backend requires it. The persisted key must preserve the complete `(owner domain, queue, resource kind)` scope.
 4. Adapt the constructor to the `Factory` interface in the wiring layer, not here

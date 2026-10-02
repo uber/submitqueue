@@ -23,7 +23,7 @@ import (
 // to the orchestrator. It contains only the validated inputs and generated ID — the orchestrator
 // is responsible for constructing the full Request entity with state machine fields.
 type LandRequest struct {
-	// ID is the globally unique identifier for the land request. Format: "<queue>/<counter_value>".
+	// ID is the canonical decimal request identifier, unique within Queue.
 	ID string `json:"id"`
 	// Queue is the name of the queue processing the land request.
 	Queue string `json:"queue"`
@@ -38,7 +38,6 @@ type LandRequest struct {
 // controller assigned to the request so the transport layer can echo it back to
 // the caller.
 type LandResult struct {
-	// ID is the globally unique identifier assigned to the accepted land request.
-	// Format: "<queue>/<counter_value>".
+	// ID is the canonical decimal request identifier assigned within the request queue.
 	ID string
 }

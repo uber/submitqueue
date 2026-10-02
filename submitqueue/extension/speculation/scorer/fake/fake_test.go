@@ -31,7 +31,7 @@ import (
 // testCfg is the per-queue identity used by every case in this file.
 var testCfg = scorer.Config{QueueName: "test-queue"}
 
-const batchID = "q/batch/1"
+const batchID = "1"
 
 func TestNew_ImplementsInterface(t *testing.T) {
 	var _ scorer.Scorer = New(testCfg, nil, nil)

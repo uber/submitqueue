@@ -17,6 +17,8 @@ package controller
 import (
 	"errors"
 	"fmt"
+
+	"github.com/uber/submitqueue/platform/resourceid"
 )
 
 const (
@@ -94,6 +96,13 @@ func validateStoredIdentifier(name, value string) error {
 	}
 	if len(value) > maxStorageIdentifierBytes {
 		return fmt.Errorf("%s exceeds %d bytes: %w", name, maxStorageIdentifierBytes, ErrInvalidRequest)
+	}
+	return nil
+}
+
+func validateResourceID(name, value string) error {
+	if err := resourceid.Validate(value); err != nil {
+		return fmt.Errorf("invalid %s %q: %v: %w", name, value, err, ErrInvalidRequest)
 	}
 	return nil
 }

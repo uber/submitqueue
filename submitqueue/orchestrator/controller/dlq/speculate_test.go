@@ -122,16 +122,16 @@ func TestDLQSpeculateController_Process_Attribution(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
 			blamed := entity.Batch{
-				ID: tt.wantFailedBatch, Queue: "q", Contains: []string{"q/1"},
+				ID: tt.wantFailedBatch, Queue: "q", Contains: []string{"1"},
 				State: entity.BatchStateSpeculating, Version: 2,
 			}
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), tt.wantFailedBatch).Return(blamed, nil)
 			batchStore.EXPECT().Update(gomock.Any(), batchWithState(blamed, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
 
-			request := entity.Request{ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateProcessing}
+			request := entity.Request{ID: "1", Queue: "q", Version: 1, State: entity.RequestStateProcessing}
 			requestStore := storagemock.NewMockRequestStore(ctrl)
-			requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+			requestStore.EXPECT().Get(gomock.Any(), "1").Return(request, nil)
 			requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 			// The queue drained with the blamed batch, so no re-trigger.
@@ -172,26 +172,26 @@ func TestDLQSpeculateController_Process_RetriggersQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	failedBatch := entity.Batch{
-		ID: "q/batch/1", Queue: "q", Contains: nil,
+		ID: "1", Queue: "q", Contains: nil,
 		State: entity.BatchStateSpeculating, Version: 1,
 	}
 	// Two still live afterwards; the lower ID is chosen so the wake-up is
 	// reproducible despite ListByStates promising no order.
-	liveA := entity.Batch{ID: "q/batch/2", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
-	liveB := entity.Batch{ID: "q/batch/3", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	liveA := entity.Batch{ID: "2", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	liveB := entity.Batch{ID: "3", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(failedBatch, nil)
+	batchStore.EXPECT().Get(gomock.Any(), "1").Return(failedBatch, nil)
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(failedBatch, entity.BatchStateFailed), int32(1), int32(2)).Return(nil)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/3").Return(liveB, nil).AnyTimes()
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/2").Return(liveA, nil).AnyTimes()
+	batchStore.EXPECT().Get(gomock.Any(), "3").Return(liveB, nil).AnyTimes()
+	batchStore.EXPECT().Get(gomock.Any(), "2").Return(liveA, nil).AnyTimes()
 
 	queueBatchState := storagemock.NewMockQueueBatchStateStore(ctrl)
 	queueBatchState.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	queueBatchState.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	queueBatchState.EXPECT().List(gomock.Any(), entity.BatchStateSpeculating).Return([]entity.QueueBatchState{
-		{Queue: "q", State: entity.BatchStateSpeculating, BatchID: "q/batch/3"},
-		{Queue: "q", State: entity.BatchStateSpeculating, BatchID: "q/batch/2"},
+		{Queue: "q", State: entity.BatchStateSpeculating, BatchID: "3"},
+		{Queue: "q", State: entity.BatchStateSpeculating, BatchID: "2"},
 	}, nil).AnyTimes()
 	queueBatchState.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
@@ -203,13 +203,13 @@ func TestDLQSpeculateController_Process_RetriggersQueue(t *testing.T) {
 	registry := speculateRegistry(t, ctrl, 0, &republished, nil)
 	c := newSpeculateController(registry, store, t)
 
-	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/1", "q")
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDeliveryWithFailure(ctrl, payload, failure.New("boom"), true)
 	require.NoError(t, c.Process(context.Background(), delivery))
 
-	assert.Equal(t, []string{"q/batch/2"}, republished)
+	assert.Equal(t, []string{"2"}, republished)
 }
 
 // Redelivery of a reconcile already done must publish nothing. Republishing
@@ -219,18 +219,18 @@ func TestDLQSpeculateController_Process_NoRetriggerWithoutProgress(t *testing.T)
 	ctrl := gomock.NewController(t)
 
 	already := entity.Batch{
-		ID: "q/batch/1", Queue: "q", Contains: nil,
+		ID: "1", Queue: "q", Contains: nil,
 		State: entity.BatchStateFailed, Version: 4,
 	}
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(already, nil)
+	batchStore.EXPECT().Get(gomock.Any(), "1").Return(already, nil)
 
 	queueBatchState := storagemock.NewMockQueueBatchStateStore(ctrl)
 	queueBatchState.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	queueBatchState.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	// Live batches remain, so only the progress guard can be what stops it.
 	queueBatchState.EXPECT().List(gomock.Any(), entity.BatchStateSpeculating).Return([]entity.QueueBatchState{
-		{Queue: "q", State: entity.BatchStateSpeculating, BatchID: "q/batch/2"},
+		{Queue: "q", State: entity.BatchStateSpeculating, BatchID: "2"},
 	}, nil).AnyTimes()
 	queueBatchState.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
@@ -242,7 +242,7 @@ func TestDLQSpeculateController_Process_NoRetriggerWithoutProgress(t *testing.T)
 	registry := speculateRegistry(t, ctrl, 0, &republished, nil)
 	c := newSpeculateController(registry, store, t)
 
-	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "q/batch/1", "q")
+	payload, err := sqmq.MarshalID(sqmq.TopicKeySpeculate, "1", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDeliveryWithFailure(ctrl, payload, failure.New("boom"), true)

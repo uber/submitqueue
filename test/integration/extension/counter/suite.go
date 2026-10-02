@@ -66,48 +66,48 @@ func (s *CounterContractSuite) TestCounter_Next() {
 	t := s.T()
 	ctx := s.ctx
 
-	domain := "test-counter-next"
+	resourceKind := "test-counter-next"
 
 	// Get first sequence number
-	seq1, err := s.counter.Next(ctx, domain)
+	seq1, err := s.counter.Next(ctx, resourceKind)
 	require.NoError(t, err, "failed to get next sequence")
 	assert.Greater(t, seq1, int64(0), "sequence should be positive")
 
 	// Get next sequence number
-	seq2, err := s.counter.Next(ctx, domain)
+	seq2, err := s.counter.Next(ctx, resourceKind)
 	require.NoError(t, err, "failed to get next sequence")
 	assert.Equal(t, seq1+1, seq2, "sequence should increment by 1")
 
 	// Get another
-	seq3, err := s.counter.Next(ctx, domain)
+	seq3, err := s.counter.Next(ctx, resourceKind)
 	require.NoError(t, err)
 	assert.Equal(t, seq2+1, seq3, "sequence should continue incrementing")
 }
 
-// TestCounter_MultipleDomains tests independent counters
-func (s *CounterContractSuite) TestCounter_MultipleDomains() {
+// TestCounter_MultipleResourceKinds tests independent counters.
+func (s *CounterContractSuite) TestCounter_MultipleResourceKinds() {
 	t := s.T()
 	ctx := s.ctx
 
-	domain1 := "test-counter-1"
-	domain2 := "test-counter-2"
+	resourceKind1 := "test-counter-1"
+	resourceKind2 := "test-counter-2"
 
-	// Get sequences from both domains
-	seq1a, err := s.counter.Next(ctx, domain1)
+	// Get sequences from both resource kinds.
+	seq1a, err := s.counter.Next(ctx, resourceKind1)
 	require.NoError(t, err)
 
-	seq2a, err := s.counter.Next(ctx, domain2)
+	seq2a, err := s.counter.Next(ctx, resourceKind2)
 	require.NoError(t, err)
 
-	seq1b, err := s.counter.Next(ctx, domain1)
+	seq1b, err := s.counter.Next(ctx, resourceKind1)
 	require.NoError(t, err)
 
-	seq2b, err := s.counter.Next(ctx, domain2)
+	seq2b, err := s.counter.Next(ctx, resourceKind2)
 	require.NoError(t, err)
 
-	// Each domain should increment independently
-	assert.Equal(t, seq1a+1, seq1b, "domain1 should increment")
-	assert.Equal(t, seq2a+1, seq2b, "domain2 should increment")
+	// Each resource kind should increment independently.
+	assert.Equal(t, seq1a+1, seq1b, "resource kind 1 should increment")
+	assert.Equal(t, seq2a+1, seq2b, "resource kind 2 should increment")
 }
 
 // TestCounter_Concurrency tests concurrent access to the same counter
@@ -115,7 +115,7 @@ func (s *CounterContractSuite) TestCounter_Concurrency() {
 	t := s.T()
 	ctx := s.ctx
 
-	domain := "test-counter-concurrent"
+	resourceKind := "test-counter-concurrent"
 	numGoroutines := 10
 	numIterations := 10
 	totalExpected := numGoroutines * numIterations
@@ -127,7 +127,7 @@ func (s *CounterContractSuite) TestCounter_Concurrency() {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			for j := 0; j < numIterations; j++ {
-				seq, err := s.counter.Next(ctx, domain)
+				seq, err := s.counter.Next(ctx, resourceKind)
 				require.NoError(t, err)
 				results <- seq
 			}
@@ -149,32 +149,32 @@ func (s *CounterContractSuite) TestCounter_Concurrency() {
 	}
 }
 
-// TestCounter_QueueIsolation tests that the same domain in two queues is two
+// TestCounter_QueueIsolation tests that the same resource kind in two queues is two
 // independent sequences: the queue leads the key, so one queue's counter must
 // never advance or observe another's.
 func (s *CounterContractSuite) TestCounter_QueueIsolation() {
 	t := s.T()
 	ctx := s.ctx
 
-	const domain = "request"
+	const resourceKind = "request"
 	queueA := s.forQueue("isolation-queue-a")
 	queueB := s.forQueue("isolation-queue-b")
 
-	a1, err := queueA.Next(ctx, domain)
+	a1, err := queueA.Next(ctx, resourceKind)
 	require.NoError(t, err)
-	a2, err := queueA.Next(ctx, domain)
+	a2, err := queueA.Next(ctx, resourceKind)
 	require.NoError(t, err)
 	assert.Equal(t, a1+1, a2, "queue A advances its own sequence")
 
 	// Queue B starts its own sequence rather than continuing A's.
-	b1, err := queueB.Next(ctx, domain)
+	b1, err := queueB.Next(ctx, resourceKind)
 	require.NoError(t, err)
-	assert.Equal(t, a1, b1, "the same domain in another queue is an independent sequence")
+	assert.Equal(t, a1, b1, "the same resource kind in another queue is an independent sequence")
 
 	// Advancing B leaves A untouched.
-	_, err = queueB.Next(ctx, domain)
+	_, err = queueB.Next(ctx, resourceKind)
 	require.NoError(t, err)
-	a3, err := queueA.Next(ctx, domain)
+	a3, err := queueA.Next(ctx, resourceKind)
 	require.NoError(t, err)
 	assert.Equal(t, a2+1, a3, "queue B's writes must not advance queue A")
 }

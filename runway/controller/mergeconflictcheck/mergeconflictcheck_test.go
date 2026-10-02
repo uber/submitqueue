@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	testID           = "test-queue/1"
+	testID           = "1"
 	testQueue        = "test-queue"
 	testPartitionKey = "test-queue"
 )

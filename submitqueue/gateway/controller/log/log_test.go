@@ -49,7 +49,7 @@ func TestController_Process(t *testing.T) {
 	}{
 		{
 			name:     "success",
-			logEntry: newRequestLog("test-queue/1", entity.RequestStatusStarted, 1, "", nil),
+			logEntry: newRequestLog("1", entity.RequestStatusStarted, 1, "", nil),
 			setupStore: func(ctrl *gomock.Controller) *requestcore.Materializer {
 				return newLogControllerStore(ctrl, nil, nil, nil, nil)
 			},
@@ -62,7 +62,7 @@ func TestController_Process(t *testing.T) {
 		},
 		{
 			name:     "audit insert failure",
-			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
+			logEntry: newRequestLog("2", entity.RequestStatusError, 3, "merge conflict", nil),
 			setupStore: func(ctrl *gomock.Controller) *requestcore.Materializer {
 				return newLogControllerStore(ctrl, fmt.Errorf("audit down"), nil, nil, nil)
 			},
@@ -70,7 +70,7 @@ func TestController_Process(t *testing.T) {
 		},
 		{
 			name:     "summary read failure",
-			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
+			logEntry: newRequestLog("2", entity.RequestStatusError, 3, "merge conflict", nil),
 			setupStore: func(ctrl *gomock.Controller) *requestcore.Materializer {
 				return newLogControllerStore(ctrl, nil, fmt.Errorf("summary down"), nil, nil)
 			},
@@ -78,7 +78,7 @@ func TestController_Process(t *testing.T) {
 		},
 		{
 			name:     "summary update failure",
-			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
+			logEntry: newRequestLog("2", entity.RequestStatusError, 3, "merge conflict", nil),
 			setupStore: func(ctrl *gomock.Controller) *requestcore.Materializer {
 				return newLogControllerStore(ctrl, nil, nil, fmt.Errorf("summary update down"), nil)
 			},
@@ -86,7 +86,7 @@ func TestController_Process(t *testing.T) {
 		},
 		{
 			name:     "queue projection failure",
-			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
+			logEntry: newRequestLog("2", entity.RequestStatusError, 3, "merge conflict", nil),
 			setupStore: func(ctrl *gomock.Controller) *requestcore.Materializer {
 				return newLogControllerStore(ctrl, nil, nil, nil, fmt.Errorf("queue update down"))
 			},
@@ -104,7 +104,7 @@ func TestController_Process(t *testing.T) {
 				require.NoError(t, err)
 			}
 			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, tt.setupStore(ctrl), topickey.TopicKeyLog, "gateway-log")
-			msg := entityqueue.NewMessage("test-queue/1", payload, "test-queue", nil)
+			msg := entityqueue.NewMessage("1", payload, "test-queue", nil)
 			if tt.logEntry != nil {
 				msg.Tenant = tt.logEntry.Queue
 			}
@@ -124,7 +124,7 @@ func TestController_Process(t *testing.T) {
 
 func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	logEntry := newRequestLog("test-queue/1", entity.RequestStatusStarted, 1, "", nil)
+	logEntry := newRequestLog("1", entity.RequestStatusStarted, 1, "", nil)
 	payload, err := sqmq.Marshal(sqmq.LogFromEntity(*logEntry))
 	require.NoError(t, err)
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, newUnusedMaterializer(ctrl), topickey.TopicKeyLog, "gateway-log")
@@ -154,7 +154,7 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 		return materializer
 	}
 	summaryStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.RequestSummary{
-		RequestID: "test-queue/2", Queue: "test-queue", ChangeURIs: []string{}, ReceivedAtMs: 1,
+		RequestID: "2", Queue: "test-queue", ChangeURIs: []string{}, ReceivedAtMs: 1,
 		Status: entity.RequestStatusAccepted, StatusTimestampMs: 1, Version: 1, Metadata: map[string]string{},
 	}, getErr)
 	if getErr != nil {
@@ -164,8 +164,8 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 	if updateErr != nil {
 		return materializer
 	}
-	queueStore.EXPECT().Get(gomock.Any(), int64(1), "test-queue/2").Return(entity.RequestQueueSummary{
-		RequestID: "test-queue/2", Queue: "test-queue", ChangeURIs: []string{}, ReceivedAtMs: 1,
+	queueStore.EXPECT().Get(gomock.Any(), int64(1), "2").Return(entity.RequestQueueSummary{
+		RequestID: "2", Queue: "test-queue", ChangeURIs: []string{}, ReceivedAtMs: 1,
 		Status: entity.RequestStatusAccepted, Version: 1, Metadata: map[string]string{},
 	}, nil)
 	queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(queueErr)

@@ -416,6 +416,10 @@ local-init-runway-queue-schema: ## Apply queue schema only (mysql-queue) for Run
 
 local-init-stovepipe-schemas: ## Apply storage (mysql-app) and queue (mysql-queue) schemas for Stovepipe compose stacks
 	@echo "Applying storage schema to mysql-app..."
+	@for file in platform/extension/counter/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
 	@for file in stovepipe/extension/storage/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \

@@ -94,7 +94,7 @@ While a validation runs, ingest keeps admitting newer heads (distinct Requests, 
 
 "Latest" is the **monotonic ingest order**, not VCS history:
 
-- Ingest mints ids from a per-Queue counter (`request/<queue>/<n>`). The counter suffix is the order key (higher = later ingest = newer head); there is no separate `Sequence` field on `Request`.
+- Ingest mints IDs from a durable per-queue counter and stores each value as its canonical decimal string. The numeric value is the order key (higher = later ingest = newer head); there is no separate `Sequence` field on `Request`.
 - Ingest also CASes `Queue.latest_request_id` to the accepted request's id when it is newer (via `CompareRequestID`) — the **out-of-band latest pointer** (a request id, distinct from `last_green_uri`) that makes coalescing a single-row comparison.
 
 Why not `SourceControl.History`: a history walk is expensive, and after a rewrite the superseded URIs may be off-ref entirely — exactly where history order is meaningless. Ingest order authoritatively says which head we learned of last.
@@ -202,7 +202,7 @@ Per-queue knobs such as `max_concurrent` live outside this row — see [Per-Queu
 
 | Field | Role |
 |---|---|
-| `ID` | Globally unique id (`request/<queue>/<n>`); the counter suffix is the ingest-order key for coalescing |
+| `ID` | Canonical decimal string, unique within `Queue`; its numeric value is the ingest-order key for coalescing |
 | `BuildStrategy` | `incremental_since_green` \| `full`; immutable once set by `process` |
 | `BaseURI` | Last-green URI used as the incremental base; empty for full builds |
 

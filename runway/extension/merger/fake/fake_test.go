@@ -37,16 +37,16 @@ const baseURI = "github://github.example.com/uber/repo/pull/1/abcdef0123456789ab
 // URIs, so tests can prove the token is found on any step, not just the first.
 func requestWith(uris ...string) *runwaymq.MergeRequest {
 	return &runwaymq.MergeRequest{
-		Id:        "queue-a/42",
+		Id:        "42",
 		QueueName: "queue-a",
 		Steps: []*runwaymq.MergeStep{
 			{
-				StepId:   "queue-a/1",
+				StepId:   "1",
 				Change:   &changepb.Change{Uris: []string{baseURI}},
 				Strategy: strategypb.Strategy_REBASE,
 			},
 			{
-				StepId:   "queue-a/2",
+				StepId:   "2",
 				Change:   &changepb.Change{Uris: uris},
 				Strategy: strategypb.Strategy_REBASE,
 			},
@@ -64,9 +64,9 @@ func TestUnmarkedRequestSucceeds(t *testing.T) {
 		assert.Equal(t, req.GetId(), res.GetId())
 		assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
 		require.Len(t, res.GetSteps(), 2)
-		assert.Equal(t, "queue-a/1", res.GetSteps()[0].GetStepId())
+		assert.Equal(t, "1", res.GetSteps()[0].GetStepId())
 		assert.Empty(t, res.GetSteps()[0].GetOutputs())
-		assert.Equal(t, "queue-a/2", res.GetSteps()[1].GetStepId())
+		assert.Equal(t, "2", res.GetSteps()[1].GetStepId())
 		assert.Empty(t, res.GetSteps()[1].GetOutputs())
 	})
 
@@ -140,11 +140,11 @@ func TestUnrecognizedTokenSucceeds(t *testing.T) {
 
 func TestFirstRecognizedTokenWins(t *testing.T) {
 	req := &runwaymq.MergeRequest{
-		Id:        "queue-a/42",
+		Id:        "42",
 		QueueName: "queue-a",
 		Steps: []*runwaymq.MergeStep{
-			{StepId: "queue-a/1", Change: &changepb.Change{Uris: []string{baseURI + "?sq-fake=" + tokenConflict}}},
-			{StepId: "queue-a/2", Change: &changepb.Change{Uris: []string{baseURI + "?sq-fake=" + tokenInvalid}}},
+			{StepId: "1", Change: &changepb.Change{Uris: []string{baseURI + "?sq-fake=" + tokenConflict}}},
+			{StepId: "2", Change: &changepb.Change{Uris: []string{baseURI + "?sq-fake=" + tokenInvalid}}},
 		},
 	}
 

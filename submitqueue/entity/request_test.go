@@ -25,7 +25,7 @@ import (
 
 func TestRequest_ToBytes(t *testing.T) {
 	req := Request{
-		ID:    "test-queue/123",
+		ID:    "123",
 		Queue: "test-queue",
 		Change: change.Change{URIs: []string{
 			"github://github.example.com/uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01",
@@ -42,7 +42,7 @@ func TestRequest_ToBytes(t *testing.T) {
 
 	// Verify JSON contains expected fields
 	jsonStr := string(data)
-	assert.Contains(t, jsonStr, "test-queue/123")
+	assert.Contains(t, jsonStr, "123")
 	assert.Contains(t, jsonStr, "github://github.example.com/uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01")
 	assert.Contains(t, jsonStr, "rebase")
 	assert.Contains(t, jsonStr, "started")
@@ -50,7 +50,7 @@ func TestRequest_ToBytes(t *testing.T) {
 
 func TestRequestFromBytes(t *testing.T) {
 	original := Request{
-		ID:           "my-queue/999",
+		ID:           "999",
 		Queue:        "my-queue",
 		Change:       change.Change{URIs: []string{"code.uber.internal.com/D111"}},
 		LandStrategy: mergestrategy.MergeStrategyMerge,
@@ -146,7 +146,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "github stacked diff",
 			req: Request{
-				ID:    "queue1/100",
+				ID:    "100",
 				Queue: "queue1",
 				Change: change.Change{URIs: []string{
 					"github://github.example.com/uber/repo-a/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -161,7 +161,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "phabricator revision",
 			req: Request{
-				ID:           "queue2/200",
+				ID:           "200",
 				Queue:        "queue2",
 				Change:       change.Change{URIs: []string{"code.uber.internal.com/D12345"}},
 				LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -172,7 +172,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "github enterprise request",
 			req: Request{
-				ID:           "queue3/300",
+				ID:           "300",
 				Queue:        "queue3",
 				Change:       change.Change{URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
 				LandStrategy: mergestrategy.MergeStrategyMerge,

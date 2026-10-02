@@ -40,7 +40,7 @@ const (
 // Build is the payload speculate publishes to the build stage: the id is a batch id. build reloads the Batch from storage.
 type Build struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the batch id whose speculated head should be built. Format: "<queue>/batch/<counter>".
+	// id is the batch id whose speculated head should be built. Canonical positive decimal string; queue and kind are carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

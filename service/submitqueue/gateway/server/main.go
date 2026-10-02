@@ -517,5 +517,5 @@ func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
 	if config.QueueName == "" {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
-	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
+	return mysqlcounter.NewCounter(f.db, f.scope, "submitqueue", config.QueueName), nil
 }

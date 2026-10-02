@@ -83,18 +83,17 @@ const (
 )
 
 // Request represents a single validation of a queue at a particular commit. The queue reports
-// a newly observed commit, Stovepipe mints a Request (identity namespaced by the queue), and
+// a newly observed commit, Stovepipe mints a Request (identity scoped by the queue), and
 // the request flows through the pipeline accumulating state.
 type Request struct {
 	// ****************
 	// Immutable fields, fixed at request entity creation
 	// ****************
 
-	// ID is the globally unique identifier for the request. Format: "request/<queue>/<counter>"
-	// (e.g. "request/monorepo/main/42").
+	// ID is the canonical decimal request identifier, unique within Queue.
 	ID string `json:"id"`
-	// Queue is the name of the queue (a named repo+ref) being validated. It namespaces the ID
-	// and is the stable handle the ingest caller supplies.
+	// Queue is the name of the queue (a named repo+ref) being validated. Together with ID it
+	// identifies the request and is the stable handle the ingest caller supplies.
 	Queue string `json:"queue"`
 	// URI is the opaque, VCS-agnostic locator of the commit under validation, as produced by the
 	// SourceControl extension.

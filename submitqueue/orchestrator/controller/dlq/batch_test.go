@@ -47,17 +47,17 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batch := entity.Batch{
-		ID: "q/batch/9", Queue: "q", Contains: []string{"q/1"},
+		ID: "9", Queue: "q", Contains: []string{"1"},
 		State: entity.BatchStateLanding, Version: 2,
 	}
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/9").Return(batch, nil)
+	batchStore.EXPECT().Get(gomock.Any(), "9").Return(batch, nil)
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
+		ID: "1", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
 	}
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Get(gomock.Any(), "1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
@@ -71,7 +71,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
-	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "q/batch/9", "q")
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "9", "q")
 	require.NoError(t, err)
 
 	delivery := newMockDelivery(ctrl, payload)
@@ -83,7 +83,7 @@ func TestDLQBatchController_Process_TenantPayloadQueueMismatchAcks(t *testing.T)
 	store := orchstoragemock.NewMockStorage(ctrl)
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
-	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "q/batch/9", "q")
+	payload, err := sqmq.MarshalID(sqmq.TopicKeyLand, "9", "q")
 	require.NoError(t, err)
 
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))

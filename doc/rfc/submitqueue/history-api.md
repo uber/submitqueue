@@ -16,7 +16,7 @@ The gateway exposes two read-only RPCs because an `sqid` selects one event list 
 
 ```proto
 message GetRequestHistoryByIDRequest {
-    // Globally unique identifier for a request, as returned by Land.
+    // Canonical decimal identifier for a request, as returned by Land.
     string sqid = 1;
     // Queue processing the request. Required: a sqid is only resolvable within its own queue.
     string queue = 2;
@@ -46,7 +46,7 @@ message GetRequestHistoryByChangeURIRequest {
 }
 
 message RequestHistory {
-    // Globally unique identifier for the request associated with these events.
+    // Queue-scoped decimal identifier for the request associated with these events.
     string sqid = 1;
     // Retained request-log events ordered by timestamp_ms ascending with a stable tie-breaker.
     repeated HistoryEvent events = 2;

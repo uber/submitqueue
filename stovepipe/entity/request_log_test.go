@@ -24,7 +24,7 @@ func TestRequestLogValidate(t *testing.T) {
 	base := RequestLog{
 		ID:             "state/1",
 		Queue:          "monorepo/main",
-		RequestID:      "request/monorepo/main/1",
+		RequestID:      "1",
 		TimestampMs:    1735689600000,
 		State:          RequestStateAccepted,
 		RequestVersion: 1,
@@ -40,7 +40,7 @@ func TestRequestLogValidate(t *testing.T) {
 			name: "superseded state",
 			mutate: func(entry RequestLog) RequestLog {
 				entry.State = RequestStateSuperseded
-				entry.Metadata = map[string]string{"superseded_by_request_id": "request/monorepo/main/2"}
+				entry.Metadata = map[string]string{"superseded_by_request_id": "2"}
 				entry.OutcomeReason = RequestOutcomeReasonSupersededByNewerHead
 				return entry
 			},

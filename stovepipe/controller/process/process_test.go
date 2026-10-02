@@ -45,8 +45,8 @@ import (
 
 const (
 	testQueue   = "monorepo/main"
-	testID      = "request/monorepo/main/7"
-	testOlderID = "request/monorepo/main/3"
+	testID      = "7"
+	testOlderID = "3"
 	testURI     = "git://repo/monorepo/main/abc123"
 )
 
@@ -797,7 +797,7 @@ func TestProcess(t *testing.T) {
 				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 				// Reload: ingest stamped a newer head — our head is no longer latest.
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: "request/monorepo/main/9", Version: 2,
+					Name: testQueue, LatestRequestID: "9", Version: 2,
 				}, nil)
 				superseded := acceptedRequest(testID)
 				superseded.State = entity.RequestStateSuperseded
@@ -964,7 +964,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name:            testQueue,
-					LatestRequestID: "request/other-queue/99",
+					LatestRequestID: "request.99",
 					Version:         1,
 				}, nil)
 			},

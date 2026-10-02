@@ -28,7 +28,7 @@ import (
 
 func TestStartRoundTrip(t *testing.T) {
 	req := StartFromLandRequest(entity.LandRequest{
-		ID:           "q/1",
+		ID:           "1",
 		Queue:        "q",
 		Change:       change.Change{URIs: []string{"github://github.example.com/org/repo/pull/1/0123456789abcdef0123456789abcdef01234567"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
@@ -44,12 +44,12 @@ func TestStartRoundTrip(t *testing.T) {
 }
 
 func TestCancelRoundTrip(t *testing.T) {
-	msg := CancelFromEntity(entity.CancelRequest{ID: "q/7", Queue: "q", Reason: "user"})
+	msg := CancelFromEntity(entity.CancelRequest{ID: "7", Queue: "q", Reason: "user"})
 	data, err := Marshal(msg)
 	require.NoError(t, err)
 	got := &Cancel{}
 	require.NoError(t, Unmarshal(data, got))
-	assert.Equal(t, entity.CancelRequest{ID: "q/7", Queue: "q", Reason: "user"}, CancelToEntity(got))
+	assert.Equal(t, entity.CancelRequest{ID: "7", Queue: "q", Reason: "user"}, CancelToEntity(got))
 }
 
 func TestIDMessageRoundTrip(t *testing.T) {
@@ -58,14 +58,14 @@ func TestIDMessageRoundTrip(t *testing.T) {
 		msg  proto.Message
 		into proto.Message
 	}{
-		{name: "validate", msg: &Validate{Id: "q/1", Queue: "q"}, into: &Validate{}},
-		{name: "batch", msg: &Batch{Id: "q/1", Queue: "q"}, into: &Batch{}},
-		{name: "dependency-analysis", msg: &DependencyAnalysis{Id: "q/batch/1", Queue: "q"}, into: &DependencyAnalysis{}},
-		{name: "speculate", msg: &Speculate{Id: "q/batch/1", Queue: "q"}, into: &Speculate{}},
-		{name: "build", msg: &Build{Id: "q/batch/1", Queue: "q"}, into: &Build{}},
+		{name: "validate", msg: &Validate{Id: "1", Queue: "q"}, into: &Validate{}},
+		{name: "batch", msg: &Batch{Id: "1", Queue: "q"}, into: &Batch{}},
+		{name: "dependency-analysis", msg: &DependencyAnalysis{Id: "1", Queue: "q"}, into: &DependencyAnalysis{}},
+		{name: "speculate", msg: &Speculate{Id: "1", Queue: "q"}, into: &Speculate{}},
+		{name: "build", msg: &Build{Id: "1", Queue: "q"}, into: &Build{}},
 		{name: "buildsignal", msg: &BuildSignal{Id: "build-1", Queue: "q"}, into: &BuildSignal{}},
-		{name: "merge", msg: &Merge{Id: "q/batch/1", Queue: "q"}, into: &Merge{}},
-		{name: "conclude", msg: &Conclude{Id: "q/batch/1", Queue: "q"}, into: &Conclude{}},
+		{name: "merge", msg: &Merge{Id: "1", Queue: "q"}, into: &Merge{}},
+		{name: "conclude", msg: &Conclude{Id: "1", Queue: "q"}, into: &Conclude{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestIDMessageRoundTrip(t *testing.T) {
 }
 
 func TestLogRoundTrip(t *testing.T) {
-	entry := entity.NewRequestStatusLog("q", "q/1", entity.RequestStatusStarted, 1, "boom", map[string]string{"k": "v"})
+	entry := entity.NewRequestStatusLog("q", "1", entity.RequestStatusStarted, 1, "boom", map[string]string{"k": "v"})
 	entry.TimestampMs = 1700000000000
 
 	data, err := Marshal(LogFromEntity(entry))
@@ -89,14 +89,14 @@ func TestLogRoundTrip(t *testing.T) {
 }
 
 func TestLogToEntityDefaults(t *testing.T) {
-	got := LogToEntity(&Log{RequestId: "q/1", Queue: "q"})
+	got := LogToEntity(&Log{RequestId: "1", Queue: "q"})
 	assert.Equal(t, entity.RequestLogTypeStatus, got.Type)
 	assert.NotNil(t, got.Metadata)
 	assert.Empty(t, got.Metadata)
 }
 
 func TestLogEventRoundTrip(t *testing.T) {
-	entry := entity.NewRequestEventLog("q", "q/1", entity.RequestEventBuilding, map[string]string{"build_id": "b/7"})
+	entry := entity.NewRequestEventLog("q", "1", entity.RequestEventBuilding, map[string]string{"build_id": "b/7"})
 	entry.TimestampMs = 1700000000000
 
 	data, err := Marshal(LogFromEntity(entry))
@@ -130,7 +130,7 @@ func TestLandStrategyMapping(t *testing.T) {
 }
 
 func TestStartNilChange(t *testing.T) {
-	got := LandRequestFromStart(&Start{Id: "q/1", Queue: "q"})
+	got := LandRequestFromStart(&Start{Id: "1", Queue: "q"})
 	assert.Nil(t, got.Change.URIs)
 	assert.Equal(t, mergestrategy.MergeStrategyUnknown, got.LandStrategy)
 }
@@ -139,7 +139,7 @@ func TestStartNilChange(t *testing.T) {
 // and int64 as a JSON string.
 func TestWireFormat(t *testing.T) {
 	start, err := Marshal(StartFromLandRequest(entity.LandRequest{
-		ID:           "q/1",
+		ID:           "1",
 		Queue:        "q",
 		Change:       change.Change{URIs: []string{"u"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -150,7 +150,7 @@ func TestWireFormat(t *testing.T) {
 	assert.Contains(t, string(start), `"land_strategy"`)
 	assert.Contains(t, string(start), `"REBASE"`)
 
-	logBytes, err := Marshal(LogFromEntity(entity.RequestLog{RequestID: "q/1", TimestampMs: 42}))
+	logBytes, err := Marshal(LogFromEntity(entity.RequestLog{RequestID: "1", TimestampMs: 42}))
 	require.NoError(t, err)
 	assert.Contains(t, string(logBytes), `"timestamp_ms":"42"`)
 }
@@ -198,45 +198,45 @@ func TestMarshalIDRoundTripPerTopic(t *testing.T) {
 	_, err = UnmarshalRequestLog([]byte(`{`))
 	require.Error(t, err)
 
-	land, err := UnmarshalLandRequest([]byte(`{"id":"q/1","queue":"q"}`))
+	land, err := UnmarshalLandRequest([]byte(`{"id":"1","queue":"q"}`))
 	require.NoError(t, err)
-	assert.Equal(t, "q/1", land.ID)
-	cancel, err := UnmarshalCancelRequest([]byte(`{"id":"q/7","queue":"q","reason":"x"}`))
+	assert.Equal(t, "1", land.ID)
+	cancel, err := UnmarshalCancelRequest([]byte(`{"id":"7","queue":"q","reason":"x"}`))
 	require.NoError(t, err)
 	assert.Equal(t, "x", cancel.Reason)
-	logEntry, err := UnmarshalRequestLog([]byte(`{"request_id":"q/1","queue":"q"}`))
+	logEntry, err := UnmarshalRequestLog([]byte(`{"request_id":"1","queue":"q"}`))
 	require.NoError(t, err)
 	assert.Equal(t, entity.RequestLogTypeStatus, logEntry.Type)
 }
 
 func TestMarshalIDRejectsUnknownTopic(t *testing.T) {
-	_, err := MarshalID(TopicKeyStart, "q/1", "q")
+	_, err := MarshalID(TopicKeyStart, "1", "q")
 	require.Error(t, err)
 }
 
 func TestUnmarshalIDAndTypedIDs(t *testing.T) {
-	data, err := MarshalID(TopicKeyBuild, "q/batch/1", "q")
+	data, err := MarshalID(TopicKeyBuild, "1", "q")
 	require.NoError(t, err)
 
 	id, queue, err := UnmarshalID(TopicKeyBuild, data)
 	require.NoError(t, err)
-	assert.Equal(t, "q/batch/1", id)
+	assert.Equal(t, "1", id)
 	assert.Equal(t, "q", queue)
 
 	bid, err := UnmarshalBatchID(TopicKeyBuild, data)
 	require.NoError(t, err)
-	assert.Equal(t, entity.BatchID{ID: "q/batch/1", Queue: "q"}, bid)
+	assert.Equal(t, entity.BatchID{ID: "1", Queue: "q"}, bid)
 
 	_, _, err = UnmarshalID(TopicKeyBuild, []byte(`{`))
 	require.Error(t, err)
 }
 
 func TestUnmarshalIDRejectsNonIDTopic(t *testing.T) {
-	_, _, err := UnmarshalID(TopicKeyStart, []byte(`{"id":"q/1","queue":"q"}`))
+	_, _, err := UnmarshalID(TopicKeyStart, []byte(`{"id":"1","queue":"q"}`))
 	require.Error(t, err)
-	_, err = UnmarshalRequestID(TopicKeySpeculate, []byte(`{"id":"q/1","queue":"q"}`))
+	_, err = UnmarshalRequestID(TopicKeySpeculate, []byte(`{"id":"1","queue":"q"}`))
 	require.Error(t, err)
-	_, err = UnmarshalBatchID(TopicKeyValidate, []byte(`{"id":"q/1","queue":"q"}`))
+	_, err = UnmarshalBatchID(TopicKeyValidate, []byte(`{"id":"1","queue":"q"}`))
 	require.Error(t, err)
 	_, err = UnmarshalBuildID(TopicKeyBuild, []byte(`{"id":"b","queue":"q"}`))
 	require.Error(t, err)

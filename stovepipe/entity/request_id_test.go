@@ -22,8 +22,6 @@ import (
 )
 
 func TestCompareRequestID(t *testing.T) {
-	const queue = "monorepo/main"
-
 	tests := []struct {
 		name    string
 		a       string
@@ -33,39 +31,34 @@ func TestCompareRequestID(t *testing.T) {
 	}{
 		{
 			name: "older vs newer",
-			a:    "request/monorepo/main/7",
-			b:    "request/monorepo/main/10",
+			a:    "7",
+			b:    "10",
 			want: -1,
 		},
 		{
 			name: "newer vs older",
-			a:    "request/monorepo/main/10",
-			b:    "request/monorepo/main/7",
+			a:    "10",
+			b:    "7",
 			want: 1,
 		},
 		{
 			name: "equal",
-			a:    "request/monorepo/main/42",
-			b:    "request/monorepo/main/42",
+			a:    "42",
+			b:    "42",
 			want: 0,
 		},
 		{
 			name: "numeric not lexicographic",
-			a:    "request/monorepo/main/9",
-			b:    "request/monorepo/main/10",
+			a:    "9",
+			b:    "10",
 			want: -1,
 		},
-		{
-			name:    "wrong queue prefix",
-			a:       "request/other/1",
-			b:       "request/monorepo/main/2",
-			wantErr: true,
-		},
+		{name: "prefixed ID", a: "request.1", b: "2", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := CompareRequestID(queue, tt.a, tt.b)
+			got, err := CompareRequestID(tt.a, tt.b)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

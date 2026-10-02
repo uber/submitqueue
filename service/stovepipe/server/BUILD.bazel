@@ -16,6 +16,7 @@ go_library(
         "//platform/errs/yarpc:go_default_library",
         "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/counter:go_default_library",
+        "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/hook:go_default_library",
         "//platform/extension/hook/noop:go_default_library",
         "//platform/extension/messagequeue:go_default_library",

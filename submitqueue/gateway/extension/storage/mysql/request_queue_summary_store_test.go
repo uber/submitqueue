@@ -42,7 +42,7 @@ func setupRequestQueueSummaryStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, 
 
 func TestRequestQueueSummaryStore_Create(t *testing.T) {
 	summary := entity.RequestQueueSummary{
-		RequestID:    "monorepo/1",
+		RequestID:    "1",
 		Queue:        "monorepo",
 		ChangeURIs:   []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"},
 		ReceivedAtMs: 1000,
@@ -113,7 +113,7 @@ func TestRequestQueueSummaryStore_Create(t *testing.T) {
 
 func TestRequestQueueSummaryStore_Get(t *testing.T) {
 	want := entity.RequestQueueSummary{
-		RequestID:    "monorepo/1",
+		RequestID:    "1",
 		Queue:        "monorepo",
 		ChangeURIs:   []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"},
 		ReceivedAtMs: 1000,
@@ -183,7 +183,7 @@ func TestRequestQueueSummaryStore_Get(t *testing.T) {
 
 func TestRequestQueueSummaryStore_Update(t *testing.T) {
 	summary := entity.RequestQueueSummary{
-		RequestID:    "monorepo/1",
+		RequestID:    "1",
 		Queue:        "monorepo",
 		ChangeURIs:   []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"},
 		ReceivedAtMs: 1000,
@@ -307,7 +307,7 @@ func TestRequestQueueSummaryStore_Update(t *testing.T) {
 
 func TestRequestQueueSummaryStore_List(t *testing.T) {
 	summary := entity.RequestQueueSummary{
-		RequestID:    "monorepo/1",
+		RequestID:    "1",
 		Queue:        "monorepo",
 		ReceivedAtMs: 1000,
 		Status:       entity.RequestStatusStarted,
@@ -355,13 +355,13 @@ func TestRequestQueueSummaryStore_List(t *testing.T) {
 				HasCursor:           true,
 				Cursor: storage.RequestQueueSummaryCursor{
 					ReceivedAtMs: 1500,
-					RequestID:    "monorepo/2",
+					RequestID:    "2",
 				},
 			},
 			setup: func(mock sqlmock.Sqlmock) {
 				rows := sqlmock.NewRows([]string{"queue", "received_at_ms", "request_id", "change_uris", "status", "version", "last_error", "metadata"})
 				mock.ExpectQuery("SELECT queue, received_at_ms, request_id, change_uris, status").
-					WithArgs("monorepo", int64(0), int64(2000), int64(1500), int64(1500), "monorepo/2", 10).
+					WithArgs("monorepo", int64(0), int64(2000), int64(1500), int64(1500), "2", 10).
 					WillReturnRows(rows)
 			},
 			want: []entity.RequestQueueSummary{},

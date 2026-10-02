@@ -153,7 +153,7 @@ func TestPublishProcessCarriesQueueMetadata(t *testing.T) {
 			return nil
 		})
 
-	require.NoError(t, c.publishProcess(context.Background(), "request/monorepo/main/7", testQueue))
+	require.NoError(t, c.publishProcess(context.Background(), "7", testQueue))
 	assert.Equal(t, testQueue, got.PartitionKey)
 	assert.Equal(t, testQueue, got.Tenant)
 	assert.Equal(t, testQueue, got.Metadata[entityqueue.MetadataKeyQueueName])
@@ -175,41 +175,41 @@ func TestIngestController_Ingest(t *testing.T) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
-				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "request/monorepo/main/7").Return(nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/7").Return(entity.Request{}, storage.ErrNotFound)
+				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "7").Return(nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "7").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				expectMaterializeAccepted(m, "request/monorepo/main/7")
-				expectAdvanceLatestRequestID(m, testQueue, "request/monorepo/main/7")
+				expectMaterializeAccepted(m, "7")
+				expectAdvanceLatestRequestID(m, testQueue, "7")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
-			wantID: "request/monorepo/main/7",
+			wantID: "7",
 		},
 		{
 			name:  "dedup with existing accepted request republishes without minting",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
 				expectResolve(m)
-				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(acceptedRequest("request/monorepo/main/3"), nil)
-				expectMaterializeAccepted(m, "request/monorepo/main/3")
-				expectAdvanceLatestRequestIDNoOp(m, testQueue, "request/monorepo/main/3")
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(acceptedRequest("3"), nil)
+				expectMaterializeAccepted(m, "3")
+				expectAdvanceLatestRequestIDNoOp(m, testQueue, "3")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
-			wantID: "request/monorepo/main/3",
+			wantID: "3",
 		},
 		{
 			name:  "heals when uri mapped but request missing",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
 				expectResolve(m)
-				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(entity.Request{}, storage.ErrNotFound)
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				expectMaterializeAccepted(m, "request/monorepo/main/3")
-				expectAdvanceLatestRequestID(m, testQueue, "request/monorepo/main/3")
+				expectMaterializeAccepted(m, "3")
+				expectAdvanceLatestRequestID(m, testQueue, "3")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
-			wantID: "request/monorepo/main/3",
+			wantID: "3",
 		},
 		{
 			name:  "dedup race returns winner id and completes",
@@ -218,14 +218,14 @@ func TestIngestController_Ingest(t *testing.T) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
-				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "request/monorepo/main/7").Return(storage.ErrAlreadyExists)
-				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(acceptedRequest("request/monorepo/main/3"), nil)
-				expectMaterializeAccepted(m, "request/monorepo/main/3")
-				expectAdvanceLatestRequestIDNoOp(m, testQueue, "request/monorepo/main/3")
+				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "7").Return(storage.ErrAlreadyExists)
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(acceptedRequest("3"), nil)
+				expectMaterializeAccepted(m, "3")
+				expectAdvanceLatestRequestIDNoOp(m, testQueue, "3")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
-			wantID: "request/monorepo/main/3",
+			wantID: "3",
 		},
 		{
 			name:        "empty queue is invalid",
@@ -271,6 +271,16 @@ func TestIngestController_Ingest(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:  "non-positive counter value",
+			queue: testQueue,
+			setup: func(m ingestMocks) {
+				expectResolve(m)
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
+				m.counter.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), nil)
+			},
+			wantErr: true,
+		},
+		{
 			name:  "request store create error",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
@@ -293,8 +303,8 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, gomock.Any()).Return(nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				expectMaterializeAccepted(m, "request/monorepo/main/7")
-				expectAdvanceLatestRequestID(m, testQueue, "request/monorepo/main/7")
+				expectMaterializeAccepted(m, "7")
+				expectAdvanceLatestRequestID(m, testQueue, "7")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(errors.New("queue down"))
 			},
 			wantErr: true,
@@ -304,12 +314,12 @@ func TestIngestController_Ingest(t *testing.T) {
 			queue: testQueue,
 			setup: func(m ingestMocks) {
 				expectResolve(m)
-				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(acceptedRequest("request/monorepo/main/3"), nil)
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(acceptedRequest("3"), nil)
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(acceptedRequest("request/monorepo/main/3"), entity.RequestOutcomeReasonUnknown),
+					requestlog.NewRequestStateLog(acceptedRequest("3"), entity.RequestOutcomeReasonUnknown),
 				).Return(errors.New("log unavailable"))
 			},
 			wantErr: true,

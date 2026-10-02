@@ -45,11 +45,11 @@ func (driverClassifier) Classify(err error) Verdict {
 }
 
 func TestAttributionReadsBackSubjects(t *testing.T) {
-	err := Attribute(errors.New("boom"), failure.Subject{Type: "batch", ID: "q/batch/1"})
+	err := Attribute(errors.New("boom"), failure.Subject{Type: "batch", ID: "1"})
 
 	got := Attribution(err)
 	assert.Equal(t, "boom", got.Message)
-	assert.Equal(t, []failure.Subject{{Type: "batch", ID: "q/batch/1"}}, got.Subjects)
+	assert.Equal(t, []failure.Subject{{Type: "batch", ID: "1"}}, got.Subjects)
 }
 
 // An unattributed error still yields a usable failure — the message alone.
@@ -74,12 +74,12 @@ func TestAttributeNilIsNil(t *testing.T) {
 // Attribution survives further wrapping, which is the normal shape: a leaf
 // attributes the entity it knows about, outer frames add context with %w.
 func TestAttributionThroughOuterWrap(t *testing.T) {
-	inner := Attribute(errors.New("boom"), failure.Subject{Type: "batch", ID: "q/batch/1"})
+	inner := Attribute(errors.New("boom"), failure.Subject{Type: "batch", ID: "1"})
 	outer := fmt.Errorf("run failed: %w", inner)
 
 	got := Attribution(outer)
 	assert.Equal(t, "run failed: boom", got.Message)
-	assert.Equal(t, []failure.Subject{{Type: "batch", ID: "q/batch/1"}}, got.Subjects)
+	assert.Equal(t, []failure.Subject{{Type: "batch", ID: "1"}}, got.Subjects)
 }
 
 func TestAttributionMergesLayers(t *testing.T) {
@@ -105,7 +105,7 @@ func TestAttributionMergesLayers(t *testing.T) {
 // being retryable.
 func TestAttributionDoesNotHideTheCauseFromClassifiers(t *testing.T) {
 	cause := driverError{code: 1213}
-	attributed := Attribute(fmt.Errorf("write failed: %w", cause), failure.Subject{Type: "batch", ID: "q/batch/1"})
+	attributed := Attribute(fmt.Errorf("write failed: %w", cause), failure.Subject{Type: "batch", ID: "1"})
 
 	var de driverError
 	require.True(t, errors.As(attributed, &de), "errors.As must reach the cause through the wrapper")
@@ -115,7 +115,7 @@ func TestAttributionDoesNotHideTheCauseFromClassifiers(t *testing.T) {
 	assert.True(t, IsRetryable(processed), "classification must survive attribution")
 
 	// And the attribution survives classification wrapping it in turn.
-	assert.Equal(t, []failure.Subject{{Type: "batch", ID: "q/batch/1"}}, Attribution(processed).Subjects)
+	assert.Equal(t, []failure.Subject{{Type: "batch", ID: "1"}}, Attribution(processed).Subjects)
 }
 
 // Attribution carries no verdict of its own, so an attributed error with

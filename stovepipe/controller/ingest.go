@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	"github.com/uber/submitqueue/platform/resourceid"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -32,9 +33,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// counterDomainRequest names the per-queue sequence that mints request IDs. It also
-// happens to be the leading segment of the ID, but the two are written independently
-// (see resolveID) so they cannot drift into each other.
+// counterDomainRequest names the per-queue sequence that mints request IDs.
 const counterDomainRequest = "request"
 
 // IngestController handles ingest business logic for stovepipe: it admits a queue's newly
@@ -183,10 +182,7 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 		return "", fmt.Errorf("failed to look up existing request for queue=%s: %w", queue, err)
 	}
 
-	// Mint a globally unique request ID namespaced by the queue. The ID format
-	// ("request/<queue>/<counter>") is written out here rather than derived from the counter
-	// domain: the domain is a per-queue sequence name only, and the two must stay independent
-	// so re-keying the counter cannot change the emitted ID.
+	// Mint a request ID within the queue's request sequence.
 	queueCounter, err := c.counters.For(counter.Config{QueueName: queue})
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
@@ -195,7 +191,10 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 	if err != nil {
 		return "", fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
-	id := fmt.Sprintf("%s/%s/%d", counterDomainRequest, queue, seq)
+	id, err := resourceid.FromCounter(seq)
+	if err != nil {
+		return "", fmt.Errorf("generated invalid request ID for queue=%s: %w", queue, err)
+	}
 
 	if err := uriStore.Create(ctx, uri, id); err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
@@ -278,7 +277,7 @@ func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, stor
 			return err
 		}
 		if queueRow.LatestRequestID != "" {
-			cmp, err := entity.CompareRequestID(queue, id, queueRow.LatestRequestID)
+			cmp, err := entity.CompareRequestID(id, queueRow.LatestRequestID)
 			if err != nil {
 				return fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
 			}
