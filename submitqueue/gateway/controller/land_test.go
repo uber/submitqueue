@@ -128,7 +128,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 	result, err := controller.Land(ctx, testLandRequest("test-queue"))
 
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/1", result.ID)
+	assert.Equal(t, "1", result.ID)
 }
 
 func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
@@ -144,9 +144,21 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLand_ReturnsErrorOnNonPositiveCounterValue(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), nil)
+	controller := newNoopLandController(t, ctrl, cnt)
+
+	_, err := controller.Land(context.Background(), testLandRequest("test-queue"))
+
+	require.Error(t, err)
+}
+
 // TestLand_ResolvesCounterForRequestQueue pins that the queue reaches the counter
-// through the factory binding rather than through the domain string: the domain is a
-// bare sequence name, and the sqid is still "<queue>/<counter_value>".
+// through the factory binding rather than through the domain name: the value is a
+// bare sequence name, and the sqid is the decimal counter value.
 func TestLand_ResolvesCounterForRequestQueue(t *testing.T) {
 	var capturedDomain, capturedQueue string
 
@@ -176,7 +188,7 @@ func TestLand_ResolvesCounterForRequestQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "request", capturedDomain, "the domain is a sequence name, not a queue-qualified key")
 	assert.Equal(t, "my-queue", capturedQueue, "the queue reaches the counter through the factory binding")
-	assert.Equal(t, "my-queue/1", result.ID)
+	assert.Equal(t, "1", result.ID)
 }
 
 func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
@@ -223,7 +235,7 @@ func TestLand_ValidatesQueueLengthBeforeAllocatingSqid(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.queue+"/1", result.ID)
+			assert.Equal(t, "1", result.ID)
 		})
 	}
 }
@@ -377,7 +389,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 				return nil
 			},
 		),
-		summaryStore.EXPECT().Get(gomock.Any(), "test-queue/123").DoAndReturn(
+		summaryStore.EXPECT().Get(gomock.Any(), "123").DoAndReturn(
 			func(context.Context, string) (entity.RequestSummary, error) {
 				return receiptSummary, nil
 			},
@@ -389,7 +401,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 				return nil
 			},
 		),
-		queueStore.EXPECT().Get(gomock.Any(), gomock.Any(), "test-queue/123").DoAndReturn(
+		queueStore.EXPECT().Get(gomock.Any(), gomock.Any(), "123").DoAndReturn(
 			func(context.Context, int64, string) (entity.RequestQueueSummary, error) {
 				return entity.RequestQueueSummary{}, basestorage.ErrNotFound
 			},
@@ -419,10 +431,10 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	result, err := controller.Land(ctx, req)
 
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/123", result.ID)
+	assert.Equal(t, "123", result.ID)
 
 	assert.Equal(t, entity.RequestSummary{
-		RequestID:         "test-queue/123",
+		RequestID:         "123",
 		Queue:             "test-queue",
 		ChangeURIs:        []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
 		ReceivedAtMs:      receiptSummary.ReceivedAtMs,
@@ -433,7 +445,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	}, receiptSummary)
 	assert.Positive(t, receiptSummary.ReceivedAtMs)
 	assert.Equal(t, entity.RequestLog{
-		RequestID:   "test-queue/123",
+		RequestID:   "123",
 		Queue:       "test-queue",
 		TimestampMs: receiptSummary.ReceivedAtMs,
 		Type:        entity.RequestLogTypeStatus,
@@ -446,10 +458,10 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		ChangeURI:    "github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98",
 		Queue:        "test-queue",
 		ReceivedAtMs: receiptSummary.ReceivedAtMs,
-		RequestID:    "test-queue/123",
+		RequestID:    "123",
 	}, persistedMapping)
 	assert.Equal(t, entity.RequestQueueSummary{
-		RequestID:    "test-queue/123",
+		RequestID:    "123",
 		Queue:        "test-queue",
 		ChangeURIs:   []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
 		ReceivedAtMs: receiptSummary.ReceivedAtMs,
@@ -460,14 +472,14 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	// Verify message was published to the topic registered under TopicKeyStart
 	assert.Equal(t, "start", publishedTopic)
-	assert.Equal(t, "test-queue/123", publishedMessage.ID)
+	assert.Equal(t, "123", publishedMessage.ID)
 	assert.Equal(t, "test-queue", publishedMessage.Tenant)
 	assert.Equal(t, "test-queue", publishedMessage.PartitionKey)
 
 	// Verify payload can be deserialized
 	deserializedReq, err := sqmq.UnmarshalLandRequest(publishedMessage.Payload)
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/123", deserializedReq.ID)
+	assert.Equal(t, "123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
 	assert.Equal(t, []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
 	assert.Equal(t, mergestrategy.MergeStrategyRebase, deserializedReq.LandStrategy)
@@ -515,5 +527,5 @@ func TestLand_ReturnsSqidWhenAcceptedLogFailsAfterPublish(t *testing.T) {
 	result, err := controller.Land(context.Background(), testLandRequest("test-queue"))
 
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/999", result.ID)
+	assert.Equal(t, "999", result.ID)
 }

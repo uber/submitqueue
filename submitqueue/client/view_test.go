@@ -240,12 +240,12 @@ func TestRowStage(t *testing.T) {
 		},
 		{
 			name: "accepted but nothing recorded yet",
-			row:  Row{SQID: "demo-queue/17"},
+			row:  Row{SQID: "17"},
 			want: "…",
 		},
 		{
 			name: "the states it passed through",
-			row:  Row{SQID: "demo-queue/17", Trail: []string{"accepted", "started", "landed"}},
+			row:  Row{SQID: "17", Trail: []string{"accepted", "started", "landed"}},
 			want: "accepted → started → landed",
 		},
 		{
@@ -253,13 +253,13 @@ func TestRowStage(t *testing.T) {
 			// a request is without knowing how it got there. That still beats
 			// a column of nothing.
 			name: "the position it holds, when the trail was never fetched",
-			row:  Row{SQID: "demo-queue/17", Status: "speculating"},
+			row:  Row{SQID: "17", Status: "speculating"},
 			want: "speculating",
 		},
 		{
 			name: "a fetched trail is preferred over the bare position",
 			row: Row{
-				SQID:   "demo-queue/17",
+				SQID:   "17",
 				Status: "landed",
 				Trail:  []string{"accepted", "landed"},
 			},
@@ -361,9 +361,9 @@ func TestDrawLineAccounting(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
 	rows := []*Row{
-		{SQID: "demo-queue/17", Cells: []Cell{{Text: "#41", URL: "https://github.com/o/r/pull/41"}},
+		{SQID: "17", Cells: []Cell{{Text: "#41", URL: "https://github.com/o/r/pull/41"}},
 			Submitted: time.Now(), Trail: []string{"accepted", "started"}},
-		{SQID: "demo-queue/18", Cells: []Cell{{Text: "#42", URL: "https://github.com/o/r/pull/42"}},
+		{SQID: "18", Cells: []Cell{{Text: "#42", URL: "https://github.com/o/r/pull/42"}},
 			Submitted: time.Now(), Trail: []string{"accepted"}},
 		{},
 	}
@@ -385,7 +385,7 @@ func TestDrawStaysWithinLineWidth(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
 	rows := []*Row{{
-		SQID:      "demo-queue/17",
+		SQID:      "17",
 		Submitted: time.Now(),
 		Trail:     strings.Split(strings.Repeat("speculating ", 30), " "),
 		Note:      strings.Repeat("a very long error message ", 10),
@@ -412,7 +412,7 @@ func TestDrawFollowsAResize(t *testing.T) {
 	r.width = width
 	r.size = func() (int, int, bool) { return width, 40, true }
 
-	rows := []*Row{{SQID: "demo-queue/72", Submitted: time.Now(), Trail: longTrail}}
+	rows := []*Row{{SQID: "72", Submitted: time.Now(), Trail: longTrail}}
 
 	wide := captureStdout(t, func() { r.draw(rows, "watching") })
 	for _, line := range strings.Split(wide, "\n") {
@@ -459,7 +459,7 @@ func TestNewRendererNeedsASizeToRedrawInPlace(t *testing.T) {
 func TestDrawPipedSkipsClockOnlyRedraws(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = false
-	rows := []*Row{{SQID: "demo-queue/17", Submitted: time.Now().Add(-5 * time.Second), Trail: []string{"accepted"}}}
+	rows := []*Row{{SQID: "17", Submitted: time.Now().Add(-5 * time.Second), Trail: []string{"accepted"}}}
 
 	first := captureStdout(t, func() { r.draw(rows, "watching") })
 	require.NotEmpty(t, first)
@@ -479,10 +479,10 @@ func TestDrawPipedSkipsClockOnlyRedraws(t *testing.T) {
 // that shrank would make the table jitter as rows fill in.
 func TestFitGrowsColumnsOnly(t *testing.T) {
 	r := newRenderer()
-	wide := []*Row{{SQID: "some-very-long-queue-name/1234"}}
+	wide := []*Row{{SQID: "12345678"}}
 	r.fit(wide)
 	grown := r.wRequest
-	assert.Equal(t, len("some-very-long-queue-name/1234"), grown)
+	assert.Equal(t, len("12345678"), grown)
 
 	r.fit([]*Row{{}})
 	assert.Equal(t, grown, r.wRequest)
@@ -502,14 +502,14 @@ func TestOutcome(t *testing.T) {
 }
 
 func TestSummarize(t *testing.T) {
-	assert.NoError(t, summarize([]*Row{{SQID: "q/1", Status: "landed"}}))
-	assert.Error(t, summarize([]*Row{{SQID: "q/1", Status: "landed"}, {SQID: "q/2", Status: "error"}}))
+	assert.NoError(t, summarize([]*Row{{SQID: "1", Status: "landed"}}))
+	assert.Error(t, summarize([]*Row{{SQID: "1", Status: "landed"}, {SQID: "2", Status: "error"}}))
 
 	// A failure reason, when the request carries one, is part of the summary so a
 	// scripted run reports why rather than only that.
-	err := summarize([]*Row{{SQID: "q/2", Status: "error", Note: "merge failed: conflict in foo.go"}})
+	err := summarize([]*Row{{SQID: "2", Status: "error", Note: "merge failed: conflict in foo.go"}})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "q/2=error: merge failed: conflict in foo.go")
+	assert.Contains(t, err.Error(), "2=error: merge failed: conflict in foo.go")
 }
 
 // TestRowLineAlignment is the column contract: on every row the stage begins at
@@ -566,21 +566,21 @@ func TestTrackerSettlesOnlyWhenSealedAndTerminal(t *testing.T) {
 	ctx := context.Background()
 
 	captureStdout(t, func() {
-		tr.Update(func() { tr.rows[0].SQID = "demo-queue/1" })
+		tr.Update(func() { tr.rows[0].SQID = "1" })
 		tr.Seal()
 	})
 	assert.False(t, isClosed(tr.settled), "a row that was never enqueued is not settled")
 
-	captureStdout(t, func() { tr.Update(func() { tr.rows[1].SQID = "demo-queue/2" }) })
-	gw.set("demo-queue/1", "accepted", "started")
-	gw.set("demo-queue/2", "accepted")
+	captureStdout(t, func() { tr.Update(func() { tr.rows[1].SQID = "2" }) })
+	gw.set("1", "accepted", "started")
+	gw.set("2", "accepted")
 	captureStdout(t, func() { tr.refresh(ctx, gw, "demo-queue") })
 
 	assert.Equal(t, []string{"accepted", "started"}, tr.rows[0].Trail)
 	assert.False(t, isClosed(tr.settled), "requests still in flight")
 
-	gw.set("demo-queue/1", "accepted", "started", "landed")
-	gw.set("demo-queue/2", "accepted", "error")
+	gw.set("1", "accepted", "started", "landed")
+	gw.set("2", "accepted", "error")
 	captureStdout(t, func() { tr.refresh(ctx, gw, "demo-queue") })
 
 	assert.True(t, isClosed(tr.settled), "every request reached a terminal status")
@@ -607,10 +607,10 @@ func TestTrackerPollsWhileCreating(t *testing.T) {
 	tr := NewTracker(NewRows(3))
 	tr.r.inPlace = false
 	gw := &fakeGateway{}
-	gw.set("demo-queue/1", "accepted", "started", "batched")
+	gw.set("1", "accepted", "started", "batched")
 
 	captureStdout(t, func() {
-		tr.Update(func() { tr.rows[0].SQID = "demo-queue/1" })
+		tr.Update(func() { tr.rows[0].SQID = "1" })
 		tr.refresh(context.Background(), gw, "demo-queue")
 	})
 
@@ -634,7 +634,7 @@ func TestTrackerConcurrentPollAndUpdate(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range tr.rows {
-				sqid := fmt.Sprintf("demo-queue/%d", i)
+				sqid := fmt.Sprintf("%d", i+1)
 				gw.set(sqid, "accepted", "landed")
 				i := i
 				tr.Update(func() {
@@ -702,11 +702,11 @@ func TestNoteLinesRenderErrorInFull(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
 	failed := &Row{
-		SQID:      "demo-queue/1",
+		SQID:      "1",
 		Cells:     []Cell{{Text: "#75", URL: "https://github.com/behinddwalls/sq-demo/pull/75"}},
 		Submitted: time.Now(),
 		Trail:     []string{"accepted", "started", "validated", "batched", "error"},
-		Note: `speculator failed for queue demo-queue: score dependency "demo-queue/batch/1": ` +
+		Note: `speculator failed for queue demo-queue: score dependency "1": ` +
 			`failed to resolve storage for queue "": queue name must not be empty`,
 	}
 	r.fit([]*Row{failed})
@@ -738,7 +738,7 @@ func TestNoteLinesRenderErrorInFull(t *testing.T) {
 func TestNoteLinesIndentToStageColumn(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
-	rows := []*Row{{SQID: "demo-queue/1", Submitted: time.Now(), Trail: []string{"error"}, Note: "boom"}}
+	rows := []*Row{{SQID: "1", Submitted: time.Now(), Trail: []string{"error"}, Note: "boom"}}
 	r.fit(rows)
 
 	lines := r.noteLines(rows[0])
@@ -751,12 +751,12 @@ func TestRowLineAlignment(t *testing.T) {
 	r.inPlace = true
 	rows := []*Row{
 		{
-			SQID:      "demo-queue/17",
+			SQID:      "17",
 			Cells:     []Cell{{Text: "#41", URL: "https://github.com/behinddwalls/sq-demo/pull/41"}},
 			Submitted: time.Now(),
 			Trail:     []string{"accepted", "started", "batched", "speculating", "landed"},
 		},
-		{SQID: "demo-queue/1234", Submitted: time.Now(), Trail: []string{"accepted"}},
+		{SQID: "1234", Submitted: time.Now(), Trail: []string{"accepted"}},
 		{},
 	}
 	r.fit(rows)
@@ -829,7 +829,7 @@ var longTrail = []string{
 func TestRowLinesWrapsRatherThanTruncates(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
-	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	rw := &Row{SQID: "1", Submitted: time.Now(), Trail: longTrail}
 	r.fit([]*Row{rw})
 
 	lines := r.rowLines(rw)
@@ -847,7 +847,7 @@ func TestRowLinesWrapsRatherThanTruncates(t *testing.T) {
 func TestRowLinesContinuationsAlignUnderTheStage(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
-	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	rw := &Row{SQID: "1", Submitted: time.Now(), Trail: longTrail}
 	r.fit([]*Row{rw})
 
 	lines := r.rowLines(rw)
@@ -869,7 +869,7 @@ func TestRowLinesFitTheWidth(t *testing.T) {
 			r := newRenderer()
 			r.inPlace = true
 			r.width = width
-			rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+			rw := &Row{SQID: "1", Submitted: time.Now(), Trail: longTrail}
 			r.fit([]*Row{rw})
 
 			for _, line := range r.rowLines(rw) {
@@ -885,7 +885,7 @@ func TestRowLinesUseTheWholeWidthBeforeWrapping(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
 	r.width = 240
-	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	rw := &Row{SQID: "1", Submitted: time.Now(), Trail: longTrail}
 	r.fit([]*Row{rw})
 
 	lines := r.rowLines(rw)
@@ -897,7 +897,7 @@ func TestRowLinesPipedStayOnOneLine(t *testing.T) {
 	// A log has no width to respect and is easier to read and grep unwrapped.
 	r := newRenderer()
 	r.inPlace = false
-	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	rw := &Row{SQID: "1", Submitted: time.Now(), Trail: longTrail}
 	r.fit([]*Row{rw})
 
 	lines := r.rowLines(rw)
@@ -921,7 +921,7 @@ func TestDrawNeverExceedsTheWindowHeight(t *testing.T) {
 	rows := make([]*Row, 0, 60)
 	for i := range 60 {
 		rows = append(rows, &Row{
-			SQID:      fmt.Sprintf("demo-queue/%d", i+1),
+			SQID:      fmt.Sprintf("%d", i+1),
 			Submitted: time.Now(),
 			Trail:     []string{"accepted", "started", "speculating"},
 		})
@@ -949,7 +949,7 @@ func TestDrawKeepsMovingRowsWhenTheWindowIsShort(t *testing.T) {
 	rows := make([]*Row, 0, 30)
 	for i := range 30 {
 		rows = append(rows, &Row{
-			SQID:      fmt.Sprintf("demo-queue/%d", i+1),
+			SQID:      fmt.Sprintf("%d", i+1),
 			Submitted: time.Now(),
 			Status:    "landed",
 			Trail:     []string{"accepted", "landed"},
@@ -957,7 +957,7 @@ func TestDrawKeepsMovingRowsWhenTheWindowIsShort(t *testing.T) {
 		})
 	}
 	moving := &Row{
-		SQID:      "demo-queue/moving",
+		SQID:      "999",
 		Submitted: time.Now(),
 		Status:    "speculating",
 		Trail:     []string{"accepted", "speculating"},
@@ -965,7 +965,7 @@ func TestDrawKeepsMovingRowsWhenTheWindowIsShort(t *testing.T) {
 	rows = append(rows, moving)
 
 	out := captureStdout(t, func() { r.draw(rows, "watching") })
-	assert.Contains(t, out, "demo-queue/moving", "the unsettled row must survive the trim")
+	assert.Contains(t, out, "999", "the unsettled row must survive the trim")
 	assert.Contains(t, out, "not shown", "and the reader must be told the table is partial")
 }
 
@@ -975,7 +975,7 @@ func TestDrawOneShotKeepsEveryRow(t *testing.T) {
 	rows := make([]*Row, 0, 40)
 	for i := range 40 {
 		rows = append(rows, &Row{
-			SQID:      fmt.Sprintf("demo-queue/%d", i+1),
+			SQID:      fmt.Sprintf("%d", i+1),
 			Submitted: time.Now(),
 			Status:    "landed",
 			Done:      true,
@@ -983,7 +983,7 @@ func TestDrawOneShotKeepsEveryRow(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() { Draw(rows, "40 request(s)") })
-	assert.Contains(t, out, "demo-queue/40", "a listing must not drop rows to fit the window")
+	assert.Contains(t, out, "40", "a listing must not drop rows to fit the window")
 	assert.NotContains(t, out, "not shown")
 }
 
@@ -996,11 +996,11 @@ func TestDrawPipedKeepsEveryRow(t *testing.T) {
 
 	rows := make([]*Row, 0, 40)
 	for i := range 40 {
-		rows = append(rows, &Row{SQID: fmt.Sprintf("demo-queue/%d", i+1), Submitted: time.Now(), Done: true})
+		rows = append(rows, &Row{SQID: fmt.Sprintf("%d", i+1), Submitted: time.Now(), Done: true})
 	}
 
 	out := captureStdout(t, func() { r.draw(rows, "watching") })
-	assert.Contains(t, out, "demo-queue/40")
+	assert.Contains(t, out, "40")
 	assert.NotContains(t, out, "not shown")
 }
 

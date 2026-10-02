@@ -42,15 +42,14 @@ message PingResponse {
 // IngestRequest is the request for the Ingest method. The poller reports that a queue
 // (a named repo+ref) has a new commit to validate.
 message IngestRequest {
-    // Logical queue name to validate (e.g. "monorepo/main"). It namespaces the minted
-    // request ID and is the stable handle for the repo+ref being validated.
+    // Logical queue name to validate (e.g. "monorepo/main"). Together with the minted
+    // request ID it identifies the request and is the stable handle for the repo+ref.
     string queue = 1;
 }
 
 // IngestResponse is the response for the Ingest method.
 message IngestResponse {
-    // The minted request ID, namespaced by queue. Format: "request/<queue>/<counter>"
-    // (e.g. "request/monorepo/main/42").
+    // Canonical decimal request ID, unique within the selected queue.
     string id = 1;
 }
 
@@ -58,7 +57,7 @@ message IngestResponse {
 message GetRequestHistoryByIDRequest {
     // Logical queue containing the request.
     string queue = 1;
-    // Globally unique request identifier returned from Ingest.
+    // Canonical decimal request identifier returned from Ingest.
     string request_id = 2;
 }
 
@@ -89,7 +88,7 @@ message HistoryEvent {
 
 // RequestHistory identifies one request and contains its ordered events.
 message RequestHistory {
-    // Globally unique request identifier.
+    // Queue-scoped decimal request identifier.
     string request_id = 1;
     // Events ordered by occurrence time and stable event identity.
     repeated HistoryEvent events = 2;
@@ -133,7 +132,7 @@ message ProjectValidation {
 
 // GetProjectStatusByURIResponse contains the selected validation's current projection.
 message GetProjectStatusByURIResponse {
-    // Globally unique identifier of the validation request.
+    // Queue-scoped decimal identifier of the validation request.
     string request_id = 1;
     // Logical queue containing the validation request.
     string queue = 2;

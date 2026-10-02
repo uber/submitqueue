@@ -40,7 +40,7 @@ func setupRequestURIStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.R
 }
 
 func TestRequestURIStore_Create(t *testing.T) {
-	const queue, uri, id = "monorepo/main", "git://remote/monorepo/main/deadbeef", "request/monorepo/main/1"
+	const queue, uri, id = "monorepo/main", "git://remote/monorepo/main/deadbeef", "1"
 
 	tests := []struct {
 		name      string
@@ -99,7 +99,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 }
 
 func TestRequestURIStore_GetIDByURI(t *testing.T) {
-	const queue, uri, wantID = "monorepo/main", "git://remote/monorepo/main/deadbeef", "request/monorepo/main/1"
+	const queue, uri, wantID = "monorepo/main", "git://remote/monorepo/main/deadbeef", "1"
 
 	tests := []struct {
 		name      string

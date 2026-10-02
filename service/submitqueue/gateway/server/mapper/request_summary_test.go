@@ -24,8 +24,8 @@ import (
 
 func TestProtoToGetRequestSummaryByIDRequest(t *testing.T) {
 	assert.Equal(t,
-		entity.GetRequestSummaryByIDRequest{ID: "test-queue/42", Queue: "test-queue"},
-		ProtoToGetRequestSummaryByIDRequest(&pb.GetRequestSummaryByIDRequest{Sqid: "test-queue/42", Queue: "test-queue"}),
+		entity.GetRequestSummaryByIDRequest{ID: "42", Queue: "test-queue"},
+		ProtoToGetRequestSummaryByIDRequest(&pb.GetRequestSummaryByIDRequest{Sqid: "42", Queue: "test-queue"}),
 	)
 }
 
@@ -38,7 +38,7 @@ func TestProtoToGetRequestSummaryByChangeURIRequest(t *testing.T) {
 
 func TestRequestSummaryToProto(t *testing.T) {
 	summary := entity.RequestSummary{
-		RequestID:    "test-queue/42",
+		RequestID:    "42",
 		Queue:        "test-queue",
 		ChangeURIs:   []string{"github://uber/repo/pull/1/abc"},
 		ReceivedAtMs: 100,
@@ -48,7 +48,7 @@ func TestRequestSummaryToProto(t *testing.T) {
 	}
 
 	assert.Equal(t, &pb.RequestSummary{
-		Sqid:         "test-queue/42",
+		Sqid:         "42",
 		Queue:        "test-queue",
 		ChangeUris:   []string{"github://uber/repo/pull/1/abc"},
 		ReceivedAtMs: 100,
@@ -60,11 +60,11 @@ func TestRequestSummaryToProto(t *testing.T) {
 
 func TestRequestSummariesToProto(t *testing.T) {
 	summaries := []entity.RequestSummary{
-		{RequestID: "test-queue/2", Status: entity.RequestStatusLanded},
-		{RequestID: "test-queue/1", Status: entity.RequestStatusError},
+		{RequestID: "2", Status: entity.RequestStatusLanded},
+		{RequestID: "1", Status: entity.RequestStatusError},
 	}
 
 	requests := RequestSummariesToProto(summaries)
 
-	assert.Equal(t, []string{"test-queue/2", "test-queue/1"}, []string{requests[0].Sqid, requests[1].Sqid})
+	assert.Equal(t, []string{"2", "1"}, []string{requests[0].Sqid, requests[1].Sqid})
 }

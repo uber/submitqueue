@@ -159,8 +159,8 @@ func (x *PingResponse) GetHostname() string {
 // (a named repo+ref) has a new commit to validate.
 type IngestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Logical queue name to validate (e.g. "monorepo/main"). It namespaces the minted
-	// request ID and is the stable handle for the repo+ref being validated.
+	// Logical queue name to validate (e.g. "monorepo/main"). Together with the minted
+	// request ID it identifies the request and is the stable handle for the repo+ref.
 	Queue         string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -206,8 +206,7 @@ func (x *IngestRequest) GetQueue() string {
 // IngestResponse is the response for the Ingest method.
 type IngestResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The minted request ID, namespaced by queue. Format: "request/<queue>/<counter>"
-	// (e.g. "request/monorepo/main/42").
+	// Canonical decimal request ID, unique within the selected queue.
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -255,7 +254,7 @@ type GetRequestHistoryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Logical queue containing the request.
 	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
-	// Globally unique request identifier returned from Ingest.
+	// Canonical decimal request identifier returned from Ingest.
 	RequestId     string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -477,7 +476,7 @@ func (*HistoryEvent_Event) isHistoryEvent_Occurrence() {}
 // RequestHistory identifies one request and contains its ordered events.
 type RequestHistory struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique request identifier.
+	// Queue-scoped decimal request identifier.
 	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Events ordered by occurrence time and stable event identity.
 	Events        []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
@@ -784,7 +783,7 @@ func (*ProjectValidation_BreakageDegree) isProjectValidation_Result() {}
 // GetProjectStatusByURIResponse contains the selected validation's current projection.
 type GetProjectStatusByURIResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier of the validation request.
+	// Queue-scoped decimal identifier of the validation request.
 	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Logical queue containing the validation request.
 	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`

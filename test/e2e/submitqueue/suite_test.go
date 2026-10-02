@@ -223,7 +223,7 @@ func (s *E2EIntegrationSuite) TestConflictAnalyzerFailure_ReconcilesFromDLQ() {
 	t := s.T()
 	const (
 		queue   = "e2e-conflict-error-queue"
-		batchID = queue + "/batch/1"
+		batchID = "1"
 	)
 
 	req := s.land(queue, "github://github.example.com/uber/e2e-conflict-error/pull/1/abcdef0123456789abcdef0123456789abcdef01")
@@ -644,14 +644,14 @@ func (s *E2EIntegrationSuite) TestReadAPIs() {
 // leader resolves.
 //
 // The wait is forced rather than raced. Batch IDs come from a per-queue counter
-// as "<queue>/batch/<n>", so the leader on a fresh queue is batch/1, and the
+// as decimal strings, so the leader on a fresh queue is batch 1, and the
 // build topic partitions by batch — closing the gate on that partition before
 // anything is published holds the leader's build and nothing else, so the
 // follower reaches a passed path while its dependency is still outstanding.
 func (s *E2EIntegrationSuite) TestLand_DependentBatch_BypassesAnUnresolvedDependency() {
 	const queue = "e2e-respeculate-queue"
 	const gateGroup = "orchestrator"
-	leaderBatch := queue + "/batch/1"
+	leaderBatch := "1"
 
 	s.closeGate(queue, gateGroup, leaderBatch, "e2e: hold the leader's build so its dependent speculates first")
 	defer s.openGate(queue, gateGroup, leaderBatch)
@@ -791,7 +791,7 @@ func (s *E2EIntegrationSuite) TestBatchRedelivery_DoesNotEnrolTheRequestTwice() 
 	const gateGroup = "orchestrator"
 	// Nothing has landed on this queue, so the first batch is predictable, and
 	// the build topic partitions by batch ID.
-	const heldBatch = queue + "/batch/1"
+	const heldBatch = "1"
 
 	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the request stays in flight for the redelivery")
 	// Reopen even if an assertion below fails, so teardown does not stop the
@@ -833,7 +833,7 @@ func (s *E2EIntegrationSuite) TestStrandedBatch_IsAdmittedByALaterRun() {
 
 	const queue = "e2e-strand-queue"
 	const gateGroup = "orchestrator"
-	const heldBatch = queue + "/batch/1"
+	const heldBatch = "1"
 
 	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the batch can be stranded while still in flight")
 	defer s.openGate(queue, gateGroup, heldBatch)

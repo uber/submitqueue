@@ -16,7 +16,7 @@ package entity
 
 // RequestSummary is the materialized current view of a validation request.
 type RequestSummary struct {
-	// RequestID is the globally unique request identifier.
+	// RequestID is the canonical decimal request identifier, unique within Queue.
 	RequestID string
 	// Queue is the queue containing the request.
 	Queue string

@@ -105,3 +105,20 @@ func (s *MySQLCounterIntegrationSuite) TearDownSuite() {
 	s.log.Logf("Tearing down MySQL Counter integration test suite")
 	// Cleanup handled automatically by testutil.ComposeStack
 }
+
+func (s *MySQLCounterIntegrationSuite) TestCounter_Restart() {
+	const (
+		queue  = "restart"
+		domain = "request"
+	)
+
+	originalCounter := mysqlcounter.NewCounter(s.db, tally.NoopScope, queue)
+	firstID, err := originalCounter.Next(context.Background(), domain)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(1), firstID)
+
+	reopenedCounter := mysqlcounter.NewCounter(s.db, tally.NoopScope, queue)
+	nextID, err := reopenedCounter.Next(context.Background(), domain)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), firstID+1, nextID)
+}

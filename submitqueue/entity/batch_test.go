@@ -82,9 +82,9 @@ func TestBatch_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "batch with single request",
 			batch: Batch{
-				ID:       "queueA/batch/1",
+				ID:       "1",
 				Queue:    "queueA",
-				Contains: []string{"queueA/1"},
+				Contains: []string{"1"},
 				State:    BatchStateCreated,
 				Version:  1,
 			},
@@ -92,9 +92,9 @@ func TestBatch_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "batch with multiple requests",
 			batch: Batch{
-				ID:       "queueB/batch/42",
+				ID:       "42",
 				Queue:    "queueB",
-				Contains: []string{"queueB/10", "queueB/11", "queueB/12"},
+				Contains: []string{"10", "11", "12"},
 				State:    BatchStateSpeculating,
 				Version:  3,
 			},
@@ -102,12 +102,12 @@ func TestBatch_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "batch with dependencies",
 			batch: Batch{
-				ID:       "queueA/batch/3",
+				ID:       "3",
 				Queue:    "queueA",
-				Contains: []string{"queueA/5"},
+				Contains: []string{"5"},
 				Dependencies: []string{
-					"queueA/batch/1",
-					"queueA/batch/2",
+					"1",
+					"2",
 				},
 				State:   BatchStateCreated,
 				Version: 1,
@@ -116,9 +116,9 @@ func TestBatch_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "batch in terminal state",
 			batch: Batch{
-				ID:       "queueC/batch/99",
+				ID:       "99",
 				Queue:    "queueC",
-				Contains: []string{"queueC/50"},
+				Contains: []string{"50"},
 				State:    BatchStateSucceeded,
 				Version:  5,
 			},

@@ -140,7 +140,7 @@ type MySQLRequestSummaryStoreSuite struct {
 
 func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
 	summary := entity.RequestSummary{
-		RequestID: "request/monorepo/main/summary", Queue: "monorepo/main", URI: "git://repo/head",
+		RequestID: "1", Queue: "monorepo/main", URI: "git://repo/head",
 		State: entity.RequestStateAccepted, RequestVersion: 1, StateTimestampMs: 1000, Version: 1,
 	}
 	require.NoError(s.T(), s.store.Create(s.ctx, summary))
@@ -164,7 +164,7 @@ func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
 }
 
 func (s *MySQLRequestSummaryStoreSuite) TestGetNotFound() {
-	_, err := s.store.Get(s.ctx, "request/monorepo/main/missing-summary")
+	_, err := s.store.Get(s.ctx, "999")
 	require.True(s.T(), storage.IsNotFound(err))
 }
 
@@ -179,7 +179,7 @@ type MySQLRequestStoreSuite struct {
 
 func (s *MySQLRequestStoreSuite) TestCreateAndGet() {
 	req := entity.Request{
-		ID:      "request/monorepo/main/1",
+		ID:      "1",
 		Queue:   "monorepo/main",
 		URI:     "git://remote/monorepo/main/aaaa1111",
 		State:   entity.RequestStateAccepted,
@@ -194,7 +194,7 @@ func (s *MySQLRequestStoreSuite) TestCreateAndGet() {
 
 func (s *MySQLRequestStoreSuite) TestCreateAndGetWithProcessFields() {
 	req := entity.Request{
-		ID:            "request/monorepo/main/process-fields",
+		ID:            "3",
 		Queue:         "monorepo/main",
 		URI:           "git://remote/monorepo/main/cccc3333",
 		State:         entity.RequestStateProcessing,
@@ -210,13 +210,13 @@ func (s *MySQLRequestStoreSuite) TestCreateAndGetWithProcessFields() {
 }
 
 func (s *MySQLRequestStoreSuite) TestGetNotFound() {
-	_, err := s.store.Get(s.ctx, "request/monorepo/main/does-not-exist")
+	_, err := s.store.Get(s.ctx, "999")
 	require.True(s.T(), storage.IsNotFound(err))
 }
 
 func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 	req := entity.Request{
-		ID:      "request/monorepo/main/update",
+		ID:      "4",
 		Queue:   "monorepo/main",
 		State:   entity.RequestStateAccepted,
 		Version: 1,
@@ -243,14 +243,14 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 }
 
 func (s *MySQLRequestStoreSuite) TestUpdateNotFoundIsVersionMismatch() {
-	missing := entity.Request{ID: "request/monorepo/main/missing", Queue: "monorepo/main", State: entity.RequestStateAccepted}
+	missing := entity.Request{ID: "999", Queue: "monorepo/main", State: entity.RequestStateAccepted}
 	err := s.store.Update(s.ctx, missing, 1, 2)
 	require.ErrorIs(s.T(), err, storage.ErrVersionMismatch)
 }
 
 func (s *MySQLRequestStoreSuite) TestCreateDuplicateID() {
 	req := entity.Request{
-		ID:      "request/monorepo/main/2",
+		ID:      "2",
 		Queue:   "monorepo/main",
 		State:   entity.RequestStateAccepted,
 		Version: 1,
@@ -265,7 +265,7 @@ func (s *MySQLRequestStoreSuite) TestURIMappingCreateAndGet() {
 	const (
 		queue = "monorepo/main"
 		uri   = "git://remote/monorepo/main/bbbb2222"
-		id    = "request/monorepo/main/3"
+		id    = "3"
 	)
 	require.NoError(s.T(), s.uriStore.Create(s.ctx, uri, id))
 
@@ -284,10 +284,10 @@ func (s *MySQLRequestStoreSuite) TestURIMappingDuplicate() {
 		queue = "monorepo/main"
 		uri   = "git://remote/monorepo/main/cccc3333"
 	)
-	require.NoError(s.T(), s.uriStore.Create(s.ctx, uri, "request/monorepo/main/4"))
+	require.NoError(s.T(), s.uriStore.Create(s.ctx, uri, "4"))
 
 	// A second request claiming the same (queue, uri) is rejected — the dedup signal.
-	err := s.uriStore.Create(s.ctx, uri, "request/monorepo/main/5")
+	err := s.uriStore.Create(s.ctx, uri, "5")
 	require.ErrorIs(s.T(), err, storage.ErrAlreadyExists)
 }
 
@@ -297,16 +297,16 @@ func (s *MySQLRequestStoreSuite) TestURIMappingDistinctAcrossQueues() {
 	require.NoError(s.T(), err)
 	boundB, err := s.backend.For("queue-b")
 	require.NoError(s.T(), err)
-	require.NoError(s.T(), boundA.GetRequestURIStore().Create(s.ctx, uri, "request/queue-a/1"))
-	require.NoError(s.T(), boundB.GetRequestURIStore().Create(s.ctx, uri, "request/queue-b/1"))
+	require.NoError(s.T(), boundA.GetRequestURIStore().Create(s.ctx, uri, "1"))
+	require.NoError(s.T(), boundB.GetRequestURIStore().Create(s.ctx, uri, "1"))
 
 	idA, err := boundA.GetRequestURIStore().GetIDByURI(s.ctx, uri)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "request/queue-a/1", idA)
+	require.Equal(s.T(), "1", idA)
 
 	idB, err := boundB.GetRequestURIStore().GetIDByURI(s.ctx, uri)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "request/queue-b/1", idB)
+	require.Equal(s.T(), "1", idB)
 
 	// The other queue's mapping is invisible through this queue's binding.
 	_, err = boundA.GetRequestURIStore().GetIDByURI(s.ctx, "git://remote/monorepo/shared/only-b")

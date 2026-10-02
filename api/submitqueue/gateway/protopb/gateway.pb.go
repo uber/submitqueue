@@ -230,7 +230,7 @@ func (x *LandRequest) GetStrategy() protopb1.Strategy {
 // LandResponse defines the response to a land request.
 type LandResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier for the land request. Used to track the land request lifecycle.
+	// Canonical decimal identifier for the land request, unique within its queue.
 	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -276,7 +276,7 @@ func (x *LandResponse) GetSqid() string {
 // CancelRequest defines a request to cancel an in-flight land request. If the request is part of a batch, the entire batch is cancelled.
 type CancelRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier of the land request to cancel, returned by a prior Land call.
+	// Canonical decimal identifier of the land request to cancel, returned by a prior Land call.
 	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	// Optional human-readable reason for the cancellation. Recorded for observability.
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
@@ -382,7 +382,7 @@ func (*CancelResponse) Descriptor() ([]byte, []int) {
 // RequestSummary is the gateway-owned materialized current view of one received request.
 type RequestSummary struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique request identifier. This is request_id in internal storage.
+	// Queue-scoped decimal request identifier. This is request_id in internal storage.
 	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	// Queue supplied when the request was received.
 	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
@@ -482,7 +482,7 @@ func (x *RequestSummary) GetMetadata() map[string]string {
 // GetRequestSummaryByIDRequest selects one request by the sqid returned from Land.
 type GetRequestSummaryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier for the request.
+	// Canonical decimal identifier for the request, resolved within queue.
 	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	// Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
 	// so naming a queue the request does not belong to is reported as not found.
@@ -823,7 +823,7 @@ func (x *ListResponse) GetNextPageToken() string {
 // GetRequestHistoryByIDRequest selects one retained request history by sqid.
 type GetRequestHistoryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier for the request.
+	// Canonical decimal identifier for the request, resolved within queue.
 	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	// Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
 	// so naming a queue the request does not belong to is reported as not found.
@@ -1074,7 +1074,7 @@ func (x *GetRequestHistoryByChangeURIRequest) GetQueue() string {
 // RequestHistory groups retained events for one request.
 type RequestHistory struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique request identifier.
+	// Queue-scoped decimal request identifier.
 	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	// Retained events ordered chronologically.
 	Events        []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`

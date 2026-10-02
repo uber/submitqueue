@@ -45,9 +45,9 @@ make demo-requests
 ```
 Creating 3 change(s) across 8 folder(s) via fake changes (no repository) — independent, 5 at a time, each enqueued as soon as it is created
 
-  REQUEST       CHANGES             ELAPSED  STAGE
-  ────────────  ──────────────────  ───────  ─────────────────────────────────────────────
-  demo-queue/1  demo/0814-135021/1      13s  accepted → started → validating → validated →
+  REQUEST  CHANGES             ELAPSED  STAGE
+  ───────  ──────────────────  ───────  ─────────────────────────────────────────────
+  1        demo/0814-135021/1      13s  accepted → started → validating → validated →
                                              batching → batched → speculating → speculated →
                                              landing → landed
 ```
@@ -112,7 +112,7 @@ Landing one change by hand instead:
 ```bash
 make land QUEUE=demo-queue \
   URI='git://demo.example.com/demo/refs%2Fheads%2Fmy-change/1111111111111111111111111111111111111111'
-make land-status QUEUE=demo-queue SQID=demo-queue/1
+make land-status QUEUE=demo-queue SQID=1
 ```
 
 A change URI is `git://{remote}/{repo}/{ref}/{commit_sha}`. Two parts are checked before anything else happens: the **commit SHA must be 40 lowercase hex characters**, and the **ref must be fully qualified and percent-encoded** — `refs%2Fheads%2Fmy-change`, not `my-change`. Encoding is what keeps a branch name containing slashes inside a single path segment.
@@ -227,9 +227,9 @@ git -C /tmp/sq-sandbox/sandbox.git log --oneline main
 ```
 
 ```
-b517508 squash: demo-queue/5 (sandbox@refs/heads/demo/0814-134848/2)
-25c86c5 squash: demo-queue/4 (sandbox@refs/heads/demo/0814-134848/1)
-9f72dcf squash: demo-queue/3 (sandbox@refs/heads/demo/0814-134848/3)
+b517508 squash: 5 (sandbox@refs/heads/demo/0814-134848/2)
+25c86c5 squash: 4 (sandbox@refs/heads/demo/0814-134848/1)
+9f72dcf squash: 3 (sandbox@refs/heads/demo/0814-134848/3)
 b5d86d6 seed the sandbox
 ```
 
@@ -299,11 +299,11 @@ make demo-requests
 It opens real pull requests, enqueues each as it is created, and watches them land — having picked up from the running stack that this one is GitHub. A three-change run against a scratch repo:
 
 ```
-  REQUEST       CHANGES                                           ELAPSED  STAGE
-  ────────────  ────────────────────────────────────────────────  ───────  ──────────────────────────────
-  demo-queue/1  https://github.com/behinddwalls/sq-demo/pull/522      21s  accepted → … → landed
-  demo-queue/2  https://github.com/behinddwalls/sq-demo/pull/523      22s  accepted → … → landed
-  demo-queue/3  https://github.com/behinddwalls/sq-demo/pull/524      25s  accepted → … → landed
+  REQUEST  CHANGES                                           ELAPSED  STAGE
+  ───────  ────────────────────────────────────────────────  ───────  ──────────────────────────────
+  1        https://github.com/behinddwalls/sq-demo/pull/522      21s  accepted → … → landed
+  2        https://github.com/behinddwalls/sq-demo/pull/523      22s  accepted → … → landed
+  3        https://github.com/behinddwalls/sq-demo/pull/524      25s  accepted → … → landed
 ```
 
 Their commits land on `main`, but the pull requests themselves stay open: nothing here calls GitHub's API to close them, and `SQUASH_REBASE` rewrites the commits, so a pull request's original head never becomes reachable from `main` for GitHub to notice on its own. Closing them requires a separately driven automation, which nothing in this stack provides.

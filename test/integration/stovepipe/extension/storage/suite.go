@@ -89,8 +89,8 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 	toCreate := entity.Queue{
 		Name:               name,
 		LastGreenURI:       "git://remote/monorepo/main/green-bbbb",
-		LastGreenRequestID: "request/contract/defaults/98",
-		LatestRequestID:    "request/contract/defaults/99",
+		LastGreenRequestID: "98",
+		LatestRequestID:    "99",
 		Version:            1,
 	}
 	require.NoError(t, s.storeFor(name).Create(s.ctx, toCreate))
@@ -105,13 +105,13 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 	t := s.T()
 	const name = "contract/already-exists"
 
-	first := entity.Queue{Name: name, LatestRequestID: "request/contract/already-exists/3", Version: 1}
+	first := entity.Queue{Name: name, LatestRequestID: "3", Version: 1}
 	require.NoError(t, s.storeFor(name).Create(s.ctx, first))
 
 	err := s.storeFor(name).Create(s.ctx, entity.Queue{
 		Name:            name,
 		LastGreenURI:    "git://remote/monorepo/main/ignored-on-race",
-		LatestRequestID: "request/contract/already-exists/500",
+		LatestRequestID: "500",
 		Version:         1,
 	})
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
@@ -139,16 +139,16 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 
 	updated := created
 	updated.LastGreenURI = "git://remote/monorepo/main/green-cccc"
-	updated.LastGreenRequestID = "request/contract/update-cas/41"
-	updated.LatestRequestID = "request/contract/update-cas/42"
+	updated.LastGreenRequestID = "41"
+	updated.LatestRequestID = "42"
 	updated.InFlightCount = 1
 	require.NoError(t, s.storeFor(name).Update(s.ctx, updated, 1, 2))
 
 	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, updated.LastGreenURI, got.LastGreenURI)
-	assert.Equal(t, "request/contract/update-cas/41", got.LastGreenRequestID)
-	assert.Equal(t, "request/contract/update-cas/42", got.LatestRequestID)
+	assert.Equal(t, "41", got.LastGreenRequestID)
+	assert.Equal(t, "42", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(2), got.Version)
 
@@ -171,15 +171,15 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 
 	require.NoError(t, s.storeFor(name).Create(s.ctx, entity.Queue{Name: name, Version: 1}))
 
-	v2 := entity.Queue{Name: name, LatestRequestID: "request/contract/sequential-cas/10", Version: 1}
+	v2 := entity.Queue{Name: name, LatestRequestID: "10", Version: 1}
 	require.NoError(t, s.storeFor(name).Update(s.ctx, v2, 1, 2))
 
-	v3 := entity.Queue{Name: name, LatestRequestID: "request/contract/sequential-cas/10", InFlightCount: 1, Version: 2}
+	v3 := entity.Queue{Name: name, LatestRequestID: "10", InFlightCount: 1, Version: 2}
 	require.NoError(t, s.storeFor(name).Update(s.ctx, v3, 2, 3))
 
 	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
-	assert.Equal(t, "request/contract/sequential-cas/10", got.LatestRequestID)
+	assert.Equal(t, "10", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(3), got.Version)
 }
@@ -224,7 +224,7 @@ func (s *RequestLogStoreContractSuite) entry(queue, requestID, id string, timest
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_CreateAndGet() {
 	const (
 		queue     = "contract/history-create"
-		requestID = "request/contract/history-create/1"
+		requestID = "1"
 	)
 	entry := entity.RequestLog{
 		ID:          "fact/repository",
@@ -249,7 +249,7 @@ func (s *RequestLogStoreContractSuite) TestRequestLogStore_CreateAndGet() {
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_CreateAlreadyExists() {
 	const (
 		queue     = "contract/history-duplicate"
-		requestID = "request/contract/history-duplicate/1"
+		requestID = "1"
 	)
 	store := s.storeFor(queue)
 	entry := s.entry(queue, requestID, "state/1", 1735689600000, 1)
@@ -265,7 +265,7 @@ func (s *RequestLogStoreContractSuite) TestRequestLogStore_CreateAlreadyExists()
 
 // TestRequestLogStore_GetNotFound verifies a missing stable identity returns ErrNotFound.
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_GetNotFound() {
-	_, err := s.storeFor("contract/history-missing").Get(s.ctx, "request/missing/1", "state/1")
+	_, err := s.storeFor("contract/history-missing").Get(s.ctx, "1", "state/1")
 	assert.True(s.T(), storage.IsNotFound(err))
 }
 
@@ -273,7 +273,7 @@ func (s *RequestLogStoreContractSuite) TestRequestLogStore_GetNotFound() {
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_List() {
 	const (
 		queue     = "contract/history-list"
-		requestID = "request/contract/history-list/1"
+		requestID = "1"
 	)
 	store := s.storeFor(queue)
 	last := s.entry(queue, requestID, "state/z", 2000, 3)
@@ -290,13 +290,13 @@ func (s *RequestLogStoreContractSuite) TestRequestLogStore_List() {
 
 // TestRequestLogStore_ListNotFound verifies a request with no retained records returns ErrNotFound.
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_ListNotFound() {
-	_, err := s.storeFor("contract/history-list-missing").List(s.ctx, "request/shared/1")
+	_, err := s.storeFor("contract/history-list-missing").List(s.ctx, "1")
 	assert.ErrorIs(s.T(), err, storage.ErrNotFound)
 }
 
 // TestRequestLogStore_QueueIsolation verifies identical request and entry IDs remain queue-scoped.
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_QueueIsolation() {
-	const requestID = "request/shared/1"
+	const requestID = "1"
 	entryA := s.entry("contract/history-a", requestID, "state/1", 1000, 1)
 	entryB := s.entry("contract/history-b", requestID, "state/1", 2000, 1)
 	require.NoError(s.T(), s.storeFor(entryA.Queue).Create(s.ctx, entryA))
@@ -345,7 +345,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAndGet() {
 
 	build := entity.Build{
 		ID:        id,
-		RequestID: "request/contract/create/1",
+		RequestID: "1",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -365,7 +365,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAlreadyExists() {
 
 	first := entity.Build{
 		ID:        id,
-		RequestID: "request/contract/already-exists/1",
+		RequestID: "1",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -373,7 +373,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAlreadyExists() {
 
 	err := s.buildStore.Create(s.ctx, entity.Build{
 		ID:        id,
-		RequestID: "request/contract/already-exists/ignored-on-race",
+		RequestID: "2",
 		Status:    entity.BuildStatusRunning,
 		Version:   1,
 	})
@@ -403,7 +403,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateCAS() {
 
 	created := entity.Build{
 		ID:        id,
-		RequestID: "request/contract/update-cas/1",
+		RequestID: "1",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -442,7 +442,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateSequentialCAS() {
 
 	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
 		ID:        id,
-		RequestID: "request/contract/sequential-cas/1",
+		RequestID: "1",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}))
@@ -470,11 +470,11 @@ func (s *BuildStoreContractSuite) TestBuildStore_QueueIsolation() {
 	)
 
 	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
-		ID: idA, RequestID: "request/contract/isolation-a/1",
+		ID: idA, RequestID: "1",
 		Status: entity.BuildStatusAccepted, Version: 1,
 	}))
 	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
-		ID: idB, RequestID: "request/contract/isolation-b/1",
+		ID: idB, RequestID: "1",
 		Status: entity.BuildStatusAccepted, Version: 1,
 	}))
 
@@ -482,7 +482,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_QueueIsolation() {
 	require.NoError(t, err)
 
 	updatedA := entity.Build{
-		ID: idA, RequestID: "request/contract/isolation-a/1",
+		ID: idA, RequestID: "1",
 		Status: entity.BuildStatusRunning, Version: 1,
 	}
 	require.NoError(t, s.buildStore.Update(s.ctx, updatedA, 1, 2))
@@ -513,7 +513,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 	updatedA := entity.Queue{
 		Name:            nameA,
 		LastGreenURI:    "git://remote/monorepo/a/green",
-		LatestRequestID: "request/contract/isolation-a/7",
+		LatestRequestID: "7",
 		InFlightCount:   2,
 		Version:         1,
 	}
@@ -567,7 +567,7 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateAndGet(
 	fact := entity.ValidationFact{
 		URI:       "git://remote/contract/fact-create/aaaa",
 		Degree:    entity.DegreeGreen,
-		RequestID: "request/contract/fact-create/1",
+		RequestID: "1",
 		CreatedAt: 1735689600000,
 	}
 	require.NoError(t, s.storeFor(queue).Create(s.ctx, fact))
@@ -586,7 +586,7 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateAlready
 	first := entity.ValidationFact{
 		URI:       "git://remote/contract/fact-exists/aaaa",
 		Degree:    entity.DegreeGreen,
-		RequestID: "request/contract/fact-exists/1",
+		RequestID: "1",
 		CreatedAt: 1735689600000,
 	}
 	require.NoError(t, s.storeFor(queue).Create(s.ctx, first))
@@ -594,7 +594,7 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateAlready
 	err := s.storeFor(queue).Create(s.ctx, entity.ValidationFact{
 		URI:       first.URI,
 		Degree:    entity.DegreeBroken,
-		RequestID: "request/contract/fact-exists/2",
+		RequestID: "2",
 		CreatedAt: 1735689700000,
 	})
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
@@ -623,14 +623,14 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_ProjectIsPart
 	wholeRepo := entity.ValidationFact{
 		URI:       uri,
 		Degree:    entity.DegreeGreen,
-		RequestID: "request/contract/fact-project/1",
+		RequestID: "1",
 		CreatedAt: 1735689600000,
 	}
 	scoped := entity.ValidationFact{
 		URI:       uri,
 		Project:   "billing",
 		Degree:    entity.DegreeBroken,
-		RequestID: "request/contract/fact-project/1",
+		RequestID: "1",
 		CreatedAt: 1735689600000,
 	}
 	require.NoError(t, s.storeFor(queue).Create(s.ctx, wholeRepo))
@@ -658,7 +658,7 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_QueueIsolatio
 	factA := entity.ValidationFact{
 		URI:       uri,
 		Degree:    entity.DegreeGreen,
-		RequestID: "request/contract/fact-isolation-a/1",
+		RequestID: "1",
 		CreatedAt: 1735689600000,
 	}
 	require.NoError(t, s.storeFor(queueA).Create(s.ctx, factA))
@@ -671,7 +671,7 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_QueueIsolatio
 	factB := entity.ValidationFact{
 		URI:       uri,
 		Degree:    entity.DegreeBroken,
-		RequestID: "request/contract/fact-isolation-b/1",
+		RequestID: "1",
 		CreatedAt: 1735689700000,
 	}
 	require.NoError(t, s.storeFor(queueB).Create(s.ctx, factB))

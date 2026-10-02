@@ -70,10 +70,10 @@ func TestGetRequestHistoryByID(t *testing.T) {
 			srv := &StovepipeServer{requestHistoryController: fake}
 
 			resp, err := srv.GetRequestHistoryByID(context.Background(), &pb.GetRequestHistoryByIDRequest{
-				Queue: "monorepo/main", RequestId: "request/1",
+				Queue: "monorepo/main", RequestId: "1",
 			})
 
-			assert.Equal(t, entity.GetRequestHistoryByIDRequest{Queue: "monorepo/main", ID: "request/1"}, gotReq)
+			assert.Equal(t, entity.GetRequestHistoryByIDRequest{Queue: "monorepo/main", ID: "1"}, gotReq)
 			if tt.err != nil {
 				require.ErrorIs(t, err, tt.err)
 				assert.Nil(t, resp)
@@ -92,7 +92,7 @@ func TestGetRequestHistoryByID(t *testing.T) {
 func TestGetRequestHistoryByURI(t *testing.T) {
 	controllerErr := errors.New("controller failed")
 	histories := []entity.RequestHistory{{
-		RequestID: "request/1",
+		RequestID: "1",
 		Events:    []entity.RequestLog{{ID: "occurrence/1", State: entity.RequestStateAccepted}},
 	}}
 	tests := []struct {
@@ -130,7 +130,7 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, resp.Histories, tt.wantHistories)
 			if tt.wantHistories > 0 {
-				assert.Equal(t, "request/1", resp.Histories[0].RequestId)
+				assert.Equal(t, "1", resp.Histories[0].RequestId)
 				require.Len(t, resp.Histories[0].Events, 1)
 				assert.Equal(t, "accepted", resp.Histories[0].Events[0].GetRequestState())
 			}

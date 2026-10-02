@@ -167,7 +167,7 @@ func newTestController(
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -187,7 +187,7 @@ func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -197,7 +197,7 @@ func TestController_Process_Success(t *testing.T) {
 	store, _ := newMockStorage(ctrl, request)
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
-	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, request.ID), "test-queue", nil)
+	msg := entityqueue.NewMessage("123", requestIDPayload(t, request.ID), "test-queue", nil)
 	msg.Tenant = "test-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
@@ -210,7 +210,7 @@ func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := orchstoragemock.NewMockStorage(ctrl)
 	controller := newTestController(t, ctrl, store, storagemock.NewMockChangeStore(ctrl), nil)
-	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
+	msg := entityqueue.NewMessage("123", requestIDPayload(t, "123"), "test-queue", nil)
 	msg.Tenant = "other-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
@@ -225,7 +225,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -298,7 +298,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 	// claim carries that change's details.
 	const uri = "github://github.example.com/org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01"
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{uri}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -340,13 +340,13 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(entity.Request{}, fmt.Errorf("db connection lost"))
+	mockReqStore.EXPECT().Get(gomock.Any(), "123").Return(entity.Request{}, fmt.Errorf("db connection lost"))
 	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
-	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
+	msg := entityqueue.NewMessage("123", requestIDPayload(t, "123"), "test-queue", nil)
 	msg.Tenant = "test-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
@@ -361,7 +361,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -384,7 +384,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	request := entity.Request{ID: "test-queue/123", Queue: "test-queue"}
+	request := entity.Request{ID: "123", Queue: "test-queue"}
 	store, _ := newMockStorage(ctrl, request)
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
@@ -578,7 +578,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -618,7 +618,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
 			request := entity.Request{
-				ID:      "test-queue/123",
+				ID:      "123",
 				Queue:   "test-queue",
 				State:   state,
 				Version: 5,
@@ -647,7 +647,7 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -697,7 +697,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -762,7 +762,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,

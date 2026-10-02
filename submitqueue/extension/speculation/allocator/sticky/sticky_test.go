@@ -82,27 +82,27 @@ func TestSticky_Allocate(t *testing.T) {
 			name:   "fills free budget in order",
 			budget: 2,
 			items: []entity.CandidatePath{
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"),
-				candidate("q/2", entity.DependencyAssumptionFails, "q/1"),
-				candidate("q/3", entity.DependencyAssumptionSucceeds, "q/1"),
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"),
+				candidate("2", entity.DependencyAssumptionFails, "1"),
+				candidate("3", entity.DependencyAssumptionSucceeds, "1"),
 			},
 			wantIdx: []int{0, 1},
 		},
 		{
 			name:     "keeps in-flight path funded and fills the free slot",
 			budget:   2,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusBuilding)},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusBuilding)},
 			items: []entity.CandidatePath{
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"), // already funded -> skipped
-				candidate("q/2", entity.DependencyAssumptionFails, "q/1"),    // fills the one free slot
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"), // already funded -> skipped
+				candidate("2", entity.DependencyAssumptionFails, "1"),    // fills the one free slot
 			},
 			wantIdx: []int{1},
 		},
 		{
 			name:     "terminal entry does not charge budget",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusPassed)},
-			items:    []entity.CandidatePath{candidate("q/3", entity.DependencyAssumptionFails, "q/1")},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusPassed)},
+			items:    []entity.CandidatePath{candidate("3", entity.DependencyAssumptionFails, "1")},
 			wantIdx:  []int{0},
 		},
 		{
@@ -112,38 +112,38 @@ func TestSticky_Allocate(t *testing.T) {
 			// then goes to the next eligible candidate.
 			name:     "skips a passed top candidate without spending the slot",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusPassed)},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusPassed)},
 			items: []entity.CandidatePath{
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"), // the passed path itself
-				candidate("q/2", entity.DependencyAssumptionFails, "q/1"),
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"), // the passed path itself
+				candidate("2", entity.DependencyAssumptionFails, "1"),
 			},
 			wantIdx: []int{1},
 		},
 		{
 			name:     "skips a failed top candidate without spending the slot",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusFailed)},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusFailed)},
 			items: []entity.CandidatePath{
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"), // the failed path itself
-				candidate("q/2", entity.DependencyAssumptionFails, "q/1"),
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"), // the failed path itself
+				candidate("2", entity.DependencyAssumptionFails, "1"),
 			},
 			wantIdx: []int{1},
 		},
 		{
 			name:     "skips a cancelled top candidate without spending the slot",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusCancelled)},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusCancelled)},
 			items: []entity.CandidatePath{
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"), // the cancelled path itself
-				candidate("q/2", entity.DependencyAssumptionFails, "q/1"),
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"), // the cancelled path itself
+				candidate("2", entity.DependencyAssumptionFails, "1"),
 			},
 			wantIdx: []int{1},
 		},
 		{
 			name:     "pending entry charges budget",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusPending)},
-			items:    []entity.CandidatePath{candidate("q/3", entity.DependencyAssumptionSucceeds, "q/1")},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusPending)},
+			items:    []entity.CandidatePath{candidate("3", entity.DependencyAssumptionSucceeds, "1")},
 			wantIdx:  nil,
 		},
 		{
@@ -152,8 +152,8 @@ func TestSticky_Allocate(t *testing.T) {
 			// oversubscribe the hard cap on concurrent builds.
 			name:     "cancelling entry charges budget",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusCancelling)},
-			items:    []entity.CandidatePath{candidate("q/3", entity.DependencyAssumptionSucceeds, "q/1")},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusCancelling)},
+			items:    []entity.CandidatePath{candidate("3", entity.DependencyAssumptionSucceeds, "1")},
 			wantIdx:  nil,
 		},
 		{
@@ -161,16 +161,16 @@ func TestSticky_Allocate(t *testing.T) {
 			// could be wrong, so sticky fails fast rather than guessing.
 			name:     "entry with no status fails fast",
 			budget:   1,
-			pathSets: []entity.SpeculationPathSet{fundedSet("q/2", entity.DependencyAssumptionSucceeds, "q/1", entity.SpeculationPathStatusUnknown)},
-			items:    []entity.CandidatePath{candidate("q/3", entity.DependencyAssumptionSucceeds, "q/1")},
+			pathSets: []entity.SpeculationPathSet{fundedSet("2", entity.DependencyAssumptionSucceeds, "1", entity.SpeculationPathStatusUnknown)},
+			items:    []entity.CandidatePath{candidate("3", entity.DependencyAssumptionSucceeds, "1")},
 			wantErr:  true,
 		},
 		{
 			name:   "deduplicates a repeated candidate",
 			budget: 5,
 			items: []entity.CandidatePath{
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"),
-				candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"),
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"),
+				candidate("2", entity.DependencyAssumptionSucceeds, "1"),
 			},
 			wantIdx: []int{0},
 		},
@@ -205,8 +205,8 @@ func TestSticky_HonorsCancelledContext(t *testing.T) {
 	// The run's output is all-or-nothing: a partial action list would fund an
 	// arbitrary prefix of the ranking, so cancellation yields no actions at all.
 	items := []entity.CandidatePath{
-		candidate("q/2", entity.DependencyAssumptionSucceeds, "q/1"),
-		candidate("q/2", entity.DependencyAssumptionFails, "q/1"),
+		candidate("2", entity.DependencyAssumptionSucceeds, "1"),
+		candidate("2", entity.DependencyAssumptionFails, "1"),
 	}
 
 	t.Run("cancelled before the first pull", func(t *testing.T) {

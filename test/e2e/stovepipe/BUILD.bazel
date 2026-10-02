@@ -7,6 +7,7 @@ go_test(
         "suite_test.go",
     ],
     data = [
+        "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
         "//service/stovepipe:docker-compose.yml",
         "//service/stovepipe/server:docker_test_context",

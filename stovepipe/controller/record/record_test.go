@@ -48,7 +48,7 @@ import (
 
 const (
 	testQueue   = "monorepo/main"
-	testID      = "request/monorepo/main/7"
+	testID      = "7"
 	testURI     = "git://remote/monorepo/main/head-sha"
 	testBaseURI = "git://remote/monorepo/main/base-sha"
 )
@@ -288,7 +288,7 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 		},
 		{
 			name:    "stored bookmark is older",
-			stored:  queueRow("git://remote/monorepo/main/old", "request/monorepo/main/3", 4),
+			stored:  queueRow("git://remote/monorepo/main/old", "3", 4),
 			wantURI: testURI,
 		},
 	}
@@ -728,7 +728,7 @@ func TestProcess_ExistingFactFromDifferentRequestFails(t *testing.T) {
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
 	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
-		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: "request/monorepo/main/1"}, nil)
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: "1"}, nil)
 	// The bookmark must not move on an identity this request does not own.
 
 	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -751,7 +751,7 @@ func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
 			// A newer green commit owns the bookmark and the ref, so promoting
 			// this one would move the ref backwards.
 			name:   "stored bookmark is newer",
-			stored: queueRow("git://remote/monorepo/main/newer", "request/monorepo/main/9", 5),
+			stored: queueRow("git://remote/monorepo/main/newer", "9", 5),
 		},
 	}
 

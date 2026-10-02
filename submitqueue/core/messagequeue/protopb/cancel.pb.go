@@ -40,7 +40,7 @@ const (
 // Cancel is the payload the gateway publishes to the cancel stage.
 type Cancel struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the request id to cancel. Format: "<queue>/<counter>".
+	// id is the request id to cancel. Canonical positive decimal string; queue is carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

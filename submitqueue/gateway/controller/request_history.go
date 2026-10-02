@@ -18,10 +18,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -58,7 +57,7 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 	op := metrics.Begin(c.metricsScope, "get_by_id", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := validateStoredIdentifier("sqid", req.ID); err != nil {
+	if err := validateResourceID("sqid", req.ID); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByID invalid request: %w", err)
 	}
 	if err := validateQueueIdentifier(req.Queue); err != nil {
@@ -114,8 +113,11 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 		return nil, errs.NewUserError(&TooManyChangeRequestsError{ChangeURI: req.ChangeURI, Limit: maxChangeRequestResults})
 	}
 
-	histories := make([]requestHistoryWithCounter, 0, len(mappings))
+	histories := make([]entity.RequestHistory, 0, len(mappings))
 	for _, mapping := range mappings {
+		if err := id.Validate(mapping.RequestID); err != nil {
+			return nil, &InternalConsistencyError{Message: fmt.Sprintf("invalid mapped sqid %q: %v", mapping.RequestID, err)}
+		}
 		logs, err := logStore.List(ctx, mapping.RequestID)
 		if err != nil {
 			if basestorage.IsNotFound(err) {
@@ -123,16 +125,9 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 			}
 			return nil, fmt.Errorf("GetRequestHistoryByChangeURI failed to list request logs change_uri=%s sqid=%s: %w", req.ChangeURI, mapping.RequestID, err)
 		}
-		counter, err := sqidCounter(mapping.RequestID)
-		if err != nil {
-			return nil, &InternalConsistencyError{Message: fmt.Sprintf("invalid mapped sqid %q: %v", mapping.RequestID, err)}
-		}
-		histories = append(histories, requestHistoryWithCounter{
-			counter: counter,
-			history: entity.RequestHistory{
-				RequestID: mapping.RequestID,
-				Events:    append([]entity.RequestLog{}, logs...),
-			},
+		histories = append(histories, entity.RequestHistory{
+			RequestID: mapping.RequestID,
+			Events:    append([]entity.RequestLog{}, logs...),
 		})
 	}
 	if len(histories) == 0 {
@@ -140,36 +135,14 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 	}
 
 	sort.Slice(histories, func(i, j int) bool {
-		if histories[i].counter != histories[j].counter {
-			return histories[i].counter < histories[j].counter
-		}
-		return histories[i].history.RequestID < histories[j].history.RequestID
+		comparison, _ := id.Compare(histories[i].RequestID, histories[j].RequestID)
+		return comparison < 0
 	})
 
-	result = make([]entity.RequestHistory, len(histories))
-	for i, history := range histories {
-		result[i] = history.history
-	}
+	result = histories
 	c.logger.Debugw("request histories retrieved",
 		"change_uri", req.ChangeURI,
 		"request_count", len(result),
 	)
 	return result, nil
-}
-
-type requestHistoryWithCounter struct {
-	counter int64
-	history entity.RequestHistory
-}
-
-func sqidCounter(sqid string) (int64, error) {
-	separator := strings.LastIndexByte(sqid, '/')
-	if separator < 0 || separator == len(sqid)-1 {
-		return 0, fmt.Errorf("missing numeric counter")
-	}
-	counter, err := strconv.ParseInt(sqid[separator+1:], 10, 64)
-	if err != nil || counter <= 0 {
-		return 0, fmt.Errorf("invalid numeric counter")
-	}
-	return counter, nil
 }

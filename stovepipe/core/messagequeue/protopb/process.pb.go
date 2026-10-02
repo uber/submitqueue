@@ -43,7 +43,7 @@ const (
 // the store, so the id is enough and redelivery stays idempotent).
 type ProcessRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the minted request id to process. Format: "request/<queue>/<counter>".
+	// id is the minted request id to process. Canonical positive decimal string; queue is carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue_name is the name of the queue processing the request, carried so
 	// the consumer can route by queue without loading state first. Empty on

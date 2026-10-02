@@ -36,9 +36,9 @@ func TestListRequiresAQueue(t *testing.T) {
 
 func TestListFollowsPages(t *testing.T) {
 	gw := &pagingGateway{pages: [][]string{
-		{"q/1", "q/2"},
-		{"q/3", "q/4"},
-		{"q/5"},
+		{"1", "2"},
+		{"3", "4"},
+		{"5"},
 	}}
 	sq, stop := dial(t, gw)
 	defer stop()
@@ -46,7 +46,7 @@ func TestListFollowsPages(t *testing.T) {
 	got, err := sq.List(context.Background(), ListQuery{Queue: "q"})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"q/1", "q/2", "q/3", "q/4", "q/5"}, sqidsOf(got))
+	assert.Equal(t, []string{"1", "2", "3", "4", "5"}, sqidsOf(got))
 	assert.Equal(t, 3, gw.calls, "every page is fetched")
 }
 
@@ -54,9 +54,9 @@ func TestListStopsAtTheLimit(t *testing.T) {
 	// The limit is across pages, not per page, so it has to cut a page short
 	// and stop asking for more rather than over-fetching the whole queue.
 	gw := &pagingGateway{pages: [][]string{
-		{"q/1", "q/2"},
-		{"q/3", "q/4"},
-		{"q/5"},
+		{"1", "2"},
+		{"3", "4"},
+		{"5"},
 	}}
 	sq, stop := dial(t, gw)
 	defer stop()
@@ -64,26 +64,26 @@ func TestListStopsAtTheLimit(t *testing.T) {
 	got, err := sq.List(context.Background(), ListQuery{Queue: "q", Limit: 3})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"q/1", "q/2", "q/3"}, sqidsOf(got))
+	assert.Equal(t, []string{"1", "2", "3"}, sqidsOf(got))
 	assert.Equal(t, 2, gw.calls, "the third page is never asked for")
 }
 
 func TestListStopsOnAnEmptyPage(t *testing.T) {
 	// A server that keeps handing back a token with nothing in the page would
 	// otherwise spin forever.
-	gw := &pagingGateway{pages: [][]string{{"q/1"}, {}}, alwaysToken: true}
+	gw := &pagingGateway{pages: [][]string{{"1"}, {}}, alwaysToken: true}
 	sq, stop := dial(t, gw)
 	defer stop()
 
 	got, err := sq.List(context.Background(), ListQuery{Queue: "q"})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"q/1"}, sqidsOf(got))
+	assert.Equal(t, []string{"1"}, sqidsOf(got))
 	assert.Equal(t, 2, gw.calls)
 }
 
 func TestListSinceBecomesAReceiptBound(t *testing.T) {
-	gw := &pagingGateway{pages: [][]string{{"q/1"}}}
+	gw := &pagingGateway{pages: [][]string{{"1"}}}
 	sq, stop := dial(t, gw)
 	defer stop()
 
@@ -97,7 +97,7 @@ func TestListSinceBecomesAReceiptBound(t *testing.T) {
 }
 
 func TestListWithoutSinceLeavesTheWindowOpen(t *testing.T) {
-	gw := &pagingGateway{pages: [][]string{{"q/1"}}}
+	gw := &pagingGateway{pages: [][]string{{"1"}}}
 	sq, stop := dial(t, gw)
 	defer stop()
 
@@ -111,7 +111,7 @@ func TestListWithoutSinceLeavesTheWindowOpen(t *testing.T) {
 func TestListClosesTheWindowAtTheCallTime(t *testing.T) {
 	// The gateway rejects a list whose lower bound is not strictly below its
 	// upper one, so leaving the upper bound unset fails every call.
-	gw := &pagingGateway{pages: [][]string{{"q/1"}}}
+	gw := &pagingGateway{pages: [][]string{{"1"}}}
 	sq, stop := dial(t, gw)
 	defer stop()
 
@@ -130,7 +130,7 @@ func TestListClosesTheWindowAtTheCallTime(t *testing.T) {
 func TestListKeepsTheWindowFixedAcrossPages(t *testing.T) {
 	// The continuation token pins both bounds, so a bound recomputed per page
 	// would be rejected from the second page on.
-	gw := &pagingGateway{pages: [][]string{{"q/1"}, {"q/2"}, {"q/3"}}}
+	gw := &pagingGateway{pages: [][]string{{"1"}, {"2"}, {"3"}}}
 	sq, stop := dial(t, gw)
 	defer stop()
 
@@ -148,23 +148,23 @@ func TestRowsFromSummaries(t *testing.T) {
 	received := time.Now().Add(-5 * time.Minute)
 	rows := RowsFromSummaries([]*pb.RequestSummary{
 		{
-			Sqid:         "q/1",
+			Sqid:         "1",
 			Status:       "landed",
 			ChangeUris:   []string{"github://h/o/r/pull/1/abc"},
 			ReceivedAtMs: received.UnixMilli(),
 		},
 		nil, // a hole in the page is skipped rather than becoming a blank row
-		{Sqid: "q/2", Status: "batched", LastError: "still going"},
+		{Sqid: "2", Status: "batched", LastError: "still going"},
 	})
 
 	require.Len(t, rows, 2)
 
-	assert.Equal(t, "q/1", rows[0].SQID)
+	assert.Equal(t, "1", rows[0].SQID)
 	assert.Equal(t, []Cell{{Text: "github://h/o/r/pull/1/abc"}}, rows[0].Cells)
 	assert.True(t, rows[0].Done, "a terminal status arrives already settled")
 	assert.Equal(t, received.UnixMilli(), rows[0].Submitted.UnixMilli())
 
-	assert.Equal(t, "q/2", rows[1].SQID)
+	assert.Equal(t, "2", rows[1].SQID)
 	assert.False(t, rows[1].Done, "an active request is still outstanding")
 	assert.Equal(t, "still going", rows[1].Note)
 }

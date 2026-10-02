@@ -54,7 +54,7 @@ func TestGatewayStatusError(t *testing.T) {
 		},
 		{
 			name: "request not found",
-			err:  &controller.RequestNotFoundError{Sqid: "queue/1"},
+			err:  &controller.RequestNotFoundError{Sqid: "1"},
 			code: codes.NotFound,
 		},
 		{

@@ -34,7 +34,7 @@ import (
 const (
 	projectStatusQueue = "monorepo/main"
 	projectStatusURI   = "git://monorepo/main/abc"
-	projectStatusID    = "request/monorepo/main/7"
+	projectStatusID    = "7"
 )
 
 func TestGetProjectStatusByURI(t *testing.T) {

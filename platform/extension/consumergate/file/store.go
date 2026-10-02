@@ -21,7 +21,7 @@
 //	parked/{consumer_group}/{topic}/t-{tenant}/p-{partition}/{urlenc(id)}.json
 //
 // Consumer groups and topics are filesystem-safe by the repo's naming rules;
-// partition keys and message IDs may contain "/" (request IDs like "queue/1"),
+// partition keys and message IDs may contain "/" (for example, derived event IDs),
 // so they are URL-encoded in file names. Gate files hold human-readable JSON
 // metadata so an operator finding a paused controller can tell why. All writes
 // go through temp-file-plus-rename so readers never see partial JSON.

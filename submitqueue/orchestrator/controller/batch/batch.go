@@ -21,6 +21,7 @@ import (
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
@@ -51,9 +52,7 @@ var _ consumer.Controller = (*Controller)(nil)
 
 const opName = "process"
 
-// counterDomainBatch names the per-queue sequence that mints batch IDs. The batch
-// ID is built independently as "<queue>/batch/<counter_value>", so the domain is a
-// sequence name only and never appears in the ID.
+// counterDomainBatch names the per-queue sequence that mints batch IDs.
 const counterDomainBatch = "batch"
 
 // NewController creates a new batch controller for the orchestrator.
@@ -138,7 +137,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
 
-	// Generate a globally unique batch ID.
+	// Generate a queue-scoped batch ID.
 	queueCounter, err := c.counters.For(counter.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
@@ -149,12 +148,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
 	}
+	batchID, err := id.FromCounter(seq)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
+		return fmt.Errorf("generated invalid batch ID for queue=%s: %w", request.Queue, err)
+	}
 
 	// Dependencies stay empty here: what the batch must serialize behind is
 	// resolved by the dependency-analysis stage, which fills them in as it
 	// promotes the batch out of Creating.
 	batch := entity.Batch{
-		ID:           fmt.Sprintf("%s/batch/%d", request.Queue, seq),
+		ID:           batchID,
 		Queue:        request.Queue,
 		Contains:     []string{request.ID},
 		Dependencies: []string{},

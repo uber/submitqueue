@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/uber/submitqueue/platform/base/id"
 	"github.com/uber/submitqueue/platform/errs"
 )
 
@@ -37,6 +38,13 @@ func validateHistoryIdentifier(name, value string) error {
 	}
 	if len(value) > maxHistoryIdentifierBytes {
 		return fmt.Errorf("%s exceeds %d bytes: %w", name, maxHistoryIdentifierBytes, ErrInvalidRequest)
+	}
+	return nil
+}
+
+func validateRequestID(value string) error {
+	if err := id.Validate(value); err != nil {
+		return fmt.Errorf("invalid request ID %q: %v: %w", value, err, ErrInvalidRequest)
 	}
 	return nil
 }

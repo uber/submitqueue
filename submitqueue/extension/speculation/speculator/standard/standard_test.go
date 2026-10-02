@@ -54,8 +54,8 @@ func (c constScorer) Score(context.Context, entity.Batch, entity.SpeculationPath
 
 func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	batches := []entity.Batch{
-		{ID: "q/1", State: entity.BatchStateSpeculating},
-		{ID: "q/2", State: entity.BatchStateSpeculating, Dependencies: []string{"q/1"}},
+		{ID: "1", State: entity.BatchStateSpeculating},
+		{ID: "2", State: entity.BatchStateSpeculating, Dependencies: []string{"1"}},
 	}
 
 	// bestfirst generator + sticky allocator with a 2-build budget.
@@ -69,22 +69,22 @@ func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	var found bool
 	for _, s := range got {
 		assert.Equal(t, entity.PathActionBuild, s.Action)
-		if s.Path.Head == "q/2" {
+		if s.Path.Head == "2" {
 			q2, found = s, true
 		}
 	}
 	// q/2's funded path is the optimistic one: it assumes q/1 succeeds.
 	require.True(t, found, "q/2 should have been funded")
-	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(q2.Path, "q/1"))
+	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(q2.Path, "1"))
 }
 
 func TestComposed_WiresGeneratorIntoAllocator(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	batches := []entity.Batch{{ID: "q/1", State: entity.BatchStateSpeculating}}
-	pathSets := []entity.SpeculationPathSet{{Head: "q/1"}}
+	batches := []entity.Batch{{ID: "1", State: entity.BatchStateSpeculating}}
+	pathSets := []entity.SpeculationPathSet{{Head: "1"}}
 	want := []entity.Speculation{{
-		Path:   entity.SpeculationPath{Head: "q/1"},
+		Path:   entity.SpeculationPath{Head: "1"},
 		Action: entity.PathActionBuild,
 	}}
 
@@ -119,8 +119,8 @@ func TestComposed_PropagatesContextCancellation(t *testing.T) {
 	// the two parts. This pins that the seam actually propagates: a cancelled
 	// run yields the context error and no actions.
 	batches := []entity.Batch{
-		{ID: "q/1", State: entity.BatchStateSpeculating},
-		{ID: "q/2", State: entity.BatchStateSpeculating, Dependencies: []string{"q/1"}},
+		{ID: "1", State: entity.BatchStateSpeculating},
+		{ID: "2", State: entity.BatchStateSpeculating, Dependencies: []string{"1"}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

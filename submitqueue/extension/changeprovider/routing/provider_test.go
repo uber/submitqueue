@@ -39,7 +39,7 @@ const (
 
 func newRequest(uris ...string) entity.Request {
 	return entity.Request{
-		ID:    "test-queue/1",
+		ID:    "1",
 		Queue: "test-queue",
 		Change: change.Change{
 			URIs: uris,

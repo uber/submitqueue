@@ -56,8 +56,8 @@ func TestIngestResultToProto(t *testing.T) {
 	}{
 		{
 			name:     "maps ID",
-			result:   entity.IngestResult{ID: "request/monorepo/main/7"},
-			expected: &pb.IngestResponse{Id: "request/monorepo/main/7"},
+			result:   entity.IngestResult{ID: "7"},
+			expected: &pb.IngestResponse{Id: "7"},
 		},
 		{
 			name:     "zero value result yields empty response",

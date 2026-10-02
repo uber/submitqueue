@@ -32,7 +32,7 @@ import (
 
 const (
 	testQueue      = "monorepo/main"
-	testRequestID  = "request/monorepo/main/1"
+	testRequestID  = "1"
 	testRequestURI = "git://repo/head"
 	testBaseURI    = "git://repo/base"
 	testNowMs      = int64(1735689600000)

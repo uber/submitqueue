@@ -42,7 +42,7 @@ import (
 
 const (
 	testQueue   = "monorepo/main"
-	testID      = "request/monorepo/main/7"
+	testID      = "7"
 	testBuildID = "bk-1"
 )
 

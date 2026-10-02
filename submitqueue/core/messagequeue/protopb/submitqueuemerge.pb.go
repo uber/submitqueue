@@ -40,7 +40,7 @@ const (
 // Merge is the payload speculate publishes to the internal land stage: the id is a batch id. land reloads the Batch from storage before handing work to Runway.
 type Merge struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the batch id to land. Format: "<queue>/batch/<counter>".
+	// id is the batch id to land. Canonical positive decimal string; queue and kind are carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

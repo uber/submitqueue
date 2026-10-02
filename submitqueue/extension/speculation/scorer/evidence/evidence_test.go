@@ -47,14 +47,14 @@ func (errorScorer) Score(_ context.Context, _ entity.Batch, _ entity.Speculation
 // pathSet builds a set whose entries carry the given statuses, every path
 // assuming all of its dependencies succeed.
 func pathSet(statuses ...entity.SpeculationPathStatus) entity.SpeculationPathSet {
-	set := entity.SpeculationPathSet{Queue: "q", Head: "q/batch/1"}
+	set := entity.SpeculationPathSet{Queue: "q", Head: "1"}
 	for i, status := range statuses {
 		set.Paths = append(set.Paths, entity.SpeculationPathEntry{
 			ID:     fmt.Sprintf("path-%d", i),
 			Status: status,
 			Path: entity.SpeculationPath{
-				Head:         "q/batch/1",
-				Dependencies: []entity.PathDependency{{Batch: "q/batch/0", Assumption: entity.DependencyAssumptionSucceeds}},
+				Head:         "1",
+				Dependencies: []entity.PathDependency{{Batch: "0", Assumption: entity.DependencyAssumptionSucceeds}},
 			},
 		})
 	}

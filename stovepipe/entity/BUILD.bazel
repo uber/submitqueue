@@ -17,6 +17,7 @@ go_library(
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
     visibility = ["//visibility:public"],
+    deps = ["//platform/base/id:go_default_library"],
 )
 
 go_test(

@@ -48,7 +48,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 		ChangeURI:    "github://github.example.com/uber/submitqueue/pull/123/deadbeef",
 		Queue:        testURIQueue,
 		ReceivedAtMs: 1000,
-		RequestID:    "monorepo/1",
+		RequestID:    "1",
 	}
 
 	tests := []struct {
@@ -112,7 +112,7 @@ func TestRequestURIStore_ListByURI(t *testing.T) {
 		ChangeURI:    "github://github.example.com/uber/submitqueue/pull/123/deadbeef",
 		Queue:        testURIQueue,
 		ReceivedAtMs: 1000,
-		RequestID:    "monorepo/1",
+		RequestID:    "1",
 	}
 
 	tests := []struct {

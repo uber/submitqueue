@@ -44,7 +44,7 @@ func setupRequestLogStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.R
 
 func TestRequestLogStore_Insert(t *testing.T) {
 	log := entity.RequestLog{
-		RequestID:      "monorepo/1",
+		RequestID:      "1",
 		Queue:          testLogQueue,
 		TimestampMs:    1000,
 		Type:           entity.RequestLogTypeStatus,
@@ -98,7 +98,7 @@ func TestRequestLogStore_Insert(t *testing.T) {
 
 func TestRequestLogStore_List(t *testing.T) {
 	log := entity.RequestLog{
-		RequestID:      "monorepo/1",
+		RequestID:      "1",
 		Queue:          testLogQueue,
 		TimestampMs:    1000,
 		Type:           entity.RequestLogTypeStatus,

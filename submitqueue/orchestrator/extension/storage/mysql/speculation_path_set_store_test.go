@@ -47,7 +47,7 @@ func setupSpeculationPathSetStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, s
 // testPathSet returns a two-path set for the given head: one assuming its
 // dependency succeeds, one assuming it fails.
 func testPathSet(head string) entity.SpeculationPathSet {
-	const dep = "monorepo/batch/1"
+	const dep = "1"
 	succeeds := entity.SpeculationPath{
 		Head:         head,
 		Dependencies: []entity.PathDependency{{Batch: dep, Assumption: entity.DependencyAssumptionSucceeds}},
@@ -84,7 +84,7 @@ func testPathSet(head string) entity.SpeculationPathSet {
 }
 
 func TestSpeculationPathSetStore_Get(t *testing.T) {
-	want := testPathSet("monorepo/batch/2")
+	want := testPathSet("2")
 	pathsJSON, err := json.Marshal(want.Paths)
 	require.NoError(t, err)
 
@@ -166,8 +166,8 @@ func TestSpeculationPathSetStore_Get(t *testing.T) {
 }
 
 func TestSpeculationPathSetStore_Create(t *testing.T) {
-	set := testPathSet("monorepo/batch/2")
-	otherQueueSet := testPathSet("monorepo/batch/2")
+	set := testPathSet("2")
+	otherQueueSet := testPathSet("2")
 	otherQueueSet.Queue = "other-queue"
 
 	tests := []struct {
@@ -238,8 +238,8 @@ func TestSpeculationPathSetStore_Create(t *testing.T) {
 
 func TestSpeculationPathSetStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(3), int32(4)
-	set := testPathSet("monorepo/batch/2")
-	otherQueueSet := testPathSet("monorepo/batch/2")
+	set := testPathSet("2")
+	otherQueueSet := testPathSet("2")
 	otherQueueSet.Queue = "other-queue"
 
 	tests := []struct {
@@ -326,7 +326,7 @@ func TestSpeculationPathSetStore_UpdateIgnoresEntityVersion(t *testing.T) {
 	db, mock, store := setupSpeculationPathSetStoreTest(t)
 	defer db.Close()
 
-	set := testPathSet("monorepo/batch/2")
+	set := testPathSet("2")
 	set.Version = 99 // deliberately disagrees with both arguments
 
 	const oldVersion, newVersion = int32(3), int32(4)

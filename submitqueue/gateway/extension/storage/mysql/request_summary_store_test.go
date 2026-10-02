@@ -45,7 +45,7 @@ func setupRequestSummaryStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, stora
 
 func TestRequestSummaryStore_Create(t *testing.T) {
 	summary := entity.RequestSummary{
-		RequestID:         "monorepo/1",
+		RequestID:         "1",
 		Queue:             testSummaryQueue,
 		ChangeURIs:        []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"},
 		ReceivedAtMs:      1000,
@@ -118,7 +118,7 @@ func TestRequestSummaryStore_Create(t *testing.T) {
 
 func TestRequestSummaryStore_Get(t *testing.T) {
 	want := entity.RequestSummary{
-		RequestID:         "monorepo/1",
+		RequestID:         "1",
 		Queue:             testSummaryQueue,
 		ChangeURIs:        []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"},
 		ReceivedAtMs:      1000,
@@ -201,7 +201,7 @@ func TestRequestSummaryStore_Get(t *testing.T) {
 
 func TestRequestSummaryStore_Update(t *testing.T) {
 	summary := entity.RequestSummary{
-		RequestID:         "monorepo/1",
+		RequestID:         "1",
 		Queue:             testSummaryQueue,
 		ChangeURIs:        []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"},
 		ReceivedAtMs:      1500,

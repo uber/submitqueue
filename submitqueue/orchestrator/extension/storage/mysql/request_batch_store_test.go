@@ -40,13 +40,13 @@ func setupRequestBatchStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage
 
 func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 	association1 := entity.RequestBatch{
-		RequestID: "monorepo/1",
-		BatchID:   "monorepo/batch/1",
+		RequestID: "1",
+		BatchID:   "1",
 		Version:   1,
 	}
 	association2 := entity.RequestBatch{
 		RequestID: association1.RequestID,
-		BatchID:   "monorepo/batch/2",
+		BatchID:   "2",
 		Version:   1,
 	}
 	storeErr := errors.New("storage failed")
@@ -124,8 +124,8 @@ func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 
 func TestRequestBatchStore_Create(t *testing.T) {
 	association := entity.RequestBatch{
-		RequestID: "monorepo/1",
-		BatchID:   "monorepo/batch/2",
+		RequestID: "1",
+		BatchID:   "2",
 		Version:   1,
 	}
 	tests := map[string]struct {

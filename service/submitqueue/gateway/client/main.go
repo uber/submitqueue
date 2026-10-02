@@ -61,7 +61,7 @@ Examples:
   client land -queue my-queue -pr https://github.com/uber/sq-sandbox/pull/7
   client land -queue my-queue -uri github://github.com/uber/r/pull/7/<sha> -strategy SQUASH_REBASE
   client land -queue my-queue -pr <url-of-first> -pr <url-of-second>
-  client status -queue my-queue -sqid my-queue/12
+  client status -queue my-queue -sqid 12
   client list -queue my-queue -since 1h
   client watch -queue my-queue
   client -addr sq.example.com:443 -tls list -queue my-queue

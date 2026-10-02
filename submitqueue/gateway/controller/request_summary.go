@@ -55,7 +55,7 @@ func (c *requestSummaryController) GetRequestSummaryByID(ctx context.Context, re
 	op := metrics.Begin(c.metricsScope, "get_by_id", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := validateStoredIdentifier("sqid", req.ID); err != nil {
+	if err := validateResourceID("sqid", req.ID); err != nil {
 		return entity.RequestSummary{}, fmt.Errorf("GetRequestSummaryByID invalid request: %w", err)
 	}
 	if err := validateQueueIdentifier(req.Queue); err != nil {

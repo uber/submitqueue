@@ -37,7 +37,7 @@ func NewCounter(db *sql.DB, scope tally.Scope, queue string) counter.Counter {
 	return &mysqlCounter{db: db, scope: scope, queue: queue}
 }
 
-// Next atomically increments the counter for the given domain within the bound queue
+// Next atomically increments the counter for the given domain within the bound scope
 // and returns the new value.
 // Uses MySQL's LAST_INSERT_ID() to set the value atomically and read the incremented value.
 func (c *mysqlCounter) Next(ctx context.Context, domain string) (ret int64, retErr error) {
@@ -54,6 +54,9 @@ func (c *mysqlCounter) Next(ctx context.Context, domain string) (ret int64, retE
 	value, err := result.LastInsertId()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get counter value for queue=%s domain=%s: %w", c.queue, domain, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("counter returned non-positive value for queue=%s domain=%s", c.queue, domain)
 	}
 
 	return value, nil

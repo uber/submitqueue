@@ -16,7 +16,7 @@ package entity
 
 // GetRequestSummaryByIDRequest identifies one request summary by sqid.
 type GetRequestSummaryByIDRequest struct {
-	// ID is the globally unique identifier of the request. Format: "<queue>/<counter_value>".
+	// ID is the canonical decimal request identifier, resolved within Queue.
 	ID string
 	// Queue is the name of the queue processing the request. It scopes the lookup:
 	// a request is only resolvable within its own queue.
@@ -35,7 +35,7 @@ type GetRequestSummaryByChangeURIRequest struct {
 // RequestSummary is the gateway-owned materialized current view of a request.
 // RequestID is exposed as sqid by the gateway API.
 type RequestSummary struct {
-	// RequestID is the globally unique request identifier.
+	// RequestID is the canonical decimal request identifier, unique within Queue.
 	RequestID string
 	// Queue is the queue supplied at receipt.
 	Queue string
@@ -59,7 +59,7 @@ type RequestSummary struct {
 
 // RequestQueueSummary is the queue-ordered projection returned by List.
 type RequestQueueSummary struct {
-	// RequestID is the globally unique request identifier.
+	// RequestID is the canonical decimal request identifier, unique within Queue.
 	RequestID string
 	// Queue is the queue supplied at receipt.
 	Queue string
@@ -86,6 +86,6 @@ type RequestURI struct {
 	Queue string
 	// ReceivedAtMs is the immutable receipt timestamp in Unix milliseconds.
 	ReceivedAtMs int64
-	// RequestID is the globally unique request identifier.
+	// RequestID is the canonical decimal request identifier, unique within Queue.
 	RequestID string
 }

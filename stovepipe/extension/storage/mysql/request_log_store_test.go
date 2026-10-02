@@ -32,7 +32,7 @@ import (
 
 const (
 	testLogQueue     = "monorepo/main"
-	testLogRequestID = "request/monorepo/main/1"
+	testLogRequestID = "1"
 )
 
 var requestLogColumnNames = []string{

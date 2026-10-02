@@ -33,7 +33,7 @@ const testRequestSummaryQueue = "monorepo/main"
 
 func testRequestSummary() entity.RequestSummary {
 	return entity.RequestSummary{
-		RequestID:        "request/monorepo/main/1",
+		RequestID:        "1",
 		Queue:            testRequestSummaryQueue,
 		URI:              "git://repo/head",
 		BaseURI:          "git://repo/base",

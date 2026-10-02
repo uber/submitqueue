@@ -30,8 +30,8 @@ func TestProtoToGetRequestHistoryByIDRequest(t *testing.T) {
 	}{
 		{
 			name: "maps selector",
-			req:  &pb.GetRequestHistoryByIDRequest{Queue: "monorepo/main", RequestId: "request/monorepo/main/1"},
-			want: entity.GetRequestHistoryByIDRequest{Queue: "monorepo/main", ID: "request/monorepo/main/1"},
+			req:  &pb.GetRequestHistoryByIDRequest{Queue: "monorepo/main", RequestId: "1"},
+			want: entity.GetRequestHistoryByIDRequest{Queue: "monorepo/main", ID: "1"},
 		},
 		{
 			name: "empty request yields zero value",
@@ -147,19 +147,19 @@ func TestRequestHistoriesToProto(t *testing.T) {
 		{
 			name: "maps groups in order",
 			histories: []entity.RequestHistory{
-				{RequestID: "request/monorepo/main/1", Events: logs},
-				{RequestID: "request/monorepo/main/2", Events: []entity.RequestLog{}},
+				{RequestID: "1", Events: logs},
+				{RequestID: "2", Events: []entity.RequestLog{}},
 			},
 			want: []*pb.RequestHistory{
 				{
-					RequestId: "request/monorepo/main/1",
+					RequestId: "1",
 					Events: []*pb.HistoryEvent{{
 						EventId:     "state/1",
 						TimestampMs: 10,
 						Occurrence:  &pb.HistoryEvent_RequestState{RequestState: "accepted"},
 					}},
 				},
-				{RequestId: "request/monorepo/main/2", Events: []*pb.HistoryEvent{}},
+				{RequestId: "2", Events: []*pb.HistoryEvent{}},
 			},
 		},
 		{name: "nil input", histories: nil, want: []*pb.RequestHistory{}},

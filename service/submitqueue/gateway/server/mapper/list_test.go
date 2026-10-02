@@ -43,7 +43,7 @@ func TestProtoToListRequest(t *testing.T) {
 func TestListResultToProto(t *testing.T) {
 	result := entity.ListResult{
 		Requests: []entity.RequestQueueSummary{{
-			RequestID:    "q/1",
+			RequestID:    "1",
 			Queue:        "q",
 			ChangeURIs:   []string{"github://uber/repo/pull/1/abc"},
 			ReceivedAtMs: 100,
@@ -55,6 +55,6 @@ func TestListResultToProto(t *testing.T) {
 
 	response := ListResultToProto(result)
 
-	assert.Equal(t, "q/1", response.Requests[0].Sqid)
+	assert.Equal(t, "1", response.Requests[0].Sqid)
 	assert.Equal(t, "next", response.NextPageToken)
 }
