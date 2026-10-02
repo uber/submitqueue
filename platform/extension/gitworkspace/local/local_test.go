@@ -69,7 +69,8 @@ func TestExec_SkipsAfterFailure(t *testing.T) {
 	require.Len(t, outputs, 3)
 	assert.Equal(t, int32(0), outputs[0].ExitCode)
 	assert.NotEqual(t, int32(0), outputs[1].ExitCode)
-	assert.Equal(t, int32(skippedExitCode), outputs[2].ExitCode)
+	assert.False(t, outputs[1].Skipped)
+	assert.True(t, outputs[2].Skipped)
 	assert.Equal(t, "skipped", outputs[2].Alias)
 }
 
@@ -132,9 +133,10 @@ func TestExec_InvalidBinary(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
-	assert.Equal(t, int32(skippedExitCode), outputs[0].ExitCode)
+	assert.NotEqual(t, int32(0), outputs[0].ExitCode)
+	assert.False(t, outputs[0].Skipped)
 	assert.NotEmpty(t, outputs[0].Stderr)
-	assert.Equal(t, int32(skippedExitCode), outputs[1].ExitCode)
+	assert.True(t, outputs[1].Skipped)
 }
 
 func TestExec_EmptyBatch(t *testing.T) {
@@ -145,4 +147,22 @@ func TestExec_EmptyBatch(t *testing.T) {
 	outputs, err := ws.Exec(nil)
 	require.NoError(t, err)
 	assert.Empty(t, outputs)
+}
+
+func TestExec_CancelledContextStopsCommands(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(ctx, "")
+	require.NoError(t, err)
+	defer ws.Close()
+
+	cancel()
+	outputs, err := ws.Exec([]gitworkspace.Command{
+		{Alias: "first", Bin: "echo", Args: []string{"never"}},
+		{Alias: "second", Bin: "echo", Args: []string{"never"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, outputs, 2)
+	assert.NotEqual(t, int32(0), outputs[0].ExitCode)
+	assert.False(t, outputs[0].Skipped)
+	assert.True(t, outputs[1].Skipped)
 }

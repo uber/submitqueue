@@ -1,8 +1,23 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["gitworkspace.go"],
+    srcs = [
+        "failure.go",
+        "gitworkspace.go",
+    ],
     importpath = "github.com/uber/submitqueue/platform/extension/gitworkspace",
     visibility = ["//visibility:public"],
+    deps = ["//platform/git/exec:go_default_library"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["failure_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//platform/errs/git:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
 )

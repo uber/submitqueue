@@ -26,9 +26,9 @@ import (
 	"github.com/uber/submitqueue/platform/extension/gitworkspace"
 )
 
-// skippedExitCode marks a command that was not executed because a prior
-// command in the same batch failed.
-const skippedExitCode = -1
+// notRunExitCode is the exit code reported for a command that never ran to
+// completion: one skipped after a failure, or one the OS could not start.
+const notRunExitCode = -1
 
 // Params configures a local workspace factory.
 type Params struct {
@@ -46,11 +46,12 @@ func NewFactory(p Params) gitworkspace.Factory {
 	return &factory{dir: p.Dir}
 }
 
-func (f *factory) For(_ context.Context, _ string) (gitworkspace.Workspace, error) {
-	return &workspace{dir: f.dir}, nil
+func (f *factory) For(ctx context.Context, _ string) (gitworkspace.Workspace, error) {
+	return &workspace{ctx: ctx, dir: f.dir}, nil
 }
 
 type workspace struct {
+	ctx context.Context
 	dir string
 }
 
@@ -63,7 +64,8 @@ func (w *workspace) Exec(commands []gitworkspace.Command) ([]gitworkspace.Output
 			for _, remaining := range commands[i+1:] {
 				outputs = append(outputs, gitworkspace.Output{
 					Alias:    remaining.Alias,
-					ExitCode: skippedExitCode,
+					ExitCode: notRunExitCode,
+					Skipped:  true,
 				})
 			}
 			break
@@ -73,7 +75,7 @@ func (w *workspace) Exec(commands []gitworkspace.Command) ([]gitworkspace.Output
 }
 
 func (w *workspace) run(cmd gitworkspace.Command) gitworkspace.Output {
-	c := exec.Command(cmd.Bin, cmd.Args...)
+	c := exec.CommandContext(w.ctx, cmd.Bin, cmd.Args...)
 	c.Dir = w.dir
 	if cmd.Stdin != "" {
 		c.Stdin = strings.NewReader(cmd.Stdin)
@@ -95,7 +97,7 @@ func (w *workspace) run(cmd gitworkspace.Command) gitworkspace.Output {
 		}
 		return gitworkspace.Output{
 			Alias:    cmd.Alias,
-			ExitCode: skippedExitCode,
+			ExitCode: notRunExitCode,
 			Stderr:   err.Error(),
 		}
 	}

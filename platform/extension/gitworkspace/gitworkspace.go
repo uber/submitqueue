@@ -24,11 +24,14 @@ import "context"
 
 // Command is one command to execute in a git workspace.
 type Command struct {
-	// Alias identifies this command's Output in the response.
+	// Alias identifies this command's Output in the response. It must be unique
+	// within one Exec batch.
 	Alias string
-	// Bin is the executable name.
+	// Bin is the executable name, such as "git". The backend decides which
+	// binary it resolves to.
 	Bin string
-	// Args are the command-line arguments.
+	// Args are the command-line arguments. For git, Args[0] is the subcommand;
+	// global options and identity belong to the backend, not here.
 	Args []string
 	// Stdin is optional standard input.
 	Stdin string
@@ -38,8 +41,11 @@ type Command struct {
 type Output struct {
 	// Alias matches the Command that produced this output.
 	Alias string
-	// ExitCode is the process exit code (0 = success, -1 = skipped).
+	// ExitCode is the process exit code. It is unspecified when Skipped is set.
 	ExitCode int32
+	// Skipped reports that the command did not run because an earlier command
+	// in the same batch failed.
+	Skipped bool
 	// Stdout is the captured standard output.
 	Stdout string
 	// Stderr is the captured standard error.
@@ -47,11 +53,14 @@ type Output struct {
 }
 
 // Workspace is a stateful git environment where command batches execute
-// sequentially. Commands within one Exec call run in order; a non-zero
-// exit code skips the remaining commands in that batch. State persists
-// across Exec calls on the same Workspace.
+// sequentially. Commands within one Exec call run in order; after the first
+// non-zero exit, every remaining command is reported Skipped. State persists
+// across Exec calls on the same Workspace. A Workspace is used by one
+// goroutine at a time.
 type Workspace interface {
-	// Exec sends a batch of commands and returns their outputs.
+	// Exec runs a batch and returns one Output per command, in order. A
+	// command that exits non-zero is reported in its Output, not as an error;
+	// the error is reserved for failing to run the batch at all.
 	Exec(commands []Command) ([]Output, error)
 	// Close releases the workspace and its resources.
 	Close() error
@@ -59,6 +68,7 @@ type Workspace interface {
 
 // Factory creates Workspace instances bound to a repository.
 type Factory interface {
-	// For returns a Workspace for the given repository.
+	// For returns a Workspace for the given repository. Cancelling ctx aborts
+	// any running command and ends the Workspace, so ctx bounds its lifetime.
 	For(ctx context.Context, repo string) (Workspace, error)
 }
