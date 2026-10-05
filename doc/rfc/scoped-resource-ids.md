@@ -1,9 +1,5 @@
 # Scoped Sequential Resource IDs
 
-## Status
-
-Proposed.
-
 ## Decision
 
 A generated resource ID is the canonical decimal string for a positive value returned by a durable counter scoped to `(owner domain, queue, resource kind)`.
@@ -53,16 +49,14 @@ This proposal applies only to counter-generated resources. Provider build IDs, m
 
 ## URLs and display
 
-The decimal ID is used directly as one path segment:
+| Before — base64url or percent-encoded | After — readable |
+|---|---|
+| `/queues/demo-queue/requests/ZGVtby1xdWV1ZS80Mg`<br>or `/queues/demo-queue/requests/demo-queue%2F42` | `/queues/demo-queue/requests/42` |
+| `/queues/demo-queue/batches/ZGVtby1xdWV1ZS9iYXRjaC83`<br>or `/queues/demo-queue/batches/demo-queue%2Fbatch%2F7` | `/queues/demo-queue/batches/7` |
+| `/queues/demo-queue/changes/Z2l0aHViOi8v…`<br>or `/queues/demo-queue/changes/github%3A%2F%2Fgithub.com%2Fuber%2Frepo%2Fpull%2F123%2F{sha}` | `/queues/demo-queue/changes/github/github.com/uber/repo/pull/123` |
+| `/queues/demo-queue/changes/cGhhYjovL3BoYWIuZXhhbXBsZS5jb20vRDEyMzQ1LzY3ODkw`<br>or `/queues/demo-queue/changes/phab%3A%2F%2Fphab.example.com%2FD12345%2F67890` | `/queues/demo-queue/changes/phab/phab.example.com/D12345` |
 
-```text
-/requests/42
-/batches/7
-```
-
-The route supplies the resource kind; the request context supplies the queue. Queue URL design is separate.
-
-A UI may display `request.42`, `batch.7`, or `#42`, but those are derived labels, not identities.
+Both columns use the same queue prefix for comparison. The before batch/change routes and percent-encoded alternatives are illustrative, not implemented pages; GitHub base64url is abbreviated, and `{sha}` stands for a full lowercase commit SHA.
 
 ## Rejected alternatives
 
