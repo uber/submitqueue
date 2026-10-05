@@ -179,48 +179,35 @@ message RequestSummary {
     string outcome_reason = 8;
 }
 
-// ListOrder selects the immutable ordering key for request listing.
-enum ListOrder {
-    // Descending numeric per-queue request sequence.
-    REQUEST_ID_DESC = 0;
-    // Descending acceptance time, then bytewise descending request ID.
-    ACCEPTED_AT_DESC = 1;
-}
-
 // ListRequest selects a page of retained request summaries for one queue.
 message ListRequest {
     // Required configured queue.
     string queue = 1;
-    // Ordering for every page. Defaults to request-ID order.
-    ListOrder order = 2;
     oneof accepted_lower_bound {
-        // Inclusive Unix millisecond bound. Time order only; omitted defaults to zero.
-        int64 accepted_at_or_after_ms = 3;
+        // Inclusive Unix millisecond bound; omitted defaults to zero.
+        int64 accepted_at_or_after_ms = 2;
     }
     oneof accepted_upper_bound {
-        // Exclusive Unix millisecond bound. Time order only; omitted defaults to server now.
-        int64 accepted_before_ms = 4;
+        // Exclusive Unix millisecond bound; omitted defaults to server now.
+        int64 accepted_before_ms = 3;
     }
     // Zero selects 50; nonzero values must be between 1 and 200.
-    int32 page_size = 5;
-    // Opaque continuation token bound to the queue, order, and resolved time bounds.
-    string page_token = 6;
+    int32 page_size = 4;
+    // Opaque continuation token bound to the queue and resolved time bounds.
+    string page_token = 5;
 }
 
-// ListResponse contains a page in the requested order, not a snapshot across pages.
+// ListResponse contains a page in acceptance-time order, not a snapshot across pages.
 message ListResponse {
-    // Current summaries in the selected order.
+    // Current summaries ordered by acceptance time descending, then bytewise request ID descending.
+    // Requests with unknown acceptance time are excluded.
     repeated RequestSummary requests = 1;
     // Opaque continuation token; empty when no further row was observed.
     string next_page_token = 2;
-    oneof accepted_lower_bound {
-        // Resolved inclusive Unix millisecond bound; absent in request-ID order.
-        int64 accepted_at_or_after_ms = 3;
-    }
-    oneof accepted_upper_bound {
-        // Resolved exclusive Unix millisecond bound, fixed across pages; absent in request-ID order.
-        int64 accepted_before_ms = 4;
-    }
+    // Resolved inclusive Unix millisecond bound.
+    int64 accepted_at_or_after_ms = 3;
+    // Resolved exclusive Unix millisecond bound, fixed across pages.
+    int64 accepted_before_ms = 4;
 }
 
 // Stovepipe provides the Stovepipe API.
