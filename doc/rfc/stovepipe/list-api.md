@@ -40,12 +40,12 @@ This is the wire representation of the existing domain `RequestSummary`, not ano
 | `queue` | string | Owning queue. |
 | `change_uri` | string | Exact ingested URI. |
 | `base_uri` | string | Selected baseline; empty before selection or for a full build. |
-| `request_state` | string | Current public lifecycle state, including superseded requests. |
+| `request_state` | string | Current lifecycle state: `accepted`, `processing`, `superseded`, `succeeded`, `failed`, or `cancelled`. |
 | `state_updated_at_ms` | int64 | Timestamp of the represented state entry. |
 | `accepted_at_ms` | optional int64 | Immutable timestamp of the original retained accepted entry. |
 | `outcome_reason` | string | Reason for the represented state; empty when unavailable or inapplicable. |
 
-States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
+The domain already defines a typed [RequestState](../../../stovepipe/entity/request.go). The wire field remains a string to match existing status/history APIs; replacing it with a protobuf enum would not be wire-compatible. States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
 
 ## Data and Storage Work Required
 
