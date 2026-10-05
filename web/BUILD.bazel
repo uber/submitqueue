@@ -11,6 +11,10 @@ test_suite(
     tests = [
         "//web/api:generate_tests",
         "//web/api:test",
+        "//web/package_test:consumer_typecheck_typecheck_test",
+        "//web/package_test:pack_contents_test",
+        "//web/submitqueue:test",
+        "//web/submitqueue:typecheck_typecheck_test",
     ],
 )
 
