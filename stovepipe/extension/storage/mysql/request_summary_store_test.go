@@ -37,9 +37,11 @@ func testRequestSummary() entity.RequestSummary {
 		Queue:            testRequestSummaryQueue,
 		URI:              "git://repo/head",
 		BaseURI:          "git://repo/base",
-		State:            entity.RequestStateProcessing,
-		RequestVersion:   2,
+		State:            entity.RequestStateFailed,
+		RequestVersion:   3,
 		StateTimestampMs: 1735689600000,
+		AcceptedAtMs:     1735689599000,
+		OutcomeReason:    entity.RequestOutcomeReasonProcessingFailed,
 		Version:          1,
 	}
 }
@@ -65,7 +67,7 @@ func TestRequestSummaryStoreCreate(t *testing.T) {
 			summary: summary,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_summary").
-					WithArgs(summary.Queue, summary.RequestID, summary.URI, summary.BaseURI, summary.State, summary.RequestVersion, summary.StateTimestampMs, summary.Version).
+					WithArgs(summary.Queue, summary.RequestID, summary.URI, summary.BaseURI, summary.State, summary.RequestVersion, summary.StateTimestampMs, summary.AcceptedAtMs, summary.OutcomeReason, summary.Version).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -74,7 +76,7 @@ func TestRequestSummaryStoreCreate(t *testing.T) {
 			summary: summary,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_summary").
-					WithArgs(summary.Queue, summary.RequestID, summary.URI, summary.BaseURI, summary.State, summary.RequestVersion, summary.StateTimestampMs, summary.Version).
+					WithArgs(summary.Queue, summary.RequestID, summary.URI, summary.BaseURI, summary.State, summary.RequestVersion, summary.StateTimestampMs, summary.AcceptedAtMs, summary.OutcomeReason, summary.Version).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -124,8 +126,8 @@ func TestRequestSummaryStoreGet(t *testing.T) {
 		{
 			name: "found",
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"queue", "request_id", "uri", "base_uri", "state", "request_version", "state_timestamp_ms", "version"}).
-					AddRow(want.Queue, want.RequestID, want.URI, want.BaseURI, want.State, want.RequestVersion, want.StateTimestampMs, want.Version)
+				rows := sqlmock.NewRows([]string{"queue", "request_id", "uri", "base_uri", "state", "request_version", "state_timestamp_ms", "accepted_at_ms", "outcome_reason", "version"}).
+					AddRow(want.Queue, want.RequestID, want.URI, want.BaseURI, want.State, want.RequestVersion, want.StateTimestampMs, want.AcceptedAtMs, want.OutcomeReason, want.Version)
 				mock.ExpectQuery("SELECT queue, request_id, uri, base_uri, state").WithArgs(testRequestSummaryQueue, want.RequestID).WillReturnRows(rows)
 			},
 		},
@@ -178,7 +180,7 @@ func TestRequestSummaryStoreUpdate(t *testing.T) {
 			db, mock, store := setupRequestSummaryStoreTest(t)
 			defer db.Close()
 			expectation := mock.ExpectExec("UPDATE request_summary").
-				WithArgs(summary.BaseURI, summary.State, summary.RequestVersion, summary.StateTimestampMs, newVersion, summary.Queue, summary.RequestID, oldVersion)
+				WithArgs(summary.BaseURI, summary.State, summary.RequestVersion, summary.StateTimestampMs, summary.AcceptedAtMs, summary.OutcomeReason, newVersion, summary.Queue, summary.RequestID, oldVersion)
 			if tt.execErr != nil {
 				expectation.WillReturnError(tt.execErr)
 			} else {

@@ -105,7 +105,18 @@ func TestMaterializerPersistRequestStateLog(t *testing.T) {
 				request.BaseURI = testBaseURI
 			}
 			if !tt.wantErr {
-				expectRequestSummaryUpdate(summaries)
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(seededRequestSummary(), nil)
+				summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+					func(_ context.Context, summary entity.RequestSummary, _, _ int32) error {
+						assert.Equal(t, tt.outcomeReason, summary.OutcomeReason)
+						if tt.state == entity.RequestStateAccepted {
+							assert.Equal(t, testNowMs, summary.AcceptedAtMs)
+						} else {
+							assert.Zero(t, summary.AcceptedAtMs)
+						}
+						return nil
+					},
+				)
 				store.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, entry entity.RequestLog) error {
 					assert.NotEmpty(t, entry.ID)
 					assert.Equal(t, testNowMs, entry.TimestampMs)
@@ -157,6 +168,7 @@ func TestMaterializerExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
 	current.State = entity.RequestStateAccepted
 	current.RequestVersion = 1
 	current.StateTimestampMs = testNowMs - 1000
+	current.AcceptedAtMs = testNowMs - 1000
 	current.Version = 2
 	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil)
 

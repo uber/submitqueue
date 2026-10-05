@@ -142,6 +142,7 @@ func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
 	summary := entity.RequestSummary{
 		RequestID: "1", Queue: "monorepo/main", URI: "git://repo/head",
 		State: entity.RequestStateAccepted, RequestVersion: 1, StateTimestampMs: 1000, Version: 1,
+		AcceptedAtMs: 1000,
 	}
 	require.NoError(s.T(), s.store.Create(s.ctx, summary))
 
@@ -151,7 +152,8 @@ func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
 
 	updated := summary
 	updated.BaseURI = "git://repo/base"
-	updated.State = entity.RequestStateProcessing
+	updated.State = entity.RequestStateFailed
+	updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 	updated.RequestVersion = 2
 	updated.StateTimestampMs = 2000
 	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))

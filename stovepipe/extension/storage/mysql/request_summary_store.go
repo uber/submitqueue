@@ -48,8 +48,8 @@ func (s *requestSummaryStore) Create(ctx context.Context, summary entity.Request
 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO request_summary (
-			queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, accepted_at_ms, outcome_reason, version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		summary.Queue,
 		summary.RequestID,
 		summary.URI,
@@ -57,6 +57,8 @@ func (s *requestSummaryStore) Create(ctx context.Context, summary entity.Request
 		summary.State,
 		summary.RequestVersion,
 		summary.StateTimestampMs,
+		summary.AcceptedAtMs,
+		summary.OutcomeReason,
 		summary.Version,
 	)
 	if err != nil {
@@ -73,7 +75,7 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 	defer func() { op.Complete(retErr) }()
 
 	err := s.db.QueryRowContext(ctx, `
-		SELECT queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version
+		SELECT queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, accepted_at_ms, outcome_reason, version
 		FROM request_summary
 		WHERE queue = ? AND request_id = ?`,
 		s.queue, requestID,
@@ -85,6 +87,8 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 		&ret.State,
 		&ret.RequestVersion,
 		&ret.StateTimestampMs,
+		&ret.AcceptedAtMs,
+		&ret.OutcomeReason,
 		&ret.Version,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -106,12 +110,14 @@ func (s *requestSummaryStore) Update(ctx context.Context, summary entity.Request
 
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE request_summary
-		SET base_uri = ?, state = ?, request_version = ?, state_timestamp_ms = ?, version = ?
+		SET base_uri = ?, state = ?, request_version = ?, state_timestamp_ms = ?, accepted_at_ms = ?, outcome_reason = ?, version = ?
 		WHERE queue = ? AND request_id = ? AND version = ?`,
 		summary.BaseURI,
 		summary.State,
 		summary.RequestVersion,
 		summary.StateTimestampMs,
+		summary.AcceptedAtMs,
+		summary.OutcomeReason,
 		newVersion,
 		summary.Queue,
 		summary.RequestID,
