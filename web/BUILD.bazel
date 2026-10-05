@@ -13,11 +13,12 @@ test_suite(
         "//web/api:test",
         "//web/package_test:consumer_typecheck_typecheck_test",
         "//web/package_test:pack_contents_test",
-        "//web/submitqueue:test",
-        "//web/submitqueue:typecheck_typecheck_test",
         "//web/service/submitqueue:lint",
         "//web/service/submitqueue:test",
         "//web/service/submitqueue:typecheck_typecheck_test",
+        "//web/submitqueue:test",
+        "//web/submitqueue:typecheck_typecheck_test",
+        ":e2e_typecheck_typecheck_test",
     ],
 )
 
@@ -30,12 +31,39 @@ js_library(
 exports_files([
     "buf.gen.yaml",
     "package.json",
+    "playwright.config.ts",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "tsconfig.e2e.json",
     "vitest.config.ts",
 ])
 
 ts_config(
     name = "tsconfig_base",
     src = "tsconfig.base.json",
+)
+
+ts_config(
+    name = "tsconfig_e2e",
+    src = "tsconfig.e2e.json",
+    deps = [":tsconfig_base"],
+)
+
+ts_project(
+    name = "e2e_typecheck",
+    srcs = [
+        "playwright.config.ts",
+        "//web/test/e2e:srcs_for_typecheck",
+    ],
+    declaration = True,
+    no_emit = True,
+    tsconfig = ":tsconfig_e2e",
+    deps = [
+        ":node_modules/@axe-core/playwright",
+        ":node_modules/@connectrpc/connect",
+        ":node_modules/@connectrpc/connect-node",
+        ":node_modules/@playwright/test",
+        ":node_modules/@types/node",
+        ":node_modules/@submitqueue/api",
+    ],
 )

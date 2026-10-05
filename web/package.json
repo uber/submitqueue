@@ -13,7 +13,7 @@
     "check": "pnpm build && pnpm lint && pnpm typecheck && pnpm test",
     "lint": "pnpm --recursive --if-present run lint",
     "test": "pnpm --recursive --if-present run test",
-    "typecheck": "pnpm --recursive --if-present run typecheck"
+    "typecheck": "tsc --project tsconfig.e2e.json && pnpm --recursive --if-present run typecheck"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.10.2",

@@ -1,0 +1,32 @@
+# Compose overlay for the local, read-only SubmitQueue web demo.
+#
+# The browser talks only to this Next.js host. The host reaches the private
+# grpc-go gateway over Compose's internal network using explicit plaintext
+# HTTP/2, which is intentionally limited to the local demo.
+
+services:
+  web-service:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue}-web-service:latest
+    platform: linux/amd64
+    ports:
+      - "3000"
+    environment:
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - SUBMITQUEUE_GATEWAY_URL=http://gateway-service:8080
+      - SUBMITQUEUE_GATEWAY_ALLOW_PLAINTEXT=true
+      - SUBMITQUEUE_WEB_TOKEN=${SUBMITQUEUE_WEB_TOKEN:?set SUBMITQUEUE_WEB_TOKEN to at least 32 characters}
+    depends_on:
+      gateway-service:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30

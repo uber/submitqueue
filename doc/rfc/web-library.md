@@ -79,7 +79,7 @@ Submissions for a PR or revision, with version selection and separate status/his
 | Internal link helpers and a structural gateway-diagnostic hook | Queue names, per-queue gateway routing, credentials, deadlines, and the diagnostic backend |
 | Serializable view models and polling controls | Session authorization, configuration, and process lifecycle |
 
-The host configures the queues it serves and selects each generated client with `(queue) => client`. It builds those clients with `@connectrpc/connect-node` `createGrpcTransport` over HTTP/2: TLS by default, plaintext h2c only as an explicit local option. It installs the library's tracing interceptor while constructing the transport. The gateway stays reachable only by trusted hosts.
+The host configures the queues it serves and selects each generated client with `(queue) => client`. It builds those clients with `@connectrpc/connect-node` `createGrpcTransport` over HTTP/2: TLS by default, plaintext h2c only as an explicit local option. The host supplies the library's diagnostic hook and keeps the gateway reachable only by trusted hosts.
 
 Components render serializable props and do not fetch. Sessions, gateway clients, and protobuf messages stay on the server. The library does not depend on Next.js: host routes call `connection()` before gateway I/O, render dynamically, and do not cache gateway results. The host supplies a refresh callback that completes only when its framework has finished refreshing the view.
 
@@ -87,11 +87,11 @@ Components render serializable props and do not fetch. Sessions, gateway clients
 
 `List` requires a queue and a half-open receipt window. The host recalculates the default trailing 24-hour window on refresh and keeps the URL free of timestamps. Pagination preserves the original bounds inside a signed, queue-scoped cursor; refreshing an older page returns to the live first page.
 
-A client component starts `router.refresh()` inside a React transition and does not schedule the next refresh until that transition finishes. The wait is the terminal client's poll interval plus jitter, grows across consecutive transport failures, and pauses while the document is hidden or the browser is offline. A request view stops only after the summary is terminal and successfully loaded history contains the same terminal status. A queue list keeps polling for the life of its fixed window.
+A client component starts `router.refresh()` inside a React transition and does not schedule the next refresh until that transition finishes. The wait is the terminal client's poll interval plus jitter, grows across consecutive transport failures, and pauses while the document is hidden or the browser is offline. A request view normally stops only after the summary is terminal and successfully loaded history contains the same terminal status; it also stops when a terminal summary is paired with a non-retryable history error, because polling cannot make that authorization or request-shape failure converge. A queue list keeps polling for the life of its fixed window.
 
 ## Package shape
 
-The pnpm workspace lives under `web/`, with a nested `web/go.mod` so the Go build graph does not index it:
+The web workspace lives under `web/`. Bazel owns the pinned Node toolchain, npm dependency graph, generated protobuf API, TypeScript compilation, tests, Next production build, OCI image, and browser E2E. The pnpm workspace metadata remains for optional editor and direct local-development workflows; Gazelle excludes `web/` because it contains no Go packages.
 
 ```
 web/
@@ -112,9 +112,9 @@ Generated TypeScript is committed beside the Go stubs. Gateway stubs and the bas
 
 - Vitest tests cover proto drift, timestamp conversion, stable list bounds, queue-scoped readable paths, error classification, host-controlled deadlines, structured diagnostics, readiness configuration, and polling controls including transition-aware single-flight, progressive backoff, hidden/offline pause, and history-aware terminal stop.
 - Every protected host layout and route repeats the session check rather than relying only on `proxy.ts`.
-- A Node-owned Compose check, outside Bazel and in required checks, runs the reference host against the real grpc-go gateway as `e2e-submitqueue-web` ([testing guide](../howto/TESTING.md#container-naming)). It covers the Basic-auth challenge, explicit h2c, newest-first list navigation, a slash-containing sqid, lifecycle/build history, and axe-core checks on list and detail pages.
-- `pnpm pack` tarballs install into an external TypeScript consumer and typecheck the root, `./server`, and `./testing` export map. The repository's Next 16 reference host production build separately verifies the framework integration.
-- Browser fakes are a build-time alias. The production artifact contains none.
+- The Bazel target `//web/test/e2e:web_test` loads Bazel-built scratch OCI images for the grpc-go services, the Bazel-built web OCI image, and a digest-pinned MySQL image before running the stack as `e2e-submitqueue-web-*` with pulls and Dockerfile builds disabled. It covers the Basic-auth challenge, explicit h2c, newest-first list navigation, a slash-containing sqid, lifecycle/build history, and axe-core checks on list and detail pages.
+- Bazel-built package tarballs are inspected and linked into an isolated TypeScript consumer that typechecks the root, `./server`, and `./testing` export map. The repository's Bazel-built Next 16 production host separately verifies framework integration.
+- Deterministic gateway fakes ship only through the explicit `./testing` entry point, which the reference host does not import.
 
 ## Deferred
 
@@ -125,6 +125,6 @@ Generated TypeScript is committed beside the Go stubs. Gateway stubs and the bas
 
 ## Rejected
 
-- **A repository-owned application or container.** Another deployer would have to fork routes, authentication, telemetry, and transport.
+- **A production application contract owned by this repository.** The checked-in app and OCI image are a local reference host; a production deployer still owns routes, authentication, telemetry, transport, and release policy.
 - **Static export or embedding in a Go binary.** Request routes are dynamic, and the gateway stays private to a server that can authorize the caller.
 - **A generic runtime, DI container, or web-extension layer.** Next's filesystem and the generated gateway client are the composition boundaries.

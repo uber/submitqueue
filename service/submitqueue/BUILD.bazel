@@ -1,7 +1,15 @@
 exports_files(
     [
         "docker-compose.git.yml",
+        "docker-compose.fake.yml",
+        "docker-compose.web.yml",
         "docker-compose.yml",
     ],
     visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "fake_provider_config",
+    srcs = glob(["demo/provider/fake/*.yaml"]),
+    visibility = ["//web/test/e2e:__pkg__"],
 )
