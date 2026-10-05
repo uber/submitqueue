@@ -20,9 +20,9 @@ The host configures the queues it serves and selects each generated client with 
 
 Components render serializable props and do not fetch. Sessions, gateway clients, and protobuf messages stay on the server. Server helpers call `connection()` before gateway I/O, host routes that call them are dynamically rendered, and neither side caches gateway results.
 
-`WebPaths` selects internal links. Each substituted value is unpadded base64url, so a slash inside an sqid (`<queue>/<counter>`) remains one path segment after a proxy decodes `%2F`. Phase one renders change URIs and build metadata as text; trusted external-link mapping and typed build URLs are deferred.
+`WebPaths` selects queue-scoped internal links. A queue landing page and request list live at `/<queue>` and a detail page at `/<queue>/request/<full-request-id>`. The `request` segment leaves room for other queue-scoped resources while the full request ID remains human-readable and opaque to the UI; the host's catch-all route only reassembles its URL path segments before passing it unchanged to the gateway. Phase one renders change URIs and build metadata as text; trusted external-link mapping and typed build URLs are deferred.
 
-`List` requires a queue and a half-open receipt window. A first visit uses a trailing 24-hour window, which the host may override. Both bounds live in the route's search parameters and stay fixed across refresh and paging, because the page token is valid only for that queue and those bounds. Changing or resetting the window drops the token; the reference host links back to an unbounded `/requests` route to establish a fresh trailing window.
+`List` requires a queue and a half-open receipt window. A first visit uses a trailing 24-hour window, which the host may override. Both bounds live in the route's search parameters and stay fixed across refresh and paging, because the page token is valid only for that queue and those bounds. Changing or resetting the window drops the token; the reference host links back to the queue's list route to establish a fresh trailing window.
 
 A client component starts `router.refresh()` inside a React transition and does not schedule the next refresh until that transition finishes. The wait is the terminal client's poll interval plus jitter, grows across consecutive transport failures, and pauses while the document is hidden or the browser is offline. A request view stops only after the summary is terminal and successfully loaded history contains the same terminal status. A queue list keeps polling for the life of its fixed window.
 
@@ -47,7 +47,7 @@ Generated TypeScript is committed beside the Go stubs. Gateway stubs and the bas
 
 ## Acceptance
 
-- Vitest tests cover proto drift, timestamp conversion, stable list bounds, base64url paths, error classification, host-controlled deadlines, structured diagnostics, readiness configuration, and polling controls including transition-aware single-flight, progressive backoff, hidden/offline pause, and history-aware terminal stop.
+- Vitest tests cover proto drift, timestamp conversion, stable list bounds, queue-scoped readable paths, error classification, host-controlled deadlines, structured diagnostics, readiness configuration, and polling controls including transition-aware single-flight, progressive backoff, hidden/offline pause, and history-aware terminal stop.
 - Every protected host layout and route repeats the session check rather than relying only on `proxy.ts`.
 - A Node-owned Compose check, outside Bazel and in required checks, runs the reference host against the real grpc-go gateway as `e2e-submitqueue-web` ([testing guide](../howto/TESTING.md#container-naming)). It covers the Basic-auth challenge, explicit h2c, newest-first list navigation, a slash-containing sqid, lifecycle/build history, and axe-core checks on list and detail pages.
 - `pnpm pack` tarballs install into an external TypeScript consumer and typecheck the root, `./server`, and `./testing` export map. The repository's Next 16 reference host production build separately verifies the framework integration.
