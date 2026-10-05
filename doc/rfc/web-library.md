@@ -26,7 +26,7 @@ The queue directory replaces the automatic redirect to `demo-queue`. Queue disco
 
 The request and batch examples follow [scoped sequential resource IDs](scoped-resource-ids.md): `"10"` and `"4"` are stored string IDs, and the route supplies their queue and resource context. The UI passes each ID unchanged to the gateway. The mockups below retain earlier illustrative slash-containing IDs; those labels do not override the scoped-ID contract.
 
-Summary is the default request view. A `view=history` parameter makes the History tab shareable without adding a reserved suffix to the request ID. List bounds and pagination remain query state, for example `/demo-queue?from=1791208800000&to=1791295200000&page=<opaque-page-token>`; the host URL-escapes the token, and the bounds are epoch milliseconds for the fixed receipt window.
+Summary is the default request view; `?view=history` makes History shareable. Queue URLs stay clean: `/demo-queue` refreshes a rolling 24-hour window, while `/demo-queue?page=<opaque-cursor>` preserves a pagination snapshot without exposing `from`/`to`.
 
 ### Readable change links
 
@@ -41,7 +41,7 @@ Omit the SHA/diff ID for submissions across versions; include it for submissions
 
 Exact-version URLs mirror the [change URI](change-uri.md): replace `<scheme>://` with `/<queue>/change/<scheme>/`, preserving the authority and encoded path. Do not insert `commit` or `diff` segments.
 
-The host resolves change identities; React components do not parse URIs. Exact-version pages use the gateway's exact-URI lookups. Across-version demo pages scan an explicit receipt window; unbounded lookup and git routes remain deferred.
+The host resolves change identities; React components do not parse URIs. Pinned GitHub/Phabricator pages use exact-URI lookups. Across-version and git demo pages scan the displayed rolling window; fake file hints stay backend-only.
 
 ## Reference UX
 
@@ -85,7 +85,7 @@ Components render serializable props and do not fetch. Sessions, gateway clients
 
 `WebPaths` selects queue-scoped internal links. A queue landing page and request list live at `/<queue>` and a detail page at `/<queue>/request/<full-request-id>`. The `request` segment leaves room for other queue-scoped resources while the full request ID remains human-readable and opaque to the UI; the host's catch-all route only reassembles its URL path segments before passing it unchanged to the gateway. Phase one renders change URIs and build metadata as text; trusted external-link mapping and typed build URLs are deferred.
 
-`List` requires a queue and a half-open receipt window. A first visit uses a trailing 24-hour window, which the host may override. Both bounds live in the route's search parameters and stay fixed across refresh and paging, because the page token is valid only for that queue and those bounds. Changing or resetting the window drops the token; the reference host links back to the queue's list route to establish a fresh trailing window.
+`List` requires a queue and a half-open receipt window. The host recalculates the default trailing 24-hour window on refresh and keeps the URL free of timestamps. Pagination preserves the original bounds inside a signed, queue-scoped cursor; refreshing an older page returns to the live first page.
 
 A client component starts `router.refresh()` inside a React transition and does not schedule the next refresh until that transition finishes. The wait is the terminal client's poll interval plus jitter, grows across consecutive transport failures, and pauses while the document is hidden or the browser is offline. A request view stops only after the summary is terminal and successfully loaded history contains the same terminal status. A queue list keeps polling for the life of its fixed window.
 
