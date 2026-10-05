@@ -15,15 +15,68 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/submitqueue/entity"
+	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
+	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestGatewayServerListQueues(t *testing.T) {
+	configErr := errors.New("queue config unavailable")
+	tests := []struct {
+		name   string
+		queues []entity.QueueConfig
+		err    error
+		want   []string
+	}{
+		{
+			name:   "configured queues exposed in name order",
+			queues: []entity.QueueConfig{{Name: "release"}, {Name: "main"}},
+			want:   []string{"main", "release"},
+		},
+		{
+			name: "no configured queues",
+			want: []string{},
+		},
+		{
+			name: "configuration failure",
+			err:  configErr,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			queueConfigs := qcmock.NewMockStore(gomock.NewController(t))
+			queueConfigs.EXPECT().List(gomock.Any()).Return(tt.queues, tt.err)
+			server := &GatewayServer{
+				listQueuesController: controller.NewListQueuesController(zap.NewNop().Sugar(), tally.NoopScope, queueConfigs),
+			}
+
+			resp, err := server.ListQueues(context.Background(), &pb.ListQueuesRequest{})
+			if tt.err != nil {
+				require.ErrorIs(t, err, tt.err)
+				assert.Nil(t, resp)
+				return
+			}
+			require.NoError(t, err)
+			names := make([]string, 0, len(resp.GetQueues()))
+			for _, queue := range resp.GetQueues() {
+				names = append(names, queue.GetName())
+			}
+			assert.Equal(t, tt.want, names)
+		})
+	}
+}
 
 func TestValidateConfiguredQueueTenants(t *testing.T) {
 	require.NoError(t, validateConfiguredQueueTenants(

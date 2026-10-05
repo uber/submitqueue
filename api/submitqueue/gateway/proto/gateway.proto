@@ -157,6 +157,22 @@ message ListResponse {
     string next_page_token = 2;
 }
 
+// Queue identifies a configured submit queue.
+message Queue {
+    // Unique queue name accepted by the gateway.
+    string name = 1;
+}
+
+// ListQueuesRequest selects all configured submit queues.
+message ListQueuesRequest {
+}
+
+// ListQueuesResponse contains all configured queues, including queues with no requests.
+message ListQueuesResponse {
+    // Queues ordered by name ascending.
+    repeated Queue queues = 1;
+}
+
 // GetRequestHistoryByIDRequest selects one retained request history by sqid.
 message GetRequestHistoryByIDRequest {
     // Globally unique identifier for the request.
@@ -249,6 +265,9 @@ message RequestNotFoundError {
 service SubmitQueueGateway {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
+
+    // ListQueues returns all configured submit queues ordered by name ascending.
+    rpc ListQueues(ListQueuesRequest) returns (ListQueuesResponse) {}
 
     // Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
     // The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.

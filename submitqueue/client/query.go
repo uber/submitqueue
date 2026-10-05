@@ -22,6 +22,15 @@ import (
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 )
 
+// ListQueues includes configured queues with no requests, ordered by name ascending.
+func (c *Client) ListQueues(ctx context.Context) ([]*pb.Queue, error) {
+	resp, err := c.gw.ListQueues(ctx, &pb.ListQueuesRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list queues failed: %w", err)
+	}
+	return resp.GetQueues(), nil
+}
+
 // ListQuery selects a page range of a queue's receipt history.
 type ListQuery struct {
 	// Queue is the exact queue to read. Required: the gateway has no

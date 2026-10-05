@@ -138,6 +138,29 @@ func (s *GatewayIntegrationSuite) TestPingAPI() {
 	assert.NotZero(t, resp.Timestamp)
 }
 
+func (s *GatewayIntegrationSuite) TestListQueuesAPI() {
+	t := s.T()
+	resp, err := s.client.ListQueues(s.ctx, &pb.ListQueuesRequest{})
+	require.NoError(t, err)
+	names := make([]string, 0, len(resp.GetQueues()))
+	for _, queue := range resp.GetQueues() {
+		names = append(names, queue.GetName())
+	}
+	assert.Equal(t, []string{
+		"demo-queue",
+		"e2e-cancel-queue",
+		"e2e-chain-queue",
+		"e2e-conflict-error-queue",
+		"e2e-git-queue",
+		"e2e-redelivery-queue",
+		"e2e-respeculate-queue",
+		"e2e-strand-queue",
+		"e2e-test-queue",
+		"file-overlap-queue",
+		"test-queue",
+	}, names)
+}
+
 // TestLandAPI tests the Gateway Land API with queue publishing
 func (s *GatewayIntegrationSuite) TestLandAPI() {
 	t := s.T()

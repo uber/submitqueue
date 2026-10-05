@@ -6,6 +6,7 @@ go_library(
         "cancel.go",
         "land.go",
         "list.go",
+        "list_queues.go",
         "ping.go",
         "read_errors.go",
         "request_history.go",
@@ -37,6 +38,7 @@ go_test(
     srcs = [
         "cancel_test.go",
         "land_test.go",
+        "list_queues_test.go",
         "list_test.go",
         "ping_test.go",
         "request_history_test.go",

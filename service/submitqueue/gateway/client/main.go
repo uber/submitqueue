@@ -44,11 +44,12 @@ import (
 const usage = `Usage: client [global flags] <command> [command flags]
 
 Commands:
-  ping     Check that the gateway is reachable
-  land     Submit a change, or an ordered stack of changes, to a queue
-  status   Read a request's current status
-  list     Show a queue's recent requests as a table
-  watch    Follow a queue's requests until they settle
+  ping         Check that the gateway is reachable
+  land         Submit a change, or an ordered stack of changes, to a queue
+  status       Read a request's current status
+  list         Show a queue's recent requests as a table
+  list-queues  Show all configured submit queues
+  watch        Follow a queue's requests until they settle
 
 Global flags:
   -addr       gateway address (default "localhost:8081")
@@ -58,6 +59,7 @@ Global flags:
 
 Examples:
   client ping
+  client list-queues
   client land -queue my-queue -pr https://github.com/uber/sq-sandbox/pull/7
   client land -queue my-queue -uri github://github.com/uber/r/pull/7/<sha> -strategy SQUASH_REBASE
   client land -queue my-queue -pr <url-of-first> -pr <url-of-second>
@@ -113,6 +115,8 @@ func run(opts client.Options, timeout time.Duration, command string, args []stri
 		return runStatus(ctx, sq, args)
 	case "list":
 		return runList(ctx, sq, args)
+	case "list-queues":
+		return runListQueues(ctx, sq, args, os.Stdout)
 	case "watch":
 		return runWatch(ctx, sq, args)
 	default:
