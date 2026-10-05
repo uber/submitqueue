@@ -15,6 +15,9 @@ test_suite(
         "//web/package_test:pack_contents_test",
         "//web/submitqueue:test",
         "//web/submitqueue:typecheck_typecheck_test",
+        "//web/service/submitqueue:lint",
+        "//web/service/submitqueue:test",
+        "//web/service/submitqueue:typecheck_typecheck_test",
     ],
 )
 

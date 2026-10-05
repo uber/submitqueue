@@ -3,7 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {},
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "lint": "eslint .",
+    "start": "next start --hostname 0.0.0.0 --port 3000",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",
     "@connectrpc/connect": "^2.1.1",
