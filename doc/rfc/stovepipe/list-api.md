@@ -32,7 +32,7 @@ Returned state is current, not state as of the upper bound. Pagination is not a 
 
 ## Request Summary
 
-This is the wire representation of the existing domain `RequestSummary`, not another stored projection. Its first five fields match the names, types, and numbers in `GetProjectStatusByURIResponse`; numbers 6–10 are reserved to avoid colliding with status-only data. New summary fields use 11–13. The status RPC remains unchanged; refactoring it to share this message is deferred and must preserve its existing wire fields. Summary `state_updated_at_ms` is lifecycle-only, unlike status `updated_at_ms`, which also includes validation results.
+This is the wire representation of the existing domain `RequestSummary`, not another stored projection. The status RPC remains unchanged; it can later add this message as a nested field while retaining its existing flat fields for compatibility. Nested messages have independent field numbers. Summary `state_updated_at_ms` is lifecycle-only, unlike status `updated_at_ms`, which also includes validation results.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ This is the wire representation of the existing domain `RequestSummary`, not ano
 | `accepted_at_ms` | optional int64 | Immutable timestamp of the original retained accepted entry. |
 | `outcome_reason` | string | Reason for the represented state; empty when unavailable or inapplicable. |
 
-The domain already defines a typed [RequestState](../../../stovepipe/entity/request.go). The wire field remains a string to match existing status/history APIs; replacing it with a protobuf enum would not be wire-compatible. States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
+The domain already defines a typed [RequestState](../../../stovepipe/entity/request.go). The wire field remains a string to match existing status/history APIs. States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
 
 ## Data and Storage Work Required
 
