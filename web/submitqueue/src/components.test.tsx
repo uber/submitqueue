@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ErrorState, RequestStatus, QueueDirectory, RequestList, RequestListView } from "./components";
+import { ErrorState, RequestStatus, QueueDirectory, RequestList, RequestListView, RequestDetail } from "./components";
 import type { RequestDetailModel, RequestListModel } from "./models";
 
 const request = {
@@ -51,6 +51,41 @@ describe("request components", () => {
     expect(screen.getByText("No requests were received in this window.")).toBeTruthy();
   });
 
+  it("renders ordered status/build history with expandable metadata", () => {
+    const model: RequestDetailModel = {
+      request: { ...request, status: "landed" },
+      history: [
+        {
+          timestampMs: 1_700_000_000_000,
+          type: "status",
+          status: "started",
+          event: null,
+          lastError: null,
+          metadata: {},
+        },
+        {
+          timestampMs: 1_700_000_001_000,
+          type: "event",
+          status: null,
+          event: "building",
+          lastError: null,
+          metadata: { build_url: "https://build.example/1" },
+        },
+      ],
+      historyError: null,
+    };
+    render(<RequestDetail model={model} view="history" />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("demo-queue/1");
+    const history = screen.getByRole("list", { name: "Request history" });
+    expect(within(history).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(history).getByText("Building")).toBeTruthy();
+    fireEvent.click(within(history).getByText("Building"));
+    expect(within(history).getByText("https://build.example/1")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "event" } });
+    expect(within(history).getAllByRole("listitem")).toHaveLength(1);
+  });
+
   it("lists configured queues even when there is only one", () => {
     render(<QueueDirectory queues={[{ name: "demo-queue", description: "Demo gateway" }]} />);
     expect(screen.getByRole("link", { name: "demo-queue" }).getAttribute("href")).toBe("/demo-queue");
@@ -92,6 +127,20 @@ describe("request components", () => {
     expect(screen.getByText(/last successful snapshot/)).toBeTruthy();
     view.rerender(<RequestListView result={{ ok: false, error: { ...error, retryable: false } }} />);
     expect(screen.queryByRole("link", { name: request.sqid })).toBeNull();
+  });
+
+  it("does not describe unavailable history as empty and copies the opaque ID", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<RequestDetail model={{
+      request, history: [], historyError: {
+        kind: "transient", title: "Unavailable", message: "Try again", retryable: true,
+      },
+    }} />);
+    expect(screen.getByText("History unavailable")).toBeTruthy();
+    expect(screen.queryByText("No history has been retained for this request.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(request.sqid));
   });
 
   it("shows unknown statuses safely", () => {

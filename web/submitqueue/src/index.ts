@@ -9,6 +9,10 @@ export {
   RequestList,
   RequestListView,
   type RequestListProps,
+  RequestHistory,
+  RequestDetail,
+  RequestDetailView,
+  type RequestDetailProps,
 } from "./components.js";
 export type {
   QueueModel,
