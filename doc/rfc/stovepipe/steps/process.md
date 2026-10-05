@@ -25,11 +25,11 @@ For a delivery carrying request id `R`:
 4. R.State is accepted. Load the Queue row Q.
 5. Coalesce: if CompareRequestID(R.Queue, R.ID, Q.latest_request_id) < 0:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
-6. R is the latest head. Gate: if Q.in_flight_count >= max_concurrent (from queue config; see below):
-   - defer (hold the delivery) -> re-check on redelivery until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
+6. R is the latest head. Gate: if Q.in_flight_count >= max_concurrent or Q.build_admission_not_before_ms is in the future:
+   - defer (hold the delivery) -> re-check on redelivery until both gates open (admit) or a newer head supersedes it. See [Waiting for admission](#waiting-for-admission).
 7. Admit R:
    a. Derive build strategy + baseline (see "Build-strategy decision").
-   b. CAS the Queue row: in_flight_count += 1.
+   b. CAS the Queue row: in_flight_count += 1 and advance build_admission_not_before_ms by the configured minimum admission interval.
    c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
    d. Announce validation start on the hook topic (see "Hooks").
    e. Publish R to build.
@@ -60,8 +60,10 @@ Validation is expensive and shares a baseline, so heads arriving while an earlie
 | Source | Field | Meaning |
 |---|---|---|
 | Queue row | `last_green_uri` | Bookmark `record` advances on whole-repo green; empty until first green. |
-| Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
+| Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `buildsignal` (or DLQ reconciliation) decrements on terminal. |
+| Queue row | `build_admission_not_before_ms` | Durable earliest time for the next logical admission; zero until a time policy advances it. |
 | Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
+| Queue config | `minimum_build_admission_interval_ms` | Minimum start-to-start spacing between logical admissions. Positive values enable general throttling; non-positive values disable it. **Default 0**. |
 
 A slot is held from admit until the build goes terminal (`process → build → buildsignal`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `buildsignal` recording the build's outcome, success *or* failure, or the DLQ reconciler forcing a terminal `failed` (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
 
@@ -115,7 +117,7 @@ The gate is **not** tied to `process` returning; a slot taken at admit is held u
 
 **Rules**
 
-1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `record` decrements on terminal.
+1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `buildsignal` decrements when the build becomes terminal.
 2. **No skip-ahead while in-flight.** The latest head waits for a slot until the running validation completes; it never preempts.
 3. **Intermediates are superseded on sight**, gate open or closed — no slot consumed (step 5).
 4. **Coalesce-to-latest on gate open.** When a slot frees, the waiting latest head is admitted.
@@ -135,9 +137,9 @@ A, D, F each get a full cycle; B, C, E end `superseded`. No intermediate is vali
 
 **What does not happen**
 
-- `process` returning does **not** free a slot — only `record` (or DLQ reconciliation) does.
+- `process` returning does **not** free a slot — only `buildsignal` (or DLQ reconciliation) does.
 - A newer head does **not** preempt an in-flight validation.
-- Deferred messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for a slot](#waiting-for-a-slot)).
+- Deferred messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for admission](#waiting-for-admission)).
 
 ## Hooks
 
@@ -170,10 +172,10 @@ The window to handle is "count incremented, state not yet `processing`". Admit d
 
 `in_flight_count` is a cache; the source of truth is **the set of non-terminal Request rows for the Queue**. Two rules keep it from drifting:
 
-1. **Decrement is bound to the terminal transition.** The single CAS that moves a Request non-terminal → terminal (in `record` or the DLQ reconciler) also decrements. Being CAS-guarded, it fires exactly once per Request even under redelivery.
+1. **Decrement precedes the terminal transition.** `buildsignal` or the DLQ reconciler decrements before moving a Request non-terminal → terminal, so a terminal request never strands a slot. Redelivery may transiently over-release after a crash between the two entity writes, which is preferred to a permanent capacity leak.
 2. **Increment is bound to the admit transition.** `process` increments only on the `accepted → processing` CAS; a redelivery of an already-`processing` Request takes step 3 and does not increment again.
 
-On a crash between admit and `record`, the Request stays non-terminal; visibility-timeout redelivery drives it forward, and the fail-closed DLQ path eventually forces it terminal, decrementing as it does. The count can drift high only transiently and self-heals as stuck Requests terminate. A reconciler that recomputes the count from non-terminal rows can be added later if drift proves real, but isn't required for MVP.
+On a crash between admit and the terminal outcome, the Request stays non-terminal; visibility-timeout redelivery drives it forward, and the fail-closed DLQ path eventually forces it terminal, decrementing as it does. The count can drift high only transiently and self-heals as stuck Requests terminate. A reconciler that recomputes the count from non-terminal rows can be added later if drift proves real, but isn't required for MVP.
 
 ## Edge cases
 
@@ -192,7 +194,8 @@ Runtime coordination only — fields the pipeline writes under CAS:
 |---|---|---|
 | `name` | Stable logical id (`monorepo/main`); the string ingest accepts | ingest (create) |
 | `last_green_uri` | Bookmark; empty until first green | record |
-| `in_flight_count` | Active Phase 1 validations | process (+1), record/DLQ (−1) |
+| `in_flight_count` | Active Phase 1 validations | process (+1), buildsignal/DLQ (−1) |
+| `build_admission_not_before_ms` | Earliest Unix-millisecond time for another logical admission | process and terminal-result policies |
 | `latest_request_id` | Request id of the newest head ingest accepted | ingest |
 | `version` | Optimistic-locking version | all writers |
 
@@ -227,14 +230,14 @@ New key/value-shaped operations (single-key reads/writes, no server-side filteri
 
 No "list requests by queue/state" query is introduced; coalescing uses the single-row `latest_request_id` pointer instead, keeping the contract satisfiable by a plain KV backend.
 
-## Waiting for a slot
+## Waiting for admission
 
-When the gate is closed, `process` must defer the latest head without admitting it (no `in_flight_count` increment, no publish to `build`). The mechanism is the consumer hold primitive ([consumer-hold.md](../../consumer-hold.md)): the controller records a hold for `gate_wait_delay_ms` and returns success, and the framework postpones the delivery — the same message redelivers after the delay, and the redelivery does not count toward `MaxAttempts`.
+When either gate is closed, `process` must defer the latest head without admitting it (no `in_flight_count` increment, no publish to `build`). The mechanism is the consumer hold primitive ([consumer-hold.md](../../consumer-hold.md)): the controller records a hold for at most `gate_wait_delay_ms` and returns success, and the framework postpones the delivery — the same message redelivers after the delay, and the redelivery does not count toward `MaxAttempts`.
 
 Every wake-up re-runs the same **coalesce-then-gate** checks (steps 5 → 6):
 
 1. **Stale? (checked first.)** If `CompareRequestID(R.Queue, R.ID, Q.latest_request_id) < 0`, `R` is no longer latest → supersede it (ack). A newer head is admitted by its own delivery when its slot attempt runs.
-2. **Slot free?** If `in_flight_count < max_concurrent` (from config) and `R` is still latest → admit (step 7).
+2. **Capacity and time eligible?** If `in_flight_count < max_concurrent`, `build_admission_not_before_ms <= now`, and `R` is still latest → admit (step 7).
 
 Nothing is admitted to `build` until the gate opens.
 

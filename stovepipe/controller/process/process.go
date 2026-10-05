@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
@@ -55,6 +56,7 @@ type Controller struct {
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
+	now           func() time.Time
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -85,6 +87,7 @@ func NewController(
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
+		now:           time.Now,
 	}
 }
 
@@ -239,6 +242,10 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 		if queueRow.InFlightCount >= cfg.MaxConcurrent {
 			return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
 		}
+		nowMs := c.now().UnixMilli()
+		if queueRow.BuildAdmissionNotBeforeMs > nowMs {
+			return c.holdForBuildThrottle(ctx, delivery, request, queueRow.BuildAdmissionNotBeforeMs, nowMs, cfg.GateWaitDelayMs)
+		}
 
 		if queueRow.LastGreenURI != "" && sc == nil {
 			sc, err = c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
@@ -255,7 +262,7 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 			return err
 		}
 
-		err = c.claimBuildSlot(ctx, store, &queueRow)
+		err = c.claimBuildSlot(ctx, store, &queueRow, nowMs, cfg.MinimumBuildAdmissionIntervalMs)
 		if err == nil {
 			break
 		}
@@ -349,13 +356,19 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 	return entity.BuildStrategyFull, "", nil
 }
 
-// claimBuildSlot CAS-increments queue.in_flight_count by one. On version mismatch it
-// reloads queueRow and returns ErrVersionMismatch so the caller can retry.
-func (c *Controller) claimBuildSlot(ctx context.Context, store storage.Storage, queueRow *entity.Queue) error {
+// claimBuildSlot atomically claims capacity and reserves the next logical admission time.
+// On version mismatch it reloads queueRow and returns ErrVersionMismatch so the caller can retry.
+func (c *Controller) claimBuildSlot(ctx context.Context, store storage.Storage, queueRow *entity.Queue, admittedAtMs, minimumIntervalMs int64) error {
 	queueStore := store.GetQueueStore()
 
 	updated := *queueRow
 	updated.InFlightCount = queueRow.InFlightCount + 1
+	if minimumIntervalMs > 0 {
+		notBeforeMs := admittedAtMs + minimumIntervalMs
+		if notBeforeMs > updated.BuildAdmissionNotBeforeMs {
+			updated.BuildAdmissionNotBeforeMs = notBeforeMs
+		}
+	}
 	newVersion := queueRow.Version + 1
 	if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
 		if errors.Is(err, storage.ErrVersionMismatch) {
@@ -489,6 +502,28 @@ func (c *Controller) holdForBuildSlot(ctx context.Context, delivery consumer.Del
 		"queue", request.Queue,
 		"uri", request.URI,
 		"in_flight_count", inFlightCount,
+		"delay_ms", delayMs,
+	)
+	return nil
+}
+
+func (c *Controller) holdForBuildThrottle(ctx context.Context, delivery consumer.Delivery, request entity.Request, notBeforeMs, nowMs, gateWaitDelayMs int64) error {
+	if gateWaitDelayMs <= 0 {
+		metrics.NamedCounter(c.metricsScope, _opName, "config_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("requires a positive gate wait delay for queue %s, got %dms", request.Queue, gateWaitDelayMs)
+	}
+
+	delayMs := notBeforeMs - nowMs
+	if delayMs > gateWaitDelayMs {
+		delayMs = gateWaitDelayMs
+	}
+	delivery.Hold(delayMs)
+	metrics.NamedCounter(c.metricsScope, _opName, "admission_throttled", 1, metrics.TagsFromContext(ctx)...)
+	c.logger.Infow("holding latest head until build admission is eligible",
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"uri", request.URI,
+		"not_before_ms", notBeforeMs,
 		"delay_ms", delayMs,
 	)
 	return nil

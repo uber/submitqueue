@@ -26,4 +26,7 @@ type QueueConfig struct {
 	MaxConcurrent int32 `json:"max_concurrent" yaml:"max_concurrent"`
 	// GateWaitDelayMs is the redelivery delay while the latest head waits for a slot.
 	GateWaitDelayMs int64 `json:"gate_wait_delay_ms" yaml:"gate_wait_delay_ms"`
+	// MinimumBuildAdmissionIntervalMs is the minimum start-to-start spacing between logical
+	// build admissions for this queue. Non-positive values disable time-based throttling.
+	MinimumBuildAdmissionIntervalMs int64 `json:"minimum_build_admission_interval_ms" yaml:"minimum_build_admission_interval_ms"`
 }
