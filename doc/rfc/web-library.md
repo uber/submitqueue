@@ -8,6 +8,69 @@ The package resembles `submitqueue/client/`, while the host resembles service wi
 
 Phase one is read-only: request summary, history, and queue receipt list ([status/list](submitqueue/status-list-api.md), [history](submitqueue/history-api.md)). Mutations require a separate authorization and audit design.
 
+## URL reference
+
+The entry point lists the queues configured by the host, with each queue linking to its landing page. The queue is the top-level navigation context. Singular resource segments identify what the user is opening; the ID remains a value supplied by the gateway, not a string the UI interprets. The reference host currently serves only `demo-queue`, so its queue list initially has one entry.
+
+| Resource or view | Route | Example | Availability |
+|---|---|---|---|
+| Queue directory | `/` | `/` lists configured queues, including a link to `/demo-queue` | Reference host |
+| Queue landing and request list | `/<queue>` | `/demo-queue` | Reference host |
+| Request detail | `/<queue>/request/<request-id>` | `/demo-queue/request/10` | Reference host |
+| Request history tab | `/<queue>/request/<request-id>?view=history` | `/demo-queue/request/10?view=history` | Reference host |
+| Batch detail | `/<queue>/batch/<batch-id>` | `/demo-queue/batch/4` | Deferred; requires a batch read contract |
+| GitHub logical change | `/<queue>/change/github/<host>/<org>/<repo>/pull/<pr>` | `/demo-queue/change/github/github.com/uber/submitqueue/pull/123` | Demo receipt-window scan; unbounded lookup deferred |
+| Phabricator logical change | `/<queue>/change/phab/<host>/D<revision>` | `/demo-queue/change/phab/phabricator.example.com/D12345` | Demo receipt-window scan; unbounded lookup deferred |
+
+The queue directory replaces the automatic redirect to `demo-queue`. Queue discovery belongs to the host's configured queue registry; the directory does not infer queue names from requests or require a new gateway discovery API.
+
+The request and batch examples follow [scoped sequential resource IDs](scoped-resource-ids.md): `"10"` and `"4"` are stored string IDs, and the route supplies their queue and resource context. The UI passes each ID unchanged to the gateway. The mockups below retain earlier illustrative slash-containing IDs; those labels do not override the scoped-ID contract.
+
+Summary is the default request view. A `view=history` parameter makes the History tab shareable without adding a reserved suffix to the request ID. List bounds and pagination remain query state, for example `/demo-queue?from=1791208800000&to=1791295200000&page=<opaque-page-token>`; the host URL-escapes the token, and the bounds are epoch milliseconds for the fixed receipt window.
+
+### Readable change links
+
+Omit the SHA/diff ID for submissions across versions; include it for submissions of one exact version.
+
+```text
+/demo-queue/change/github/github.com/uber/submitqueue/pull/123
+/demo-queue/change/github/github.com/uber/submitqueue/pull/123/<full-sha>
+/demo-queue/change/phab/phabricator.example.com/D12345
+/demo-queue/change/phab/phabricator.example.com/D12345/67890
+```
+
+Exact-version URLs mirror the [change URI](change-uri.md): replace `<scheme>://` with `/<queue>/change/<scheme>/`, preserving the authority and encoded path. Do not insert `commit` or `diff` segments.
+
+The host resolves change identities; React components do not parse URIs. Exact-version pages use the gateway's exact-URI lookups. Across-version demo pages scan an explicit receipt window; unbounded lookup and git routes remain deferred.
+
+## Reference UX
+
+Design mockups with illustrative data; the implementation displays gateway change URIs rather than placeholder titles.
+
+### Queue landing page
+
+![Queue landing mockup showing a newest-first request table, status badges, displayed-page search, receipt window, and live refresh state.](image/web-library/queue-landing.jpg)
+
+Newest-first request table with displayed-page search, status, receipt times, and refresh controls.
+
+### Request summary
+
+![Request summary mockup showing an opaque request ID, current status, copy controls, Summary and History tabs, request facts, changes, and expandable metadata.](image/web-library/request-summary.jpg)
+
+Request identity and current status, with copy controls, changes, and expandable metadata.
+
+### Request history
+
+![Request history mockup showing timestamped lifecycle and build events, an event-type filter, and expanded build metadata.](image/web-library/event-history.jpg)
+
+Chronological lifecycle and build events with type filters, errors, and expandable metadata.
+
+### Change submission history
+
+![Change submission history mockup showing multiple SubmitQueue requests for GitHub PR 123 across two pinned versions, with receipt times, statuses, and a displayed-version filter.](image/web-library/change-submission-history.jpg)
+
+Submissions for a PR or revision, with version selection and separate status/history links for each request.
+
 ## Host/library boundary
 
 | Library | Host |
@@ -18,7 +81,7 @@ Phase one is read-only: request summary, history, and queue receipt list ([statu
 
 The host configures the queues it serves and selects each generated client with `(queue) => client`. It builds those clients with `@connectrpc/connect-node` `createGrpcTransport` over HTTP/2: TLS by default, plaintext h2c only as an explicit local option. It installs the library's tracing interceptor while constructing the transport. The gateway stays reachable only by trusted hosts.
 
-Components render serializable props and do not fetch. Sessions, gateway clients, and protobuf messages stay on the server. Server helpers call `connection()` before gateway I/O, host routes that call them are dynamically rendered, and neither side caches gateway results.
+Components render serializable props and do not fetch. Sessions, gateway clients, and protobuf messages stay on the server. The library does not depend on Next.js: host routes call `connection()` before gateway I/O, render dynamically, and do not cache gateway results. The host supplies a refresh callback that completes only when its framework has finished refreshing the view.
 
 `WebPaths` selects queue-scoped internal links. A queue landing page and request list live at `/<queue>` and a detail page at `/<queue>/request/<full-request-id>`. The `request` segment leaves room for other queue-scoped resources while the full request ID remains human-readable and opaque to the UI; the host's catch-all route only reassembles its URL path segments before passing it unchanged to the gateway. Phase one renders change URIs and build metadata as text; trusted external-link mapping and typed build URLs are deferred.
 
@@ -37,7 +100,7 @@ web/
 └── service/submitqueue/    # reference host
 ```
 
-Generated TypeScript is committed beside the Go stubs. Gateway stubs and the base protos they import share one package, so the imports stay valid after publish. The library ships ESM at the root, `./server`, and `./testing`. The root preserves `'use client'` and reaches no `server-only` or Node-only code. React, Next, Connect, and Protobuf-ES are peers. Shared UI waits until a second domain needs it.
+Generated TypeScript is committed beside the Go stubs. Gateway stubs and the base protos they import share one package, so the imports stay valid after publish. The library ships ESM at the root, `./server`, and `./testing`. The root preserves `'use client'` and reaches no `server-only` or Node-only code. React, Connect, and Protobuf-ES are peers; Next.js is a dependency of the reference host only. Shared UI waits until a second domain needs it.
 
 ## Shipped compatibility contracts
 
