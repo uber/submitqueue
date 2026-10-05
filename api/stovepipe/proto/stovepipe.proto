@@ -171,10 +171,8 @@ message RequestSummary {
     string request_state = 5;
     // Unix millisecond timestamp of the represented state entry.
     int64 state_updated_at_ms = 6;
-    oneof acceptance_time {
-        // Immutable original accepted-log timestamp in Unix milliseconds; absent if unknown.
-        int64 accepted_at_ms = 7;
-    }
+    // Original retained accepted-log timestamp in Unix milliseconds; positive when known, zero if unknown.
+    int64 accepted_at_ms = 7;
     // Stable reason for the represented state. Empty when unavailable or inapplicable.
     string outcome_reason = 8;
 }
@@ -200,7 +198,7 @@ message ListRequest {
 // ListResponse contains a page in acceptance-time order, not a snapshot across pages.
 message ListResponse {
     // Current summaries ordered by acceptance time descending, then bytewise request ID descending.
-    // Requests with unknown acceptance time are excluded.
+    // Requests with accepted_at_ms = 0 (unknown) are excluded.
     repeated RequestSummary requests = 1;
     // Opaque continuation token; empty when no further row was observed.
     string next_page_token = 2;

@@ -22,7 +22,7 @@ Continuations repeat the same queue. Time bounds may be omitted or must match th
 
 ## Ordering and Time Defaults
 
-Order is descending `(accepted_at_ms, request_id)`, with bytewise descending request IDs only to break timestamp ties. Only requests with known acceptance times are included; numeric request-ID ordering is not offered.
+Order is descending `(accepted_at_ms, request_id)`, with bytewise descending request IDs only to break timestamp ties. Only requests with `accepted_at_ms > 0` are included; `0` means unknown. Numeric request-ID ordering is not offered.
 
 All timestamps are Unix milliseconds. Time selection is `lower <= accepted_at_ms < upper`. Omitted lower defaults to `0`; omitted upper defaults to server `now`, sampled once on the first page and retained in the token. Require `0 <= lower < upper`; explicit future bounds are allowed. There is no mandatory window, implicit 24-hour cutoff, or maximum window width.
 
@@ -40,7 +40,7 @@ This is the wire representation of the existing domain `RequestSummary`, not ano
 | `base_uri` | string | Selected baseline; empty before selection or for a full build. |
 | `request_state` | string | Current lifecycle state: `accepted`, `processing`, `superseded`, `succeeded`, `failed`, or `cancelled`. |
 | `state_updated_at_ms` | int64 | Timestamp of the represented state entry. |
-| `accepted_at_ms` | optional int64 | Immutable timestamp of the original retained accepted entry. |
+| `accepted_at_ms` | int64 | Timestamp of the original retained accepted entry; `0` means unknown, otherwise positive and immutable. |
 | `outcome_reason` | string | Reason for the represented state; empty when unavailable or inapplicable. |
 
 The domain already defines a typed [RequestState](../../../stovepipe/entity/request.go). The wire field remains a string to match existing status/history APIs. States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
@@ -49,12 +49,12 @@ The domain already defines a typed [RequestState](../../../stovepipe/entity/requ
 
 The first six fields already exist in [RequestSummary](../../../stovepipe/entity/request_summary.go). Acceptance time and outcome reason already exist in retained logs but must be added to the summary. Acceptance time is acceptance-log time, not first RPC receipt time. No new producer signal or per-queue counter is needed.
 
-Listing uses an immutable mapping keyed by `(queue, accepted_at_ms, request_id)`, then point-reads the corresponding summaries. This adds one small record per request and bounded extra reads, not another mutable status projection. Existing summary keys and public request IDs remain unchanged; no numeric-key migration is needed.
+Listing uses an immutable mapping keyed by `(queue, accepted_at_ms, request_id)` for known positive acceptance times, then point-reads the corresponding summaries. This adds one small record per request and bounded extra reads, not another mutable status projection. Existing summary keys and public request IDs remain unchanged; no numeric-key migration is needed.
 
 The mapping follows the repository's [storage contract](../../../submitqueue/extension/storage/README.md#key-value-contract): a needed alternate lookup is an explicit primary-key mapping, not a SQL secondary-index requirement. Maintain it idempotently after summary persistence and before dependent publication, using existing retries rather than cross-entity transactions.
 
 ## Coverage and Scope
 
-Older requests without a known acceptance time or time mapping do not appear in List until repaired or backfilled. Compatible writers materialize both for newly accepted requests. Automatic historical backfill is not part of this proposal; incomplete older-history coverage is an accepted limitation.
+Older requests with `accepted_at_ms = 0` or without a time mapping do not appear in List until repaired or backfilled. Compatible writers materialize both for newly accepted requests. Automatic historical backfill is not part of this proposal; incomplete older-history coverage is an accepted limitation.
 
 V1 has no fixed retention duration or automatic pruning. State/verdict filters, recently-updated order, totals, scheduler position, and snapshot exports are deferred. Validation details and histories remain separate APIs.

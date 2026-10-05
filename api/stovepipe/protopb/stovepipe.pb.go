@@ -947,10 +947,8 @@ type RequestSummary struct {
 	RequestState string `protobuf:"bytes,5,opt,name=request_state,json=requestState,proto3" json:"request_state,omitempty"`
 	// Unix millisecond timestamp of the represented state entry.
 	StateUpdatedAtMs int64 `protobuf:"varint,6,opt,name=state_updated_at_ms,json=stateUpdatedAtMs,proto3" json:"state_updated_at_ms,omitempty"`
-	// Types that are valid to be assigned to AcceptanceTime:
-	//
-	//	*RequestSummary_AcceptedAtMs
-	AcceptanceTime isRequestSummary_AcceptanceTime `protobuf_oneof:"acceptance_time"`
+	// Original retained accepted-log timestamp in Unix milliseconds; positive when known, zero if unknown.
+	AcceptedAtMs int64 `protobuf:"varint,7,opt,name=accepted_at_ms,json=acceptedAtMs,proto3" json:"accepted_at_ms,omitempty"`
 	// Stable reason for the represented state. Empty when unavailable or inapplicable.
 	OutcomeReason string `protobuf:"bytes,8,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1029,18 +1027,9 @@ func (x *RequestSummary) GetStateUpdatedAtMs() int64 {
 	return 0
 }
 
-func (x *RequestSummary) GetAcceptanceTime() isRequestSummary_AcceptanceTime {
-	if x != nil {
-		return x.AcceptanceTime
-	}
-	return nil
-}
-
 func (x *RequestSummary) GetAcceptedAtMs() int64 {
 	if x != nil {
-		if x, ok := x.AcceptanceTime.(*RequestSummary_AcceptedAtMs); ok {
-			return x.AcceptedAtMs
-		}
+		return x.AcceptedAtMs
 	}
 	return 0
 }
@@ -1051,17 +1040,6 @@ func (x *RequestSummary) GetOutcomeReason() string {
 	}
 	return ""
 }
-
-type isRequestSummary_AcceptanceTime interface {
-	isRequestSummary_AcceptanceTime()
-}
-
-type RequestSummary_AcceptedAtMs struct {
-	// Immutable original accepted-log timestamp in Unix milliseconds; absent if unknown.
-	AcceptedAtMs int64 `protobuf:"varint,7,opt,name=accepted_at_ms,json=acceptedAtMs,proto3,oneof"`
-}
-
-func (*RequestSummary_AcceptedAtMs) isRequestSummary_AcceptanceTime() {}
 
 // ListRequest selects a page of retained request summaries for one queue.
 type ListRequest struct {
@@ -1193,7 +1171,7 @@ func (*ListRequest_AcceptedBeforeMs) isListRequest_AcceptedUpperBound() {}
 type ListResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Current summaries ordered by acceptance time descending, then bytewise request ID descending.
-	// Requests with unknown acceptance time are excluded.
+	// Requests with accepted_at_ms = 0 (unknown) are excluded.
 	Requests []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
 	// Opaque continuation token; empty when no further row was observed.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
@@ -1328,7 +1306,7 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x18project_results_complete\x18\a \x01(\bR\x16projectResultsComplete\x12I\n" +
 	"\bprojects\x18\b \x03(\v2-.uber.submitqueue.stovepipe.ProjectValidationR\bprojects\x12&\n" +
 	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageTokenB\x13\n" +
-	"\x11repository_result\"\xb5\x02\n" +
+	"\x11repository_result\"\xa0\x02\n" +
 	"\x0eRequestSummary\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
@@ -1337,10 +1315,9 @@ const file_stovepipe_proto_rawDesc = "" +
 	"change_uri\x18\x03 \x01(\tR\tchangeUri\x12\x19\n" +
 	"\bbase_uri\x18\x04 \x01(\tR\abaseUri\x12#\n" +
 	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12-\n" +
-	"\x13state_updated_at_ms\x18\x06 \x01(\x03R\x10stateUpdatedAtMs\x12&\n" +
-	"\x0eaccepted_at_ms\x18\a \x01(\x03H\x00R\facceptedAtMs\x12%\n" +
-	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReasonB\x11\n" +
-	"\x0facceptance_time\"\xf7\x01\n" +
+	"\x13state_updated_at_ms\x18\x06 \x01(\x03R\x10stateUpdatedAtMs\x12$\n" +
+	"\x0eaccepted_at_ms\x18\a \x01(\x03R\facceptedAtMs\x12%\n" +
+	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReason\"\xf7\x01\n" +
 	"\vListRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x126\n" +
 	"\x17accepted_at_or_after_ms\x18\x02 \x01(\x03H\x00R\x13acceptedAtOrAfterMs\x12.\n" +
@@ -1434,9 +1411,6 @@ func file_stovepipe_proto_init() {
 	}
 	file_stovepipe_proto_msgTypes[12].OneofWrappers = []any{
 		(*GetProjectStatusByURIResponse_RepositoryBreakageDegree)(nil),
-	}
-	file_stovepipe_proto_msgTypes[13].OneofWrappers = []any{
-		(*RequestSummary_AcceptedAtMs)(nil),
 	}
 	file_stovepipe_proto_msgTypes[14].OneofWrappers = []any{
 		(*ListRequest_AcceptedAtOrAfterMs)(nil),
