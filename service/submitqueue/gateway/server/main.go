@@ -64,6 +64,7 @@ type GatewayServer struct {
 	cancelController         controller.CancelController
 	requestSummaryController controller.RequestSummaryController
 	listController           controller.ListController
+	listQueuesController     controller.ListQueuesController
 	requestHistoryController controller.RequestHistoryController
 }
 
@@ -120,6 +121,14 @@ func (s *GatewayServer) List(ctx context.Context, req *pb.ListRequest) (*pb.List
 		return nil, err
 	}
 	return mapper.ListResultToProto(result), nil
+}
+
+func (s *GatewayServer) ListQueues(ctx context.Context, _ *pb.ListQueuesRequest) (*pb.ListQueuesResponse, error) {
+	queues, err := s.listQueuesController.ListQueues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.ListQueuesResponse{Queues: mapper.QueuesToProto(queues)}, nil
 }
 
 // GetRequestHistoryByID maps the wire request to an entity, delegates to the controller, and maps the result back to the wire response.
@@ -354,6 +363,7 @@ func run() error {
 	cancelController := controller.NewCancelController(logger.Sugar(), scope, storageFty, materializer, registry)
 	requestSummaryController := controller.NewRequestSummaryController(logger.Sugar(), scope, storageFty)
 	listController := controller.NewListController(logger.Sugar(), scope, storageFty, queueConfigs)
+	listQueuesController := controller.NewListQueuesController(logger.Sugar(), scope, queueConfigs)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	gatewayServer := &GatewayServer{
 		pingController:           pingController,
@@ -361,6 +371,7 @@ func run() error {
 		cancelController:         cancelController,
 		requestSummaryController: requestSummaryController,
 		listController:           listController,
+		listQueuesController:     listQueuesController,
 		requestHistoryController: requestHistoryController,
 	}
 

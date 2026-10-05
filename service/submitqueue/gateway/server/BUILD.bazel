@@ -76,10 +76,16 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":gateway_lib"],  # keep
     deps = [
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/queueconfig/mock:go_default_library",
         "//submitqueue/gateway/controller:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )

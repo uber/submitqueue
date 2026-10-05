@@ -24,7 +24,65 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestClientListQueues(t *testing.T) {
+	tests := []struct {
+		name   string
+		queues []*pb.Queue
+		err    error
+		want   []string
+	}{
+		{
+			name:   "configured queues",
+			queues: []*pb.Queue{{Name: "demo"}, {Name: "main"}},
+			want:   []string{"demo", "main"},
+		},
+		{
+			name: "no configured queues",
+			want: []string{},
+		},
+		{
+			name: "gateway failure",
+			err:  status.Error(codes.Unavailable, "queue config unavailable"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sq, stop := dial(t, &queueListingGateway{queues: tt.queues, err: tt.err})
+			defer stop()
+
+			queues, err := sq.ListQueues(context.Background())
+			if tt.err != nil {
+				require.Error(t, err)
+				assert.Equal(t, status.Code(tt.err), status.Code(err))
+				assert.Nil(t, queues)
+				return
+			}
+			require.NoError(t, err)
+			names := make([]string, 0, len(queues))
+			for _, queue := range queues {
+				names = append(names, queue.GetName())
+			}
+			assert.Equal(t, tt.want, names)
+		})
+	}
+}
+
+type queueListingGateway struct {
+	pb.UnimplementedSubmitQueueGatewayServer
+	queues []*pb.Queue
+	err    error
+}
+
+func (g *queueListingGateway) ListQueues(context.Context, *pb.ListQueuesRequest) (*pb.ListQueuesResponse, error) {
+	if g.err != nil {
+		return nil, g.err
+	}
+	return &pb.ListQueuesResponse{Queues: g.queues}, nil
+}
 
 func TestListRequiresAQueue(t *testing.T) {
 	sq, stop := dial(t, &pagingGateway{})

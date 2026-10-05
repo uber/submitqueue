@@ -35,6 +35,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SubmitQueueGateway_Ping_FullMethodName                         = "/uber.submitqueue.gateway.SubmitQueueGateway/Ping"
+	SubmitQueueGateway_ListQueues_FullMethodName                   = "/uber.submitqueue.gateway.SubmitQueueGateway/ListQueues"
 	SubmitQueueGateway_Land_FullMethodName                         = "/uber.submitqueue.gateway.SubmitQueueGateway/Land"
 	SubmitQueueGateway_Cancel_FullMethodName                       = "/uber.submitqueue.gateway.SubmitQueueGateway/Cancel"
 	SubmitQueueGateway_GetRequestSummaryByID_FullMethodName        = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByID"
@@ -52,6 +53,8 @@ const (
 type SubmitQueueGatewayClient interface {
 	// Ping returns a response indicating the service is alive
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// ListQueues returns all configured submit queues ordered by name ascending.
+	ListQueues(ctx context.Context, in *ListQueuesRequest, opts ...grpc.CallOption) (*ListQueuesResponse, error)
 	// Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
 	// The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
 	Land(ctx context.Context, in *LandRequest, opts ...grpc.CallOption) (*LandResponse, error)
@@ -91,6 +94,16 @@ func (c *submitQueueGatewayClient) Ping(ctx context.Context, in *PingRequest, op
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
 	err := c.cc.Invoke(ctx, SubmitQueueGateway_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *submitQueueGatewayClient) ListQueues(ctx context.Context, in *ListQueuesRequest, opts ...grpc.CallOption) (*ListQueuesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListQueuesResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_ListQueues_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +188,8 @@ func (c *submitQueueGatewayClient) GetRequestHistoryByChangeURI(ctx context.Cont
 type SubmitQueueGatewayServer interface {
 	// Ping returns a response indicating the service is alive
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// ListQueues returns all configured submit queues ordered by name ascending.
+	ListQueues(context.Context, *ListQueuesRequest) (*ListQueuesResponse, error)
 	// Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
 	// The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
 	Land(context.Context, *LandRequest) (*LandResponse, error)
@@ -212,6 +227,9 @@ type UnimplementedSubmitQueueGatewayServer struct{}
 
 func (UnimplementedSubmitQueueGatewayServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) ListQueues(context.Context, *ListQueuesRequest) (*ListQueuesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListQueues not implemented")
 }
 func (UnimplementedSubmitQueueGatewayServer) Land(context.Context, *LandRequest) (*LandResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Land not implemented")
@@ -269,6 +287,24 @@ func _SubmitQueueGateway_Ping_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SubmitQueueGatewayServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SubmitQueueGateway_ListQueues_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListQueuesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).ListQueues(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_ListQueues_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).ListQueues(ctx, req.(*ListQueuesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -409,6 +445,10 @@ var SubmitQueueGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _SubmitQueueGateway_Ping_Handler,
+		},
+		{
+			MethodName: "ListQueues",
+			Handler:    _SubmitQueueGateway_ListQueues_Handler,
 		},
 		{
 			MethodName: "Land",
