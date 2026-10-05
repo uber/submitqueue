@@ -33,7 +33,9 @@ import (
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
 	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
+	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
@@ -231,14 +233,7 @@ func run() error {
 		deps,
 		orchestrator.Stages,
 		pipeline.PublishOnly(orchestrator.PublishOnlyTopics...),
-		pipeline.Classifiers(
-			genericerrs.Classifier,
-			// Storage (submitqueue/orchestrator/extension/storage/mysql) and queue
-			// (platform/extension/messagequeue/mysql) both run on the same
-			// MySQL driver, so a single classifier covers errors surfaced
-			// from either backend.
-			mysqlerrs.Classifier,
-		),
+		pipeline.Classifiers(primaryErrorClassifiers()...),
 		pipeline.Gate(newConsumerGate(logger)),
 	)
 	if err != nil {
@@ -430,6 +425,15 @@ func defaultProfilesConfig() profilesConfig {
 		panic(fmt.Sprintf("built-in profiles are invalid: %v", err))
 	}
 	return cfg
+}
+
+func primaryErrorClassifiers() []errs.Classifier {
+	return []errs.Classifier{
+		genericerrs.Classifier,
+		// HTTP must precede MySQL's broad net.Error match to retain dependency attribution.
+		httperrs.Classifier,
+		mysqlerrs.Classifier,
+	}
 }
 
 // getEnv returns environment variable value or default if not set.

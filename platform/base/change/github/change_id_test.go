@@ -134,6 +134,31 @@ func TestParseChangeID(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "zero PR number",
+			raw:     "github://github.example.com/uber/submitqueue/pull/0/" + shaAFull,
+			wantErr: true,
+		},
+		{
+			name:    "negative PR number",
+			raw:     "github://github.example.com/uber/submitqueue/pull/-3/" + shaAFull,
+			wantErr: true,
+		},
+		{
+			name:    "plus-signed PR number",
+			raw:     "github://github.example.com/uber/submitqueue/pull/+5/" + shaAFull,
+			wantErr: true,
+		},
+		{
+			name:    "leading-zero PR number",
+			raw:     "github://github.example.com/uber/submitqueue/pull/007/" + shaAFull,
+			wantErr: true,
+		},
+		{
+			name:    "empty interior org segment",
+			raw:     "github://github.example.com/uber//frontend/webapp/pull/42/" + shaAFull,
+			wantErr: true,
+		},
+		{
 			name:    "empty SHA",
 			raw:     "github://github.example.com/uber/submitqueue/pull/123/",
 			wantErr: true,
