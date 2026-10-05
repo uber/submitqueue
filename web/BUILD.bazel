@@ -1,0 +1,34 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages(name = "node_modules")
+
+test_suite(
+    name = "check",
+    tests = [
+        "//web/api:generate_tests",
+        "//web/api:test",
+    ],
+)
+
+js_library(
+    name = "vitest_config",
+    srcs = ["vitest.config.ts"],
+    deps = [":node_modules/vitest"],
+)
+
+exports_files([
+    "buf.gen.yaml",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "vitest.config.ts",
+])
+
+ts_config(
+    name = "tsconfig_base",
+    src = "tsconfig.base.json",
+)

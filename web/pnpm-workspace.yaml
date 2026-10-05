@@ -1,0 +1,10 @@
+packages:
+  - api
+  - submitqueue
+  - service/*
+
+hoist: false
+
+onlyBuiltDependencies:
+  - '@bufbuild/buf'
+  - esbuild

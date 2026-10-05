@@ -1,0 +1,32 @@
+{
+  "name": "@submitqueue/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./base/change": {
+      "types": "./dist/api/base/change/proto/change_pb.d.ts",
+      "import": "./dist/api/base/change/proto/change_pb.js"
+    },
+    "./base/mergestrategy": {
+      "types": "./dist/api/base/mergestrategy/proto/mergestrategy_pb.d.ts",
+      "import": "./dist/api/base/mergestrategy/proto/mergestrategy_pb.js"
+    },
+    "./submitqueue/gateway": {
+      "types": "./dist/api/submitqueue/gateway/proto/gateway_pb.d.ts",
+      "import": "./dist/api/submitqueue/gateway/proto/gateway_pb.js"
+    }
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc --project tsconfig.build.json",
+    "lint": "tsc --project tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.15.0"
+  }
+}

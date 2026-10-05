@@ -23,3 +23,11 @@ bin/
 
 # Make completion cache
 .make_targets_cache
+/web/node_modules/
+/web/**/node_modules/
+/web/**/dist/
+/web/**/.next/
+/web/**/coverage/
+/web/**/playwright-report/
+/web/**/test-results/
+/web/**/*.tsbuildinfo

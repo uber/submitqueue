@@ -1,0 +1,10 @@
+.git
+bazel-*
+bin
+web/**/.next
+web/**/coverage
+web/**/dist
+web/**/node_modules
+web/**/playwright-report
+web/**/test-results
+web/**/*.tsbuildinfo

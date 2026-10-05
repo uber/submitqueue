@@ -1,0 +1,89 @@
+load("@aspect_rules_js//npm:defs.bzl", "npm_package")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//web:@bufbuild/buf/package_json.bzl", buf = "bin")
+load("@npm//web:@bufbuild/protoc-gen-es/package_json.bzl", protoc_gen_es = "bin")
+load("@npm//web:vitest/package_json.bzl", vitest = "bin")
+load("//web/tool:generate_api.bzl", "generate_web_api")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages(name = "node_modules")
+
+buf.buf_binary(name = "buf")
+
+protoc_gen_es.protoc_gen_es_binary(name = "protoc_gen_es")
+
+generate_web_api(
+    name = "generated",
+    buf = ":buf",
+    protoc_gen_es = ":protoc_gen_es",
+    srcs = [
+        "//api/base/change/proto:change.proto",
+        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/submitqueue/gateway/proto:gateway.proto",
+    ],
+)
+
+write_source_files(
+    name = "generate",
+    diff_test_failure_message = "Generated web API is stale. Run bazel run //web/api:generate.",
+    files = {"src/gen": ":generated"},
+)
+
+filegroup(
+    name = "generated_srcs",
+    srcs = glob(["src/gen/**/*.ts"]),
+)
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = ["//web:tsconfig_base"],
+)
+
+ts_config(
+    name = "tsconfig_build",
+    src = "tsconfig.build.json",
+    deps = [":tsconfig"],
+)
+
+ts_project(
+    name = "lib",
+    srcs = [":generated_srcs"],
+    declaration = True,
+    no_emit = False,
+    out_dir = "dist",
+    root_dir = "src/gen",
+    source_map = True,
+    transpiler = "tsc",
+    tsconfig = ":tsconfig_build",
+    deps = [":node_modules/@bufbuild/protobuf"],
+)
+
+npm_package(
+    name = "pkg",
+    package = "@submitqueue/api",
+    packable = True,
+    srcs = [
+        ":lib",
+        ":lib_types",
+        "README.md",
+        "package.json",
+    ],
+    version = "0.1.0",
+)
+
+vitest.vitest_test(
+    name = "test",
+    args = ["run"],
+    chdir = package_name(),
+    data = [
+        ":generated_srcs",
+        ":node_modules",
+        "//web:vitest_config",
+        "//web:node_modules/vitest",
+        "src/api.test.ts",
+    ],
+)
