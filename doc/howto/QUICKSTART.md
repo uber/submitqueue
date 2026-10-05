@@ -6,7 +6,7 @@ The stack always runs the same way. What changes is where the changes come from 
 
 | `PROVIDER` | A change is | Read from | Building it | Landing it | Needs |
 |---|---|---|---|---|---|
-| **`fake`** (default) | a URI, and nothing else | the URI itself | instant fake pass | reports success without touching a repository | nothing |
+| **`fake`** (default) | a URI, and nothing else | deterministic synthetic files | instant fake pass | reports success without touching a repository | nothing |
 | **`git`** | a branch in a bare repository on disk | the repository | instant fake pass | a real fetch, cherry-pick and push | nothing |
 | **`github`** | a real pull request | GitHub's API | a real GitHub Actions run per batch | a real push to a real repository | a repository, a token, and CI minutes |
 
@@ -14,7 +14,7 @@ They are a ladder, not alternatives: the same commands work on each rung, so you
 
 The queue's own logic is real on every rung; what changes is how much of the world around it is. The one thing to keep in mind before reading a `landed` as more than it is: on `fake` and `git` **the build is faked**, so it means the pipeline ran, not that anything was tested.
 
-"Read from" is what the queue knows about a change — which files it touches, how large it is — and it is what conflict analysis and scoring are computed from. Only `fake` invents it: a change there is a URI pointing at nothing, so `make demo-requests` states the paths on the URI itself (`sq-files=`) and the fake reads them back, which means a change submitted by hand on that rung conflicts with nothing. On `git` the orchestrator keeps its own copy of the repository and reads the commits, so a change pushed by anyone is described correctly.
+"Read from" is what the queue knows about a change — which files it touches, how large it is — and it is what conflict analysis and scoring are computed from. Only `fake` invents it: the provider generates pseudo-random files from each clean change URI, using a small directory pool so some changes overlap. The same URI always resolves to the same files, including across processes and retries; no file hints or shared fixtures are needed. `FOLDERS` and `FILES` control the git/github generators, not this synthetic metadata. On `git` the orchestrator keeps its own copy of the repository and reads the commits, so a change pushed by anyone is described correctly.
 
 ## Start the stack
 
@@ -43,7 +43,7 @@ make demo-requests
 `demo-requests` creates changes, enqueues each the moment it exists, and watches them all until they settle:
 
 ```
-Creating 3 change(s) across 8 folder(s) via fake changes (no repository) — independent, 5 at a time, each enqueued as soon as it is created
+Creating 3 synthetic change(s) via fake changes (no repository) — independent, 5 at a time, each enqueued as soon as it is created
 
   REQUEST       CHANGES             ELAPSED  STAGE
   ────────────  ──────────────────  ───────  ─────────────────────────────────────────────
@@ -58,9 +58,9 @@ Each row shows the states its request passed through, not just the one it is in,
 
 ```bash
 make demo-requests COUNT=8              # more traffic
-make demo-requests FOLDERS=1            # every change in one folder: all of them conflict
-make demo-requests FOLDERS=50           # a folder each: none of them conflict
-make demo-requests FILES=8              # wider changes, more files each
+make demo-requests FOLDERS=1            # git/github: every change in one folder
+make demo-requests FOLDERS=50           # git/github: spread changes across more folders
+make demo-requests FILES=8              # git/github: wider changes, more files each
 make demo-requests CONCURRENCY=1        # create them one at a time
 make demo-requests STACKED=true         # one stack, enqueued as a single request
 make demo-requests LAND=false           # create only, print the command to enqueue them
@@ -68,11 +68,11 @@ make demo-requests LAND=false           # create only, print the command to enqu
 
 Independent changes are created **five at a time** by default (`CONCURRENCY`), because creating them serially is most of what a large run spends its time on and it delays the overlap the demo exists to show. A stack ignores the setting: each of its changes is based on the branch before it, so the next cannot be cut until the previous head exists.
 
-A change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit change — closer to a real one, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run.
+On git/github, a change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit change — closer to a real one, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run.
 
-Every change writes all of its files into one folder under `demo/`, and `FOLDERS` decides how many folders there are to land in — by default a number between five and ten, picked per run. That is what makes a run interesting rather than uniform, because `demo-queue` uses the `pathoverlap` analyzer keyed on the directory: two changes landing in the same folder are batched in order and the second speculates on the first, while changes in different folders go out beside each other. A run prints the number it picked, and repeating a run tag reproduces the same collisions.
+On git/github, every change writes all of its files into one folder under `demo/`, and `FOLDERS` decides how many folders there are to land in — by default a number between five and ten, picked per run. That is what makes a run interesting rather than uniform, because `demo-queue` uses the `pathoverlap` analyzer keyed on the directory: two changes landing in the same folder are batched in order and the second speculates on the first, while changes in different folders go out beside each other. A run prints the number it picked, and repeating a run tag reproduces the same collisions.
 
-Set it deliberately when you want a run to show one thing. `FOLDERS=1` puts every change in the same place, so the queue serializes the lot and each change speculates on the one before it. A number well above `COUNT` keeps them all apart, so they go out together.
+In those modes, set it deliberately when you want a run to show one thing. `FOLDERS=1` puts every change in the same place, so the queue serializes the lot and each change speculates on the one before it. A number well above `COUNT` keeps them all apart, so they go out together.
 
 How much speculation that turns into is capped by the queue's **build budget** — how many builds it may have occupying CI at once, counted across every in-flight batch rather than per batch. It defaults to 4 and is set per queue in the provider's `profiles.yaml`. The demo also sets **evidence scorer factors** there so speculation ranking revises the base price when a path passes or fails or a batch is merging or cancelling; omitting `factors` leaves every factor at `1`, which is a no-op and ranks on the nested base alone.
 
@@ -375,7 +375,7 @@ That request walks the same path as far as `speculating`, records `building`, an
 
 A hand-written URI like the one above belongs to the `fake` rung alone. On `git` it names a commit the merger cannot fetch, and on `github` the change provider tries to resolve it as a pull request — both fail, but for reasons that have nothing to do with the marker.
 
-Submit a good change into the **same folder** as a failing one and you can watch what makes a queue worth having: the two are batched in order, and the second speculates on the first landing. When the first fails, that guess is contradicted, the second re-plans, and it lands anyway.
+Submit a good change whose synthetic directory overlaps a failing one and you can watch what makes a queue worth having: the two are batched in order, and the second speculates on the first landing. When the first fails, that guess is contradicted, the second re-plans, and it lands anyway.
 
 ## Clean up
 

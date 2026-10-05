@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "go_default_test",
     srcs = [
+        "fake_demo_test.go",
         "git_suite_test.go",
         "harness_test.go",
         "suite_test.go",
@@ -14,6 +15,7 @@ go_test(
         "//service/submitqueue:docker-compose.git.yml",
         "//service/submitqueue:docker-compose.yml",
         "//service/submitqueue/demo/provider/git:config",
+        "//service/submitqueue/demo/requests",
         "//service/submitqueue/gateway/server:docker_test_context",
         "//service/submitqueue/orchestrator/server:docker_test_context",
         "//submitqueue/extension/storage:schema",
@@ -39,6 +41,7 @@ go_test(
         "//api/runway/messagequeue:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
+        "//platform/base/change:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/extension/consumergate:go_default_library",
@@ -49,6 +52,8 @@ go_test(
         "//submitqueue/core/messagequeue:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/changeprovider:go_default_library",
+        "//submitqueue/extension/changeprovider/fake:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/orchestrator/core/batch:go_default_library",
         "//submitqueue/orchestrator/extension/storage/mysql:go_default_library",

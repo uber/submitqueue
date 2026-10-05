@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gitchange "github.com/uber/submitqueue/platform/base/change/git"
-	"github.com/uber/submitqueue/platform/fakemarker"
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 )
@@ -44,38 +43,6 @@ func quietSpec(branch, parentBranch, parentSHA string, files ...changeFile) chan
 	}
 }
 
-func TestWithFiles_NamesOnePathPerDirectory(t *testing.T) {
-	uri := withFiles("git://git.example.com/r/x/y", []changeFile{
-		{path: "demo/alpha/one.txt"},
-		{path: "demo/alpha/two.txt"},
-		{path: "demo/beta/three.txt"},
-	})
-
-	assert.Equal(t, []string{"demo/alpha/one.txt", "demo/beta/three.txt"}, fakemarker.Files([]string{uri}),
-		"a second file in a directory already named adds no key the analyzer does not have")
-}
-
-// The gateway rejects a change URI over 255 bytes, so a change touching many
-// directories must lose paths rather than produce a request that cannot be
-// submitted at all.
-func TestWithFiles_StaysWithinTheURIBudget(t *testing.T) {
-	base := "git://git.example.com/sandbox/refs%2Fheads%2Fdemo%2F0814-154238%2F1/" + strings.Repeat("a", 40)
-	files := make([]changeFile, 0, 20)
-	for i := range 20 {
-		files = append(files, changeFile{path: fmt.Sprintf("demo/area-%02d/0814-154238-1-%d.txt", i, i)})
-	}
-
-	uri := withFiles(base, files)
-	assert.LessOrEqual(t, len(uri), maxChangeURIBytes)
-	assert.NotEmpty(t, fakemarker.Files([]string{uri}), "some paths must still be reported")
-}
-
-func TestWithFiles_LeavesTheURIAloneWithNoFiles(t *testing.T) {
-	assert.Equal(t, "git://git.example.com/r/x/y", withFiles("git://git.example.com/r/x/y", nil))
-}
-
-// Every URI a run submits has to survive the gateway's validation, marker and
-// all — which is what the first attempt at this got wrong.
 func TestSources_ProduceSubmittableURIs(t *testing.T) {
 	files := make([]changeFile, 0, 8)
 	for k := 1; k <= 8; k++ {
@@ -85,7 +52,8 @@ func TestSources_ProduceSubmittableURIs(t *testing.T) {
 
 	opened, err := fakeSource{}.open(context.Background(), spec)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(opened.uri), maxChangeURIBytes)
+	assert.NotContains(t, opened.uri, "?")
+	assert.LessOrEqual(t, len(opened.uri), 255)
 	_, err = gitchange.ParseChangeID(opened.uri)
 	assert.NoError(t, err)
 }

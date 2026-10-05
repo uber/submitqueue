@@ -16,6 +16,8 @@ package fake
 
 import (
 	"context"
+	"fmt"
+	"path"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,32 +71,44 @@ func TestProvider_Get_ErrorMarker(t *testing.T) {
 	require.Error(t, err)
 }
 
-// Without this the path-keyed conflict analyzers see a change that touches
-// nothing, and a batch that touches nothing conflicts with nothing — so a queue
-// configured to serialize on overlap silently runs everything in parallel.
-func TestProvider_Get_ReportsFilesFromTheURI(t *testing.T) {
-	p := New(testCfg)
-
-	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"git://git.example.com/sandbox/refs%2Fheads%2Fa/abc?sq-files=demo/alpha/one.txt,demo/alpha/two.txt"},
-	}})
+func TestProvider_Get_SyntheticFilesAreStable(t *testing.T) {
+	ctx := context.Background()
+	request := entity.Request{Change: change.Change{URIs: []string{
+		"git://demo.example.com/demo/refs%2Fheads%2Fa/abc",
+		"git://demo.example.com/demo/refs%2Fheads%2Fb/def",
+	}}}
+	first, err := New(testCfg).Get(ctx, request)
 	require.NoError(t, err)
-	require.Len(t, infos, 1)
-
-	paths := make([]string, 0, len(infos[0].Details.ChangedFiles))
-	for _, f := range infos[0].Details.ChangedFiles {
-		paths = append(paths, f.Path)
+	for _, info := range first {
+		require.NotEmpty(t, info.Details.ChangedFiles)
+		for _, file := range info.Details.ChangedFiles {
+			assert.NotEmpty(t, file.Path)
+			assert.Positive(t, file.LinesAdded)
+		}
 	}
-	assert.Equal(t, []string{"demo/alpha/one.txt", "demo/alpha/two.txt"}, paths)
+	for range 2 {
+		again, err := New(testCfg).Get(ctx, request)
+		require.NoError(t, err)
+		assert.Equal(t, first, again)
+	}
+	request.Change.URIs[0], request.Change.URIs[1] = request.Change.URIs[1], request.Change.URIs[0]
+	reordered, err := New(testCfg).Get(ctx, request)
+	require.NoError(t, err)
+	assert.Equal(t, []entity.ChangeInfo{first[1], first[0]}, reordered)
 }
 
-func TestProvider_Get_ReportsNoFilesWithoutTheMarker(t *testing.T) {
-	p := New(testCfg)
-
-	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"git://git.example.com/sandbox/refs%2Fheads%2Fa/abc"},
-	}})
+func TestProvider_Get_ProducesOverlappingAndIndependentDirectories(t *testing.T) {
+	var uris []string
+	for i := range 64 {
+		uris = append(uris, fmt.Sprintf("git://demo.example.com/demo/ref/%040d", i))
+	}
+	infos, err := New(testCfg).Get(context.Background(), entity.Request{Change: change.Change{URIs: uris}})
 	require.NoError(t, err)
-	require.Len(t, infos, 1)
-	assert.Empty(t, infos[0].Details.ChangedFiles)
+	directories := make(map[string]int)
+	for _, info := range infos {
+		require.NotEmpty(t, info.Details.ChangedFiles)
+		directories[path.Dir(info.Details.ChangedFiles[0].Path)]++
+	}
+	assert.Greater(t, len(directories), 1, "some changes must be independent")
+	assert.Less(t, len(directories), len(uris), "some changes must overlap")
 }

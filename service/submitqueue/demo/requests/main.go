@@ -115,9 +115,9 @@ func parseFlags() config {
 	flag.StringVar(&c.base, "base", "main", "branch the changes target")
 	flag.IntVar(&c.count, "count", 3, "how many changes to create")
 	flag.IntVar(&c.folders, "folders", 0,
-		"how many folders to spread the changes across; 0 picks one per run. Changes sharing a folder are batched in order, changes in different folders go out together")
+		"git/github: how many folders to spread the changes across; 0 picks one per run. Changes sharing a folder are batched in order, changes in different folders go out together")
 	flag.IntVar(&c.files, "files", 3,
-		"fewest files each change touches; the actual count varies a little above it. Ignored by -provider fake, which writes none")
+		"fewest files each change touches; the actual count varies a little above it. Ignored by -provider fake, which synthesizes its own paths")
 	flag.IntVar(&c.concurrency, "concurrency", 5,
 		"how many changes to create at once; a stack ignores it, being sequential by nature, and -provider git serializes its git commands")
 	flag.BoolVar(&c.stacked, "stacked", false, "chain the changes and enqueue them as one stack")
@@ -178,8 +178,12 @@ func run(ctx context.Context, cfg config) error {
 	// Resolved once, so every change in the run is dealt into the same tree and
 	// the number can be reported rather than inferred from the paths.
 	cfg.folders = resolveFolders(tag, cfg.folders)
-	fmt.Printf("Creating %d change(s) across %d folder(s) via %s — %s\n\n",
-		cfg.count, cfg.folders, target(cfg), shape(cfg))
+	if cfg.provider == providerFake {
+		fmt.Printf("Creating %d synthetic change(s) via %s — %s\n\n", cfg.count, target(cfg), shape(cfg))
+	} else {
+		fmt.Printf("Creating %d change(s) across %d folder(s) via %s — %s\n\n",
+			cfg.count, cfg.folders, target(cfg), shape(cfg))
+	}
 
 	// Every row is known before anything is created: one per change, or a
 	// single one for a stack, since the whole chain lands as one request. The

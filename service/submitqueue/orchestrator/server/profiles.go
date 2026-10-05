@@ -480,7 +480,7 @@ func (b *profileBuilder) newRoutingChangeProviderFactory(cfg changeProviderConfi
 	}
 
 	if makeGitHub == nil && makePhab == nil {
-		b.logger.Warn("no change provider tokens set; using fake change provider (empty change info unless URI-marked)",
+		b.logger.Warn("no change provider tokens set; using fake change provider (synthetic file metadata)",
 			zap.String("profile", where))
 		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 			return cpfake.New(c), nil
