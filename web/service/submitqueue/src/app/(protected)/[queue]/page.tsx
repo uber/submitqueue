@@ -17,6 +17,7 @@ import { gatewayDiagnostics } from "../../../server/diagnostics";
 import { resolveDemoGateway } from "../../../server/gateway";
 import { requireAuthorization } from "../../../server/request-auth";
 import { NextRefresh } from "../../../components/next-refresh";
+import { requestChangeLabels, requestChangeLinks } from "../../../server/change";
 import { loadAuthConfiguration } from "../../../server/auth";
 import {
   defaultRequestWindow,
@@ -99,7 +100,8 @@ export default async function QueueRequestsPage({
       <section className="panel" aria-label="Queue requests">
         <RequestListView
           key={`${queue}:${search.page ?? "live"}`}
-          result={result}
+          result={result} changeLinks={result.ok ? requestChangeLinks(queue, result.data.requests) : {}}
+          changeLabels={result.ok ? requestChangeLabels(result.data.requests) : {}}
         />
       </section>
     </main>

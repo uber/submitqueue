@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ErrorState, RequestStatus, QueueDirectory, RequestList, RequestListView, RequestDetail } from "./components";
+import { ChangeSubmissions, QueueDirectory, ErrorState, RequestDetail, RequestList, RequestListView, RequestStatus } from "./components";
 import type { RequestDetailModel, RequestListModel } from "./models";
 
 const request = {
@@ -14,7 +14,6 @@ const request = {
 };
 
 describe("request components", () => {
-
   it("renders a linked queue request with its complete sqid", () => {
     const model: RequestListModel = {
       queue: "demo-queue",
@@ -141,6 +140,34 @@ describe("request components", () => {
     expect(screen.queryByText("No history has been retained for this request.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(request.sqid));
+  });
+
+  it("keeps repeated submissions for the same version separate", () => {
+    render(<ChangeSubmissions model={{
+      queue: "demo-queue", provider: "GitHub", host: "github.com",
+      repository: "uber/submitqueue", review: "PR #123", pinnedVersion: null,
+      window: { fromMs: 1, toMs: 2 },
+      submissions: ["42", "38"].map(sqid => ({
+        request: { ...request, sqid }, version: "same-sha", versionHref: "/version",
+      })),
+    }} />);
+    const table = screen.getByRole("table", { name: "Change submissions" });
+    expect(within(table).getAllByText("same-sha")).toHaveLength(2);
+    expect(within(table).getByRole("link", { name: "38" }).getAttribute("href")).toBe("/demo-queue/request/38");
+  });
+
+  it("delegates version navigation to the host and keeps full versions in links", () => {
+    const onVersionChange = vi.fn();
+    const version = "0123456789abcdef0123456789abcdef01234567";
+    render(<ChangeSubmissions onVersionChange={onVersionChange} model={{
+      queue: "demo-queue", provider: "GitHub", host: "github.com",
+      repository: "uber/submitqueue", review: "PR #123", pinnedVersion: null,
+      logicalHref: "/logical", window: { fromMs: 1, toMs: 2 },
+      submissions: [{ request, version, versionHref: `/logical/${version}` }],
+    }} />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: `/logical/${version}` } });
+    expect(onVersionChange).toHaveBeenCalledWith(`/logical/${version}`);
+    expect(screen.getByRole("link", { name: version }).getAttribute("href")).toBe(`/logical/${version}`);
   });
 
   it("shows unknown statuses safely", () => {

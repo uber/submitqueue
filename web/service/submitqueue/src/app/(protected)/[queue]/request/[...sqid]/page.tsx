@@ -16,6 +16,7 @@ import { gatewayDiagnostics } from "../../../../../server/diagnostics";
 import { resolveDemoGateway } from "../../../../../server/gateway";
 import { requireAuthorization } from "../../../../../server/request-auth";
 import { NextRefresh } from "../../../../../components/next-refresh";
+import { requestChangeLabels, requestChangeLinks } from "../../../../../server/change";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -74,6 +75,8 @@ export default async function RequestPage({
         backHref={paths.requests(queue)}
         summaryHref={paths.request(queue, sqid)}
         historyHref={paths.request(queue, sqid, { view: "history" })}
+        changeLinks={result.ok ? requestChangeLinks(queue, [result.data.request]) : {}}
+        changeLabels={result.ok ? requestChangeLabels([result.data.request]) : {}}
         controls={<NextRefresh {...refreshState} />}
       />
     </main>
