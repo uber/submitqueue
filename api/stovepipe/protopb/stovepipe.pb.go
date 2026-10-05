@@ -1175,12 +1175,8 @@ type ListResponse struct {
 	Requests []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
 	// Opaque continuation token; empty when no further row was observed.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
-	// Resolved inclusive Unix millisecond bound.
-	AcceptedAtOrAfterMs int64 `protobuf:"varint,3,opt,name=accepted_at_or_after_ms,json=acceptedAtOrAfterMs,proto3" json:"accepted_at_or_after_ms,omitempty"`
-	// Resolved exclusive Unix millisecond bound, fixed across pages.
-	AcceptedBeforeMs int64 `protobuf:"varint,4,opt,name=accepted_before_ms,json=acceptedBeforeMs,proto3" json:"accepted_before_ms,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListResponse) Reset() {
@@ -1225,20 +1221,6 @@ func (x *ListResponse) GetNextPageToken() string {
 		return x.NextPageToken
 	}
 	return ""
-}
-
-func (x *ListResponse) GetAcceptedAtOrAfterMs() int64 {
-	if x != nil {
-		return x.AcceptedAtOrAfterMs
-	}
-	return 0
-}
-
-func (x *ListResponse) GetAcceptedBeforeMs() int64 {
-	if x != nil {
-		return x.AcceptedBeforeMs
-	}
-	return 0
 }
 
 var File_stovepipe_proto protoreflect.FileDescriptor
@@ -1326,12 +1308,10 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\n" +
 	"page_token\x18\x05 \x01(\tR\tpageTokenB\x16\n" +
 	"\x14accepted_lower_boundB\x16\n" +
-	"\x14accepted_upper_bound\"\xe2\x01\n" +
+	"\x14accepted_upper_bound\"~\n" +
 	"\fListResponse\x12F\n" +
 	"\brequests\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\brequests\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x124\n" +
-	"\x17accepted_at_or_after_ms\x18\x03 \x01(\x03R\x13acceptedAtOrAfterMs\x12,\n" +
-	"\x12accepted_before_ms\x18\x04 \x01(\x03R\x10acceptedBeforeMs2\xde\x05\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xde\x05\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
 	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +

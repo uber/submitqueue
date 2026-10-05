@@ -16,7 +16,7 @@ The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) is include
 | `page_size` | int32 | Default 50; maximum 200. Zero means default. |
 | `page_token` | string | Empty for the first page; otherwise an opaque continuation. |
 
-The response contains `requests`, `next_page_token`, and the two resolved time bounds. No matches returns an empty page; an empty continuation means no further row was observed.
+The response contains only `requests` and `next_page_token`. No matches returns an empty page; an empty continuation means no further row was observed.
 
 Continuations repeat the same queue. Time bounds may be omitted or must match the token; page size may change. Tokens preserve the query bounds and continue exclusively after the last returned ordering key. Invalid inputs and mismatched tokens fail the request. Every page follows the service's queue-access policy.
 

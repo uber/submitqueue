@@ -202,10 +202,6 @@ message ListResponse {
     repeated RequestSummary requests = 1;
     // Opaque continuation token; empty when no further row was observed.
     string next_page_token = 2;
-    // Resolved inclusive Unix millisecond bound.
-    int64 accepted_at_or_after_ms = 3;
-    // Resolved exclusive Unix millisecond bound, fixed across pages.
-    int64 accepted_before_ms = 4;
 }
 
 // Stovepipe provides the Stovepipe API.
