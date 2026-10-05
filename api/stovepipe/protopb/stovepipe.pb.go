@@ -36,6 +36,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// ListOrder selects the immutable ordering key for request listing.
+type ListOrder int32
+
+const (
+	// Descending numeric per-queue request sequence.
+	ListOrder_REQUEST_ID_DESC ListOrder = 0
+	// Descending acceptance time, then bytewise descending request ID.
+	ListOrder_ACCEPTED_AT_DESC ListOrder = 1
+)
+
+// Enum value maps for ListOrder.
+var (
+	ListOrder_name = map[int32]string{
+		0: "REQUEST_ID_DESC",
+		1: "ACCEPTED_AT_DESC",
+	}
+	ListOrder_value = map[string]int32{
+		"REQUEST_ID_DESC":  0,
+		"ACCEPTED_AT_DESC": 1,
+	}
+)
+
+func (x ListOrder) Enum() *ListOrder {
+	p := new(ListOrder)
+	*p = x
+	return p
+}
+
+func (x ListOrder) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ListOrder) Descriptor() protoreflect.EnumDescriptor {
+	return file_stovepipe_proto_enumTypes[0].Descriptor()
+}
+
+func (ListOrder) Type() protoreflect.EnumType {
+	return &file_stovepipe_proto_enumTypes[0]
+}
+
+func (x ListOrder) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ListOrder.Descriptor instead.
+func (ListOrder) EnumDescriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{0}
+}
+
 // PingRequest is the request for the Ping method
 type PingRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -932,6 +981,389 @@ type GetProjectStatusByURIResponse_RepositoryBreakageDegree struct {
 func (*GetProjectStatusByURIResponse_RepositoryBreakageDegree) isGetProjectStatusByURIResponse_RepositoryResult() {
 }
 
+// ListRequest selects a page of retained request summaries for one queue.
+type ListRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required configured queue.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Ordering for every page. Defaults to request-ID order.
+	Order ListOrder `protobuf:"varint,2,opt,name=order,proto3,enum=uber.submitqueue.stovepipe.ListOrder" json:"order,omitempty"`
+	// Types that are valid to be assigned to AcceptedLowerBound:
+	//
+	//	*ListRequest_AcceptedAtOrAfterMs
+	AcceptedLowerBound isListRequest_AcceptedLowerBound `protobuf_oneof:"accepted_lower_bound"`
+	// Types that are valid to be assigned to AcceptedUpperBound:
+	//
+	//	*ListRequest_AcceptedBeforeMs
+	AcceptedUpperBound isListRequest_AcceptedUpperBound `protobuf_oneof:"accepted_upper_bound"`
+	// Zero selects 50; nonzero values must be between 1 and 200.
+	PageSize int32 `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation token bound to the queue, order, and resolved time bounds.
+	PageToken     string `protobuf:"bytes,6,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequest) Reset() {
+	*x = ListRequest{}
+	mi := &file_stovepipe_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequest) ProtoMessage() {}
+
+func (x *ListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
+func (*ListRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ListRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequest) GetOrder() ListOrder {
+	if x != nil {
+		return x.Order
+	}
+	return ListOrder_REQUEST_ID_DESC
+}
+
+func (x *ListRequest) GetAcceptedLowerBound() isListRequest_AcceptedLowerBound {
+	if x != nil {
+		return x.AcceptedLowerBound
+	}
+	return nil
+}
+
+func (x *ListRequest) GetAcceptedAtOrAfterMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptedLowerBound.(*ListRequest_AcceptedAtOrAfterMs); ok {
+			return x.AcceptedAtOrAfterMs
+		}
+	}
+	return 0
+}
+
+func (x *ListRequest) GetAcceptedUpperBound() isListRequest_AcceptedUpperBound {
+	if x != nil {
+		return x.AcceptedUpperBound
+	}
+	return nil
+}
+
+func (x *ListRequest) GetAcceptedBeforeMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptedUpperBound.(*ListRequest_AcceptedBeforeMs); ok {
+			return x.AcceptedBeforeMs
+		}
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+type isListRequest_AcceptedLowerBound interface {
+	isListRequest_AcceptedLowerBound()
+}
+
+type ListRequest_AcceptedAtOrAfterMs struct {
+	// Inclusive Unix millisecond bound. Time order only; omitted defaults to zero.
+	AcceptedAtOrAfterMs int64 `protobuf:"varint,3,opt,name=accepted_at_or_after_ms,json=acceptedAtOrAfterMs,proto3,oneof"`
+}
+
+func (*ListRequest_AcceptedAtOrAfterMs) isListRequest_AcceptedLowerBound() {}
+
+type isListRequest_AcceptedUpperBound interface {
+	isListRequest_AcceptedUpperBound()
+}
+
+type ListRequest_AcceptedBeforeMs struct {
+	// Exclusive Unix millisecond bound. Time order only; omitted defaults to server now.
+	AcceptedBeforeMs int64 `protobuf:"varint,4,opt,name=accepted_before_ms,json=acceptedBeforeMs,proto3,oneof"`
+}
+
+func (*ListRequest_AcceptedBeforeMs) isListRequest_AcceptedUpperBound() {}
+
+// RequestSummary contains one request's current materialized lifecycle state.
+type RequestSummary struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Opaque identifier returned from Ingest.
+	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Queue containing the request.
+	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Exact VCS-agnostic URI of the ingested commit.
+	ChangeUri string `protobuf:"bytes,3,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	// Selected baseline URI. Empty before selection or for a full build.
+	BaseUri string `protobuf:"bytes,4,opt,name=base_uri,json=baseUri,proto3" json:"base_uri,omitempty"`
+	// Stable public lifecycle state; clients tolerate future values.
+	RequestState string `protobuf:"bytes,5,opt,name=request_state,json=requestState,proto3" json:"request_state,omitempty"`
+	// Unix millisecond timestamp of the represented state entry.
+	StateUpdatedAtMs int64 `protobuf:"varint,6,opt,name=state_updated_at_ms,json=stateUpdatedAtMs,proto3" json:"state_updated_at_ms,omitempty"`
+	// Types that are valid to be assigned to AcceptanceTime:
+	//
+	//	*RequestSummary_AcceptedAtMs
+	AcceptanceTime isRequestSummary_AcceptanceTime `protobuf_oneof:"acceptance_time"`
+	// Stable reason for the represented state. Empty when unavailable or inapplicable.
+	OutcomeReason string `protobuf:"bytes,8,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestSummary) Reset() {
+	*x = RequestSummary{}
+	mi := &file_stovepipe_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestSummary) ProtoMessage() {}
+
+func (x *RequestSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestSummary.ProtoReflect.Descriptor instead.
+func (*RequestSummary) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *RequestSummary) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetBaseUri() string {
+	if x != nil {
+		return x.BaseUri
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetRequestState() string {
+	if x != nil {
+		return x.RequestState
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetStateUpdatedAtMs() int64 {
+	if x != nil {
+		return x.StateUpdatedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetAcceptanceTime() isRequestSummary_AcceptanceTime {
+	if x != nil {
+		return x.AcceptanceTime
+	}
+	return nil
+}
+
+func (x *RequestSummary) GetAcceptedAtMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptanceTime.(*RequestSummary_AcceptedAtMs); ok {
+			return x.AcceptedAtMs
+		}
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetOutcomeReason() string {
+	if x != nil {
+		return x.OutcomeReason
+	}
+	return ""
+}
+
+type isRequestSummary_AcceptanceTime interface {
+	isRequestSummary_AcceptanceTime()
+}
+
+type RequestSummary_AcceptedAtMs struct {
+	// Immutable original accepted-log timestamp in Unix milliseconds; absent if unknown.
+	AcceptedAtMs int64 `protobuf:"varint,7,opt,name=accepted_at_ms,json=acceptedAtMs,proto3,oneof"`
+}
+
+func (*RequestSummary_AcceptedAtMs) isRequestSummary_AcceptanceTime() {}
+
+// ListResponse contains a page in the requested order, not a snapshot across pages.
+type ListResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Current summaries in the selected order.
+	Requests []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	// Opaque continuation token; empty when no further row was observed.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	// Types that are valid to be assigned to AcceptedLowerBound:
+	//
+	//	*ListResponse_AcceptedAtOrAfterMs
+	AcceptedLowerBound isListResponse_AcceptedLowerBound `protobuf_oneof:"accepted_lower_bound"`
+	// Types that are valid to be assigned to AcceptedUpperBound:
+	//
+	//	*ListResponse_AcceptedBeforeMs
+	AcceptedUpperBound isListResponse_AcceptedUpperBound `protobuf_oneof:"accepted_upper_bound"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ListResponse) Reset() {
+	*x = ListResponse{}
+	mi := &file_stovepipe_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListResponse) ProtoMessage() {}
+
+func (x *ListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
+func (*ListResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListResponse) GetRequests() []*RequestSummary {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *ListResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
+func (x *ListResponse) GetAcceptedLowerBound() isListResponse_AcceptedLowerBound {
+	if x != nil {
+		return x.AcceptedLowerBound
+	}
+	return nil
+}
+
+func (x *ListResponse) GetAcceptedAtOrAfterMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptedLowerBound.(*ListResponse_AcceptedAtOrAfterMs); ok {
+			return x.AcceptedAtOrAfterMs
+		}
+	}
+	return 0
+}
+
+func (x *ListResponse) GetAcceptedUpperBound() isListResponse_AcceptedUpperBound {
+	if x != nil {
+		return x.AcceptedUpperBound
+	}
+	return nil
+}
+
+func (x *ListResponse) GetAcceptedBeforeMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptedUpperBound.(*ListResponse_AcceptedBeforeMs); ok {
+			return x.AcceptedBeforeMs
+		}
+	}
+	return 0
+}
+
+type isListResponse_AcceptedLowerBound interface {
+	isListResponse_AcceptedLowerBound()
+}
+
+type ListResponse_AcceptedAtOrAfterMs struct {
+	// Resolved inclusive Unix millisecond bound; absent in request-ID order.
+	AcceptedAtOrAfterMs int64 `protobuf:"varint,3,opt,name=accepted_at_or_after_ms,json=acceptedAtOrAfterMs,proto3,oneof"`
+}
+
+func (*ListResponse_AcceptedAtOrAfterMs) isListResponse_AcceptedLowerBound() {}
+
+type isListResponse_AcceptedUpperBound interface {
+	isListResponse_AcceptedUpperBound()
+}
+
+type ListResponse_AcceptedBeforeMs struct {
+	// Resolved exclusive Unix millisecond bound, fixed across pages; absent in request-ID order.
+	AcceptedBeforeMs int64 `protobuf:"varint,4,opt,name=accepted_before_ms,json=acceptedBeforeMs,proto3,oneof"`
+}
+
+func (*ListResponse_AcceptedBeforeMs) isListResponse_AcceptedUpperBound() {}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -997,13 +1429,46 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x18project_results_complete\x18\a \x01(\bR\x16projectResultsComplete\x12I\n" +
 	"\bprojects\x18\b \x03(\v2-.uber.submitqueue.stovepipe.ProjectValidationR\bprojects\x12&\n" +
 	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageTokenB\x13\n" +
-	"\x11repository_result2\x81\x05\n" +
+	"\x11repository_result\"\xb4\x02\n" +
+	"\vListRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12;\n" +
+	"\x05order\x18\x02 \x01(\x0e2%.uber.submitqueue.stovepipe.ListOrderR\x05order\x126\n" +
+	"\x17accepted_at_or_after_ms\x18\x03 \x01(\x03H\x00R\x13acceptedAtOrAfterMs\x12.\n" +
+	"\x12accepted_before_ms\x18\x04 \x01(\x03H\x01R\x10acceptedBeforeMs\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x06 \x01(\tR\tpageTokenB\x16\n" +
+	"\x14accepted_lower_boundB\x16\n" +
+	"\x14accepted_upper_bound\"\xb5\x02\n" +
+	"\x0eRequestSummary\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x03 \x01(\tR\tchangeUri\x12\x19\n" +
+	"\bbase_uri\x18\x04 \x01(\tR\abaseUri\x12#\n" +
+	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12-\n" +
+	"\x13state_updated_at_ms\x18\x06 \x01(\x03R\x10stateUpdatedAtMs\x12&\n" +
+	"\x0eaccepted_at_ms\x18\a \x01(\x03H\x00R\facceptedAtMs\x12%\n" +
+	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReasonB\x11\n" +
+	"\x0facceptance_time\"\x96\x02\n" +
+	"\fListResponse\x12F\n" +
+	"\brequests\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\brequests\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x126\n" +
+	"\x17accepted_at_or_after_ms\x18\x03 \x01(\x03H\x00R\x13acceptedAtOrAfterMs\x12.\n" +
+	"\x12accepted_before_ms\x18\x04 \x01(\x03H\x01R\x10acceptedBeforeMsB\x16\n" +
+	"\x14accepted_lower_boundB\x16\n" +
+	"\x14accepted_upper_bound*6\n" +
+	"\tListOrder\x12\x13\n" +
+	"\x0fREQUEST_ID_DESC\x10\x00\x12\x14\n" +
+	"\x10ACCEPTED_AT_DESC\x10\x012\xde\x05\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
 	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
 	"\x15GetRequestHistoryByID\x128.uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest\x1a9.uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse\"\x00\x12\x91\x01\n" +
 	"\x16GetRequestHistoryByURI\x129.uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest\x1a:.uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse\"\x00\x12\x8e\x01\n" +
-	"\x15GetProjectStatusByURI\x128.uber.submitqueue.stovepipe.GetProjectStatusByURIRequest\x1a9.uber.submitqueue.stovepipe.GetProjectStatusByURIResponse\"\x00Be\n" +
+	"\x15GetProjectStatusByURI\x128.uber.submitqueue.stovepipe.GetProjectStatusByURIRequest\x1a9.uber.submitqueue.stovepipe.GetProjectStatusByURIResponse\"\x00\x12[\n" +
+	"\x04List\x12'.uber.submitqueue.stovepipe.ListRequest\x1a(.uber.submitqueue.stovepipe.ListResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -1018,42 +1483,51 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 	return file_stovepipe_proto_rawDescData
 }
 
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_stovepipe_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_stovepipe_proto_goTypes = []any{
-	(*PingRequest)(nil),                    // 0: uber.submitqueue.stovepipe.PingRequest
-	(*PingResponse)(nil),                   // 1: uber.submitqueue.stovepipe.PingResponse
-	(*IngestRequest)(nil),                  // 2: uber.submitqueue.stovepipe.IngestRequest
-	(*IngestResponse)(nil),                 // 3: uber.submitqueue.stovepipe.IngestResponse
-	(*GetRequestHistoryByIDRequest)(nil),   // 4: uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	(*GetRequestHistoryByURIRequest)(nil),  // 5: uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	(*HistoryEvent)(nil),                   // 6: uber.submitqueue.stovepipe.HistoryEvent
-	(*RequestHistory)(nil),                 // 7: uber.submitqueue.stovepipe.RequestHistory
-	(*GetRequestHistoryByIDResponse)(nil),  // 8: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	(*GetRequestHistoryByURIResponse)(nil), // 9: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	(*GetProjectStatusByURIRequest)(nil),   // 10: uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	(*ProjectValidation)(nil),              // 11: uber.submitqueue.stovepipe.ProjectValidation
-	(*GetProjectStatusByURIResponse)(nil),  // 12: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	(ListOrder)(0),                         // 0: uber.submitqueue.stovepipe.ListOrder
+	(*PingRequest)(nil),                    // 1: uber.submitqueue.stovepipe.PingRequest
+	(*PingResponse)(nil),                   // 2: uber.submitqueue.stovepipe.PingResponse
+	(*IngestRequest)(nil),                  // 3: uber.submitqueue.stovepipe.IngestRequest
+	(*IngestResponse)(nil),                 // 4: uber.submitqueue.stovepipe.IngestResponse
+	(*GetRequestHistoryByIDRequest)(nil),   // 5: uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	(*GetRequestHistoryByURIRequest)(nil),  // 6: uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	(*HistoryEvent)(nil),                   // 7: uber.submitqueue.stovepipe.HistoryEvent
+	(*RequestHistory)(nil),                 // 8: uber.submitqueue.stovepipe.RequestHistory
+	(*GetRequestHistoryByIDResponse)(nil),  // 9: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	(*GetRequestHistoryByURIResponse)(nil), // 10: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	(*GetProjectStatusByURIRequest)(nil),   // 11: uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	(*ProjectValidation)(nil),              // 12: uber.submitqueue.stovepipe.ProjectValidation
+	(*GetProjectStatusByURIResponse)(nil),  // 13: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	(*ListRequest)(nil),                    // 14: uber.submitqueue.stovepipe.ListRequest
+	(*RequestSummary)(nil),                 // 15: uber.submitqueue.stovepipe.RequestSummary
+	(*ListResponse)(nil),                   // 16: uber.submitqueue.stovepipe.ListResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
-	6,  // 0: uber.submitqueue.stovepipe.RequestHistory.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
-	6,  // 1: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
-	7,  // 2: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
-	11, // 3: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
-	0,  // 4: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	2,  // 5: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	4,  // 6: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	5,  // 7: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	10, // 8: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	1,  // 9: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	3,  // 10: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	8,  // 11: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	9,  // 12: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	12, // 13: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
-	9,  // [9:14] is the sub-list for method output_type
-	4,  // [4:9] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	7,  // 0: uber.submitqueue.stovepipe.RequestHistory.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
+	7,  // 1: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
+	8,  // 2: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
+	12, // 3: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
+	0,  // 4: uber.submitqueue.stovepipe.ListRequest.order:type_name -> uber.submitqueue.stovepipe.ListOrder
+	15, // 5: uber.submitqueue.stovepipe.ListResponse.requests:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	1,  // 6: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	3,  // 7: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	5,  // 8: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	6,  // 9: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	11, // 10: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	14, // 11: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
+	2,  // 12: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	4,  // 13: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	9,  // 14: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	10, // 15: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	13, // 16: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	16, // 17: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
+	12, // [12:18] is the sub-list for method output_type
+	6,  // [6:12] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
@@ -1071,18 +1545,30 @@ func file_stovepipe_proto_init() {
 	file_stovepipe_proto_msgTypes[12].OneofWrappers = []any{
 		(*GetProjectStatusByURIResponse_RepositoryBreakageDegree)(nil),
 	}
+	file_stovepipe_proto_msgTypes[13].OneofWrappers = []any{
+		(*ListRequest_AcceptedAtOrAfterMs)(nil),
+		(*ListRequest_AcceptedBeforeMs)(nil),
+	}
+	file_stovepipe_proto_msgTypes[14].OneofWrappers = []any{
+		(*RequestSummary_AcceptedAtMs)(nil),
+	}
+	file_stovepipe_proto_msgTypes[15].OneofWrappers = []any{
+		(*ListResponse_AcceptedAtOrAfterMs)(nil),
+		(*ListResponse_AcceptedBeforeMs)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   13,
+			NumEnums:      1,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_stovepipe_proto_goTypes,
 		DependencyIndexes: file_stovepipe_proto_depIdxs,
+		EnumInfos:         file_stovepipe_proto_enumTypes,
 		MessageInfos:      file_stovepipe_proto_msgTypes,
 	}.Build()
 	File_stovepipe_proto = out.File
