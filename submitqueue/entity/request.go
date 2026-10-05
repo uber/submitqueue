@@ -15,8 +15,6 @@
 package entity
 
 import (
-	"encoding/json"
-
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
@@ -94,18 +92,6 @@ type Request struct {
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`
-}
-
-// ToBytes serializes the Request to JSON bytes for queue message payload.
-func (r Request) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// RequestFromBytes deserializes a Request from JSON bytes.
-func RequestFromBytes(data []byte) (Request, error) {
-	var req Request
-	err := json.Unmarshal(data, &req)
-	return req, err
 }
 
 // RequestID is a lightweight entity for publishing and consuming just the request identifier via the queue.

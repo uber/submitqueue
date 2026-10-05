@@ -14,8 +14,6 @@
 
 package entity
 
-import "encoding/json"
-
 // BatchState defines the possible states of a batch.
 type BatchState string
 
@@ -173,18 +171,6 @@ type Batch struct {
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32
-}
-
-// ToBytes serializes the Batch to JSON bytes for queue message payload.
-func (b Batch) ToBytes() ([]byte, error) {
-	return json.Marshal(b)
-}
-
-// BatchFromBytes deserializes a Batch from JSON bytes.
-func BatchFromBytes(data []byte) (Batch, error) {
-	var batch Batch
-	err := json.Unmarshal(data, &batch)
-	return batch, err
 }
 
 // BatchID is a lightweight entity for publishing and consuming just the batch identifier via the queue.

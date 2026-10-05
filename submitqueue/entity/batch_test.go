@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBatchState_IsTerminal(t *testing.T) {
@@ -72,95 +71,4 @@ func TestAllBatchStates_SupersetOfStateSubsets(t *testing.T) {
 
 func TestDependencyBatchStates_ExcludesCreating(t *testing.T) {
 	assert.NotContains(t, DependencyBatchStates(), BatchStateCreating)
-}
-
-func TestBatch_SerializationRoundTrip(t *testing.T) {
-	tests := []struct {
-		name  string
-		batch Batch
-	}{
-		{
-			name: "batch with single request",
-			batch: Batch{
-				ID:       "1",
-				Queue:    "queueA",
-				Contains: []string{"1"},
-				State:    BatchStateCreated,
-				Version:  1,
-			},
-		},
-		{
-			name: "batch with multiple requests",
-			batch: Batch{
-				ID:       "42",
-				Queue:    "queueB",
-				Contains: []string{"10", "11", "12"},
-				State:    BatchStateSpeculating,
-				Version:  3,
-			},
-		},
-		{
-			name: "batch with dependencies",
-			batch: Batch{
-				ID:       "3",
-				Queue:    "queueA",
-				Contains: []string{"5"},
-				Dependencies: []string{
-					"1",
-					"2",
-				},
-				State:   BatchStateCreated,
-				Version: 1,
-			},
-		},
-		{
-			name: "batch in terminal state",
-			batch: Batch{
-				ID:       "99",
-				Queue:    "queueC",
-				Contains: []string{"50"},
-				State:    BatchStateSucceeded,
-				Version:  5,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := tt.batch.ToBytes()
-			require.NoError(t, err)
-
-			deserialized, err := BatchFromBytes(data)
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.batch, deserialized)
-		})
-	}
-}
-
-func TestBatchFromBytes_InvalidJSON(t *testing.T) {
-	_, err := BatchFromBytes([]byte(`{"invalid": json"}`))
-	assert.Error(t, err)
-}
-
-func TestBatchFromBytes_EmptyJSON(t *testing.T) {
-	batch, err := BatchFromBytes([]byte(`{}`))
-	require.NoError(t, err)
-
-	assert.Empty(t, batch.ID)
-	assert.Empty(t, batch.Queue)
-	assert.Nil(t, batch.Contains)
-	assert.Nil(t, batch.Dependencies)
-	assert.Equal(t, BatchStateUnknown, batch.State)
-	assert.Equal(t, int32(0), batch.Version)
-}
-
-func TestBatchFromBytes_EmptyBytes(t *testing.T) {
-	_, err := BatchFromBytes([]byte{})
-	assert.Error(t, err)
-}
-
-func TestBatchFromBytes_NilBytes(t *testing.T) {
-	_, err := BatchFromBytes(nil)
-	assert.Error(t, err)
 }

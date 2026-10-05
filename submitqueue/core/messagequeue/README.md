@@ -23,3 +23,9 @@ Each topic key has its own message, even when the first version is only an id an
 - **log** (`TopicKeyLog`, `Log`) — orchestrator publishes a full request-log entry; the gateway materializes it. `type`, `status`, and `event` are open strings matching the domain vocabularies.
 
 In-boundary stages (validate through conclude, except start/cancel/log) put only an id on the queue because producer and consumer share storage.
+
+## Wire compatibility
+
+Consumers discard unknown fields, so additive proto changes do not require a coordinated producer/consumer rollout. Enum fields use protobuf names (for example, `SQUASH_REBASE`) and int64 fields such as `timestamp_ms` are JSON strings.
+
+The original entity-JSON to protojson migration uses a hard-cutover rollout, not a separate legacy codec. For deployments crossing that cutover, drain or discard queued `start` and `log` messages, including their dead-letter copies, and switch their producers and consumers together. Legacy start messages use lowercase land-strategy values instead of protobuf enum names; log producers emit quoted timestamps instead of numbers, which legacy entity-JSON consumers cannot read. The id-only payloads retain the `id` and `queue` fields; cancellation retains `id`, `queue`, and `reason`. Removing unused entity serialization helpers does not change the current wire format.

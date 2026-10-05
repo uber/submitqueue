@@ -14,8 +14,6 @@
 
 package entity
 
-import "encoding/json"
-
 // BuildStatus defines the possible states of a build. The set is
 // intentionally narrow: every supported build provider must be able to map
 // its native lifecycle into one of these values without leaking
@@ -76,18 +74,6 @@ type Build struct {
 	Attempt int
 	// Status represents the state of the build lifecycle this build is in.
 	Status BuildStatus
-}
-
-// ToBytes serializes the Build to JSON bytes for queue message payload.
-func (b Build) ToBytes() ([]byte, error) {
-	return json.Marshal(b)
-}
-
-// BuildFromBytes deserializes a Build from JSON bytes.
-func BuildFromBytes(data []byte) (Build, error) {
-	var build Build
-	err := json.Unmarshal(data, &build)
-	return build, err
 }
 
 // BuildID is a lightweight entity for publishing and consuming just the build identifier via the queue.

@@ -15,6 +15,7 @@
 package messagequeue
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -107,6 +108,46 @@ func TestLogEventRoundTrip(t *testing.T) {
 	assert.Equal(t, entity.RequestLogTypeEvent, got.Type)
 	assert.Equal(t, entity.RequestStatusUnknown, got.Status)
 	assert.Equal(t, int32(0), got.RequestVersion)
+}
+
+func TestUnmarshalDiscardsUnknownFields(t *testing.T) {
+	messages := []proto.Message{
+		StartFromLandRequest(entity.LandRequest{
+			ID:           "q/1",
+			Queue:        "q",
+			Change:       change.Change{URIs: []string{"change-1"}},
+			LandStrategy: mergestrategy.MergeStrategySquashRebase,
+		}),
+		&Cancel{Id: "q/1", Queue: "q", Reason: "user"},
+		&Validate{Id: "q/1", Queue: "q"},
+		&Batch{Id: "q/1", Queue: "q"},
+		&DependencyAnalysis{Id: "q/batch/1", Queue: "q"},
+		&Speculate{Id: "q/batch/1", Queue: "q"},
+		&Build{Id: "q/batch/1", Queue: "q"},
+		&BuildSignal{Id: "build-1", Queue: "q"},
+		&Merge{Id: "q/batch/1", Queue: "q"},
+		&Conclude{Id: "q/batch/1", Queue: "q"},
+		LogFromEntity(entity.RequestLog{
+			RequestID:      "q/1",
+			Queue:          "q",
+			TimestampMs:    1700000000000,
+			Type:           entity.RequestLogTypeStatus,
+			Status:         entity.RequestStatusStarted,
+			RequestVersion: 1,
+			Metadata:       map[string]string{"build_id": "build-1"},
+		}),
+	}
+	for _, message := range messages {
+		t.Run(string(message.ProtoReflect().Descriptor().Name()), func(t *testing.T) {
+			data, err := Marshal(message)
+			require.NoError(t, err)
+			payload := strings.TrimSuffix(string(data), "}") + `,"future_field":{"enabled":true}}`
+			got := message.ProtoReflect().Type().New().Interface()
+
+			require.NoError(t, Unmarshal([]byte(payload), got))
+			assert.True(t, proto.Equal(message, got))
+		})
+	}
 }
 
 func TestLandStrategyMapping(t *testing.T) {

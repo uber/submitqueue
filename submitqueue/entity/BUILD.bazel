@@ -43,10 +43,5 @@ go_test(
         "speculation_test.go",
     ],
     embed = [":go_default_library"],
-    deps = [
-        "//platform/base/change:go_default_library",
-        "//platform/base/mergestrategy:go_default_library",
-        "@com_github_stretchr_testify//assert:go_default_library",
-        "@com_github_stretchr_testify//require:go_default_library",
-    ],
+    deps = ["@com_github_stretchr_testify//assert:go_default_library"],
 )
