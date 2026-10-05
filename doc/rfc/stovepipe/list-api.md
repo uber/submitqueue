@@ -32,6 +32,8 @@ Returned state is current, not state as of the upper bound. Pagination is not a 
 
 ## Request Summary
 
+This is the wire representation of the existing domain `RequestSummary`, not another stored projection. Its first five fields match the names, types, and numbers in `GetProjectStatusByURIResponse`; numbers 6–10 are reserved to avoid colliding with status-only data. New summary fields use 11–13. The status RPC remains unchanged; refactoring it to share this message is deferred and must preserve its existing wire fields. Summary `state_updated_at_ms` is lifecycle-only, unlike status `updated_at_ms`, which also includes validation results.
+
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `request_id` | string | Opaque request ID. |

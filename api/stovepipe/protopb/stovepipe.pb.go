@@ -1130,13 +1130,13 @@ type RequestSummary struct {
 	// Stable public lifecycle state; clients tolerate future values.
 	RequestState string `protobuf:"bytes,5,opt,name=request_state,json=requestState,proto3" json:"request_state,omitempty"`
 	// Unix millisecond timestamp of the represented state entry.
-	StateUpdatedAtMs int64 `protobuf:"varint,6,opt,name=state_updated_at_ms,json=stateUpdatedAtMs,proto3" json:"state_updated_at_ms,omitempty"`
+	StateUpdatedAtMs int64 `protobuf:"varint,11,opt,name=state_updated_at_ms,json=stateUpdatedAtMs,proto3" json:"state_updated_at_ms,omitempty"`
 	// Types that are valid to be assigned to AcceptanceTime:
 	//
 	//	*RequestSummary_AcceptedAtMs
 	AcceptanceTime isRequestSummary_AcceptanceTime `protobuf_oneof:"acceptance_time"`
 	// Stable reason for the represented state. Empty when unavailable or inapplicable.
-	OutcomeReason string `protobuf:"bytes,8,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
+	OutcomeReason string `protobuf:"bytes,13,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1242,7 +1242,7 @@ type isRequestSummary_AcceptanceTime interface {
 
 type RequestSummary_AcceptedAtMs struct {
 	// Immutable original accepted-log timestamp in Unix milliseconds; absent if unknown.
-	AcceptedAtMs int64 `protobuf:"varint,7,opt,name=accepted_at_ms,json=acceptedAtMs,proto3,oneof"`
+	AcceptedAtMs int64 `protobuf:"varint,12,opt,name=accepted_at_ms,json=acceptedAtMs,proto3,oneof"`
 }
 
 func (*RequestSummary_AcceptedAtMs) isRequestSummary_AcceptanceTime() {}
@@ -1439,7 +1439,7 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\n" +
 	"page_token\x18\x06 \x01(\tR\tpageTokenB\x16\n" +
 	"\x14accepted_lower_boundB\x16\n" +
-	"\x14accepted_upper_bound\"\xb5\x02\n" +
+	"\x14accepted_upper_bound\"\xbb\x02\n" +
 	"\x0eRequestSummary\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
@@ -1448,10 +1448,10 @@ const file_stovepipe_proto_rawDesc = "" +
 	"change_uri\x18\x03 \x01(\tR\tchangeUri\x12\x19\n" +
 	"\bbase_uri\x18\x04 \x01(\tR\abaseUri\x12#\n" +
 	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12-\n" +
-	"\x13state_updated_at_ms\x18\x06 \x01(\x03R\x10stateUpdatedAtMs\x12&\n" +
-	"\x0eaccepted_at_ms\x18\a \x01(\x03H\x00R\facceptedAtMs\x12%\n" +
-	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReasonB\x11\n" +
-	"\x0facceptance_time\"\x96\x02\n" +
+	"\x13state_updated_at_ms\x18\v \x01(\x03R\x10stateUpdatedAtMs\x12&\n" +
+	"\x0eaccepted_at_ms\x18\f \x01(\x03H\x00R\facceptedAtMs\x12%\n" +
+	"\x0eoutcome_reason\x18\r \x01(\tR\routcomeReasonB\x11\n" +
+	"\x0facceptance_timeJ\x04\b\x06\x10\v\"\x96\x02\n" +
 	"\fListResponse\x12F\n" +
 	"\brequests\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\brequests\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x126\n" +

@@ -187,6 +187,9 @@ message ListRequest {
 
 // RequestSummary contains one request's current materialized lifecycle state.
 message RequestSummary {
+    // GetProjectStatusByURIResponse uses these numbers for validation data and combined update time.
+    reserved 6 to 10;
+
     // Opaque identifier returned from Ingest.
     string request_id = 1;
     // Queue containing the request.
@@ -198,13 +201,13 @@ message RequestSummary {
     // Stable public lifecycle state; clients tolerate future values.
     string request_state = 5;
     // Unix millisecond timestamp of the represented state entry.
-    int64 state_updated_at_ms = 6;
+    int64 state_updated_at_ms = 11;
     oneof acceptance_time {
         // Immutable original accepted-log timestamp in Unix milliseconds; absent if unknown.
-        int64 accepted_at_ms = 7;
+        int64 accepted_at_ms = 12;
     }
     // Stable reason for the represented state. Empty when unavailable or inapplicable.
-    string outcome_reason = 8;
+    string outcome_reason = 13;
 }
 
 // ListResponse contains a page in the requested order, not a snapshot across pages.
