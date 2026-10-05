@@ -18,6 +18,7 @@ package id
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // FromCounter returns the canonical decimal resource ID for value.
@@ -44,17 +45,39 @@ func Validate(id string) error {
 	return nil
 }
 
-// Compare compares two canonical resource IDs numerically.
+// Compare orders legacy IDs by their numeric suffix, followed by decimal IDs numerically.
+// Callers must ensure both IDs belong to the same queue and resource kind.
+// This ordering requires a one-way writer switch from legacy to decimal IDs.
 func Compare(a, b string) (int, error) {
-	aValue, err := parseResourceID(a)
+	aCounter, bCounter := a, b
+	aSeparator := strings.LastIndexByte(a, '/')
+	bSeparator := strings.LastIndexByte(b, '/')
+	aLegacy, bLegacy := aSeparator >= 0, bSeparator >= 0
+	if aLegacy {
+		if aSeparator == 0 {
+			return 0, fmt.Errorf("invalid first resource ID %q: legacy prefix must not be empty", a)
+		}
+		aCounter = a[aSeparator+1:]
+	}
+	if bLegacy {
+		if bSeparator == 0 {
+			return 0, fmt.Errorf("invalid second resource ID %q: legacy prefix must not be empty", b)
+		}
+		bCounter = b[bSeparator+1:]
+	}
+	aValue, err := parseResourceID(aCounter)
 	if err != nil {
 		return 0, fmt.Errorf("invalid first resource ID %q: %w", a, err)
 	}
-	bValue, err := parseResourceID(b)
+	bValue, err := parseResourceID(bCounter)
 	if err != nil {
 		return 0, fmt.Errorf("invalid second resource ID %q: %w", b, err)
 	}
 	switch {
+	case aLegacy && !bLegacy:
+		return -1, nil
+	case !aLegacy && bLegacy:
+		return 1, nil
 	case aValue < bValue:
 		return -1, nil
 	case aValue > bValue:

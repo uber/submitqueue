@@ -291,6 +291,11 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			stored:  queueRow("git://remote/monorepo/main/old", "3", 4),
 			wantURI: testURI,
 		},
+		{
+			name:    "stored legacy bookmark is older",
+			stored:  queueRow("git://remote/monorepo/main/old", "request/"+testQueue+"/42", 4),
+			wantURI: testURI,
+		},
 	}
 
 	for _, tt := range tests {

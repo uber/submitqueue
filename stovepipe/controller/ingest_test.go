@@ -185,6 +185,43 @@ func TestIngestController_Ingest(t *testing.T) {
 			wantID: "7",
 		},
 		{
+			name:  "new ID advances legacy latest pointer and publishes",
+			queue: testQueue,
+			setup: func(m ingestMocks) {
+				expectResolve(m)
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
+				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(1), nil)
+				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "1").Return(nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, storage.ErrNotFound)
+				m.reqStore.EXPECT().Create(gomock.Any(), acceptedRequest("1")).Return(nil)
+				expectMaterializeAccepted(m, "1")
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: "request/" + testQueue + "/42", Version: 1,
+				}, nil)
+				updated := entity.Queue{Name: testQueue, LatestRequestID: "1", Version: 1}
+				updateCall := m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
+				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil).After(updateCall)
+			},
+			wantID: "1",
+		},
+		{
+			name:  "retry repairs accepted decimal request behind legacy pointer",
+			queue: testQueue,
+			setup: func(m ingestMocks) {
+				expectResolve(m)
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("1", nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), "1").Return(acceptedRequest("1"), nil)
+				expectMaterializeAccepted(m, "1")
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: "request/" + testQueue + "/42", Version: 1,
+				}, nil)
+				updated := entity.Queue{Name: testQueue, LatestRequestID: "1", Version: 1}
+				updateCall := m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
+				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil).After(updateCall)
+			},
+			wantID: "1",
+		},
+		{
 			name:  "dedup with existing accepted request republishes without minting",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
