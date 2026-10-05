@@ -4,7 +4,7 @@
 
 Stovepipe exposes retained request history through queue-scoped point lookups by request ID and exact URI. URI lookup returns every retained request history associated with that commit; the current insert-once mapping produces exactly one. Both selectors return complete ordered events, and URI lookup groups them by request ID.
 
-The API reads the append-only model defined by [Stovepipe Request Log](request-log.md) directly. It does not replay history into current state or introduce a second persisted history projection. Current commit status remains a separate read concern derived from operational entities rather than request history.
+The API reads the append-only model defined by [Stovepipe Request Log](request-log.md) directly. It does not replay history into current state or introduce a second persisted history projection. Current commit status remains a separate read concern, served from the materialized request summary and durable validation facts by [GetProjectStatusByURI](get-project-status-by-uri-api.md).
 
 ## API Coverage
 
@@ -103,11 +103,11 @@ SubmitQueue's `PersistLog` operation performs two jobs after receiving a log mes
 
 Event rows remain in SubmitQueue history but never participate in current-status materialization. The materializer exists because the gateway owns public reads but cannot read the orchestrator's mutable Request store.
 
-Stovepipe has no equivalent ownership gap. The same service owns the queue-scoped `Request`, `ValidationFact`, request-URI mapping, and request-log store. Operational reads use their owning entities, while request history reads retained log records directly.
+Stovepipe has no equivalent ownership gap. The same service owns the queue-scoped `Request`, `ValidationFact`, request summary, request-URI mapping, and request-log store. Operational reads use their owning entities, current-status reads use the materialized summary and validation facts, and request history reads retained log records directly.
 
-Stovepipe calls `requestlog.Materializer.PersistLog` directly, without an intermediate topic. Its initial materializer appends only the request log: it does not add `RequestSummary`, replay history to determine current state, or materialize another history table. The controller performs only an in-memory wire projection from stored log records to protobuf messages. This avoids a second winner-selection algorithm competing with Request CAS state.
+Stovepipe calls `requestlog.Materializer.PersistLog` directly, without an intermediate topic. The materializer retains occurrences idempotently and advances `RequestSummary` from state entries using their request versions. Informational events never compete for current state. The history controller still performs only an in-memory wire projection from stored log records to protobuf messages; it does not read summaries or infer missing history from current state.
 
-`PersistLog` receives the whole queue-scoped storage aggregate so a future current-status or queue-list API can add SubmitQueue-style summary and index projections behind the same write boundary without changing request-log producers. Such projections remain deferred until a concrete read path needs them; `Request` remains authoritative in the initial implementation.
+`PersistLog` receives the whole queue-scoped storage aggregate, allowing additional summary context behind the same write boundary without changing request-log producers. The proposed [List API](list-api.md) adds immutable acceptance time to the summary, serves request-ID-order pages directly from summaries, and serves time-order pages through an immutable acceptance mapping. It duplicates no mutable lifecycle state and requires no SQL secondary index. Acceptance time and these List read paths are not implemented; the summary used for current-status lookup is implemented. `Request` remains authoritative for operational lifecycle transitions.
 
 ## Ordering and Consistency
 
@@ -146,9 +146,9 @@ Contract and controller tests cover:
 
 ## Alternatives Considered
 
-### Materialize current status from history
+### Replay history during reads
 
-Rejected because `Request` and `ValidationFact` already own current operational state and verdicts. Replaying history would add another reconciliation path without enabling either selector.
+Rejected because retained history is already the complete input for both history selectors. Current lifecycle summaries are materialized when state entries are retained, and validation facts own recorded verdicts; neither requires request-time replay by a history controller.
 
 ### Query history directly by URI
 

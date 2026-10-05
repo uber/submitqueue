@@ -18,4 +18,10 @@ A `Get` immediately following a successful write (`Create`/`Update`) — by the 
 
 ## Key-value contract
 
-Same design space as [`submitqueue/extension/storage`](../../../submitqueue/extension/storage/README.md#key-value-contract): every method must be satisfiable by a plain key-value backend as cheaply as by MySQL — get/put/conditional-update by primary key only, no query-by-attribute or server-side filtering. `RequestURIStore` is the reverse-lookup example here (which request owns a given commit URI), kept as its own store rather than a secondary index on `RequestStore`.
+Same design space as [`submitqueue/extension/storage`](../../../submitqueue/extension/storage/README.md#key-value-contract): point operations use complete primary keys, and deliberate bounded prefix/range reads use leading primary-key components. Contracts do not require secondary-index lookups, joins, or arbitrary server-side filtering. `RequestURIStore` is the reverse-lookup example here (which request owns a given commit URI), kept as its own store rather than a secondary index on `RequestStore`.
+
+## Proposed summary listing
+
+The [List RFC](../../../doc/rfc/stovepipe/list-api.md) proposes acceptance time in the existing summary and two bounded read paths: descending numeric request-ID order directly over summaries, and acceptance-time order through an immutable mapping followed by summary point reads. These fields and query methods are not implemented. The current VARCHAR ID key does not provide numeric order; request-ID listing needs an order-preserving primary-key representation and a compatible key migration.
+
+Acceptance time is sourced from the retained version-1 accepted log and is immutable once known. The proposed mapping is keyed by `(queue, accepted_at_ms, request_id)`, created idempotently after summary persistence, and never rewritten for lifecycle changes. Both SQL and ordered key-value implementations can serve it by primary-key range scan. List's lifecycle read model remains the existing summary; there is no replicated queue summary, new per-queue counter, or exception to the prohibition on secondary-index-dependent queries.
