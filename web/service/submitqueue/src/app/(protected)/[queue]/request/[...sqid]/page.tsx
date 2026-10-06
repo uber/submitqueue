@@ -37,11 +37,11 @@ export default async function RequestPage({
   await requireAuthorization();
 
   const { queue: queuePath, sqid: sqidPath } = await params;
-  const queue = decodePathSegment(queuePath);
+  const queue = decodePathSegment(decodeURIComponent(queuePath));
   if (queue !== DEMO_QUEUE || sqidPath.length === 0) {
     notFound();
   }
-  const sqid = sqidPath.map(decodePathSegment).join("/");
+  const sqid = sqidPath.map(value => decodePathSegment(decodeURIComponent(value))).join("/");
   const search = await searchParams;
   const view = search.view === "history" ? "history" : "summary";
   if (search.from !== undefined || search.to !== undefined || search.page !== undefined) {
