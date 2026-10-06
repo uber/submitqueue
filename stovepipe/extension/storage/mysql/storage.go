@@ -39,19 +39,20 @@ func NewStorage(db *sql.DB, scope tally.Scope) (*Storage, error) {
 
 // For returns the queue-scoped store aggregate bound to queueName over the
 // shared pool. Every store the aggregate hands back reads and writes only that
-// queue's records.
+// queue's records and tags its metrics with queue=queueName.
 func (s *Storage) For(queueName string) (storage.Storage, error) {
 	if queueName == "" {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
+	queueScope := s.scope.Tagged(map[string]string{"queue": queueName})
 	return &mysqlStorage{
-		requestStore:        NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
-		requestURIStore:     NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
-		requestLogStore:     NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
-		requestSummaryStore: NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
-		queueStore:          NewQueueStore(s.db, s.scope.SubScope("queue_store"), queueName),
-		buildStore:          NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
-		validationFactStore: NewValidationFactStore(s.db, s.scope.SubScope("validation_fact_store"), queueName),
+		requestStore:        NewRequestStore(s.db, queueScope.SubScope("request_store"), queueName),
+		requestURIStore:     NewRequestURIStore(s.db, queueScope.SubScope("request_uri_store"), queueName),
+		requestLogStore:     NewRequestLogStore(s.db, queueScope.SubScope("request_log_store"), queueName),
+		requestSummaryStore: NewRequestSummaryStore(s.db, queueScope.SubScope("request_summary_store"), queueName),
+		queueStore:          NewQueueStore(s.db, queueScope.SubScope("queue_store"), queueName),
+		buildStore:          NewBuildStore(s.db, queueScope.SubScope("build_store"), queueName),
+		validationFactStore: NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
 	}, nil
 }
 
