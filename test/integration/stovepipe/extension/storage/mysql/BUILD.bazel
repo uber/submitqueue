@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
-    srcs = ["storage_test.go"],
+    srcs = [
+        "request_acceptance_test.go",
+        "storage_test.go",
+    ],
     data = [
         "docker-compose.yml",
         "//stovepipe/extension/storage/mysql/schema",
@@ -12,6 +15,7 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mysql:go_default_library",

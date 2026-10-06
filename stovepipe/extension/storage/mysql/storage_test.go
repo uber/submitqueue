@@ -104,6 +104,14 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			},
 		},
 		{
+			name: "request_acceptance_store",
+			op:   "list",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetRequestAcceptanceStore().List(context.Background(), storage.RequestAcceptanceRange{AcceptedBeforeMs: 1, Limit: 1})
+				return err
+			},
+		},
+		{
 			name: "queue_store",
 			op:   "get",
 			read: func(bound storage.Storage, queue string) error {

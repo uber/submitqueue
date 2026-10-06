@@ -23,27 +23,27 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-func materializeRequestSummary(ctx context.Context, stores storage.Storage, log entity.RequestLog) error {
+func materializeRequestSummary(ctx context.Context, stores storage.Storage, log entity.RequestLog) (entity.RequestSummary, error) {
 	summaryStore := stores.GetRequestSummaryStore()
 	// Create and update races reload the winner; request versions make each retry converge.
 	for {
 		currentSummary, err := summaryStore.Get(ctx, log.RequestID)
 		if storage.IsNotFound(err) {
-			createErr := createInitialRequestSummary(ctx, stores.GetRequestStore(), summaryStore, log)
+			initial, createErr := createInitialRequestSummary(ctx, stores.GetRequestStore(), summaryStore, log)
 			if errors.Is(createErr, storage.ErrAlreadyExists) {
 				continue
 			}
-			return createErr
+			return initial, createErr
 		}
 		if err != nil {
-			return fmt.Errorf("failed to get request summary request_id=%q: %w", log.RequestID, err)
+			return entity.RequestSummary{}, fmt.Errorf("failed to get request summary request_id=%q: %w", log.RequestID, err)
 		}
 
-		updateErr := updateExistingRequestSummary(ctx, summaryStore, currentSummary, log)
+		updated, updateErr := updateExistingRequestSummary(ctx, summaryStore, currentSummary, log)
 		if errors.Is(updateErr, storage.ErrVersionMismatch) {
 			continue
 		}
-		return updateErr
+		return updated, updateErr
 	}
 }
 
@@ -52,27 +52,27 @@ func createInitialRequestSummary(
 	requestStore storage.RequestStore,
 	summaryStore storage.RequestSummaryStore,
 	log entity.RequestLog,
-) error {
+) (entity.RequestSummary, error) {
 	request, err := requestStore.Get(ctx, log.RequestID)
 	if err != nil {
-		return fmt.Errorf("failed to get request for summary request_id=%q: %w", log.RequestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to get request for summary request_id=%q: %w", log.RequestID, err)
 	}
 	if request.ID != log.RequestID || request.Queue != log.Queue {
-		return fmt.Errorf(
+		return entity.RequestSummary{}, fmt.Errorf(
 			"request identity conflicts with state log log_request_id=%q request_id=%q log_queue=%q request_queue=%q",
 			log.RequestID, request.ID, log.Queue, request.Queue,
 		)
 	}
 	if request.URI == "" {
-		return fmt.Errorf("request URI is empty for summary request_id=%q", log.RequestID)
+		return entity.RequestSummary{}, fmt.Errorf("request URI is empty for summary request_id=%q", log.RequestID)
 	}
 
 	initial := requestSummaryFromRequestAndLog(request, log)
 	initial.Version = 1
 	if err := summaryStore.Create(ctx, initial); err != nil {
-		return fmt.Errorf("failed to create request summary request_id=%q: %w", log.RequestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to create request summary request_id=%q: %w", log.RequestID, err)
 	}
-	return nil
+	return initial, nil
 }
 
 func updateExistingRequestSummary(
@@ -80,20 +80,21 @@ func updateExistingRequestSummary(
 	summaryStore storage.RequestSummaryStore,
 	current entity.RequestSummary,
 	log entity.RequestLog,
-) error {
+) (entity.RequestSummary, error) {
 	updated, err := projectRequestSummary(current, log)
 	if err != nil {
-		return err
+		return entity.RequestSummary{}, err
 	}
 	if updated == current {
-		return nil
+		return current, nil
 	}
 	oldVersion := current.Version
 	newVersion := oldVersion + 1
 	if err := summaryStore.Update(ctx, updated, oldVersion, newVersion); err != nil {
-		return fmt.Errorf("failed to update request summary request_id=%q: %w", log.RequestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to update request summary request_id=%q: %w", log.RequestID, err)
 	}
-	return nil
+	updated.Version = newVersion
+	return updated, nil
 }
 
 func projectRequestSummary(current entity.RequestSummary, log entity.RequestLog) (entity.RequestSummary, error) {

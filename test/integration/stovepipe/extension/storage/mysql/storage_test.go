@@ -112,6 +112,16 @@ func TestMySQLStorage(t *testing.T) {
 			store: bound.GetRequestSummaryStore(),
 		})
 	})
+
+	t.Run("RequestAcceptanceStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testRequestAcceptanceStore(t, ctx, factory)
+	})
+
+	t.Run("RequestAcceptanceProjection", func(t *testing.T) {
+		resetStorage(t, db)
+		testRequestAcceptanceProjection(t, ctx, factory)
+	})
 }
 
 func resetStorage(t *testing.T, db *sql.DB) {
@@ -120,6 +130,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 	for _, statement := range []string{
 		"TRUNCATE TABLE request_log",
 		"TRUNCATE TABLE request_summary",
+		"TRUNCATE TABLE request_acceptance",
 		"TRUNCATE TABLE request_uri",
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",

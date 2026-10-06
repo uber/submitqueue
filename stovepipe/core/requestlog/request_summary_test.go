@@ -344,7 +344,7 @@ func TestUpdateRequestSummaryAcceptanceTime(t *testing.T) {
 				summaries.EXPECT().Update(gomock.Any(), want, current.Version, current.Version+1).Return(nil)
 			}
 
-			err := updateExistingRequestSummary(context.Background(), summaries, current, log)
+			_, err := updateExistingRequestSummary(context.Background(), summaries, current, log)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -392,7 +392,7 @@ func TestUpdateRequestSummaryOutcomeReason(t *testing.T) {
 				summaries.EXPECT().Update(gomock.Any(), want, current.Version, current.Version+1).Return(nil)
 			}
 
-			err := updateExistingRequestSummary(context.Background(), summaries, current, log)
+			_, err := updateExistingRequestSummary(context.Background(), summaries, current, log)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -436,7 +436,8 @@ func TestUpdateRequestSummaryNewerState(t *testing.T) {
 			summaries := storagemock.NewMockRequestSummaryStore(gomock.NewController(t))
 			summaries.EXPECT().Update(gomock.Any(), want, current.Version, current.Version+1).Return(nil)
 
-			require.NoError(t, updateExistingRequestSummary(context.Background(), summaries, current, log))
+			_, err := updateExistingRequestSummary(context.Background(), summaries, current, log)
+			require.NoError(t, err)
 		})
 	}
 }

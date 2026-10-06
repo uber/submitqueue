@@ -45,9 +45,12 @@ func newTestMaterializer(t *testing.T) (*materializer, *storagemock.MockStorage,
 	store := storagemock.NewMockRequestLogStore(ctrl)
 	summaries := storagemock.NewMockRequestSummaryStore(ctrl)
 	requests := storagemock.NewMockRequestStore(ctrl)
+	acceptances := storagemock.NewMockRequestAcceptanceStore(ctrl)
 	stores.EXPECT().GetRequestLogStore().Return(store).AnyTimes()
 	stores.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
 	stores.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+	stores.EXPECT().GetRequestAcceptanceStore().Return(acceptances).AnyTimes()
+	acceptances.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return &materializer{
 		scope: tally.NoopScope,
 		now:   func() time.Time { return time.UnixMilli(testNowMs) },
@@ -360,8 +363,13 @@ func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
 	stores := storagemock.NewMockStorage(ctrl)
 	store := storagemock.NewMockRequestLogStore(ctrl)
 	summaries := storagemock.NewMockRequestSummaryStore(ctrl)
+	acceptances := storagemock.NewMockRequestAcceptanceStore(ctrl)
 	stores.EXPECT().GetRequestLogStore().Return(store)
 	stores.EXPECT().GetRequestSummaryStore().Return(summaries)
+	stores.EXPECT().GetRequestAcceptanceStore().Return(acceptances)
+	acceptances.EXPECT().Create(gomock.Any(), entity.RequestAcceptance{
+		Queue: testQueue, RequestID: testRequestID, AcceptedAtMs: testNowMs,
+	}).Return(nil)
 	store.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	expectRequestSummaryUpdate(summaries)
 	ctx := metrics.WithContextTags(context.Background(), metrics.NewTag("queue", testQueue))
