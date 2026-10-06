@@ -178,3 +178,54 @@ test("preserves literal percent escapes in Git refs when opening change history"
   await page.reload();
   await expect(page.getByRole("heading", { name: "refs/heads/web-demo%2Fpercent", exact: true })).toBeVisible();
 });
+
+test("paginates change history through more than 500 queue requests", async ({ page }) => {
+  const changePath = `/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
+  const oldest = await submitRequest("git://git.example.com/demo/refs%2Fheads%2Fpagination/5555555555555555555555555555555555555555");
+  const expectedIds = [oldest];
+  for (let offset = 0; offset < 501; offset += 25) {
+    const replies = await Promise.all(Array.from({ length: Math.min(25, 501 - offset) }, (_, index) => gateway.land({
+      queue,
+      change: { uris: [`github://github.com/uber/submitqueue/pull/${1000 + offset + index}/6666666666666666666666666666666666666666`] },
+      strategy: Strategy.SQUASH_REBASE,
+    })));
+    expectedIds.push(...replies.map(reply => reply.sqid));
+  }
+  const newest = (await gateway.land({
+    queue,
+    change: { uris: ["git://git.example.com/demo/refs%2Fheads%2Fpagination/7777777777777777777777777777777777777777"] },
+    strategy: Strategy.SQUASH_REBASE,
+  })).sqid;
+  expectedIds.push(newest);
+  await expect.poll(async () => {
+    const ids = new Set<string>();
+    const toMs = BigInt(Date.now());
+    let pageToken = "";
+    do {
+      const response = await gateway.list({
+        queue, receivedAtOrAfterMs: toMs - 86_400_000n, receivedBeforeMs: toMs,
+        pageSize: 50, pageToken,
+      });
+      response.requests.forEach(request => ids.add(request.sqid));
+      pageToken = response.nextPageToken;
+    } while (pageToken);
+    return expectedIds.every(id => ids.has(id));
+  }, { timeout: 0 }).toBe(true);
+
+  await page.goto(changePath);
+  await expect(page.getByRole("heading", { name: "refs/heads/pagination", exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Change submissions" }).getByRole("link", { name: newest, exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: oldest, exact: true })).toHaveCount(0);
+  await expect(page.getByText("More queue requests remain to be searched.", { exact: false })).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole("link", { name: "Continue history scan", exact: true }).click();
+  await expect(page.getByRole("table", { name: "Change submissions" }).getByRole("link", { name: oldest, exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Continue history scan", exact: true })).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.has("page")).toBe(true);
+  await page.reload();
+  await expect(page.getByRole("link", { name: oldest, exact: true })).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("link", { name: newest, exact: true })).toBeVisible();
+  expect(new URL(page.url()).search).toBe("");
+});
