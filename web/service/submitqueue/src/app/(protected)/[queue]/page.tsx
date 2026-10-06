@@ -12,7 +12,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 
-import { DEMO_QUEUE } from "../../../server/config";
+import { loadConfiguredQueue } from "../../../server/queues";
 import { gatewayDiagnostics } from "../../../server/diagnostics";
 import { resolveDemoGateway } from "../../../server/gateway";
 import { requireAuthorization } from "../../../server/request-auth";
@@ -47,7 +47,8 @@ export default async function QueueRequestsPage({
   await requireAuthorization();
 
   const queue = decodePathSegment(decodeURIComponent((await params).queue));
-  if (queue !== DEMO_QUEUE) {
+  const configured = await loadConfiguredQueue(queue);
+  if (configured.ok && !configured.data) {
     notFound();
   }
 
@@ -63,7 +64,7 @@ export default async function QueueRequestsPage({
   }
   const requestWindow = pageWindow ?? defaultRequestWindow();
 
-  const loaded = await loadRequestList(
+  const loaded = configured.ok ? await loadRequestList(
     resolveDemoGateway,
     {
       queue,
@@ -73,7 +74,7 @@ export default async function QueueRequestsPage({
       pageToken: requestWindow.pageToken,
     },
     { diagnostics: gatewayDiagnostics },
-  );
+  ) : configured;
   const result = loaded.ok && loaded.data.nextPageToken ? {
     ...loaded,
     data: { ...loaded.data, nextPageToken: encodeRequestPage(queue, requestWindow, loaded.data.nextPageToken, secret) },

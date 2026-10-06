@@ -6,7 +6,7 @@ export default function NotFound() {
       <section className="state-card" aria-labelledby="not-found-title">
         <p className="eyebrow">Request lookup</p>
         <h1 id="not-found-title">Request not found</h1>
-        <p>The request may not exist in the demo queue or may have expired.</p>
+        <p>The queue or request may not exist, or its retained data may have expired.</p>
         <Link className="button-link" href="/">
           Return to queues
         </Link>

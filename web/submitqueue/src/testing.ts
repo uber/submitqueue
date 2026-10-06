@@ -1,6 +1,7 @@
 import type {
   GatewayHistoryEvent,
   GatewayReader,
+  GatewayQueueReader,
   GatewayRequestSummary,
 } from "./server.js";
 
@@ -36,6 +37,8 @@ export function gatewayHistoryFixture(
 }
 
 export interface FakeGatewayReaderOptions {
+  queues?: readonly { name: string }[];
+  queuesError?: unknown;
   requests?: readonly GatewayRequestSummary[];
   nextPageToken?: string;
   summary?: GatewayRequestSummary;
@@ -45,9 +48,15 @@ export interface FakeGatewayReaderOptions {
   historyError?: unknown;
 }
 
-export function createFakeGatewayReader(options: FakeGatewayReaderOptions = {}): GatewayReader {
+export function createFakeGatewayReader(options: FakeGatewayReaderOptions = {}): GatewayReader & GatewayQueueReader {
   const summary = options.summary ?? options.requests?.[0] ?? gatewayRequestFixture();
   return {
+    async listQueues() {
+      if (options.queuesError !== undefined) {
+        throw options.queuesError;
+      }
+      return { queues: options.queues ?? [{ name: "demo-queue" }] };
+    },
     async list() {
       if (options.listError !== undefined) {
         throw options.listError;
@@ -72,4 +81,4 @@ export function createFakeGatewayReader(options: FakeGatewayReaderOptions = {}):
   };
 }
 
-export type { GatewayHistoryEvent, GatewayReader, GatewayRequestSummary } from "./server.js";
+export type { GatewayHistoryEvent, GatewayReader, GatewayQueueReader, GatewayRequestSummary } from "./server.js";

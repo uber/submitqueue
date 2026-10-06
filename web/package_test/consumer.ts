@@ -1,5 +1,5 @@
 import { RequestList, QueueDirectory, ChangeSubmissions, AutoRefresh } from "@submitqueue/web-submitqueue";
-import { loadRequestList, loadChangeSubmissions } from "@submitqueue/web-submitqueue/server";
+import { loadRequestList, loadChangeSubmissions, loadQueueDirectory } from "@submitqueue/web-submitqueue/server";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/testing";
 
 void RequestList;
@@ -9,3 +9,4 @@ void QueueDirectory;
 void ChangeSubmissions;
 void AutoRefresh;
 void loadChangeSubmissions;
+void loadQueueDirectory;

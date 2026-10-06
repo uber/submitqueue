@@ -55,6 +55,23 @@ test("challenges anonymous requests", async () => {
   expect(response.headers.get("www-authenticate")).toContain("Basic");
 });
 
+test("discovers gateway queues including empty queues and rejects unknown queues", async ({ page }) => {
+  const expected = (await gateway.listQueues({})).queues.map(value => value.name);
+  expect(expected).toContain(queue);
+  const emptyQueue = expected.find(name => name !== queue)!;
+  expect(emptyQueue).toBeDefined();
+  await page.goto("/");
+  await expect(page.locator(".sq-directory h2 a")).toHaveText(expected);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole("link", { name: emptyQueue, exact: true }).click();
+  await expect(page.getByRole("heading", { name: emptyQueue, exact: true })).toBeVisible();
+  await expect(page.getByText("No requests were received in this window.")).toBeVisible();
+  await page.goto(`/${emptyQueue}/request/999999`);
+  await expect(page.getByRole("heading", { name: "Request not found", exact: true })).toBeVisible();
+  await page.goto("/not-a-configured-queue");
+  await expect(page.getByRole("heading", { name: "Request not found", exact: true })).toBeVisible();
+});
+
 test("shows newest requests and an accessible readable detail history", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Queues", exact: true })).toBeVisible();

@@ -7,10 +7,42 @@ import {
   loadChangeSubmissions,
   loadRequestDetail,
   loadRequestList,
+  loadQueueDirectory,
   requestDetailIsComplete,
   requestDetailRefreshState,
   safeInt64ToNumber,
 } from "./server";
+
+describe("queue discovery mapping", () => {
+  it("lists gateway-configured queues, including ones without requests", async () => {
+    const reader = createFakeGatewayReader({ queues: [{ name: "demo-queue" }, { name: "empty-queue" }] });
+    const result = await loadQueueDirectory(reader);
+    expect(result).toEqual({
+      ok: true, data: [{ name: "demo-queue", description: "" }, { name: "empty-queue", description: "" }],
+    });
+  });
+
+  it("returns an empty directory when the gateway has no configured queues", async () => {
+    expect(await loadQueueDirectory(createFakeGatewayReader({ queues: [] }))).toEqual({ ok: true, data: [] });
+  });
+
+  it("classifies discovery failures without leaking the gateway message", async () => {
+    const onGatewayError = vi.fn();
+    const cause = new ConnectError("private upstream detail", Code.Unavailable);
+    const result = await loadQueueDirectory(
+      createFakeGatewayReader({ queuesError: cause }),
+      { diagnostics: { onGatewayError } },
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: "transient", retryable: true } });
+    expect(JSON.stringify(result)).not.toContain("private upstream detail");
+    expect(onGatewayError).toHaveBeenCalledWith(expect.objectContaining({ operation: "queues", cause }));
+  });
+
+  it.each([{ queues: [{ name: "" }] }, { queues: [{ name: "same" }, { name: "same" }] }])("rejects malformed discovery data", async ({ queues }) => {
+    const result = await loadQueueDirectory(createFakeGatewayReader({ queues }));
+    expect(result).toMatchObject({ ok: false, error: { kind: "internal" } });
+  });
+});
 
 describe("server presentation mapping", () => {
   beforeEach(() => vi.clearAllMocks());

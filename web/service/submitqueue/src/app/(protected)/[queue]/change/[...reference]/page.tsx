@@ -4,7 +4,7 @@ import { connection } from "next/server";
 import { notFound, redirect } from "next/navigation";
 import { NextRefresh } from "../../../../../components/next-refresh";
 import { ChangeView } from "../../../../../components/change-view";
-import { DEMO_QUEUE } from "../../../../../server/config";
+import { loadConfiguredQueue } from "../../../../../server/queues";
 import { parseChangePath, changeHref } from "../../../../../server/change";
 import { readChangeSubmissions } from "../../../../../server/change-reader";
 import { resolveGatewayClient } from "../../../../../server/gateway";
@@ -25,7 +25,11 @@ export default async function ChangePage({ params, searchParams }: {
   const path = await params;
   const queue = decodePathSegment(decodeURIComponent(path.queue));
   const reference = parseChangePath(path.reference.map(decodeURIComponent));
-  if (queue !== DEMO_QUEUE || reference === null) {
+  if (reference === null) {
+    notFound();
+  }
+  const configured = await loadConfiguredQueue(queue);
+  if (configured.ok && !configured.data) {
     notFound();
   }
   const search = await searchParams;
@@ -42,7 +46,7 @@ export default async function ChangePage({ params, searchParams }: {
     redirect(latestHref);
   }
   const requestWindow = pageWindow ?? defaultRequestWindow();
-  const result = await loadChangeSubmissions(
+  const result = configured.ok ? await loadChangeSubmissions(
     async () => {
       const page = await readChangeSubmissions(resolveGatewayClient(), queue, reference, requestWindow);
       return {
@@ -62,7 +66,7 @@ export default async function ChangePage({ params, searchParams }: {
       window: scansQueue ? { fromMs: requestWindow.fromMs, toMs: requestWindow.toMs } : null,
     },
     { diagnostics: gatewayDiagnostics },
-  );
+  ) : configured;
   return <main className="shell">
     {result.ok ? <ChangeView model={result.data} /> : <ErrorState error={result.error} />}
     <div className="page-actions"><NextRefresh refreshHref={pageWindow ? latestHref : undefined}

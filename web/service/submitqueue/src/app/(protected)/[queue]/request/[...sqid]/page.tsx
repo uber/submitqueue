@@ -11,7 +11,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 
-import { DEMO_QUEUE } from "../../../../../server/config";
+import { loadConfiguredQueue } from "../../../../../server/queues";
 import { gatewayDiagnostics } from "../../../../../server/diagnostics";
 import { resolveDemoGateway } from "../../../../../server/gateway";
 import { requireAuthorization } from "../../../../../server/request-auth";
@@ -39,7 +39,11 @@ export default async function RequestPage({
 
   const { queue: queuePath, sqid: sqidPath } = await params;
   const queue = decodePathSegment(decodeURIComponent(queuePath));
-  if (queue !== DEMO_QUEUE || sqidPath.length === 0) {
+  if (sqidPath.length === 0) {
+    notFound();
+  }
+  const configured = await loadConfiguredQueue(queue);
+  if (configured.ok && !configured.data) {
     notFound();
   }
   const sqid = sqidPath.map(value => decodePathSegment(decodeURIComponent(value))).join("/");
@@ -49,14 +53,14 @@ export default async function RequestPage({
     redirect(paths.request(queue, sqid, { view }));
   }
 
-  const result = await loadRequestDetail(
+  const result = configured.ok ? await loadRequestDetail(
     resolveDemoGateway,
     {
       queue,
       sqid,
     },
     { diagnostics: gatewayDiagnostics },
-  );
+  ) : configured;
 
   if (!result.ok && result.error.kind === "not-found") {
     notFound();

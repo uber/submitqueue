@@ -40,10 +40,10 @@ function RequestChanges({ request, links = {}, labels = {} }: {
 export function QueueDirectory({ queues, basePath }: { queues: readonly QueueModel[]; basePath?: string }) {
   const paths = new WebPaths(basePath === undefined ? {} : { basePath });
   return <section className="sq-directory">
-    <h1>Queues</h1><p className="sq-secondary">Queues configured by this host</p>
+    <h1>Queues</h1><p className="sq-secondary">Available submit queues</p>
     {queues.length === 0 ? <p>No queues are configured.</p> :
       <ul>{queues.map(queue => <li key={queue.name}>
-        <h2><a href={paths.requests(queue.name)}>{queue.name}</a></h2><p>{queue.description}</p>
+        <h2><a href={paths.requests(queue.name)}>{queue.name}</a></h2>{queue.description ? <p>{queue.description}</p> : null}
       </li>)}</ul>}
   </section>;
 }

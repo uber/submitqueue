@@ -21,4 +21,6 @@ Request list/detail result views retain the last successful snapshot on transien
 
 The package-consumer checks typecheck without Next.js and reject Next.js dependencies or imports in the emitted library.
 
+`loadQueueDirectory` maps the gateway's `ListQueues` response into serializable queue models and sanitized errors. It uses a separate structural queue-reader interface so request-only adapters remain valid; the host supplies the client and decides where to render or validate the discovered catalog.
+
 Normal queue/resource paths remain readable. Exceptional dot-only path segments use a visible `~` escape so browsers cannot normalize them away; `decodePathSegment` reverses that transport escape without interpreting an ID. Change-version navigation is an optional host callback over already supplied URLs, keeping router integration out of the library.

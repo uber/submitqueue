@@ -10,11 +10,11 @@ Phase one is read-only: request summary, history, and queue receipt list ([statu
 
 ## URL reference
 
-The entry point lists the queues configured by the host, with each queue linking to its landing page. The queue is the top-level navigation context. Singular resource segments identify what the user is opening; the ID remains a value supplied by the gateway, not a string the UI interprets. The reference host currently serves only `demo-queue`, so its queue list initially has one entry.
+The entry point lists gateway-configured queues through `ListQueues`, including empty queues, with each queue linking to its landing page. The queue is the top-level navigation context; resource IDs remain gateway-supplied values that the UI does not interpret.
 
 | Resource or view | Route | Example | Availability |
 |---|---|---|---|
-| Queue directory | `/` | `/` lists configured queues, including a link to `/demo-queue` | Reference host |
+| Queue directory | `/` | `/` lists queues returned by `ListQueues` | Reference host |
 | Queue landing and request list | `/<queue>` | `/demo-queue` | Reference host |
 | Request detail | `/<queue>/request/<request-id>` | `/demo-queue/request/10` | Reference host |
 | Request history tab | `/<queue>/request/<request-id>?view=history` | `/demo-queue/request/10?view=history` | Reference host |
@@ -22,7 +22,7 @@ The entry point lists the queues configured by the host, with each queue linking
 | GitHub logical change | `/<queue>/change/github/<host>/<org>/<repo>/pull/<pr>` | `/demo-queue/change/github/github.com/uber/submitqueue/pull/123` | Demo receipt-window scan; unbounded lookup deferred |
 | Phabricator logical change | `/<queue>/change/phab/<host>/D<revision>` | `/demo-queue/change/phab/phabricator.example.com/D12345` | Demo receipt-window scan; unbounded lookup deferred |
 
-The queue directory replaces the automatic redirect to `demo-queue`. Queue discovery belongs to the host's configured queue registry; the directory does not infer queue names from requests or require a new gateway discovery API.
+The queue directory replaces the automatic redirect to `demo-queue`. The library maps queue models; the host fetches and validates them through the published gateway API, without inferring queues from received requests.
 
 The request and batch examples follow [scoped sequential resource IDs](scoped-resource-ids.md): `"10"` and `"4"` are stored string IDs, and the route supplies their queue and resource context. The UI passes each ID unchanged to the gateway. The mockups below retain earlier illustrative slash-containing IDs; those labels do not override the scoped-ID contract.
 

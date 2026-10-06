@@ -1,9 +1,5 @@
 import "server-only";
 
-export const DEMO_QUEUE = "demo-queue";
-export const HOST_QUEUES = [
-  { name: DEMO_QUEUE, description: "Local read-only demo backed by the SubmitQueue gateway" },
-];
 export const GATEWAY_DEADLINE_MS = 5_000;
 export const GATEWAY_HEALTH_DEADLINE_MS = 1_000;
 

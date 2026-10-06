@@ -9,6 +9,7 @@ import type {
   RequestDetailModel,
   RequestListModel,
   RequestSummaryModel,
+  QueueModel,
   WebError,
 } from "./models.js";
 import { isTerminalStatus } from "./status.js";
@@ -71,7 +72,14 @@ export interface GatewayReader {
 
 export type GatewayResolver = (queue: string) => GatewayReader;
 
-export type GatewayOperation = "list" | "summary" | "history" | "change";
+export interface GatewayQueueReader {
+  listQueues(
+    input: Record<string, never>,
+    options?: GatewayCallOptions,
+  ): Promise<{ queues: readonly { name: string }[] }>;
+}
+
+export type GatewayOperation = "list" | "summary" | "history" | "change" | "queues";
 
 export interface GatewayDiagnostic {
   operation: GatewayOperation;
@@ -192,6 +200,28 @@ function reportGatewayError(
     });
   } catch {
     // Diagnostics must never replace the sanitized loader result.
+  }
+}
+
+export async function loadQueueDirectory(
+  gateway: GatewayQueueReader,
+  options: GatewayLoadOptions = {},
+): Promise<LoadResult<QueueModel[]>> {
+  try {
+    const response = await gateway.listQueues({});
+    const names = new Set<string>();
+    const queues: QueueModel[] = [];
+    for (const queue of response.queues) {
+      if (!queue.name || names.has(queue.name)) {
+        return { ok: false, error: INTERNAL_ERROR };
+      }
+      names.add(queue.name);
+      queues.push({ name: queue.name, description: "" });
+    }
+    return { ok: true, data: queues };
+  } catch (error) {
+    reportGatewayError(options, "queues", "", null, error);
+    return { ok: false, error: classifyGatewayError(error) };
   }
 }
 
