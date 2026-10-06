@@ -4,33 +4,32 @@ import {
   BASIC_AUTH_USERNAME,
   isAuthorized,
   loadAuthConfiguration,
-  MINIMUM_TOKEN_LENGTH,
 } from "./auth";
 
-const token = "a".repeat(MINIMUM_TOKEN_LENGTH);
+const token = "test";
 
 function basic(username: string, password: string): string {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }
 
 describe("loadAuthConfiguration", () => {
-  it("loads a sufficiently long token", () => {
+  it("loads the local demo password", () => {
     expect(loadAuthConfiguration({ SUBMITQUEUE_WEB_TOKEN: token })).toEqual({
       token,
     });
   });
 
-  it.each([undefined, "short"])("rejects a missing or short token", (value) => {
+  it.each([undefined, ""])("rejects a missing or empty token", (value) => {
     expect(() =>
       loadAuthConfiguration({ SUBMITQUEUE_WEB_TOKEN: value }),
-    ).toThrow(/at least 32 characters/u);
+    ).toThrow(Error);
   });
 });
 
 describe("isAuthorized", () => {
   it("accepts the configured credentials", () => {
     expect(
-      isAuthorized(basic(BASIC_AUTH_USERNAME, token), { token }),
+      isAuthorized(basic("test", "test"), { token }),
     ).toBe(true);
   });
 
@@ -40,6 +39,7 @@ describe("isAuthorized", () => {
     ["malformed base64", "Basic !!!"],
     ["missing separator", `Basic ${Buffer.from("submitqueue").toString("base64")}`],
     ["wrong user", basic("operator", token)],
+    ["previous demo user", basic("submitqueue", token)],
     ["wrong password", basic(BASIC_AUTH_USERNAME, "b".repeat(32))],
   ])("rejects %s", (_name, authorization) => {
     expect(isAuthorized(authorization, { token })).toBe(false);

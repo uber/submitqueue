@@ -2,9 +2,8 @@ import "server-only";
 
 import { createHash, timingSafeEqual } from "node:crypto";
 
-export const BASIC_AUTH_USERNAME = "submitqueue";
+export const BASIC_AUTH_USERNAME = "test";
 export const BASIC_AUTH_REALM = "SubmitQueue demo";
-export const MINIMUM_TOKEN_LENGTH = 32;
 
 export type AuthConfiguration = Readonly<{
   token: string;
@@ -14,10 +13,8 @@ export function loadAuthConfiguration(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): AuthConfiguration {
   const token = environment.SUBMITQUEUE_WEB_TOKEN ?? "";
-  if (token.length < MINIMUM_TOKEN_LENGTH) {
-    throw new Error(
-      `SUBMITQUEUE_WEB_TOKEN must contain at least ${MINIMUM_TOKEN_LENGTH} characters`,
-    );
+  if (token.length === 0) {
+    throw new Error("SUBMITQUEUE_WEB_TOKEN must be set");
   }
   return { token };
 }

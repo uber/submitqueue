@@ -30,7 +30,7 @@ describe("GET /healthz", () => {
   });
 
   it.each([
-    ["a short token", "short", "https://gateway.example:8080"],
+    ["an empty token", "", "https://gateway.example:8080"],
     ["a missing gateway", "a".repeat(32), ""],
   ])("is unavailable with %s", async (_name, token, gatewayURL) => {
     vi.stubEnv("SUBMITQUEUE_WEB_TOKEN", token);
@@ -48,14 +48,14 @@ describe("GET /healthz", () => {
     await GET();
 
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.stubEnv("SUBMITQUEUE_WEB_TOKEN", "short");
+    vi.stubEnv("SUBMITQUEUE_WEB_TOKEN", "");
     await GET();
     await GET();
 
     expect(error).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledWith(
       "SubmitQueue web configuration is invalid",
-      { message: "SUBMITQUEUE_WEB_TOKEN must contain at least 32 characters" },
+      { message: "SUBMITQUEUE_WEB_TOKEN must be set" },
     );
   });
 
