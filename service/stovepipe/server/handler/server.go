@@ -30,6 +30,7 @@ type StovepipeServer struct {
 	ingestController         *controller.IngestController
 	requestHistoryController controller.RequestHistoryController
 	projectStatusController  *controller.GetProjectStatusByURIController
+	listController           controller.ListController
 }
 
 // NewStovepipeServer creates a gRPC service handler from Stovepipe controllers.
@@ -38,12 +39,14 @@ func NewStovepipeServer(
 	ingestController *controller.IngestController,
 	requestHistoryController controller.RequestHistoryController,
 	projectStatusController *controller.GetProjectStatusByURIController,
+	listController controller.ListController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
 		ingestController:         ingestController,
 		requestHistoryController: requestHistoryController,
 		projectStatusController:  projectStatusController,
+		listController:           listController,
 	}
 }
 
@@ -87,4 +90,13 @@ func (s *StovepipeServer) GetProjectStatusByURI(ctx context.Context, req *pb.Get
 		return nil, err
 	}
 	return mapper.GetProjectStatusByURIResultToProto(result), nil
+}
+
+// List returns one queue's current request summaries in acceptance-time order.
+func (s *StovepipeServer) List(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
+	result, err := s.listController.List(ctx, mapper.ProtoToListRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.ListResultToProto(result), nil
 }

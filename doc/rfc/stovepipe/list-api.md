@@ -1,6 +1,6 @@
 # Stovepipe List API
 
-The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) defines the approved API. Summary fields, acceptance-mapping storage, and the List controller are implemented; RPC/server wiring and end-to-end coverage remain.
+The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) defines the approved API. Summary fields, acceptance-mapping storage, the List controller, and RPC/server wiring are implemented; end-to-end coverage remains.
 
 ## Proposal
 

@@ -286,7 +286,8 @@ func run() error {
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	projectStatusController := controller.NewGetProjectStatusByURIController(logger.Sugar(), scope, storageFty)
-	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController)
+	listController := controller.NewListController(logger.Sugar(), scope, storageFty, tenants)
+	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController, listController)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
 	// Register reflection service for debugging with grpcurl
