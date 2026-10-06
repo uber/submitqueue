@@ -12,12 +12,11 @@ go_library(
     importpath = "github.com/uber/submitqueue/service/submitqueue/demo/requests",
     visibility = ["//visibility:private"],
     deps = [
-        "//api/base/mergestrategy/protopb:go_default_library",
         "//platform/base/change/git:go_default_library",
         "//platform/base/change/github:go_default_library",
         "//platform/git/exec:go_default_library",
+        "//service/submitqueue/demo:go_default_library",
         "//submitqueue/client:go_default_library",
-        "@org_golang_x_sync//errgroup:go_default_library",
     ],
 )
 
@@ -45,11 +44,9 @@ go_test(
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
     },
     deps = [
-        "//api/base/mergestrategy/protopb:go_default_library",
         "//platform/base/change/git:go_default_library",
         "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
-        "//submitqueue/client:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

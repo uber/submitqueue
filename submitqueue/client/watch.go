@@ -22,8 +22,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/errs"
 )
 
 // HistorySource is the part of the gateway a watch reads from.
@@ -39,6 +42,23 @@ type HistorySource interface {
 	) (*pb.GetRequestHistoryByIDResponse, error)
 }
 
+// HistoryReader decouples request tracking from the gateway's transport.
+type HistoryReader interface {
+	History(ctx context.Context, queue, sqid string) ([]*pb.HistoryEvent, error)
+}
+
+type gatewayHistoryReader struct {
+	source HistorySource
+}
+
+func (r gatewayHistoryReader) History(ctx context.Context, queue, sqid string) ([]*pb.HistoryEvent, error) {
+	resp, err := r.source.GetRequestHistoryByID(ctx, &pb.GetRequestHistoryByIDRequest{Sqid: sqid, Queue: queue})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetEvents(), nil
+}
+
 // Tracker owns the rows and the table drawn from them.
 //
 // Two things move a run forward at once — whatever is producing requests, and
@@ -49,6 +69,9 @@ type Tracker struct {
 	rows   []*Row
 	r      *renderer
 	status string
+	// historyNotes excludes monitoring diagnostics, which must not replace a
+	// request's recorded LastError.
+	historyNotes map[*Row]string
 	// sealed records that every request that will be watched is known. Without
 	// it, polling would find nothing outstanding before the first request
 	// existed and call the run finished.
@@ -68,6 +91,19 @@ func NewTracker(rows []*Row) *Tracker {
 // which holds the lock the poll also takes.
 func (t *Tracker) Rows() []*Row {
 	return t.rows
+}
+
+// SnapshotRows returns independent row values and slices under the tracker lock.
+func (t *Tracker) SnapshotRows() []Row {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rows := make([]Row, len(t.rows))
+	for i, row := range t.rows {
+		rows[i] = *row
+		rows[i].Cells = append([]Cell(nil), row.Cells...)
+		rows[i].Trail = append([]string(nil), row.Trail...)
+	}
+	return rows
 }
 
 // Settled closes once every request has reached a terminal status.
@@ -219,17 +255,35 @@ func (t *Tracker) signalLocked() {
 
 // Poll re-reads statuses until the run finishes or the context ends.
 func (t *Tracker) Poll(ctx context.Context, src HistorySource, queue string) {
+	_ = t.pollHistory(ctx, gatewayHistoryReader{source: src}, queue, false)
+}
+
+// PollHistory returns nil after all sealed rows settle, or a context/permanent
+// read error. Temporary errors and missing histories are retried; read failures
+// never change a request's recorded status.
+func (t *Tracker) PollHistory(ctx context.Context, reader HistoryReader, queue string) error {
+	return t.pollHistory(ctx, reader, queue, true)
+}
+
+func (t *Tracker) pollHistory(ctx context.Context, reader HistoryReader, queue string, reportErrors bool) error {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	if reportErrors {
+		if err := t.refreshHistory(ctx, reader, queue, true); err != nil {
+			return err
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-t.settled:
-			return
+			return nil
 		case <-ticker.C:
 		}
-		t.refresh(ctx, src, queue)
+		if err := t.refreshHistory(ctx, reader, queue, reportErrors); err != nil {
+			return err
+		}
 	}
 }
 
@@ -239,11 +293,22 @@ func (t *Tracker) Poll(ctx context.Context, src HistorySource, queue string) {
 // stall whatever is producing requests behind the network, and letting that run
 // ahead is the whole point of watching each request the moment it exists.
 func (t *Tracker) refresh(ctx context.Context, src HistorySource, queue string) {
+	_ = t.refreshHistory(ctx, gatewayHistoryReader{source: src}, queue, false)
+}
+
+func (t *Tracker) refreshHistory(ctx context.Context, reader HistoryReader, queue string, reportErrors bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	t.mu.Lock()
-	outstanding := make([]*Row, 0, len(t.rows))
+	type requestRow struct {
+		row  *Row
+		sqid string
+	}
+	outstanding := make([]requestRow, 0, len(t.rows))
 	for _, rw := range t.rows {
 		if rw.SQID != "" && !rw.Done {
-			outstanding = append(outstanding, rw)
+			outstanding = append(outstanding, requestRow{row: rw, sqid: rw.SQID})
 		}
 	}
 	total := len(t.rows)
@@ -254,26 +319,66 @@ func (t *Tracker) refresh(ctx context.Context, src HistorySource, queue string) 
 		trail  []string
 		status string
 		note   string
+		err    error
+		empty  bool
 	}
 	readings := make([]reading, 0, len(outstanding))
-	for _, rw := range outstanding {
-		// SQID is written once, before the row becomes outstanding, so reading
-		// it here without the lock is safe.
-		resp, err := src.GetRequestHistoryByID(ctx, &pb.GetRequestHistoryByIDRequest{Sqid: rw.SQID, Queue: queue})
-		if err != nil || resp == nil || len(resp.Events) == 0 {
-			// A history that is not readable yet is normal right after Land;
-			// the next tick picks it up.
+	var readErr error
+	for _, request := range outstanding {
+		events, err := reader.History(ctx, queue, request.sqid)
+		if err != nil {
+			if !reportErrors {
+				continue
+			}
+			if status.Code(err) == codes.NotFound {
+				readings = append(readings, reading{rw: request.row, empty: true})
+				continue
+			}
+			readings = append(readings, reading{rw: request.row, err: err})
+			if ctx.Err() != nil {
+				readErr = ctx.Err()
+				break
+			}
+			if !retryableHistoryError(err) {
+				readErr = fmt.Errorf("history for %s: %w", request.sqid, err)
+				break
+			}
 			continue
 		}
-		trail, status, note := digest(resp.Events)
-		readings = append(readings, reading{rw: rw, trail: trail, status: status, note: note})
+		if len(events) == 0 {
+			if reportErrors {
+				readings = append(readings, reading{rw: request.row, empty: true})
+			}
+			continue
+		}
+		trail, current, note := digest(events)
+		readings = append(readings, reading{rw: request.row, trail: trail, status: current, note: note})
 	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	settled := 0
+	if t.historyNotes == nil {
+		t.historyNotes = make(map[*Row]string)
+	}
 	for _, got := range readings {
+		if _, known := t.historyNotes[got.rw]; !known {
+			t.historyNotes[got.rw] = got.rw.Note
+		}
+		if got.err != nil {
+			note := fmt.Sprintf("history read: %v", got.err)
+			if recorded := t.historyNotes[got.rw]; recorded != "" {
+				note = recorded + "; " + note
+			}
+			got.rw.Note = note
+			continue
+		}
+		if got.empty {
+			got.rw.Note = t.historyNotes[got.rw]
+			continue
+		}
+		t.historyNotes[got.rw] = got.note
 		got.rw.Trail, got.rw.Status, got.rw.Note = got.trail, got.status, got.note
 		if terminalStatuses[got.status] && !got.rw.Done {
 			// Stamped from the local clock rather than the event timestamp so
@@ -290,4 +395,17 @@ func (t *Tracker) refresh(ctx context.Context, src HistorySource, queue string) 
 	t.status = fmt.Sprintf("%d of %d settled", settled, total)
 	t.r.draw(t.rows, t.status)
 	t.signalLocked()
+	return readErr
+}
+
+func retryableHistoryError(err error) bool {
+	if errs.IsRetryable(err) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return true
+	default:
+		return false
+	}
 }

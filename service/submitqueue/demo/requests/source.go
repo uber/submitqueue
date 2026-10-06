@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 
+	"github.com/uber/submitqueue/service/submitqueue/demo"
 	"github.com/uber/submitqueue/submitqueue/client"
 )
 
@@ -80,4 +81,32 @@ type openedChange struct {
 	uri string
 	// cell is what the table shows for this change.
 	cell client.Cell
+}
+
+type pinnedSource struct {
+	source changeSource
+	branch string
+	sha    string
+}
+
+func (s pinnedSource) Open(ctx context.Context, spec demo.ChangeSpec) (demo.Change, error) {
+	parentBranch, parentSHA := s.branch, s.sha
+	if spec.HasParent {
+		parentBranch, parentSHA = spec.Parent.Branch, spec.Parent.HeadSHA
+	}
+	files := make([]changeFile, len(spec.Files))
+	for i, file := range spec.Files {
+		files[i] = changeFile{path: file.Path, body: file.Body, message: file.Message}
+	}
+	opened, err := s.source.open(ctx, changeSpec{
+		branch: spec.Branch, parentBranch: parentBranch, parentSHA: parentSHA,
+		title: spec.Title, files: files, note: spec.Note,
+	})
+	if err != nil {
+		return demo.Change{Branch: spec.Branch, Label: spec.Branch}, err
+	}
+	return demo.Change{
+		Branch: spec.Branch, HeadSHA: opened.headSHA, URI: opened.uri,
+		Label: opened.cell.Text, URL: opened.cell.URL,
+	}, nil
 }
