@@ -370,8 +370,13 @@ export interface GatewayChangeSubmission {
   versionHref: string;
 }
 
+export interface GatewayChangeSubmissionPage {
+  submissions: readonly GatewayChangeSubmission[];
+  pagination?: ChangeDetailModel["pagination"];
+}
+
 export async function loadChangeSubmissions(
-  read: () => Promise<readonly GatewayChangeSubmission[]>,
+  read: () => Promise<readonly GatewayChangeSubmission[] | GatewayChangeSubmissionPage>,
   context: Omit<ChangeDetailModel, "submissions">,
   options: GatewayLoadOptions = {},
 ): Promise<LoadResult<ChangeDetailModel>> {
@@ -379,15 +384,17 @@ export async function loadChangeSubmissions(
     return { ok: false, error: INVALID_INPUT };
   }
   try {
+    const response = await read();
+    const page: GatewayChangeSubmissionPage = "submissions" in response ? response : { submissions: response };
     const submissions: ChangeDetailModel["submissions"] = [];
-    for (const item of await read()) {
+    for (const item of page.submissions) {
       const request = mapRequestSummary(item.request);
       if (!request) {
         return { ok: false, error: INTERNAL_ERROR };
       }
       submissions.push({ request, version: item.version, versionHref: item.versionHref });
     }
-    return { ok: true, data: { ...context, submissions } };
+    return { ok: true, data: { ...context, submissions, ...(page.pagination ? { pagination: page.pagination } : {}) } };
   } catch (error) {
     reportGatewayError(options, "change", context.queue, null, error);
     return { ok: false, error: classifyGatewayError(error) };

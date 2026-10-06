@@ -4,6 +4,7 @@ import { createFakeGatewayReader, gatewayHistoryFixture, gatewayRequestFixture }
 
 import {
   classifyGatewayError,
+  loadChangeSubmissions,
   loadRequestDetail,
   loadRequestList,
   requestDetailIsComplete,
@@ -13,6 +14,24 @@ import {
 
 describe("server presentation mapping", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it.each([false, true])("maps change submissions with optional host pagination (paged: %s)", async paged => {
+    const request = gatewayRequestFixture();
+    const submissions = [{
+      request, version: "sha", versionHref: "/change/sha",
+    }];
+    const pagination = { nextHref: "/change?page=next", latestHref: null };
+    const result = await loadChangeSubmissions(async () => paged ? { submissions, pagination } : submissions, {
+      queue: "demo-queue", provider: "Git", host: "git.example.com",
+      repository: "demo", review: "refs/heads/main", pinnedVersion: null, window: { fromMs: 100, toMs: 200 },
+    });
+    expect(result).toMatchObject({
+      ok: true, data: { submissions: [{ request: { sqid: request.sqid }, version: "sha" }] },
+    });
+    if (result.ok) {
+      expect(result.data.pagination).toEqual(paged ? pagination : undefined);
+    }
+  });
 
   it("converts int64 only within JavaScript's safe range", () => {
     expect(safeInt64ToNumber(1_700_000_000_000n)).toBe(1_700_000_000_000);

@@ -64,6 +64,7 @@ export interface ChangeDetailModel {
   logicalHref?: string;
   submissions: ChangeSubmissionModel[];
   window: { fromMs: number; toMs: number } | null;
+  pagination?: { nextHref: string | null; latestHref: string | null };
 }
 
 export interface WebError {

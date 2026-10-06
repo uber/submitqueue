@@ -227,6 +227,10 @@ export function ChangeSubmissions({ model, basePath, onVersionChange }: ChangeSu
   return <section className="sq-change-detail">
     <nav className="sq-breadcrumb" aria-label="Breadcrumb"><a href={paths.directory()}>Queues</a><span>›</span><a href={paths.requests(model.queue)}>{model.queue}</a><span>› Change</span></nav>
     <h1>{model.review}</h1><p className="sq-secondary">{model.pinnedVersion ? `Submitted version: ${model.pinnedVersion}` : "Submissions across versions"}</p>
+    {model.pagination ? <p className="sq-secondary" role="status">
+      Showing matches from this page of queue requests only.
+      {model.pagination.nextHref ? " More queue requests remain to be searched." : " The history scan is complete for this receipt window."}
+    </p> : null}
     <dl className="sq-change-identity"><div><dt>Provider</dt><dd>{model.provider}</dd></div><div><dt>Host</dt><dd>{model.host}</dd></div><div><dt>Repository</dt><dd>{model.repository || "—"}</dd></div><div><dt>Queue</dt><dd>{model.queue}</dd></div></dl>
     <div className="sq-toolbar"><h2>Submission history</h2>
       {model.logicalHref && onVersionChange && versions.length > 0 ?
@@ -238,11 +242,15 @@ export function ChangeSubmissions({ model, basePath, onVersionChange }: ChangeSu
         model.pinnedVersion !== null && model.logicalHref ? <a href={model.logicalHref}>All submitted versions</a> : null}
     </div>
     {model.window ? <p className="sq-secondary">Receipt window: <Timestamp value={model.window.fromMs} /> — <Timestamp value={model.window.toMs} />. This is not unlimited retained history.</p> : <p className="sq-secondary">Retained submissions for this exact version</p>}
-    {model.submissions.length === 0 ? <p className="sq-empty">No submissions were found in this scope.</p> :
+    {model.submissions.length === 0 ? <p className="sq-empty">{model.pagination ? "No submissions were found on this page." : "No submissions were found in this scope."}</p> :
       <div className="sq-table-scroll"><table aria-label="Change submissions"><thead><tr><th>Request</th><th>Submitted version</th><th>Received · UTC</th><th>Status</th></tr></thead>
         <tbody>{model.submissions.map(item => <tr key={item.request.sqid}><td><a href={paths.request(model.queue, item.request.sqid)}>{item.request.sqid}</a></td>
           <td><a className="sq-version" aria-label={item.version} title={item.version} href={item.versionHref}>{item.version.length > 20 ? `${item.version.slice(0, 8)}…${item.version.slice(-4)}` : item.version}</a></td><td><Timestamp value={item.request.receivedAtMs} /></td>
           <td><RequestStatus status={item.request.status} />{item.request.lastError ? <p className="sq-row-error">{item.request.lastError}</p> : null}</td></tr>)}</tbody></table></div>}
-    <p className="sq-secondary">{model.submissions.length} requests · newest received first · repeated submissions remain separate</p>
+    <p className="sq-secondary">{model.submissions.length} requests{model.pagination ? " on this page" : ""} · newest received first · repeated submissions remain separate</p>
+    {model.pagination ? <nav className="page-actions" aria-label="Change history pagination">
+      {model.pagination.nextHref ? <a href={model.pagination.nextHref}>Continue history scan</a> : null}
+      {model.pagination.latestHref ? <a href={model.pagination.latestHref}>Latest history</a> : null}
+    </nav> : null}
   </section>;
 }

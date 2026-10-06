@@ -10,14 +10,15 @@ import { readChangeSubmissions } from "../../../../../server/change-reader";
 import { resolveGatewayClient } from "../../../../../server/gateway";
 import { requireAuthorization } from "../../../../../server/request-auth";
 import { gatewayDiagnostics } from "../../../../../server/diagnostics";
-import { defaultRequestWindow } from "../../../../../server/window";
+import { loadAuthConfiguration } from "../../../../../server/auth";
+import { defaultRequestWindow, decodeRequestPage, encodeRequestPage } from "../../../../../server/window";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function ChangePage({ params, searchParams }: {
   params: Promise<{ queue: string; reference: string[] }>;
-  searchParams: Promise<{ from?: string | string[]; to?: string | string[] }>;
+  searchParams: Promise<{ from?: string | string[]; to?: string | string[]; page?: string | string[] }>;
 }) {
   await connection();
   await requireAuthorization();
@@ -28,25 +29,44 @@ export default async function ChangePage({ params, searchParams }: {
     notFound();
   }
   const search = await searchParams;
-  if (search.from !== undefined || search.to !== undefined) {
-    redirect(changeHref(queue, reference, reference.version !== null));
+  const latestHref = changeHref(queue, reference, reference.version !== null);
+  const scansQueue = reference.version === null || reference.scheme === "git";
+  if (search.from !== undefined || search.to !== undefined ||
+    (search.page !== undefined && (typeof search.page !== "string" || !scansQueue))) {
+    redirect(latestHref);
   }
-  const requestWindow = defaultRequestWindow();
+  const secret = loadAuthConfiguration().token;
+  const cursorScope = JSON.stringify([queue, reference.logicalPath, reference.version]);
+  const pageWindow = typeof search.page === "string" ? decodeRequestPage(cursorScope, search.page, secret) : undefined;
+  if (search.page !== undefined && pageWindow === undefined) {
+    redirect(latestHref);
+  }
+  const requestWindow = pageWindow ?? defaultRequestWindow();
   const result = await loadChangeSubmissions(
-    () => readChangeSubmissions(resolveGatewayClient(), queue, reference, requestWindow),
+    async () => {
+      const page = await readChangeSubmissions(resolveGatewayClient(), queue, reference, requestWindow);
+      return {
+        submissions: page.submissions,
+        pagination: page.nextPageToken || pageWindow ? {
+          nextHref: page.nextPageToken
+            ? `${latestHref}?page=${encodeRequestPage(cursorScope, requestWindow, page.nextPageToken, secret)}` : null,
+          latestHref: pageWindow ? latestHref : null,
+        } : undefined,
+      };
+    },
     {
       queue, provider: reference.scheme === "github" ? "GitHub" : reference.scheme === "phab" ? "Phabricator" : "Git",
       host: reference.host, repository: reference.repository, review: reference.review,
       pinnedVersion: reference.version,
       logicalHref: changeHref(queue, reference),
-      window: reference.version === null || reference.scheme === "git" ? { fromMs: requestWindow.fromMs, toMs: requestWindow.toMs } : null,
+      window: scansQueue ? { fromMs: requestWindow.fromMs, toMs: requestWindow.toMs } : null,
     },
     { diagnostics: gatewayDiagnostics },
   );
   return <main className="shell">
     {result.ok ? <ChangeView model={result.data} /> : <ErrorState error={result.error} />}
-    <div className="page-actions"><NextRefresh
-      terminal={!result.ok && !result.error.retryable}
+    <div className="page-actions"><NextRefresh refreshHref={pageWindow ? latestHref : undefined}
+      terminal={pageWindow !== undefined || (!result.ok && !result.error.retryable)}
       transientFailureCount={!result.ok && result.error.retryable ? 1 : 0}
     /></div>
   </main>;

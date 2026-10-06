@@ -170,6 +170,27 @@ describe("request components", () => {
     expect(screen.getByRole("link", { name: version }).getAttribute("href")).toBe(`/logical/${version}`);
   });
 
+  it.each([
+    { nextHref: "/change?page=next", latestHref: null },
+    { nextHref: null, latestHref: "/change" },
+  ])("renders page-scoped history and host-provided navigation: %j", pagination => {
+    render(<ChangeSubmissions model={{
+      queue: "demo-queue", provider: "Git", host: "git.example.com",
+      repository: "demo", review: "refs/heads/main", pinnedVersion: null,
+      window: { fromMs: 1, toMs: 2 }, submissions: [], pagination,
+    }} />);
+    expect(screen.getByText("No submissions were found on this page.")).toBeTruthy();
+    expect(screen.queryByText("No submissions were found in this scope.")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Showing matches from this page");
+    if (pagination.nextHref) {
+      expect(screen.getByRole("link", { name: "Continue history scan" }).getAttribute("href")).toBe(pagination.nextHref);
+      expect(screen.getByRole("status").textContent).toContain("More queue requests remain");
+    } else {
+      expect(screen.queryByRole("link", { name: "Continue history scan" })).toBeNull();
+      expect(screen.getByRole("link", { name: "Latest history" }).getAttribute("href")).toBe(pagination.latestHref);
+    }
+  });
+
   it("shows unknown statuses safely", () => {
     render(<RequestStatus status="new_pipeline_step" />);
     expect(screen.getByText("New Pipeline Step").getAttribute("data-tone")).toBe("neutral");

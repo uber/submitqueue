@@ -7,12 +7,17 @@ import { REQUEST_PAGE_SIZE, type RequestWindow } from "./window";
 
 const MAX_CHANGE_SCAN_PAGES = 10;
 
+export interface ChangeSubmissionPage {
+  submissions: GatewayChangeSubmission[];
+  nextPageToken: string | null;
+}
+
 export async function readChangeSubmissions(
   client: SubmitQueueGatewayClient,
   queue: string,
   reference: ChangeReference,
   window: RequestWindow,
-): Promise<GatewayChangeSubmission[]> {
+): Promise<ChangeSubmissionPage> {
   const submissions: GatewayChangeSubmission[] = [];
   const appendSubmissions = (requests: readonly GatewayRequestSummary[]) => {
     for (const request of requests) {
@@ -30,10 +35,10 @@ export async function readChangeSubmissions(
   if (reference.uri !== null && reference.scheme !== "git") {
     const response = await client.getRequestSummaryByChangeURI({ queue, changeUri: reference.uri });
     appendSubmissions(response.requests);
-    return submissions;
+    return { submissions, nextPageToken: null };
   }
-  let pageToken = "";
-  const seenTokens = new Set<string>();
+  let pageToken = window.pageToken ?? "";
+  const seenTokens = new Set<string>(pageToken ? [pageToken] : []);
   for (let page = 0; page < MAX_CHANGE_SCAN_PAGES; page += 1) {
     const response = await client.list({
       queue,
@@ -44,7 +49,7 @@ export async function readChangeSubmissions(
     });
     appendSubmissions(response.requests);
     if (!response.nextPageToken) {
-      return submissions;
+      return { submissions, nextPageToken: null };
     }
     if (seenTokens.has(response.nextPageToken)) {
       throw new ConnectError("Repeated queue page token", Code.Internal);
@@ -52,6 +57,5 @@ export async function readChangeSubmissions(
     pageToken = response.nextPageToken;
     seenTokens.add(pageToken);
   }
-  // Never present a truncated queue scan as complete change history.
-  throw new ConnectError("Change receipt window exceeds demo scan budget", Code.ResourceExhausted);
+  return { submissions, nextPageToken: pageToken };
 }

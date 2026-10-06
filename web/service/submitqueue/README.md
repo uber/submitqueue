@@ -10,7 +10,7 @@ GitHub, Phabricator, and git change pages mirror the canonical change URI's auth
 
 The default queue and change views use a rolling 24-hour window recalculated on every refresh; there are no `from`/`to` URL parameters. Older queue pages carry the stable gateway window inside a signed, queue-scoped `page` cursor, and their Refresh button returns to the live first page.
 
-Pinned GitHub/Phabricator pages use exact-URI summary lookup. Across-version and git demo pages scan queue receipts in the displayed rolling window, up to ten gateway pages. An exhausted or looping scan fails rather than returning partial history. Git scans also match raw demo URIs carrying file hints without requiring those hints in the browser URL. This bounded adapter is not an unlimited logical-change history API.
+Pinned GitHub/Phabricator pages use exact-URI summary lookup. Across-version and git demo pages scan queue receipts in the displayed rolling window, up to ten gateway pages per history page. When more queue requests remain, the host marks the results as page-scoped and offers **Continue history scan** instead of failing or claiming complete history. Signed cursors bind the stable receipt window and gateway continuation to the queue, change, and pinned version. Older pages pause automatic refresh; Refresh and **Latest history** return to a fresh live window. A looping gateway cursor still fails. Git scans also match raw demo URIs carrying file hints without requiring those hints in the browser URL. This bounded adapter is not an unlimited logical-change history API.
 
 Required configuration:
 

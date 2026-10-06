@@ -16,7 +16,8 @@ describe("demo bounded change reader", () => {
     const client = { list } as unknown as SubmitQueueGatewayClient;
     const reference = parseChangePath(["github", "github.com", "uber", "submitqueue", "pull", "123"])!;
     const result = await readChangeSubmissions(client, "demo-queue", reference, window);
-    expect(result.map(value => value.request.sqid)).toEqual(["42", "38"]);
+    expect(result.submissions.map(value => value.request.sqid)).toEqual(["42", "38"]);
+    expect(result.nextPageToken).toBeNull();
     expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ pageToken: "next", receivedAtOrAfterMs: 100n, receivedBeforeMs: 200n }));
   });
 
@@ -35,12 +36,43 @@ describe("demo bounded change reader", () => {
     const getRequestSummaryByChangeURI = vi.fn();
     const client = { list, getRequestSummaryByChangeURI } as unknown as SubmitQueueGatewayClient;
     const result = await readChangeSubmissions(client, "demo-queue", parseChangeUri(uri)!, window);
-    expect(result[0]?.request.sqid).toBe("42");
-    expect(result[0]?.versionHref).not.toContain("?");
+    expect(result.submissions[0]?.request.sqid).toBe("42");
+    expect(result.submissions[0]?.versionHref).not.toContain("?");
     expect(getRequestSummaryByChangeURI).not.toHaveBeenCalled();
   });
 
-  it("fails a truncated or looping scan instead of presenting partial history", async () => {
+  it.each([true, false])("continues a bounded scan without losing older matches (first page has matches: %s)", async (hasMatches) => {
+    const list = vi.fn().mockImplementation(async ({ pageToken }: { pageToken: string }) => {
+      const page = pageToken ? Number(pageToken.slice(5)) : 0;
+      return {
+        requests: page === 10 ? [request("38")] : page === 0 && hasMatches ? [request("42")] : [],
+        nextPageToken: page < 10 ? `page-${page + 1}` : "",
+      };
+    });
+    const client = { list } as unknown as SubmitQueueGatewayClient;
+    const reference = parseChangePath(["github", "github.com", "uber", "submitqueue", "pull", "123"])!;
+    const first = await readChangeSubmissions(client, "demo-queue", reference, window);
+    expect(first.submissions.map(value => value.request.sqid)).toEqual(hasMatches ? ["42"] : []);
+    expect(first.nextPageToken).toBe("page-10");
+    expect(list).toHaveBeenCalledTimes(10);
+    const second = await readChangeSubmissions(client, "demo-queue", reference, { ...window, pageToken: first.nextPageToken! });
+    expect(second.submissions.map(value => value.request.sqid)).toEqual(["38"]);
+    expect(second.nextPageToken).toBeNull();
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      pageToken: "page-10", receivedAtOrAfterMs: 100n, receivedBeforeMs: 200n,
+    }));
+  });
+
+  it("rejects a cursor that loops back to the starting page", async () => {
+    const client = {
+      list: vi.fn().mockResolvedValue({ requests: [], nextPageToken: "start" }),
+    } as unknown as SubmitQueueGatewayClient;
+    const reference = parseChangePath(["github", "github.com", "uber", "submitqueue", "pull", "123"])!;
+    await expect(readChangeSubmissions(client, "demo-queue", reference, { ...window, pageToken: "start" }))
+      .rejects.toMatchObject({ code: Code.Internal });
+  });
+
+  it("fails a looping scan instead of presenting duplicate history", async () => {
     const client = {
       list: vi.fn().mockResolvedValue({ requests: [request("42")], nextPageToken: "repeated" }),
     } as unknown as SubmitQueueGatewayClient;
