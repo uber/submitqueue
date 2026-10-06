@@ -4,6 +4,8 @@ go_test(
     name = "go_default_test",
     srcs = [
         "harness_test.go",
+        "ingest_test.go",
+        "list_test.go",
         "suite_test.go",
     ],
     data = [
@@ -20,11 +22,15 @@ go_test(
     ],
     deps = [
         "//api/stovepipe/protopb:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/storage/mysql:go_default_library",
         "//test/testutil:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_stretchr_testify//suite:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
     ],
 )
