@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 _PROJECT = f"e2e-submitqueue-web-{os.getpid()}"
-_TOKEN = "submitqueue-e2e-local-token-000000000000"
+_TOKEN = "test"
 
 
 def _runfile(path: str) -> Path:

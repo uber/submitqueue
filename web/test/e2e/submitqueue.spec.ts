@@ -156,4 +156,25 @@ test("shows newest requests and an accessible readable detail history", async ({
   expect(new URL(page.url()).search).toBe("");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.screenshot({ path: test.info().outputPath("git-change.png"), fullPage: true });
+  const logicalChangeUrl = page.url();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Filter submissions by version" }).selectOption({
+    label: "3333333333333333333333333333333333333333",
+  });
+  await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(1);
+  await page.goto(logicalChangeUrl);
+  await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
+});
+
+test("preserves literal percent escapes in Git refs when opening change history", async ({ page }) => {
+  const uri = "git://git.example.com/demo/refs%2Fheads%2Fweb-demo%252Fpercent/4444444444444444444444444444444444444444";
+  const sqid = await submitRequest(`${uri}?sq-files=demo%2F00%2Fpercent.txt`);
+  await page.goto(`/${queue}`);
+  await page.getByRole("link", { name: uri, exact: true }).click();
+  await expect(page.getByRole("heading", { name: "refs/heads/web-demo%2Fpercent", exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Change submissions" }).getByRole("link", { name: sqid, exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "refs/heads/web-demo%2Fpercent", exact: true })).toBeVisible();
 });

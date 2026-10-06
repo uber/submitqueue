@@ -44,7 +44,7 @@ export REPO_ROOT := $(shell pwd)
 
 # Local-only credential for the reference web host. Override it for manual
 # testing; production authentication is deliberately outside this demo.
-export SUBMITQUEUE_WEB_TOKEN ?= submitqueue-local-demo-token-change-me
+export SUBMITQUEUE_WEB_TOKEN ?= test
 
 # Which provider the demo stack targets, and the only difference between a free
 # local run and a live one. Selects a configuration directory rather than a code
@@ -533,7 +533,7 @@ local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PRO
 	@echo ""
 	@echo "Gateway gRPC port: $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "Web UX:            http://localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-web-service-1 3000 2>/dev/null | cut -d: -f2 || echo 'unknown')"
-	@echo "Web username:      submitqueue"
+	@echo "Web username:      test"
 	@echo "Web token:         $(SUBMITQUEUE_WEB_TOKEN)"
 	@if [ "$(PROVIDER)" = "git" ]; then \
 		echo "Land target:       $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \

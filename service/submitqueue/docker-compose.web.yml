@@ -15,7 +15,7 @@ services:
       - HOSTNAME=0.0.0.0
       - SUBMITQUEUE_GATEWAY_URL=http://gateway-service:8080
       - SUBMITQUEUE_GATEWAY_ALLOW_PLAINTEXT=true
-      - SUBMITQUEUE_WEB_TOKEN=${SUBMITQUEUE_WEB_TOKEN:?set SUBMITQUEUE_WEB_TOKEN to at least 32 characters}
+      - SUBMITQUEUE_WEB_TOKEN=${SUBMITQUEUE_WEB_TOKEN:?set SUBMITQUEUE_WEB_TOKEN}
     depends_on:
       gateway-service:
         condition: service_started

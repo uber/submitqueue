@@ -21,7 +21,7 @@ export default defineConfig({
   use: {
     baseURL,
     httpCredentials: {
-      username: "submitqueue",
+      username: "test",
       password: token,
     },
     launchOptions: {

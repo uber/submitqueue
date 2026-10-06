@@ -8,6 +8,8 @@ The host owns the `/<queue>` landing page and `/<queue>/request/<full-request-id
 
 GitHub, Phabricator, and git change pages mirror the canonical change URI's authority/path. The host adapter validates those provider-specific paths; React components do not parse URIs. Fake-provider `sq-files`/`sq-fake` query hints remain in the submitted backend values but are excluded from UI labels and navigation URLs.
 
+The pinned Next.js runtime supplies encoded route parameters. Page boundaries URL-decode each segment once before validating change paths or removing the library's resource-path escape; encoded slashes inside a Git ref remain part of that one segment.
+
 The default queue and change views use a rolling 24-hour window recalculated on every refresh; there are no `from`/`to` URL parameters. Older queue pages carry the stable gateway window inside a signed, queue-scoped `page` cursor, and their Refresh button returns to the live first page.
 
 Pinned GitHub/Phabricator pages use exact-URI summary lookup. Across-version and git demo pages scan queue receipts in the displayed rolling window, up to ten gateway pages per history page. When more queue requests remain, the host marks the results as page-scoped and offers **Continue history scan** instead of failing or claiming complete history. Signed cursors bind the stable receipt window and gateway continuation to the queue, change, and pinned version. Older pages pause automatic refresh; Refresh and **Latest history** return to a fresh live window. A looping gateway cursor still fails. Git scans also match raw demo URIs carrying file hints without requiring those hints in the browser URL. This bounded adapter is not an unlimited logical-change history API.
