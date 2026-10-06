@@ -22,8 +22,8 @@ export default async function ChangePage({ params, searchParams }: {
   await connection();
   await requireAuthorization();
   const path = await params;
-  const queue = decodePathSegment(path.queue);
-  const reference = parseChangePath(path.reference);
+  const queue = decodePathSegment(decodeURIComponent(path.queue));
+  const reference = parseChangePath(path.reference.map(decodeURIComponent));
   if (queue !== DEMO_QUEUE || reference === null) {
     notFound();
   }
