@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build.go",
         "ingest.go",
+        "list.go",
         "project_status.go",
         "queue.go",
         "queue_config.go",

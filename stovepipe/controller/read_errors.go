@@ -80,3 +80,29 @@ func IsRequestHistoryNotFound(err error) bool {
 	var byURI *RequestHistoryByURINotFoundError
 	return errors.As(err, &byURI)
 }
+
+// ListConsistencyError indicates an invalid acceptance mapping, a missing summary,
+// or disagreement between the two. It represents an infrastructure failure, not a user lookup miss.
+type ListConsistencyError struct {
+	// Queue is the selected queue.
+	Queue string
+	// RequestID identifies the mapped request; empty when the mapping lacks an ID.
+	RequestID string
+	// Reason describes the inconsistency in the mapping or summary.
+	Reason string
+	// Err is the underlying summary-read failure, if any.
+	Err error
+}
+
+func (e *ListConsistencyError) Error() string {
+	return fmt.Sprintf("List %s queue=%q request_id=%q", e.Reason, e.Queue, e.RequestID)
+}
+
+// Unwrap preserves the underlying summary-read failure, when present.
+func (e *ListConsistencyError) Unwrap() error { return e.Err }
+
+// IsListConsistency reports whether err represents inconsistent listing records.
+func IsListConsistency(err error) bool {
+	var target *ListConsistencyError
+	return errors.As(err, &target)
+}

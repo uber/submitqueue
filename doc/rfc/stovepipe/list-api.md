@@ -1,6 +1,6 @@
 # Stovepipe List API
 
-The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) is included for review; controller and storage implementation are deferred.
+The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) defines the approved API. Summary fields, acceptance-mapping storage, and the List controller are implemented; RPC/server wiring and end-to-end coverage remain.
 
 ## Proposal
 
@@ -45,9 +45,9 @@ This is the wire representation of the existing domain `RequestSummary`, not ano
 
 The domain already defines a typed [RequestState](../../../stovepipe/entity/request.go). The wire field remains a string to match existing status/history APIs. States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
 
-## Data and Storage Work Required
+## Data and Storage
 
-The first six fields already exist in [RequestSummary](../../../stovepipe/entity/request_summary.go). Acceptance time and outcome reason already exist in retained logs but must be added to the summary. Acceptance time is acceptance-log time, not first RPC receipt time. No new producer signal or per-queue counter is needed.
+All listed fields are materialized in [RequestSummary](../../../stovepipe/entity/request_summary.go), including acceptance time and outcome reason from retained logs. Acceptance time is acceptance-log time, not first RPC receipt time. No new producer signal or per-queue counter is needed.
 
 Listing uses an immutable mapping keyed by `(queue, accepted_at_ms, request_id)` for known positive acceptance times, then point-reads the corresponding summaries. This adds one small record per request and bounded extra reads, not another mutable status projection. Existing summary keys and public request IDs remain unchanged; no numeric-key migration is needed.
 
