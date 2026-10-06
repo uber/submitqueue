@@ -45,7 +45,7 @@ export default async function QueueRequestsPage({
   await connection();
   await requireAuthorization();
 
-  const queue = decodePathSegment((await params).queue);
+  const queue = decodePathSegment(decodeURIComponent((await params).queue));
   if (queue !== DEMO_QUEUE) {
     notFound();
   }
