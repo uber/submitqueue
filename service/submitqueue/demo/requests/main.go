@@ -135,6 +135,7 @@ func run(ctx context.Context, cfg config) error {
 		Stacked: cfg.stacked, Burst: cfg.burst, Prefix: cfg.prefix, Land: cfg.land, Watch: cfg.watch,
 		Queue: cfg.queue, Strategy: strategy,
 	}, demo.Dependencies{Source: pinnedSource{source: src, branch: cfg.base, sha: baseSHA}, Gateway: gateway})
+	hinted := false
 	if !cfg.land && (!cfg.stacked || err == nil) {
 		var pinned []demo.Change
 		for _, change := range result.Changes {
@@ -144,16 +145,20 @@ func run(ctx context.Context, cfg config) error {
 		}
 		if len(pinned) > 0 {
 			fmt.Printf("\nEnqueue them with:\n  %s\n", enqueueHint(pinned))
+			hinted = true
 		}
 	}
 	if err != nil {
-		printArtifacts(result)
+		printArtifacts(result, hinted)
 	}
 	return err
 }
 
-func printArtifacts(result demo.RunResult) {
+func printArtifacts(result demo.RunResult, pinnedHinted bool) {
 	for _, change := range result.Changes {
+		if pinnedHinted && change.URI != "" && change.HeadSHA != "" {
+			continue
+		}
 		fmt.Printf("change: %s %s\n", change.Label, change.URI)
 	}
 	for _, request := range result.Requests {

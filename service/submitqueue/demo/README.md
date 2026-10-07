@@ -12,6 +12,6 @@ Readiness is optional and only runs when submission is enabled. A command can wa
 
 The runner owns polling and interactive terminal cleanup. It waits for recorded histories rather than sampling only current status, preserving fast transitions and build metadata. Monitoring failures are not request failures: permanent errors stop the local watch without cancelling creation or submission and without inventing a terminal server state, and temporary failures retain the last known status and history.
 
-Mutating source and submission calls are never retried automatically. A timeout may hide a successful remote operation; inspect the reported artifacts before retrying. Stopping the command does not cancel submitted work, close PRs, or delete branches.
+Mutating source and submission calls are never retried automatically. A failing sibling stops new work from starting and cancels readiness waits, but never cancels a source or submission call already in flight. A timeout may hide a successful remote operation; inspect the reported artifacts before retrying. Stopping the command does not cancel submitted work, close PRs, or delete branches.
 
 Workload layout is deterministic for a supplied `RunID`; an empty identifier receives a timestamp and random suffix so simultaneous runs do not collide. File/folder controls and the existing OSS command flags and Make targets are unchanged.

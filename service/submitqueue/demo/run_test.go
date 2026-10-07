@@ -317,6 +317,41 @@ func TestWatchFailureDoesNotCancelCreationOrSubmission(t *testing.T) {
 	}
 }
 
+func TestSiblingFailureDoesNotCancelInFlightLand(t *testing.T) {
+	opts := fixtureOptions()
+	opts.Count, opts.Concurrency = 3, 3
+	landStarted := make(chan struct{})
+	siblingsCancelled := make(chan struct{})
+	var landErr error
+	gateway := fixtureGateway()
+	gateway.land = func(ctx context.Context, _ string, uris []string, _ mergestrategypb.Strategy) (string, error) {
+		close(landStarted)
+		<-siblingsCancelled
+		landErr = ctx.Err()
+		return strings.Join(uris, ","), nil
+	}
+	result, err := Run(context.Background(), opts, Dependencies{
+		Source:  sourceFunc(func(_ context.Context, spec ChangeSpec) (Change, error) { return fixtureChange(spec), nil }),
+		Gateway: gateway,
+		Readiness: readinessFunc(func(gate context.Context, change Change) error {
+			switch {
+			case strings.HasSuffix(change.Branch, "/1"):
+				<-landStarted
+				return fmt.Errorf("not ready")
+			case strings.HasSuffix(change.Branch, "/3"):
+				<-gate.Done()
+				close(siblingsCancelled)
+				return gate.Err()
+			}
+			return nil
+		}),
+	})
+	require.Error(t, err)
+	assert.NoError(t, landErr)
+	require.Len(t, result.Requests, 1)
+	assert.Equal(t, "change:demo/run/2", result.Requests[0].ID)
+}
+
 func TestInvalidWorkloadsFailBeforeCreation(t *testing.T) {
 	for _, mutate := range []func(*Options){
 		func(o *Options) { o.Count = 0 },

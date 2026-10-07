@@ -137,7 +137,9 @@ func runWorkload(ctx context.Context, opts Options, deps Dependencies, existing 
 	tracker.Seal()
 	var pollErr error
 	pollJoined := false
+	interacted := false
 	if err == nil && polling {
+		interacted = true
 		stop, quit := tracker.Interact(ctx)
 		select {
 		case <-tracker.Settled():
@@ -160,8 +162,12 @@ func runWorkload(ctx context.Context, opts Options, deps Dependencies, existing 
 	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
 		err = errors.Join(err, ctxErr)
 	}
-	if err == nil && polling {
-		err = tracker.Conclude()
+	// The interactive view took the table with it; draw it into the scrollback
+	// even when the watch ended early, but only let its verdict stand alone.
+	if interacted {
+		if verdict := tracker.Conclude(); err == nil {
+			err = verdict
+		}
 	}
 	if err != nil {
 		tracker.Note("run stopped: %v", err)
@@ -178,34 +184,37 @@ func (w *workload) createAndSubmit(ctx context.Context, existing []Change) error
 		return w.createAndSubmitStack(ctx, existing)
 	}
 	if w.opts.Burst && w.opts.Land {
-		if err := w.forEachChange(ctx, func(ctx context.Context, i int) error {
-			if err := w.createChange(ctx, i, Change{}, false, existing); err != nil {
+		if err := w.forEachChange(ctx, func(gate context.Context, i int) error {
+			if err := w.createChange(ctx, gate, i, Change{}, false, existing); err != nil {
 				return err
 			}
-			return w.prepareChange(ctx, i, i)
+			return w.prepareChange(gate, i, i)
 		}); err != nil {
 			return err
 		}
 		w.tracker.Note("enqueuing %d prepared changes", w.opts.Count)
-		return w.forEachChange(ctx, func(ctx context.Context, i int) error {
-			return w.submitRequest(ctx, i, []Change{w.changes[i]})
+		return w.forEachChange(ctx, func(gate context.Context, i int) error {
+			return w.submitRequest(ctx, gate, i, []Change{w.changes[i]})
 		})
 	}
-	return w.forEachChange(ctx, func(ctx context.Context, i int) error {
-		if err := w.createChange(ctx, i, Change{}, false, existing); err != nil {
+	return w.forEachChange(ctx, func(gate context.Context, i int) error {
+		if err := w.createChange(ctx, gate, i, Change{}, false, existing); err != nil {
 			return err
 		}
 		if !w.opts.Land {
 			return nil
 		}
-		if err := w.prepareChange(ctx, i, i); err != nil {
+		if err := w.prepareChange(gate, i, i); err != nil {
 			return err
 		}
-		return w.submitRequest(ctx, i, []Change{w.changes[i]})
+		return w.submitRequest(ctx, gate, i, []Change{w.changes[i]})
 	})
 }
 
-func (w *workload) forEachChange(ctx context.Context, fn func(context.Context, int) error) error {
+// forEachChange passes fn a gate that closes when any sibling fails. Mutating
+// calls check the gate before starting but run on the caller's context, so a
+// sibling failure never cancels an Open or Land whose outcome would be unknown.
+func (w *workload) forEachChange(ctx context.Context, fn func(gate context.Context, i int) error) error {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(w.opts.Concurrency)
 	for i := range w.changes {
@@ -228,7 +237,7 @@ func (w *workload) createAndSubmitStack(ctx context.Context, existing []Change) 
 		if i > 0 {
 			parent = w.changes[i-1]
 		}
-		if err := w.createChange(ctx, i, parent, i > 0, existing); err != nil {
+		if err := w.createChange(ctx, ctx, i, parent, i > 0, existing); err != nil {
 			return err
 		}
 	}
@@ -237,17 +246,17 @@ func (w *workload) createAndSubmitStack(ctx context.Context, existing []Change) 
 	}
 	// Finish the chain before checks can block its creation.
 	w.setReadinessNote(0, "waiting for readiness")
-	if err := w.forEachChange(ctx, func(ctx context.Context, i int) error {
-		return w.waitForReadiness(ctx, i)
+	if err := w.forEachChange(ctx, func(gate context.Context, i int) error {
+		return w.waitForReadiness(gate, i)
 	}); err != nil {
 		return err
 	}
 	w.setReadinessNote(0, "")
-	return w.submitRequest(ctx, 0, w.changes)
+	return w.submitRequest(ctx, ctx, 0, w.changes)
 }
 
-func (w *workload) createChange(ctx context.Context, i int, parent Change, hasParent bool, existing []Change) error {
-	if err := ctx.Err(); err != nil {
+func (w *workload) createChange(ctx, gate context.Context, i int, parent Change, hasParent bool, existing []Change) error {
+	if err := gate.Err(); err != nil {
 		return err
 	}
 	var opened Change
@@ -315,8 +324,8 @@ func (w *workload) setReadinessNote(row int, note string) {
 	w.tracker.Update(func() { w.tracker.Rows()[row].Note = note })
 }
 
-func (w *workload) submitRequest(ctx context.Context, row int, changes []Change) error {
-	if err := ctx.Err(); err != nil {
+func (w *workload) submitRequest(ctx, gate context.Context, row int, changes []Change) error {
+	if err := gate.Err(); err != nil {
 		return err
 	}
 	uris := make([]string, len(changes))
