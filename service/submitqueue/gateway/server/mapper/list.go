@@ -32,25 +32,8 @@ func ProtoToListRequest(req *pb.ListRequest) entity.ListRequest {
 
 // ListResultToProto maps the domain result to the wire response.
 func ListResultToProto(result entity.ListResult) *pb.ListResponse {
-	requests := make([]*pb.RequestSummary, 0, len(result.Requests))
-	for _, summary := range result.Requests {
-		requests = append(requests, RequestQueueSummaryToProto(summary))
-	}
 	return &pb.ListResponse{
-		Requests:      requests,
+		Requests:      RequestSummariesToProto(result.Requests),
 		NextPageToken: result.NextPageToken,
-	}
-}
-
-// RequestQueueSummaryToProto maps a queue projection to the wire request summary.
-func RequestQueueSummaryToProto(summary entity.RequestQueueSummary) *pb.RequestSummary {
-	return &pb.RequestSummary{
-		Sqid:         summary.RequestID,
-		Queue:        summary.Queue,
-		ChangeUris:   append([]string{}, summary.ChangeURIs...),
-		ReceivedAtMs: summary.ReceivedAtMs,
-		Status:       string(summary.Status),
-		LastError:    summary.LastError,
-		Metadata:     cloneStringMap(summary.Metadata),
 	}
 }

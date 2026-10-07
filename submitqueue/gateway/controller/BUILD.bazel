@@ -39,6 +39,7 @@ go_test(
     srcs = [
         "cancel_test.go",
         "land_test.go",
+        "list_consistency_test.go",
         "list_queues_test.go",
         "list_test.go",
         "ping_test.go",

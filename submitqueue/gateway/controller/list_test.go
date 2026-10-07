@@ -17,12 +17,13 @@ package controller
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
@@ -34,55 +35,103 @@ import (
 	"go.uber.org/zap"
 )
 
-// listFactoryFor wraps a queue-summary store in a storage.Factory that
-// resolves every queue to an aggregate exposing it.
-func listFactoryFor(ctrl *gomock.Controller, store basestorage.RequestQueueSummaryStore) storage.Factory {
+type listTestFixture struct {
+	controller   ListController
+	receipts     *storagemock.MockRequestReceiptStore
+	summaries    *storagemock.MockRequestSummaryStore
+	queueConfigs *qcmock.MockStore
+}
+
+func newListTestFixture(t *testing.T) listTestFixture {
+	ctrl := gomock.NewController(t)
+	f := listTestFixture{
+		receipts: storagemock.NewMockRequestReceiptStore(ctrl), summaries: storagemock.NewMockRequestSummaryStore(ctrl),
+		queueConfigs: qcmock.NewMockStore(ctrl),
+	}
 	agg := gwstoragemock.NewMockStorage(ctrl)
-	agg.EXPECT().GetRequestQueueSummaryStore().Return(store).AnyTimes()
-	f := gwstoragemock.NewMockFactory(ctrl)
-	f.EXPECT().For(gomock.Any()).Return(agg, nil).AnyTimes()
+	agg.EXPECT().GetRequestReceiptStore().Return(f.receipts).AnyTimes()
+	agg.EXPECT().GetRequestSummaryStore().Return(f.summaries).AnyTimes()
+	factory := gwstoragemock.NewMockFactory(ctrl)
+	factory.EXPECT().For(storage.Config{QueueName: "q"}).Return(agg, nil).AnyTimes()
+	f.controller = NewListController(zap.NewNop().Sugar(), tally.NoopScope, factory, f.queueConfigs)
 	return f
 }
 
-func TestList_ReturnsPageAndCursor(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockRequestQueueSummaryStore(ctrl)
-	store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{
-		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 3,
-	}).Return([]entity.RequestQueueSummary{
-		{RequestID: "3", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 190, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
-		{RequestID: "2", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 180, Status: entity.RequestStatusLanded, Metadata: map[string]string{}},
-		{RequestID: "1", Queue: "q", ChangeURIs: []string{}, ReceivedAtMs: 170, Status: entity.RequestStatusError, Metadata: map[string]string{}},
-	}, nil)
-	controller := newConfiguredListController(ctrl, store)
+func TestList_ReceiptPages(t *testing.T) {
+	receipts := []entity.RequestReceipt{
+		{RequestID: "9", Queue: "q", ReceivedAtMs: 190},
+		{RequestID: "10", Queue: "q", ReceivedAtMs: 190},
+		{RequestID: "1", Queue: "q", ReceivedAtMs: 170},
+	}
+	tests := []struct {
+		name     string
+		receipts []entity.RequestReceipt
+		wantIDs  []string
+		wantNext bool
+	}{
+		{name: "empty", receipts: nil, wantIDs: []string{}},
+		{name: "partial final page", receipts: receipts[:1], wantIDs: []string{"9"}},
+		{name: "full final page", receipts: receipts[:2], wantIDs: []string{"9", "10"}},
+		{name: "timestamp ties use string order", receipts: receipts, wantIDs: []string{"9", "10"}, wantNext: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newListTestFixture(t)
+			f.queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
+			f.receipts.EXPECT().List(gomock.Any(), basestorage.RequestReceiptRange{
+				ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 3,
+			}).Return(tt.receipts, nil)
+			want := make([]entity.RequestSummary, 0, len(tt.wantIDs))
+			for _, receipt := range tt.receipts[:len(tt.wantIDs)] {
+				summary := entity.RequestSummary{
+					RequestID: receipt.RequestID, Queue: receipt.Queue, ReceivedAtMs: receipt.ReceivedAtMs,
+					ChangeURIs: []string{"uri/" + receipt.RequestID}, Status: entity.RequestStatusError,
+					LastError: "build failed", Metadata: map[string]string{"build": "url"}, Version: 5,
+				}
+				f.summaries.EXPECT().Get(gomock.Any(), receipt.RequestID).Return(summary, nil)
+				want = append(want, summary)
+			}
 
-	result, err := controller.List(context.Background(), entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageSize: 2})
+			result, err := f.controller.List(context.Background(), entity.ListRequest{
+				Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageSize: 2,
+			})
 
-	require.NoError(t, err)
-	require.Len(t, result.Requests, 2)
-	assert.Equal(t, []string{"3", "2"}, []string{result.Requests[0].RequestID, result.Requests[1].RequestID})
-	assert.Equal(t, int64(190), result.Requests[0].ReceivedAtMs)
-	require.NotEmpty(t, result.NextPageToken)
-	token, err := decodeListPageToken(result.NextPageToken)
-	require.NoError(t, err)
-	assert.Equal(t, int64(180), token.LastReceivedAtMs)
-	assert.Equal(t, "2", token.LastRequestID)
+			require.NoError(t, err)
+			assert.Equal(t, want, result.Requests)
+			ids := make([]string, 0, len(result.Requests))
+			for _, summary := range result.Requests {
+				ids = append(ids, summary.RequestID)
+			}
+			assert.Equal(t, tt.wantIDs, ids)
+			if !tt.wantNext {
+				assert.Empty(t, result.NextPageToken)
+				return
+			}
+			token, err := decodeListPageToken(result.NextPageToken)
+			require.NoError(t, err)
+			assert.Equal(t, listPageToken{
+				Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200,
+				LastReceivedAtMs: 190, LastRequestID: "10",
+			}, token)
+		})
+	}
 }
 
-func TestList_UsesCursor(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := storagemock.NewMockRequestQueueSummaryStore(ctrl)
-	token := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 180, LastRequestID: "2"})
-	store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{
+func TestList_UsesExistingCursor(t *testing.T) {
+	f := newListTestFixture(t)
+	f.queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
+	token := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 190, LastRequestID: "10"})
+	f.receipts.EXPECT().List(gomock.Any(), basestorage.RequestReceiptRange{
 		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 51,
-		HasCursor: true, Cursor: basestorage.RequestQueueSummaryCursor{ReceivedAtMs: 180, RequestID: "2"},
-	}).Return([]entity.RequestQueueSummary{}, nil)
-	controller := newConfiguredListController(ctrl, store)
+		Before: basestorage.RequestReceiptCursor{ReceivedAtMs: 190, RequestID: "10"},
+	}).Return([]entity.RequestReceipt{{Queue: "q", ReceivedAtMs: 170, RequestID: "1"}}, nil)
+	summary := entity.RequestSummary{Queue: "q", ReceivedAtMs: 170, RequestID: "1", Status: entity.RequestStatusLanded}
+	f.summaries.EXPECT().Get(gomock.Any(), "1").Return(summary, nil)
 
-	result, err := controller.List(context.Background(), entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: token})
+	result, err := f.controller.List(context.Background(), entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: token})
 
 	require.NoError(t, err)
-	assert.Empty(t, result.Requests)
+	assert.Equal(t, []entity.RequestSummary{summary}, result.Requests)
 	assert.Empty(t, result.NextPageToken)
 }
 
@@ -90,60 +139,78 @@ func TestList_Errors(t *testing.T) {
 	validToken := encodeListPageToken(listPageToken{Queue: "other", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: 150, LastRequestID: "1"})
 	invalidFieldsToken := base64.RawURLEncoding.EncodeToString([]byte("queue=q&received_at_or_after_ms=100&received_before_ms=200&last_received_at_ms=150"))
 	invalidNumberToken := base64.RawURLEncoding.EncodeToString([]byte("queue=q&received_at_or_after_ms=x&received_before_ms=200&last_received_at_ms=150&last_request_id=q%2F1"))
-	backendErr := fmt.Errorf("store down")
+	zeroTimeToken := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastRequestID: "1"})
+	negativeTimeToken := encodeListPageToken(listPageToken{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, LastReceivedAtMs: -1, LastRequestID: "1"})
+	backendErr := errors.New("store down")
 	tests := []struct {
 		name        string
 		request     entity.ListRequest
-		setup       func(*storagemock.MockRequestQueueSummaryStore)
+		setup       func(listTestFixture)
+		queueErr    error
+		wantErr     error
 		wantInvalid bool
 		wantUnknown bool
 	}{
 		{name: "empty queue", request: entity.ListRequest{ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2}, wantInvalid: true},
-		{name: "unknown queue", request: entity.ListRequest{Queue: "missing", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2}, wantUnknown: true},
+		{name: "unknown queue", request: entity.ListRequest{Queue: "missing", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2}, queueErr: queueconfig.ErrNotFound, wantUnknown: true, wantInvalid: true},
+		{name: "queue config failure", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2}, queueErr: backendErr, wantErr: backendErr},
 		{name: "invalid range", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 2, ReceivedBeforeMs: 2}, wantInvalid: true},
 		{name: "negative page size", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, PageSize: -1}, wantInvalid: true},
 		{name: "page size above maximum", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, PageSize: 201}, wantInvalid: true},
 		{name: "malformed token", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, PageToken: "%%%"}, wantInvalid: true},
 		{name: "invalid token number", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: invalidNumberToken}, wantInvalid: true},
 		{name: "invalid token fields", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: invalidFieldsToken}, wantInvalid: true},
+		{name: "zero cursor time", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: zeroTimeToken}, wantInvalid: true},
+		{name: "negative cursor time", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: negativeTimeToken}, wantInvalid: true},
 		{name: "token query mismatch", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, PageToken: validToken}, wantInvalid: true},
 		{
-			name:    "store failure",
-			request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2},
-			setup: func(store *storagemock.MockRequestQueueSummaryStore) {
-				store.EXPECT().List(gomock.Any(), basestorage.RequestQueueSummaryQuery{ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, Limit: 51}).Return(nil, backendErr)
+			name: "receipt scan failure", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2}, wantErr: backendErr,
+			setup: func(f listTestFixture) {
+				f.receipts.EXPECT().List(gomock.Any(), basestorage.RequestReceiptRange{ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2, Limit: 51}).Return(nil, backendErr)
+			},
+		},
+		{
+			name: "summary read failure", request: entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2}, wantErr: backendErr,
+			setup: func(f listTestFixture) {
+				f.receipts.EXPECT().List(gomock.Any(), gomock.Any()).Return([]entity.RequestReceipt{{Queue: "q", ReceivedAtMs: 1, RequestID: "1"}}, nil)
+				f.summaries.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, backendErr)
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			store := storagemock.NewMockRequestQueueSummaryStore(ctrl)
-			queueConfigs := qcmock.NewMockStore(ctrl)
+			f := newListTestFixture(t)
 			if tt.request.Queue != "" {
-				if tt.wantUnknown {
-					queueConfigs.EXPECT().Get(gomock.Any(), tt.request.Queue).Return(entity.QueueConfig{}, queueconfig.ErrNotFound)
-				} else {
-					queueConfigs.EXPECT().Get(gomock.Any(), tt.request.Queue).Return(entity.QueueConfig{}, nil)
-				}
+				f.queueConfigs.EXPECT().Get(gomock.Any(), tt.request.Queue).Return(entity.QueueConfig{}, tt.queueErr)
 			}
 			if tt.setup != nil {
-				tt.setup(store)
+				tt.setup(f)
 			}
-			controller := NewListController(zap.NewNop().Sugar(), tally.NoopScope, listFactoryFor(ctrl, store), queueConfigs)
-			_, err := controller.List(context.Background(), tt.request)
+			result, err := f.controller.List(context.Background(), tt.request)
 			require.Error(t, err)
-			if tt.wantInvalid {
-				assert.True(t, IsInvalidRequest(err))
-			}
+			assert.Equal(t, entity.ListResult{}, result)
+			assert.Equal(t, tt.wantInvalid, IsInvalidRequest(err))
 			assert.Equal(t, tt.wantUnknown, IsUnrecognizedQueue(err))
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.False(t, errs.IsUserError(err))
+			}
 		})
 	}
 }
 
-func newConfiguredListController(ctrl *gomock.Controller, store basestorage.RequestQueueSummaryStore) ListController {
+func TestList_StorageResolutionFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	factory := gwstoragemock.NewMockFactory(ctrl)
+	backendErr := errors.New("storage unavailable")
+	factory.EXPECT().For(storage.Config{QueueName: "q"}).Return(nil, backendErr)
 	queueConfigs := qcmock.NewMockStore(ctrl)
 	queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
-	return NewListController(zap.NewNop().Sugar(), tally.NoopScope, listFactoryFor(ctrl, store), queueConfigs)
+	c := NewListController(zap.NewNop().Sugar(), tally.NoopScope, factory, queueConfigs)
+
+	result, err := c.List(context.Background(), entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 2})
+
+	assert.ErrorIs(t, err, backendErr)
+	assert.Equal(t, entity.ListResult{}, result)
 }

@@ -57,7 +57,7 @@ type RequestSummary struct {
 	Metadata map[string]string
 }
 
-// RequestQueueSummary is the queue-ordered projection returned by List.
+// RequestQueueSummary is a queue-ordered copy of a public request summary.
 type RequestQueueSummary struct {
 	// RequestID is the canonical decimal request identifier, unique within Queue.
 	RequestID string

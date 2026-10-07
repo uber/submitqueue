@@ -183,9 +183,16 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND id = ?", req.Queue, resp.Sqid).Scan(&msgCount)
 	require.NoError(t, err, "failed to query queue messages")
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
+
+	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: resp.Sqid, Queue: req.Queue})
+	require.NoError(t, err)
+	listed, err := s.client.List(s.ctx, &pb.ListRequest{
+		Queue: req.Queue, ReceivedAtOrAfterMs: summary.Request.ReceivedAtMs, ReceivedBeforeMs: summary.Request.ReceivedAtMs + 1,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, listed.Requests, summary.Request)
 }
 
-// TestListAPI verifies the queue projection is exposed in deterministic receipt order.
 func (s *GatewayIntegrationSuite) TestListAPI() {
 	t := s.T()
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
@@ -195,7 +202,8 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	require.NoError(t, err)
 	for _, summary := range []entity.RequestSummary{
 		{RequestID: "901", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
-		{RequestID: "902", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "902", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusAccepted, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "903", Queue: "test-queue", ChangeURIs: []string{"uri/3"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
 	} {
 		publicStatus := summary.Status
 		summary.Status = entity.RequestStatusAccepting
@@ -209,12 +217,45 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 			Metadata:    map[string]string{},
 		}))
 	}
+	oldOnly := entity.RequestSummary{RequestID: "905", Queue: "test-queue", ReceivedAtMs: 150, Status: entity.RequestStatusAccepted, Version: 1}
+	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, oldOnly))
+	require.NoError(t, queueStore.GetRequestQueueSummaryStore().Create(s.ctx, entity.RequestQueueSummary{
+		RequestID: oldOnly.RequestID, Queue: oldOnly.Queue, ReceivedAtMs: oldOnly.ReceivedAtMs, Status: oldOnly.Status, Version: oldOnly.Version,
+	}))
+	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, entity.RequestSummary{
+		RequestID: "904", Queue: "test-queue", ReceivedAtMs: 180, Status: entity.RequestStatusAccepting, Version: 1,
+	}))
 
 	resp, err := s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
-	assert.Equal(t, "902", resp.Requests[0].Sqid)
+	assert.Equal(t, "903", resp.Requests[0].Sqid)
 	assert.Equal(t, string(entity.RequestStatusLanded), resp.Requests[0].Status)
+	require.NotEmpty(t, resp.NextPageToken)
+
+	// Simulate a newer authoritative write before the legacy projection catches up.
+	current, err := queueStore.GetRequestSummaryStore().Get(s.ctx, "902")
+	require.NoError(t, err)
+	updated := current
+	updated.Status = entity.RequestStatusError
+	updated.StatusTimestampMs = 300
+	updated.LastError = "build failed"
+	updated.Metadata = map[string]string{"build": "url"}
+	require.NoError(t, queueStore.GetRequestSummaryStore().Update(s.ctx, updated, current.Version, current.Version+1))
+	legacy, err := queueStore.GetRequestQueueSummaryStore().Get(s.ctx, 200, "902")
+	require.NoError(t, err)
+	assert.Equal(t, entity.RequestStatusAccepted, legacy.Status)
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "902", resp.Requests[0].Sqid)
+	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "902", Queue: "test-queue"})
+	require.NoError(t, err)
+	assert.Equal(t, summary.Request, resp.Requests[0])
+	assert.Equal(t, string(entity.RequestStatusError), resp.Requests[0].Status)
+	assert.Equal(t, "build failed", resp.Requests[0].LastError)
+	assert.Equal(t, map[string]string{"build": "url"}, resp.Requests[0].Metadata)
 	require.NotEmpty(t, resp.NextPageToken)
 
 	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
@@ -223,6 +264,11 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	assert.Equal(t, "901", resp.Requests[0].Sqid)
 	assert.Equal(t, string(entity.RequestStatusAccepted), resp.Requests[0].Status)
 	assert.Empty(t, resp.NextPageToken)
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "901", resp.Requests[0].Sqid)
 }
 
 // TestReadAPIErrorCodes verifies controller error classes reach stable gRPC codes.
@@ -273,6 +319,15 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 		RequestID:    "1",
 	}))
 	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI, Queue: "missing-summary"})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	receiptStore, err := store.For("test-queue")
+	require.NoError(t, err)
+	require.NoError(t, receiptStore.GetRequestReceiptStore().Create(s.ctx, entity.RequestReceipt{
+		Queue: "test-queue", RequestID: "999", ReceivedAtMs: 500,
+	}))
+	_, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 500, ReceivedBeforeMs: 501})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }

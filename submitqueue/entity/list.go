@@ -31,7 +31,7 @@ type ListRequest struct {
 // ListResult contains one page of queue receipt history.
 type ListResult struct {
 	// Requests are ordered by receipt time descending, then request ID descending.
-	Requests []RequestQueueSummary
+	Requests []RequestSummary
 	// NextPageToken is an opaque continuation token. Empty means this is the last page.
 	NextPageToken string
 }

@@ -42,19 +42,26 @@ func TestProtoToListRequest(t *testing.T) {
 
 func TestListResultToProto(t *testing.T) {
 	result := entity.ListResult{
-		Requests: []entity.RequestQueueSummary{{
+		Requests: []entity.RequestSummary{{
 			RequestID:    "1",
 			Queue:        "q",
 			ChangeURIs:   []string{"github://uber/repo/pull/1/abc"},
 			ReceivedAtMs: 100,
-			Status:       entity.RequestStatusAccepted,
-			Metadata:     map[string]string{},
+			Status:       entity.RequestStatusError,
+			LastError:    "build failed",
+			Metadata:     map[string]string{"build": "url"},
 		}},
 		NextPageToken: "next",
 	}
 
 	response := ListResultToProto(result)
 
-	assert.Equal(t, "1", response.Requests[0].Sqid)
-	assert.Equal(t, "next", response.NextPageToken)
+	assert.Equal(t, &pb.ListResponse{
+		Requests: []*pb.RequestSummary{{
+			Sqid: "1", Queue: "q", ChangeUris: []string{"github://uber/repo/pull/1/abc"},
+			ReceivedAtMs: 100, Status: string(entity.RequestStatusError), LastError: "build failed",
+			Metadata: map[string]string{"build": "url"},
+		}},
+		NextPageToken: "next",
+	}, response)
 }
