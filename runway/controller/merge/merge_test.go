@@ -217,6 +217,61 @@ func TestProcess_MergeConflict(t *testing.T) {
 	assert.NotEmpty(t, result.Reason)
 }
 
+func TestProcess_PartialLandIsReportedOnFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	partial := &runwaymq.MergeResult{
+		Id:      testID,
+		Outcome: runwaypb.Outcome_FAILED,
+		Steps: []*runwaymq.StepResult{
+			{StepId: "step-1", Outputs: []*runwaymq.StepOutput{{Id: "abc123"}}},
+			{StepId: "step-2", Reason: "conflict"},
+		},
+	}
+	m := mergermock.NewMockMerger(ctrl)
+	m.EXPECT().Merge(gomock.Any(), gomock.Any()).Return(partial, fmt.Errorf("step-2: %w", merger.ErrConflict))
+
+	factory := mergermock.NewMockFactory(ctrl)
+	factory.EXPECT().For(merger.Config{QueueName: testQueue}).Return(m, nil)
+
+	var gotPayload []byte
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			gotPayload = msg.Payload
+			return nil
+		},
+	)
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: runwaymq.TopicKeyMergeSignal, Name: "merge-signal", Queue: q},
+	})
+	require.NoError(t, err)
+
+	controller := newController(t, factory, registry)
+
+	req := &runwaymq.MergeRequest{
+		Id:        testID,
+		QueueName: testQueue,
+		Steps:     []*runwaymq.MergeStep{{StepId: "step-1"}, {StepId: "step-2"}, {StepId: "step-3"}},
+	}
+	delivery := newDelivery(t, ctrl, requestPayload(t, req))
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+
+	result := &runwaymq.MergeResult{}
+	require.NoError(t, runwaymq.Unmarshal(gotPayload, result))
+	assert.Equal(t, runwaypb.Outcome_FAILED, result.Outcome)
+	assert.NotEmpty(t, result.Reason)
+	require.Len(t, result.Steps, 2)
+	assert.Equal(t, "step-1", result.Steps[0].StepId)
+	require.Len(t, result.Steps[0].Outputs, 1)
+	assert.Equal(t, "abc123", result.Steps[0].Outputs[0].Id)
+	assert.Equal(t, "step-2", result.Steps[1].StepId)
+	assert.NotEmpty(t, result.Steps[1].Reason)
+}
+
 func TestProcess_InvalidRequest(t *testing.T) {
 	ctrl := gomock.NewController(t)
 

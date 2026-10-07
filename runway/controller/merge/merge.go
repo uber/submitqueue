@@ -125,11 +125,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"queue_name", request.GetQueueName(),
 			)
 		}
-		result = &runwaymq.MergeResult{
+		failed := &runwaymq.MergeResult{
 			Id:      request.GetId(),
 			Outcome: runwaypb.Outcome_FAILED,
 			Reason:  err.Error(),
 		}
+		// A merger that lands step by step reports the steps that landed before
+		// the failure; they stay landed, so the caller must see them.
+		if result != nil {
+			failed.Steps = result.GetSteps()
+		}
+		result = failed
 	}
 
 	// Echo the request's queue name so the consumer can route the result by
