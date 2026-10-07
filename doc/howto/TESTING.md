@@ -59,6 +59,7 @@ make integration-test               # All integration tests
 
 # E2E tests (Docker required)
 make e2e-test
+make web-e2e-test
 
 # Build
 make build                          # Build all targets
@@ -84,6 +85,13 @@ make build-all-linux                # Build Linux binaries for the local docker-
 - Containers: Each suite's required services and dependencies; SubmitQueue E2E includes Gateway, Orchestrator, Runway, and MySQL
 - Tests end-to-end behavior, including cross-service communication where applicable
 
+**4. Web E2E Test** - Browser behavior against the complete SubmitQueue stack
+- Location: `web/test/e2e/`
+- Run: `make web-e2e-test`
+- Containers: Bazel-built Gateway, Orchestrator, Runway, web OCI image, and MySQL
+- Coverage: Basic authentication, h2c gateway access, newest-first queue requests, encoded SQID navigation, ordered history, and axe accessibility checks
+- Tooling: Bazel supplies Node, Playwright, and Chromium; no host Node install or browser download is required
+
 ### Live GitHub Tests
 
 Two suites land real pull requests on github.com: `TestGitHubLandE2E` (in `make e2e-test`) and the Runway GitHub merger extension test (`make integration-test-runway-merger`). They run only when `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO=owner/repo` are set, and skip otherwise, so every other run is unaffected. The token needs write access to the test repository; everything the tests open is named under `sq-it/` and removed afterwards, while what they merge stays on its default branch.
@@ -107,12 +115,14 @@ Every run merges a few small files under `sq-it/` into the test repository's def
 
 ### How Automated Tests Work
 
-Tests use **docker-compose** via `ComposeStack` to spin up containers automatically:
+Go integration and domain E2E tests use **docker-compose** via `ComposeStack` to spin up containers automatically:
 
 1. `NewComposeStack()` registers cleanup (stop log tailing, tear down containers)
 2. `Up()` starts containers, waits for healthchecks (`--wait`), and auto-tails container logs to stderr
 3. Tests run against those containers with **real-time log output**
 4. On cleanup, containers are torn down automatically (set `SKIP_CLEANUP=true` to keep them for inspection)
+
+The web E2E target uses the Bazel `py_test` runner in `web/test/e2e/run_e2e.py`. It stages runfiles into a temporary Compose context, loads the Bazel-built web image, applies the gateway and orchestrator schemas, runs Playwright, and removes its `e2e-submitqueue-web-<pid>` project unless `SKIP_CLEANUP=true`. It does not auto-tail service logs; inspect retained containers with `docker ps` and `docker logs` when cleanup is disabled.
 
 ---
 

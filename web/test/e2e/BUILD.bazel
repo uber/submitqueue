@@ -1,0 +1,200 @@
+load("@npm//web:@playwright/test/package_json.bzl", playwright = "bin")
+load("@bazel_lib//lib:copy_to_bin.bzl", "copy_to_bin")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = ["submitqueue.spec.ts"],
+)
+
+copy_to_bin(
+    name = "srcs_for_typecheck",
+    srcs = [":srcs"],
+)
+
+playwright.playwright_binary(name = "playwright")
+
+npm_link_package(
+    name = "node_modules/@submitqueue/api",
+    src = "//web/api:pkg",
+)
+
+pkg_files(
+    name = "gateway_binary",
+    srcs = ["//service/submitqueue/gateway/server:gateway_linux"],
+    attributes = pkg_attributes(mode = "0555"),
+    prefix = "app",
+    renames = {
+        "//service/submitqueue/gateway/server:gateway_linux": "gateway",
+    },
+)
+
+pkg_files(
+    name = "gateway_configuration",
+    srcs = ["//service/submitqueue/gateway/server:queues.yaml"],
+    attributes = pkg_attributes(mode = "0444"),
+    prefix = "app",
+    renames = {
+        "//service/submitqueue/gateway/server:queues.yaml": "queues.yaml",
+    },
+)
+
+pkg_tar(
+    name = "gateway_layer",
+    srcs = [
+        ":gateway_binary",
+        ":gateway_configuration",
+    ],
+)
+
+oci_image(
+    name = "gateway_image",
+    architecture = "amd64",
+    entrypoint = ["/app/gateway"],
+    os = "linux",
+    tars = [":gateway_layer"],
+    workdir = "/app",
+)
+
+oci_load(
+    name = "gateway_image_load",
+    image = ":gateway_image",
+    repo_tags = ["submitqueue-web-e2e-gateway-service:latest"],
+)
+
+pkg_files(
+    name = "orchestrator_binary",
+    srcs = ["//service/submitqueue/orchestrator/server:orchestrator_linux"],
+    attributes = pkg_attributes(mode = "0555"),
+    prefix = "app",
+    renames = {
+        "//service/submitqueue/orchestrator/server:orchestrator_linux": "orchestrator",
+    },
+)
+
+pkg_tar(
+    name = "orchestrator_layer",
+    srcs = [":orchestrator_binary"],
+)
+
+oci_image(
+    name = "orchestrator_image",
+    architecture = "amd64",
+    entrypoint = ["/app/orchestrator"],
+    os = "linux",
+    tars = [":orchestrator_layer"],
+    workdir = "/app",
+)
+
+oci_load(
+    name = "orchestrator_image_load",
+    image = ":orchestrator_image",
+    repo_tags = ["submitqueue-web-e2e-orchestrator-service:latest"],
+)
+
+pkg_files(
+    name = "runway_binary",
+    srcs = ["//service/runway/server:runway_linux"],
+    attributes = pkg_attributes(mode = "0555"),
+    prefix = "app",
+    renames = {
+        "//service/runway/server:runway_linux": "runway",
+    },
+)
+
+pkg_tar(
+    name = "runway_layer",
+    srcs = [":runway_binary"],
+)
+
+oci_image(
+    name = "runway_image",
+    architecture = "amd64",
+    entrypoint = ["/app/runway"],
+    os = "linux",
+    tars = [":runway_layer"],
+    workdir = "/app",
+)
+
+oci_load(
+    name = "runway_image_load",
+    image = ":runway_image",
+    repo_tags = ["submitqueue-web-e2e-runway-service:latest"],
+)
+
+oci_load(
+    name = "mysql_image_load",
+    image = "@mysql_8_0_linux_amd64",
+    repo_tags = ["submitqueue-web-e2e-mysql:8.0"],
+)
+
+py_library(
+    name = "run_e2e_lib",
+    srcs = ["run_e2e.py"],
+)
+
+py_test(
+    name = "run_e2e_test",
+    srcs = ["run_e2e_test.py"],
+    deps = [":run_e2e_lib"],
+    legacy_create_init = 0,
+    main = "run_e2e_test.py",
+)
+
+py_test(
+    name = "web_test",
+    legacy_create_init = 0,
+    size = "enormous",
+    srcs = ["run_e2e_main.py"],
+    deps = [":run_e2e_lib"],
+    main = "run_e2e_main.py",
+    args = [
+        "$(rootpath :gateway_image_load)",
+        "$(rootpath :orchestrator_image_load)",
+        "$(rootpath :runway_image_load)",
+        "$(rootpath :mysql_image_load)",
+        "$(rootpath //web/service/submitqueue:image_load)",
+        "$(rootpath :playwright)",
+        "$(rootpath @playwright//:chromium)",
+    ],
+    data = [
+        ":playwright",
+        ":srcs",
+        "//platform/extension/counter/mysql/schema",
+        "//platform/extension/messagequeue/mysql/schema",
+        "//service/submitqueue:docker-compose.fake.yml",
+        "//service/submitqueue:docker-compose.web.yml",
+        "//service/submitqueue:docker-compose.yml",
+        "//service/submitqueue/demo:fake_provider_config",
+        "//submitqueue/gateway/extension/storage/mysql/schema",
+        "//submitqueue/orchestrator/extension/storage/mysql/schema",
+        "//web:node_modules/@axe-core/playwright",
+        "//web:node_modules/@bufbuild/protobuf",
+        "//web:node_modules/@connectrpc/connect",
+        "//web:node_modules/@connectrpc/connect-node",
+        "//web:node_modules/@playwright/test",
+        ":node_modules/@submitqueue/api",
+        "//web:package.json",
+        "//web:playwright.config.ts",
+        "//web/api:lib",
+        "//web/api:lib_types",
+        "//web/service/submitqueue:image_load",
+        ":docker-compose.e2e.yml",
+        ":gateway_image_load",
+        ":mysql_image_load",
+        ":orchestrator_image_load",
+        ":runway_image_load",
+        "@playwright//:chromium",
+    ],
+    tags = [
+        "e2e",
+        "integration",
+        "requires-network",
+    ],
+)

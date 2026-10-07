@@ -1,0 +1,30 @@
+load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+npm_link_all_packages(name = "node_modules")
+
+[
+    npm_link_package(
+        name = "node_modules/" + package,
+        src = target,
+    )
+    for package, target in {
+        "@submitqueue/web-submitqueue": "//web/submitqueue:pkg",
+    }.items()
+]
+
+# Resolves react from this package's React 18 links; the workspace root's
+# React 19 must stay out of the runfiles or Node would find it first.
+js_test(
+    name = "react18_runtime_test",
+    data = [
+        ":node_modules",
+        ":node_modules/@submitqueue/web-submitqueue",
+        "//web:node_modules/@bufbuild/protobuf",
+        "//web:node_modules/@connectrpc/connect",
+        "//web:node_modules/@opentelemetry/api",
+        "//web:node_modules/pino",
+    ],
+    entry_point = "react18-runtime.mjs",
+)

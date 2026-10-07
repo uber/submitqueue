@@ -44,12 +44,14 @@ import (
 // text header an executable format might begin with.
 const sniffLen = 8000
 
-// allowed lists tracked paths that are legitimately binary, relative to the
-// repository root. It is empty because nothing in the repository is: the tree
-// is source, schemas, and generated Go. An entry belongs here only when a
-// binary genuinely has to be versioned — a test fixture that cannot be built,
-// or an image a document renders — never to silence a stray build artifact.
-var allowed = map[string]bool{}
+// Only explicitly versioned document images and non-buildable fixtures are
+// exempt; generated binaries and stray build outputs remain violations.
+var allowed = map[string]bool{
+	"doc/rfc/image/web-ui/change-submission-history.jpg": true,
+	"doc/rfc/image/web-ui/event-history.jpg":             true,
+	"doc/rfc/image/web-ui/queue-landing.jpg":             true,
+	"doc/rfc/image/web-ui/request-summary.jpg":           true,
+}
 
 // violation is one tracked file that is binary.
 type violation struct {

@@ -5,6 +5,11 @@ exports_files(
     visibility = ["//visibility:public"],
 )
 
+exports_files(
+    ["queues.yaml"],
+    visibility = ["//web/test/e2e:__pkg__"],
+)
+
 go_library(
     name = "gateway_lib",
     srcs = ["main.go"],
@@ -55,6 +60,7 @@ go_cross_binary(
     name = "gateway_linux",
     platform = "@rules_go//go/toolchain:linux_amd64",
     target = ":gateway",
+    visibility = ["//web/test/e2e:__pkg__"],
 )
 
 # Everything a Docker-based test needs to build the gateway image from a staged
@@ -68,7 +74,10 @@ filegroup(
         "queues.yaml",
         ":gateway_linux",
     ],
-    visibility = ["//test:__subpackages__"],
+    visibility = [
+        "//test:__subpackages__",
+        "//web/test/e2e:__pkg__",
+    ],
 )
 
 go_test(

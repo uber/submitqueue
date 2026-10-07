@@ -12,6 +12,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
 - [Hooks Framework](hook-framework.md) - Implemented fire-and-forget side effects: one shared `HookEvent` contract (`api/base/hook/`) on a durable per-domain hook topic, dispatched by `platform/hook` to `platform/extension/hook`. Stovepipe `process` and `record` publish repository events; the SubmitQueue orchestrator registers the stage and does not publish events yet
 - [Service-Scoped Extensions](service-scoped-extensions.md) - Implemented for SubmitQueue storage: gateway and orchestrator aggregates, schemas, and the core packages that serve one service have moved, while store contracts stay at `submitqueue/extension/storage`. Domain-level `buildrunner`, `conflict`, and `speculation` have not moved, and `changeset` still declares its own store slice
+- [Web UI as a Mountable Module](web-ui.md) - Shipping the read-only SubmitQueue UI as a module any React server host mounts, while the host owns identity, gateway transport, telemetry, and its framework
 
 ## SubmitQueue
 
