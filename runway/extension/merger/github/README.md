@@ -12,6 +12,15 @@ Each step's strategy maps onto a GitHub merge method — `REBASE` to `rebase`, `
 
 Each URI's output is the merge commit GitHub records for its pull request: the squash commit, the merge commit, or, for a rebase, the last commit the rebase created for that pull request. That is one output per URI, where the git merger reports one per created commit under `REBASE`. It is read from the pull request's `merged` issue event, because API version 2026-03-10 no longer reports `merge_commit_sha` on a merged pull request. GitHub reports a stack merge settled a moment before every pull request in it shows its merge, so the merger re-reads until each is recorded.
 
+## Live tests
+
+Two suites run against a real repository whenever `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO=owner/repo` are set, and skip otherwise (see [`test/testutil/githubtestrepo`](../../../../test/testutil/githubtestrepo)). Both open, stack and merge throwaway pull requests and check what GitHub recorded:
+
+- [`test/integration/runway/extension/merger/github`](../../../../test/integration/runway/extension/merger/github) drives this merger on its own (`make integration-test-runway-merger`).
+- `TestGitHubLandE2E` in [`test/e2e/submitqueue`](../../../../test/e2e/submitqueue) lands pull requests through the whole stack — gateway, orchestrator with the GitHub change provider, and Runway with this merger (`make e2e-test`).
+
+CI runs both in its usual e2e and merger extension jobs, with the token from the `SQ_TEST_REPO_TOKEN` repository secret.
+
 ## What a step must be
 
 The URIs of a step must be something GitHub will land as one stack onto the target, and anything else is refused as an invalid request:

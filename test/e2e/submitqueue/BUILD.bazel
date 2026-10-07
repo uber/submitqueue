@@ -5,6 +5,7 @@ go_test(
     srcs = [
         "fake_demo_test.go",
         "git_suite_test.go",
+        "github_suite_test.go",
         "harness_test.go",
         "suite_test.go",
     ],
@@ -13,6 +14,7 @@ go_test(
         "//platform/extension/messagequeue/mysql/schema",
         "//service/runway/server:docker_test_context",
         "//service/submitqueue:docker-compose.git.yml",
+        "//service/submitqueue:docker-compose.provider.yml",
         "//service/submitqueue:docker-compose.yml",
         "//service/submitqueue/demo/provider/git:config",
         "//service/submitqueue/demo/requests",
@@ -30,6 +32,13 @@ go_test(
     env = {
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
     },
+    # The GitHub suite lands real pull requests in a test repository when
+    # these are set, and skips otherwise (see test/testutil/githubtestrepo).
+    env_inherit = [
+        "SQ_GITHUB_TEST_REPO",
+        "SQ_GITHUB_TEST_REQUIRED",
+        "SQ_GITHUB_TOKEN",
+    ],
     tags = [
         "e2e",
         "integration",
@@ -58,6 +67,7 @@ go_test(
         "//submitqueue/orchestrator/core/batch:go_default_library",
         "//submitqueue/orchestrator/extension/storage/mysql:go_default_library",
         "//test/testutil:go_default_library",
+        "//test/testutil/githubtestrepo:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_stretchr_testify//suite:go_default_library",

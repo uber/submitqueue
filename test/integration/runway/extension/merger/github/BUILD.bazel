@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    timeout = "long",
+    srcs = ["github_test.go"],
+    # The test repository and its credential reach the test only when set; without it the
+    # test skips (see test/testutil/githubtestrepo).
+    env_inherit = [
+        "SQ_GITHUB_TEST_REPO",
+        "SQ_GITHUB_TEST_REQUIRED",
+        "SQ_GITHUB_TOKEN",
+    ],
+    tags = [
+        "external",
+        "integration",
+        "requires-network",
+    ],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//runway/extension/merger:go_default_library",
+        "//runway/extension/merger/github:go_default_library",
+        "//test/testutil/githubtestrepo:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
+    ],
+)

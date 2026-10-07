@@ -84,6 +84,27 @@ make build-all-linux                # Build Linux binaries for the local docker-
 - Containers: Each suite's required services and dependencies; SubmitQueue E2E includes Gateway, Orchestrator, Runway, and MySQL
 - Tests end-to-end behavior, including cross-service communication where applicable
 
+### Live GitHub Tests
+
+Two suites land real pull requests on github.com: `TestGitHubLandE2E` (in `make e2e-test`) and the Runway GitHub merger extension test (`make integration-test-runway-merger`). They run only when `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO=owner/repo` are set, and skip otherwise, so every other run is unaffected. The token needs write access to the test repository; everything the tests open is named under `sq-it/` and removed afterwards, while what they merge stays on its default branch.
+
+```bash
+SQ_GITHUB_TOKEN=$(gh auth token) SQ_GITHUB_TEST_REPO=<owner>/<repo> make e2e-test
+```
+
+CI takes the repository from the `SQ_GITHUB_TEST_REPO` repository variable and the token from the `SQ_TEST_REPO_TOKEN` repository secret. In a repository that sets the variable, every CI run except a fork pull request sets `SQ_GITHUB_TEST_REQUIRED=true`, which turns a missing secret into a failure; an expired or revoked token fails regardless. Fork pull requests receive no secrets, and repositories without the variable skip the suites.
+
+#### Use your own test repository
+
+Any contributor can run these suites against a repository of their own:
+
+1. Create a repository on github.com with a default branch (an initial commit is enough). It must allow squash and rebase merges, and its default branch must not require reviews or status checks, since the tests merge directly.
+2. Create a token that can write to it: a fine-grained token limited to that repository with read and write access to contents, pull requests and issues, or simply `gh auth token`.
+3. Run locally with `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO` set, as above.
+4. For CI in your fork, set the `SQ_GITHUB_TEST_REPO` repository variable and the `SQ_TEST_REPO_TOKEN` repository secret in the fork's Actions settings. Runs in the fork then exercise your test repository.
+
+Every run merges a few small files under `sq-it/` into the test repository's default branch, so use a repository that exists for this.
+
 ### How Automated Tests Work
 
 Tests use **docker-compose** via `ComposeStack` to spin up containers automatically:

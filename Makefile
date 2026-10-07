@@ -301,6 +301,10 @@ integration-test-extensions: ## Run extension integration tests (runs in paralle
 	@echo "Running extension integration tests (parallel)..."
 	@$(BAZEL) test //test/integration/submitqueue/extension/... //test/integration/extension/... --test_output=errors
 
+integration-test-runway-merger: ## Run Runway merger extension tests (GitHub ones need SQ_GITHUB_TOKEN and SQ_GITHUB_TEST_REPO=owner/repo, else skip)
+	@echo "Running Runway merger extension tests..."
+	@$(BAZEL) test //test/integration/runway/... --test_output=errors
+
 integration-test-submitqueue-gateway: ## Run Gateway integration tests
 	@echo "Running Gateway integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/gateway:go_default_test --test_output=streamed

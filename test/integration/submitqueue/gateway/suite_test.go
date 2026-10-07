@@ -152,6 +152,7 @@ func (s *GatewayIntegrationSuite) TestListQueuesAPI() {
 		"e2e-chain-queue",
 		"e2e-conflict-error-queue",
 		"e2e-git-queue",
+		"e2e-github-queue",
 		"e2e-redelivery-queue",
 		"e2e-respeculate-queue",
 		"e2e-strand-queue",
