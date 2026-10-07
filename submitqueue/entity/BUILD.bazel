@@ -20,6 +20,7 @@ go_library(
         "request_batch.go",
         "request_history.go",
         "request_log.go",
+        "request_receipt.go",
         "request_summary.go",
         "speculation.go",
         "subject.go",

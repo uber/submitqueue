@@ -24,7 +24,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
-	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 )
 
@@ -313,18 +312,9 @@ func TestLogWins(t *testing.T) {
 }
 
 func materializerStores(ctrl *gomock.Controller) (*Materializer, *storagemock.MockRequestSummaryStore, *storagemock.MockRequestQueueSummaryStore, *storagemock.MockRequestURIStore, *storagemock.MockRequestLogStore) {
-	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
-	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
-	uriStore := storagemock.NewMockRequestURIStore(ctrl)
-	logStore := storagemock.NewMockRequestLogStore(ctrl)
-	queueScoped := gwstoragemock.NewMockStorage(ctrl)
-	queueScoped.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
-	queueScoped.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
-	queueScoped.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
-	queueScoped.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
-	factory := gwstoragemock.NewMockFactory(ctrl)
-	factory.EXPECT().For(gomock.Any()).Return(queueScoped, nil).AnyTimes()
-	return NewMaterializer(factory), summaryStore, queueStore, uriStore, logStore
+	fixture := newMaterializerReceiptFixture(ctrl)
+	fixture.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return fixture.materializer, fixture.summaries, fixture.queueSummaries, fixture.uris, fixture.logs
 }
 
 func testRequestSummary() entity.RequestSummary {

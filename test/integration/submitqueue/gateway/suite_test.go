@@ -204,6 +204,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 			RequestID:   summary.RequestID,
 			Queue:       summary.Queue,
 			TimestampMs: summary.StatusTimestampMs,
+			Type:        entity.RequestLogTypeStatus,
 			Status:      publicStatus,
 			Metadata:    map[string]string{},
 		}))
@@ -213,12 +214,14 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "902", resp.Requests[0].Sqid)
+	assert.Equal(t, string(entity.RequestStatusLanded), resp.Requests[0].Status)
 	require.NotEmpty(t, resp.NextPageToken)
 
 	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "901", resp.Requests[0].Sqid)
+	assert.Equal(t, string(entity.RequestStatusAccepted), resp.Requests[0].Status)
 	assert.Empty(t, resp.NextPageToken)
 }
 

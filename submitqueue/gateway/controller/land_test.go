@@ -348,6 +348,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	var materializedSummary entity.RequestSummary
 	var persistedMapping entity.RequestURI
 	var persistedQueueSummary entity.RequestQueueSummary
+	var persistedReceipt entity.RequestReceipt
 	var persistedLog entity.RequestLog
 
 	ctrl := gomock.NewController(t)
@@ -359,8 +360,10 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
+	receiptStore := storagemock.NewMockRequestReceiptStore(ctrl)
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	store.EXPECT().GetRequestReceiptStore().Return(receiptStore).AnyTimes()
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
@@ -418,6 +421,12 @@ func TestLand_PublishesToQueue(t *testing.T) {
 				return nil
 			},
 		),
+		receiptStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, receipt entity.RequestReceipt) error {
+				persistedReceipt = receipt
+				return nil
+			},
+		),
 	)
 
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, factoryForStorage(ctrl, store), materializer, noopQueueConfigStore(ctrl), registry)
@@ -444,6 +453,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		Metadata:          map[string]string{},
 	}, receiptSummary)
 	assert.Positive(t, receiptSummary.ReceivedAtMs)
+	assert.Equal(t, entity.RequestReceipt{Queue: req.Queue, ReceivedAtMs: receiptSummary.ReceivedAtMs, RequestID: result.ID}, persistedReceipt)
 	assert.Equal(t, entity.RequestLog{
 		RequestID:   "123",
 		Queue:       "test-queue",

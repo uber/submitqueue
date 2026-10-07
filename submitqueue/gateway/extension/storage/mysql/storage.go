@@ -51,6 +51,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
 	return &boundStorage{
+		requestReceiptStore: NewRequestReceiptStore(s.db, s.scope.SubScope("request_receipt_store"), queueName),
 		requestQueueStore:   NewRequestQueueSummaryStore(s.db, s.scope.SubScope("request_queue_summary_store"), queueName),
 		requestSummaryStore: NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
 		requestLogStore:     NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
@@ -65,6 +66,7 @@ func (s *Storage) Close() error {
 
 // boundStorage is the queue-scoped store aggregate returned by For.
 type boundStorage struct {
+	requestReceiptStore basestorage.RequestReceiptStore
 	requestQueueStore   basestorage.RequestQueueSummaryStore
 	requestSummaryStore basestorage.RequestSummaryStore
 	requestLogStore     basestorage.RequestLogStore
@@ -73,6 +75,11 @@ type boundStorage struct {
 
 // Verify boundStorage implements the queue-scoped aggregate at compile time.
 var _ storage.Storage = (*boundStorage)(nil)
+
+// GetRequestReceiptStore returns the bound MySQL-backed RequestReceiptStore.
+func (f *boundStorage) GetRequestReceiptStore() basestorage.RequestReceiptStore {
+	return f.requestReceiptStore
+}
 
 // GetRequestQueueSummaryStore returns the bound MySQL-backed RequestQueueSummaryStore.
 func (f *boundStorage) GetRequestQueueSummaryStore() basestorage.RequestQueueSummaryStore {

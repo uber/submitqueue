@@ -80,7 +80,13 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			summary = updated
 		}
 
+		if summary.Status == entity.RequestStatusAccepting {
+			return nil
+		}
 		if err := m.repairPublicProjections(ctx, stores, summary); err != nil {
+			return err
+		}
+		if err := ensureRequestReceiptMapping(ctx, stores.GetRequestReceiptStore(), summary); err != nil {
 			return err
 		}
 		return nil

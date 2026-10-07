@@ -33,6 +33,7 @@ type controllerStorageFixture struct {
 	storage        *gwstoragemock.MockStorage
 	summaryStore   *storagemock.MockRequestSummaryStore
 	queueStore     *storagemock.MockRequestQueueSummaryStore
+	receiptStore   *storagemock.MockRequestReceiptStore
 	uriStore       *storagemock.MockRequestURIStore
 	logStore       *storagemock.MockRequestLogStore
 	mu             sync.Mutex
@@ -47,12 +48,14 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		storage:        gwstoragemock.NewMockStorage(ctrl),
 		summaryStore:   storagemock.NewMockRequestSummaryStore(ctrl),
 		queueStore:     storagemock.NewMockRequestQueueSummaryStore(ctrl),
+		receiptStore:   storagemock.NewMockRequestReceiptStore(ctrl),
 		uriStore:       storagemock.NewMockRequestURIStore(ctrl),
 		logStore:       storagemock.NewMockRequestLogStore(ctrl),
 		summaries:      make(map[string]entity.RequestSummary),
 		queueSummaries: make(map[string]entity.RequestQueueSummary),
 	}
 	fixture.storage.EXPECT().GetRequestQueueSummaryStore().Return(fixture.queueStore).AnyTimes()
+	fixture.storage.EXPECT().GetRequestReceiptStore().Return(fixture.receiptStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestSummaryStore().Return(fixture.summaryStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestLogStore().Return(fixture.logStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestURIStore().Return(fixture.uriStore).AnyTimes()
@@ -127,6 +130,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 	}).AnyTimes()
 
 	fixture.uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	fixture.receiptStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	fixture.logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()

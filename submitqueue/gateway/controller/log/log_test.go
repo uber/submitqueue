@@ -141,8 +141,10 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
+	receiptStore := storagemock.NewMockRequestReceiptStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	store.EXPECT().GetRequestReceiptStore().Return(receiptStore).AnyTimes()
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
@@ -169,6 +171,9 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 		Status: entity.RequestStatusAccepted, Version: 1, Metadata: map[string]string{},
 	}, nil)
 	queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(queueErr)
+	if queueErr == nil {
+		receiptStore.EXPECT().Create(gomock.Any(), entity.RequestReceipt{Queue: "test-queue", ReceivedAtMs: 1, RequestID: "2"}).Return(nil)
+	}
 	return materializer
 }
 

@@ -12,6 +12,7 @@ go_library(
         "request_batch_store_mock.go",
         "request_log_store_mock.go",
         "request_queue_summary_store_mock.go",
+        "request_receipt_store_mock.go",
         "request_store_mock.go",
         "request_summary_store_mock.go",
         "request_uri_store_mock.go",

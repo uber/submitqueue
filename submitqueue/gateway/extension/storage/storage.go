@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package storage resolves the gateway's queue-scoped stores: the append-only
-// request log and the three read models behind request-summary retrieval and
+// request log and the read models behind request-summary retrieval and
 // List. The store contracts themselves stay in
 // submitqueue/extension/storage — only the aggregate is service-scoped, so
 // what the gateway can reach is narrower than what the domain defines.
@@ -49,6 +49,9 @@ type Storage interface {
 
 	// GetRequestSummaryStore returns the RequestSummaryStore instance.
 	GetRequestSummaryStore() basestorage.RequestSummaryStore
+
+	// GetRequestReceiptStore returns the RequestReceiptStore instance.
+	GetRequestReceiptStore() basestorage.RequestReceiptStore
 
 	// GetRequestQueueSummaryStore returns the RequestQueueSummaryStore instance.
 	GetRequestQueueSummaryStore() basestorage.RequestQueueSummaryStore

@@ -108,6 +108,20 @@ func (mr *MockStorageMockRecorder) GetRequestQueueSummaryStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestQueueSummaryStore", reflect.TypeOf((*MockStorage)(nil).GetRequestQueueSummaryStore))
 }
 
+// GetRequestReceiptStore mocks base method.
+func (m *MockStorage) GetRequestReceiptStore() storage.RequestReceiptStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRequestReceiptStore")
+	ret0, _ := ret[0].(storage.RequestReceiptStore)
+	return ret0
+}
+
+// GetRequestReceiptStore indicates an expected call of GetRequestReceiptStore.
+func (mr *MockStorageMockRecorder) GetRequestReceiptStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestReceiptStore", reflect.TypeOf((*MockStorage)(nil).GetRequestReceiptStore))
+}
+
 // GetRequestSummaryStore mocks base method.
 func (m *MockStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
 	m.ctrl.T.Helper()
