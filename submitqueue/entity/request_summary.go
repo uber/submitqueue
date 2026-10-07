@@ -57,26 +57,6 @@ type RequestSummary struct {
 	Metadata map[string]string
 }
 
-// RequestQueueSummary is a queue-ordered copy of a public request summary.
-type RequestQueueSummary struct {
-	// RequestID is the canonical decimal request identifier, unique within Queue.
-	RequestID string
-	// Queue is the queue supplied at receipt.
-	Queue string
-	// ChangeURIs are the change URIs supplied at receipt in caller order.
-	ChangeURIs []string
-	// ReceivedAtMs is the immutable receipt timestamp in Unix milliseconds.
-	ReceivedAtMs int64
-	// Status is the current customer-facing request status.
-	Status RequestStatus
-	// Version is copied from the authoritative RequestSummary and guards stale projection writers.
-	Version int32
-	// LastError is the error associated with the current status, or empty when absent.
-	LastError string
-	// Metadata is display and debugging metadata associated with the current status.
-	Metadata map[string]string
-}
-
 // RequestURI maps one change URI to one received request.
 type RequestURI struct {
 	// ChangeURI is the exact canonical URI supplied at receipt.

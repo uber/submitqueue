@@ -11,7 +11,6 @@ go_library(
         "queue_batch_state_store.go",
         "request_batch_store.go",
         "request_log_store.go",
-        "request_queue_summary_store.go",
         "request_receipt_store.go",
         "request_store.go",
         "request_summary_store.go",

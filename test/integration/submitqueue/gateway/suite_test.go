@@ -217,11 +217,8 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 			Metadata:    map[string]string{},
 		}))
 	}
-	oldOnly := entity.RequestSummary{RequestID: "905", Queue: "test-queue", ReceivedAtMs: 150, Status: entity.RequestStatusAccepted, Version: 1}
-	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, oldOnly))
-	require.NoError(t, queueStore.GetRequestQueueSummaryStore().Create(s.ctx, entity.RequestQueueSummary{
-		RequestID: oldOnly.RequestID, Queue: oldOnly.Queue, ReceivedAtMs: oldOnly.ReceivedAtMs, Status: oldOnly.Status, Version: oldOnly.Version,
-	}))
+	unindexed := entity.RequestSummary{RequestID: "905", Queue: "test-queue", ReceivedAtMs: 150, Status: entity.RequestStatusAccepted, Version: 1}
+	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, unindexed))
 	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, entity.RequestSummary{
 		RequestID: "904", Queue: "test-queue", ReceivedAtMs: 180, Status: entity.RequestStatusAccepting, Version: 1,
 	}))
@@ -233,7 +230,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	assert.Equal(t, string(entity.RequestStatusLanded), resp.Requests[0].Status)
 	require.NotEmpty(t, resp.NextPageToken)
 
-	// Simulate a newer authoritative write before the legacy projection catches up.
+	// Lifecycle updates between pages must be visible without changing receipt order.
 	current, err := queueStore.GetRequestSummaryStore().Get(s.ctx, "902")
 	require.NoError(t, err)
 	updated := current
@@ -242,9 +239,6 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	updated.LastError = "build failed"
 	updated.Metadata = map[string]string{"build": "url"}
 	require.NoError(t, queueStore.GetRequestSummaryStore().Update(s.ctx, updated, current.Version, current.Version+1))
-	legacy, err := queueStore.GetRequestQueueSummaryStore().Get(s.ctx, 200, "902")
-	require.NoError(t, err)
-	assert.Equal(t, entity.RequestStatusAccepted, legacy.Status)
 
 	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
 	require.NoError(t, err)

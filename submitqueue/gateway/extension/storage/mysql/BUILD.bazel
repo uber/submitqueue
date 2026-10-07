@@ -4,7 +4,6 @@ go_library(
     name = "go_default_library",
     srcs = [
         "request_log_store.go",
-        "request_queue_summary_store.go",
         "request_receipt_store.go",
         "request_summary_store.go",
         "request_uri_store.go",
@@ -26,7 +25,6 @@ go_test(
     name = "go_default_test",
     srcs = [
         "request_log_store_test.go",
-        "request_queue_summary_store_test.go",
         "request_receipt_store_test.go",
         "request_summary_store_test.go",
         "request_uri_store_test.go",
