@@ -63,10 +63,13 @@ make demo-requests FOLDERS=50           # git/github: spread changes across more
 make demo-requests FILES=8              # git/github: wider changes, more files each
 make demo-requests CONCURRENCY=1        # create them one at a time
 make demo-requests STACKED=true         # one stack, enqueued as a single request
+make demo-requests BURST=true           # create every change first, then enqueue them together
 make demo-requests LAND=false           # create only, print the command to enqueue them
 ```
 
 Independent changes are created **five at a time** by default (`CONCURRENCY`), because creating them serially is most of what a large run spends its time on and it delays the overlap the demo exists to show. A stack ignores the setting: each of its changes is based on the branch before it, so the next cannot be cut until the previous head exists.
+
+By default each change is enqueued the moment it exists, so a large run trickles into the queue at the pace changes are created. `BURST=true` holds every request back until all the changes exist, then enqueues them together — the way to see the queue absorb a spike. The enqueues still go out `CONCURRENCY` at a time, so raise it with `COUNT` for a true spike: `make demo-requests COUNT=100 BURST=true CONCURRENCY=100`. On github that also opens 100 pull requests in parallel, which can trip GitHub's secondary rate limits. Burst applies to independent changes only; `STACKED=true` already lands as one request, and `LAND=false` enqueues nothing.
 
 On git/github, a change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit change — closer to a real one, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run.
 
