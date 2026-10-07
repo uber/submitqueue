@@ -103,7 +103,6 @@ type workload struct {
 }
 
 func runWorkload(ctx context.Context, opts Options, deps Dependencies, existing []Change) (RunResult, error) {
-	callerContext := ctx
 	if opts.Land && deps.Gateway == nil {
 		return RunResult{}, fmt.Errorf("a gateway is required for submission")
 	}
@@ -117,18 +116,20 @@ func runWorkload(ctx context.Context, opts Options, deps Dependencies, existing 
 		changes: make([]Change, opts.Count), requests: make([][]Change, rows),
 	}
 	tracker.Note("starting")
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Polling has its own context: a failed watch must never cancel an
+	// in-flight Open or Land, whose outcome would then be unknown.
+	pollCtx, stopPolling := context.WithCancel(ctx)
+	defer stopPolling()
 	recorder := &historyRecorder{gateway: deps.Gateway, histories: make(map[string][]*pb.HistoryEvent)}
 	pollDone := make(chan error, 1)
 	polling := opts.Land && opts.Watch
 	if polling {
 		go func() {
-			err := tracker.PollHistory(ctx, recorder, opts.Queue)
-			pollDone <- err
-			if err != nil {
-				cancel()
+			err := tracker.PollHistory(pollCtx, recorder, opts.Queue)
+			if err != nil && pollCtx.Err() == nil {
+				tracker.Note("watch stopped: %v; submission continues", err)
 			}
+			pollDone <- err
 		}()
 	}
 
@@ -143,20 +144,22 @@ func runWorkload(ctx context.Context, opts Options, deps Dependencies, existing 
 		case pollErr = <-pollDone:
 			pollJoined = true
 		case <-ctx.Done():
-			err = ctx.Err()
 		case <-quit:
 			err = fmt.Errorf("watch interrupted; submitted requests continue remotely")
 		}
 		stop()
 	}
-	cancel()
+	stopPolling()
 	if polling && !pollJoined {
 		pollErr = <-pollDone
 	}
 	if errors.Is(pollErr, context.Canceled) {
 		pollErr = nil
 	}
-	err = errors.Join(err, pollErr, callerContext.Err())
+	err = errors.Join(err, pollErr)
+	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+		err = errors.Join(err, ctxErr)
+	}
 	if err == nil && polling {
 		err = tracker.Conclude()
 	}
@@ -233,11 +236,13 @@ func (w *workload) createAndSubmitStack(ctx context.Context, existing []Change) 
 		return nil
 	}
 	// Finish the chain before checks can block its creation.
+	w.setReadinessNote(0, "waiting for readiness")
 	if err := w.forEachChange(ctx, func(ctx context.Context, i int) error {
-		return w.prepareChange(ctx, i, 0)
+		return w.waitForReadiness(ctx, i)
 	}); err != nil {
 		return err
 	}
+	w.setReadinessNote(0, "")
 	return w.submitRequest(ctx, 0, w.changes)
 }
 
@@ -285,15 +290,29 @@ func (w *workload) createChange(ctx context.Context, i int, parent Change, hasPa
 }
 
 func (w *workload) prepareChange(ctx context.Context, i, row int) error {
+	w.setReadinessNote(row, "waiting for readiness")
+	if err := w.waitForReadiness(ctx, i); err != nil {
+		return err
+	}
+	w.setReadinessNote(row, "")
+	return nil
+}
+
+func (w *workload) waitForReadiness(ctx context.Context, i int) error {
 	if w.deps.Readiness == nil {
 		return nil
 	}
-	w.tracker.Update(func() { w.tracker.Rows()[row].Note = "waiting for readiness" })
 	if err := w.deps.Readiness.Wait(ctx, w.changes[i]); err != nil {
 		return fmt.Errorf("prepare %s: %w", w.changes[i].Label, err)
 	}
-	w.tracker.Update(func() { w.tracker.Rows()[row].Note = "" })
 	return nil
+}
+
+func (w *workload) setReadinessNote(row int, note string) {
+	if w.deps.Readiness == nil {
+		return
+	}
+	w.tracker.Update(func() { w.tracker.Rows()[row].Note = note })
 }
 
 func (w *workload) submitRequest(ctx context.Context, row int, changes []Change) error {

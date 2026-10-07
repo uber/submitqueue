@@ -403,7 +403,7 @@ func retryableHistoryError(err error) bool {
 		return true
 	}
 	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted, codes.Internal:
 		return true
 	default:
 		return false

@@ -99,8 +99,8 @@ type Source interface {
 
 // Gateway is the transport-independent submission and history contract.
 type Gateway interface {
-	Land(context.Context, string, []string, mergestrategypb.Strategy) (string, error)
-	History(context.Context, string, string) ([]*pb.HistoryEvent, error)
+	Land(ctx context.Context, queue string, uris []string, strategy mergestrategypb.Strategy) (requestID string, err error)
+	History(ctx context.Context, queue, requestID string) ([]*pb.HistoryEvent, error)
 }
 
 // Readiness waits for an exact revision to be eligible for submission.

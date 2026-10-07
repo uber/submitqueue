@@ -284,30 +284,37 @@ func TestWatchReturnsHistoryAndTerminalVerdict(t *testing.T) {
 	}
 }
 
-func TestWatchFailureCancelsCreationAndJoinsWorkers(t *testing.T) {
+func TestWatchFailureDoesNotCancelCreationOrSubmission(t *testing.T) {
 	opts := fixtureOptions()
 	opts.Count, opts.Concurrency, opts.Watch = 2, 2, true
-	workerEntered := make(chan struct{})
+	historyFailed := make(chan struct{})
 	var once sync.Once
 	gateway := fixtureGateway()
 	gateway.history = func(context.Context, string, string) ([]*pb.HistoryEvent, error) {
-		<-workerEntered
+		once.Do(func() { close(historyFailed) })
 		return nil, status.Error(codes.PermissionDenied, "denied")
 	}
 	result, err := Run(context.Background(), opts, Dependencies{
 		Source: sourceFunc(func(ctx context.Context, spec ChangeSpec) (Change, error) {
-			if strings.HasSuffix(spec.Branch, "/1") {
-				return fixtureChange(spec), nil
+			if !strings.HasSuffix(spec.Branch, "/1") {
+				<-historyFailed
 			}
-			once.Do(func() { close(workerEntered) })
-			<-ctx.Done()
-			return Change{}, ctx.Err()
+			if err := ctx.Err(); err != nil {
+				return Change{}, err
+			}
+			return fixtureChange(spec), nil
 		}),
 		Gateway: gateway,
 	})
 	require.Error(t, err)
-	require.Len(t, result.Requests, 1)
-	assert.Equal(t, "accepted", result.Requests[0].Status)
+	var grpcErr interface{ GRPCStatus() *status.Status }
+	require.ErrorAs(t, err, &grpcErr)
+	assert.Equal(t, codes.PermissionDenied, grpcErr.GRPCStatus().Code())
+	require.Len(t, result.Changes, 2)
+	require.Len(t, result.Requests, 2)
+	for _, request := range result.Requests {
+		assert.Equal(t, "accepted", request.Status)
+	}
 }
 
 func TestInvalidWorkloadsFailBeforeCreation(t *testing.T) {

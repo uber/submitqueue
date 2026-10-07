@@ -10,7 +10,7 @@ Sources own their base branch or snapshot. A stack link receives the preceding c
 
 Readiness is optional and only runs when submission is enabled. A command can wait for real approvals or checks without baking that policy into the workload generator. Existing-change stack validation is the caller's responsibility.
 
-The runner owns polling and interactive terminal cleanup. It waits for recorded histories rather than sampling only current status, preserving fast transitions and build metadata. Monitoring failures are not request failures: permanent errors stop the local watch without inventing a terminal server state, and temporary failures retain the last known status and history.
+The runner owns polling and interactive terminal cleanup. It waits for recorded histories rather than sampling only current status, preserving fast transitions and build metadata. Monitoring failures are not request failures: permanent errors stop the local watch without cancelling creation or submission and without inventing a terminal server state, and temporary failures retain the last known status and history.
 
 Mutating source and submission calls are never retried automatically. A timeout may hide a successful remote operation; inspect the reported artifacts before retrying. Stopping the command does not cancel submitted work, close PRs, or delete branches.
 

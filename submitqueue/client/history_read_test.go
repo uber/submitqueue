@@ -77,6 +77,8 @@ func TestHistoryTransientDiagnosticsPreserveRecordedError(t *testing.T) {
 		status.Error(codes.Unavailable, "temporarily unavailable"),
 		status.Error(codes.DeadlineExceeded, "request deadline exceeded"),
 		status.Error(codes.ResourceExhausted, "temporarily throttled"),
+		status.Error(codes.Aborted, "concurrent update"),
+		status.Error(codes.Internal, "proxy reset"),
 		errs.NewRetryableError(errors.New("temporary storage failure")),
 	} {
 		t.Run(fmt.Sprintf("%T-%v", failure, status.Code(failure)), func(t *testing.T) {
