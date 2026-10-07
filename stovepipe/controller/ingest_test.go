@@ -185,7 +185,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			wantID: "7",
 		},
 		{
-			name:  "new ID advances legacy latest pointer and publishes",
+			name:  "legacy latest pointer prevents advancement and publish",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
 				expectResolve(m)
@@ -198,14 +198,11 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: "request/" + testQueue + "/42", Version: 1,
 				}, nil)
-				updated := entity.Queue{Name: testQueue, LatestRequestID: "1", Version: 1}
-				updateCall := m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
-				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil).After(updateCall)
 			},
-			wantID: "1",
+			wantErr: true,
 		},
 		{
-			name:  "retry repairs accepted decimal request behind legacy pointer",
+			name:  "retry rejects legacy latest pointer",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
 				expectResolve(m)
@@ -215,11 +212,8 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: "request/" + testQueue + "/42", Version: 1,
 				}, nil)
-				updated := entity.Queue{Name: testQueue, LatestRequestID: "1", Version: 1}
-				updateCall := m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
-				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil).After(updateCall)
 			},
-			wantID: "1",
+			wantErr: true,
 		},
 		{
 			name:  "dedup with existing accepted request republishes without minting",

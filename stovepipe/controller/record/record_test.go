@@ -291,11 +291,6 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			stored:  queueRow("git://remote/monorepo/main/old", "3", 4),
 			wantURI: testURI,
 		},
-		{
-			name:    "stored legacy bookmark is older",
-			stored:  queueRow("git://remote/monorepo/main/old", "request/"+testQueue+"/42", 4),
-			wantURI: testURI,
-		},
 	}
 
 	for _, tt := range tests {
@@ -337,6 +332,22 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			assert.Positive(t, fact.CreatedAt)
 		})
 	}
+}
+
+func TestProcess_RejectsLegacyBookmark(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
+		Return(queueRow("git://remote/monorepo/main/old", "request/"+testQueue+"/42", 4), nil)
+
+	err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+	require.Error(t, err)
+	assert.Empty(t, m.hooks.events)
 }
 
 func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {

@@ -19,8 +19,7 @@ import "github.com/uber/submitqueue/platform/base/id"
 // CompareRequestID compares ingest order of two request IDs in the same queue.
 // Callers must ensure the IDs belong to the same queue.
 // Returns -1 if a is older than b, 0 if equal, 1 if a is newer than b.
-// Decimal IDs are newer than all legacy request/<queue>/<counter> IDs.
-// Within each format, ordering is by numeric counter.
+// IDs must be canonical positive decimal strings whose scope is carried separately.
 func CompareRequestID(a, b string) (int, error) {
 	return id.Compare(a, b)
 }

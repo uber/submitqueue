@@ -54,6 +54,8 @@ func TestCompareRequestID(t *testing.T) {
 			want: -1,
 		},
 		{name: "prefixed ID", a: "request.1", b: "2", wantErr: true},
+		{name: "legacy first ID", a: "request/monorepo/main/1", b: "2", wantErr: true},
+		{name: "legacy second ID", a: "1", b: "request/monorepo/main/2", wantErr: true},
 	}
 
 	for _, tt := range tests {
