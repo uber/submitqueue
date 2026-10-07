@@ -46,7 +46,7 @@ func quietSpec(branch, parentBranch, parentSHA string, files ...changeFile) chan
 func TestSources_ProduceSubmittableURIs(t *testing.T) {
 	files := make([]changeFile, 0, 8)
 	for k := 1; k <= 8; k++ {
-		files = append(files, changeFile{path: changeFilePath("0814-154238", 5, 1, k)})
+		files = append(files, changeFile{path: fmt.Sprintf("demo/01/0814-154238-1-%d.txt", k)})
 	}
 	spec := quietSpec("demo/0814-154238/1", "main", strings.Repeat("b", 40), files...)
 

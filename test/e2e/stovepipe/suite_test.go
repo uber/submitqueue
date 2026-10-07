@@ -14,59 +14,44 @@
 
 package e2e_test
 
-// Stovepipe end-to-end tests.
-//
-// These tests use docker-compose from service/stovepipe/docker-compose.yml.
-// They are hermetic: the stovepipe image is built from a staged context whose
-// inputs (Bazel-built Linux binary, Dockerfile) are all declared data
-// dependencies of the test target.
-//
-// Run with:
-//
-//   make e2e-test
-//
-// or only this package:
-//
-//   bazel test //test/e2e/stovepipe:stovepipe_test
-//
-// The stack runs the Stovepipe gRPC service plus a storage MySQL (request,
-// request_uri, queue, build) and a queue MySQL (the pipeline stages). Unlike the
-// integration suite (test/integration/stovepipe), which asserts only that Ingest
-// *publishes* a process message, this suite additionally drives the asynchronous
-// consumers to completion — proving the ingest→process→build→buildsignal pipeline
-// runs end-to-end.
+// Ingest scenarios drive the complete pipeline; List scenarios use fixed read-path
+// fixtures. Both exercise the real gRPC service and MySQL in a hermetic Compose stack.
+// Run with: bazel test //test/e2e/stovepipe:go_default_test
 
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	storagemysql "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 )
 
-// The process consumer runs inside the stovepipe-service container, so this
-// suite can only observe its completion black-box through the queue backend's
-// delivery-state table — there is no in-process signal to await across the
-// container boundary. A bounded poll is the deterministic-enough analog:
-// processPollInterval bounds re-query frequency; Bazel's test timeout is the
-// only convergence deadline.
-const processPollInterval = 500 * time.Millisecond
+const (
+	listPaginationQueue = "e2e-stovepipe/list-pagination"
+	listTimeBoundsQueue = "e2e-stovepipe/list-time-bounds"
+	listPrimaryQueue    = "e2e-stovepipe/list-primary"
+	listOtherQueue      = "e2e-stovepipe/list-other"
+	listValidationQueue = "e2e-stovepipe/list-validation"
+)
 
 type StovepipeE2ESuite struct {
 	suite.Suite
-	ctx     context.Context
-	log     *testutil.TestLogger
-	stack   *testutil.ComposeStack
-	client  pb.StovepipeClient
-	db      *sql.DB // storage database (request, request_uri)
-	queueDB *sql.DB // queue database (process stage)
+	ctx        context.Context
+	log        *testutil.TestLogger
+	stack      *testutil.ComposeStack
+	client     pb.StovepipeClient
+	db         *sql.DB // storage database (request, request_uri)
+	queueDB    *sql.DB // queue database (process stage)
+	appStorage *storagemysql.Storage
 }
 
 func TestStovepipeE2E(t *testing.T) {
@@ -77,12 +62,13 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	t := s.T()
 	s.ctx = context.Background()
 	s.log = testutil.NewTestLogger(t)
+	t.Setenv("MQ_TENANTS", strings.Join([]string{
+		"monorepo/main", "monorepo/release", "monorepo/slow?buildrunner-fake=build-slow",
+		listPaginationQueue, listTimeBoundsQueue, listPrimaryQueue, listOtherQueue, listValidationQueue,
+	}, ","))
 
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")
 
-	// Compose file and image build inputs come from the test runfiles; the
-	// stovepipe image is built from a staged build context assembled entirely
-	// from declared data dependencies.
 	composeFile := testutil.Runfile("service/stovepipe/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe",
 		testutil.WithBuildContext(map[string]string{
@@ -104,6 +90,8 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("stovepipe/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
+	s.appStorage, err = storagemysql.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
 
 	var conn *grpc.ClientConn
 	conn, err = s.stack.ConnectGRPC("stovepipe-service", 8080)
@@ -126,87 +114,4 @@ func (s *StovepipeE2ESuite) TestPing() {
 	assert.Equal(t, "stovepipe", resp.ServiceName)
 	assert.NotEmpty(t, resp.Message)
 	assert.NotZero(t, resp.Timestamp)
-}
-
-// TestIngest_HappyPath_Processes drives a queue's head commit through the whole
-// pipeline. Ingest synchronously resolves the head URI via the (fake)
-// SourceControl, persists the Request and its (queue, URI) mapping, and publishes
-// the request id to the process stage; the process consumer then drains that
-// message. This asserts both the synchronous side effects and — the piece the
-// integration suite does not cover — that the async process stage acked the
-// message.
-func (s *StovepipeE2ESuite) TestIngest_HappyPath_Processes() {
-	const queue = "monorepo/main"
-
-	id := s.ingest(queue)
-	s.log.Logf("Ingest succeeded: id=%s; waiting for process stage", id)
-
-	// Synchronous side effects of Ingest.
-	s.assertIngestPersisted(queue, id)
-
-	// Asynchronous completion: the process consumer acked the message.
-	s.awaitProcessed(queue)
-}
-
-// TestIngest_Idempotent verifies that re-ingesting the same queue resolves the
-// same head URI and dedups to the same request id.
-func (s *StovepipeE2ESuite) TestIngest_Idempotent() {
-	const queue = "monorepo/release"
-
-	id := s.ingest(queue)
-	s.log.Logf("First ingest: id=%s", id)
-
-	id2 := s.ingest(queue)
-	assert.Equal(s.T(), id, id2, "re-ingest of the same head should dedup to the same id")
-}
-
-func (s *StovepipeE2ESuite) TestIngest_IndependentQueuesReuseIDs() {
-	queues := []string{"monorepo/main", "monorepo/release"}
-	ids := []string{s.ingest(queues[0]), s.ingest(queues[1])}
-	require.Equal(s.T(), ids[0], ids[1], "independent queues may share a resource ID")
-
-	for i, queue := range queues {
-		s.Run(queue, func() {
-			assert.Equal(s.T(), 1, s.requestRowCount(queue, ids[i]))
-			assert.Equal(s.T(), ids[i], s.uriMapping(queue))
-			s.awaitBuildStatus(queue, ids[i], "succeeded")
-			s.awaitRequestState(queue, ids[i], "succeeded")
-		})
-	}
-}
-
-func (s *StovepipeE2ESuite) TestIngest_RejectsUnconfiguredTenant() {
-	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: "monorepo/unconfigured"})
-	require.Error(s.T(), err)
-	assert.Nil(s.T(), resp)
-}
-
-// TestIngest_SlowBuild_PollsToCompletion drives a build that is not terminal on its
-// first poll, which is the only path that exercises buildsignal's poll loop.
-//
-// The queue name carries a fake-buildrunner marker: the fake SourceControl resolves a
-// queue to "git://<queue>/HEAD", so the marker rides into the head URI and the fake
-// BuildRunner reports running for a while before succeeding. Reaching a terminal build
-// status therefore requires the poll loop to tick more than once.
-//
-// The loop is driven by holding the delivery: each non-terminal poll postpones the
-// same BuildSignal message, which redelivers after the poll delay without minting new
-// rows or burning retry attempts. A build that stalled the loop would sit at `running`
-// forever, so reaching a terminal status proves the held message kept redelivering.
-func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
-	const queue = "monorepo/slow?buildrunner-fake=build-slow"
-
-	id := s.ingest(queue)
-	s.log.Logf("Ingest succeeded: id=%s; waiting for the poll loop to reach a terminal build", id)
-
-	s.assertIngestPersisted(queue, id)
-
-	// Getting here at all means the held delivery redelivered and re-polled.
-	s.awaitBuildStatus(queue, id, "succeeded")
-
-	// buildsignal projects the terminal build status onto the request and, in the
-	// same step, releases the build slot that reopens the process gate.
-	s.awaitRequestState(queue, id, "succeeded")
-	assert.Equal(s.T(), int32(0), s.inFlightCount(queue),
-		"a terminal build should release the queue's build slot")
 }

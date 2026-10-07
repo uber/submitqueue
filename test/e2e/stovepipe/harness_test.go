@@ -14,27 +14,18 @@
 
 package e2e_test
 
-// Reusable e2e helpers so tests read as intent, not plumbing. They drive the
-// stack through the real Stovepipe gRPC surface (Ingest) and observe outcomes
-// two ways:
-//
-//   - the synchronous side effects of Ingest via raw SQL on the storage DB
-//     (the request row and its (queue, URI) mapping) and the queue DB (the
-//     published process message); and
-//   - the asynchronous completion of the process stage by polling the queue
-//     backend's per-consumer-group delivery state until the message is acked.
-//
-// The process consumer runs inside the stovepipe-service container, so there is
-// no in-process signal to await. Polling continues until the condition holds or
-// Bazel's test timeout terminates a genuinely stuck suite.
-
 import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	"github.com/uber/submitqueue/stovepipe/entity"
+	"google.golang.org/protobuf/proto"
 )
+
+// Container boundaries require polling; Bazel owns the convergence deadline.
+const convergencePollInterval = 500 * time.Millisecond
 
 func pollUntil(interval time.Duration, condition func() bool) {
 	ticker := time.NewTicker(interval)
@@ -47,72 +38,42 @@ func pollUntil(interval time.Duration, condition func() bool) {
 	}
 }
 
-// The process consumer's topic and consumer group as wired in
-// service/stovepipe/server/main.go (topic name "process", consumer group
-// "stovepipe-process"). awaitProcessed reads the queue backend's delivery state
-// keyed by this group.
 const (
 	processTopic         = "process"
 	processConsumerGroup = "stovepipe-process"
 )
 
-// ingest admits a queue's head commit into the pipeline and returns the minted
-// request id.
 func (s *StovepipeE2ESuite) ingest(queue string) string {
-	t := s.T()
+	s.T().Helper()
 	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})
-	require.NoError(t, err, "Ingest failed for queue %s", queue)
-	require.NotEmpty(t, resp.Id, "Ingest returned an empty id for queue %s", queue)
+	require.NoError(s.T(), err, "Ingest failed for queue %s", queue)
+	require.NotEmpty(s.T(), resp.Id, "Ingest returned an empty id for queue %s", queue)
 	return resp.Id
 }
 
-// requestRowCount returns the number of request rows with the given queue and id (0 or 1).
-func (s *StovepipeE2ESuite) requestRowCount(queue, id string) int {
-	t := s.T()
+func (s *StovepipeE2ESuite) assertIngestPersisted(queue, id string) {
+	s.T().Helper()
 	var count int
-	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE queue = ? AND id = ?", queue, id).Scan(&count),
-		"failed to count request rows for queue=%s id=%s", queue, id)
-	return count
-}
+	require.NoError(s.T(), s.db.QueryRowContext(s.ctx,
+		"SELECT COUNT(*) FROM request WHERE queue = ? AND id = ?", queue, id).Scan(&count))
+	assert.Equal(s.T(), 1, count)
 
-// uriMapping returns the request id the (queue, URI) mapping points at.
-func (s *StovepipeE2ESuite) uriMapping(queue string) string {
-	t := s.T()
 	var mappedID string
-	require.NoError(t, s.db.QueryRow("SELECT request_id FROM request_uri WHERE queue = ?", queue).Scan(&mappedID),
-		"failed to read request_uri mapping for queue %s", queue)
-	return mappedID
+	require.NoError(s.T(), s.db.QueryRowContext(s.ctx,
+		"SELECT request_id FROM request_uri WHERE queue = ?", queue).Scan(&mappedID))
+	assert.Equal(s.T(), id, mappedID)
 }
 
-// publishedMessageCount returns the number of process messages published for the
-// given tenant and request id (0 or 1).
-func (s *StovepipeE2ESuite) publishedMessageCount(tenant, id string) int {
-	t := s.T()
-	var count int
-	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND topic = ? AND id = ?", tenant, processTopic, id).Scan(&count),
-		"failed to count queue messages for %s", id)
-	return count
-}
-
-// awaitProcessed blocks until the process consumer has acked a message on the
-// given queue's partition, proving the ingest→process pipeline ran end-to-end.
-// The durable signal is the consumer group's acked-offset watermark in
-// queue_offsets: it starts at 0 and only advances once a message is acked (see
-// offset_store.go). We poll that rather than the message's own delivery-state
-// row because the queue GCs acked messages (and their delivery state) from
-// queue_messages once the watermark passes them. The queue uses the queue name
-// as the message's partition key (see the ingest controller), so the partition
-// key here is the queue.
 func (s *StovepipeE2ESuite) awaitProcessed(queue string) {
+	s.T().Helper()
+	// Acked messages can be garbage-collected; their offset watermark remains durable.
 	const query = `
-			SELECT offset_acked
-			FROM queue_offsets
-			WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ?`
-	pollUntil(processPollInterval, func() bool {
+		SELECT offset_acked FROM queue_offsets
+		WHERE tenant = ? AND consumer_group = ? AND topic = ? AND partition_key = ?`
+	pollUntil(convergencePollInterval, func() bool {
 		var ackedOffset int64
-		err := s.queueDB.QueryRow(query, queue, processConsumerGroup, processTopic, queue).Scan(&ackedOffset)
+		err := s.queueDB.QueryRowContext(s.ctx, query, queue, processConsumerGroup, processTopic, queue).Scan(&ackedOffset)
 		if err != nil {
-			// sql.ErrNoRows means the partition offset is not initialized yet.
 			s.log.Logf("acked offset for queue %s not ready yet: %v", queue, err)
 			return false
 		}
@@ -121,23 +82,11 @@ func (s *StovepipeE2ESuite) awaitProcessed(queue string) {
 	})
 }
 
-// assertIngestPersisted asserts the synchronous side effects of a successful
-// Ingest: the request row, the (queue, URI) mapping pointing at the minted id,
-// and exactly one published process message.
-func (s *StovepipeE2ESuite) assertIngestPersisted(queue, id string) {
-	t := s.T()
-	assert.Equal(t, 1, s.requestRowCount(queue, id), "request row should be persisted for queue=%s id=%s", queue, id)
-	assert.Equal(t, id, s.uriMapping(queue), "URI mapping should point at the minted request id")
-	assert.Equal(t, 1, s.publishedMessageCount(queue, id), "should have published one process message for %s", id)
-}
-
-// awaitRequestState blocks until the request row reaches want. buildsignal projects
-// the build's terminal status onto the request, so this is the durable, black-box
-// signal that the whole ingest→process→build→buildsignal chain converged.
 func (s *StovepipeE2ESuite) awaitRequestState(queue, id, want string) {
-	pollUntil(processPollInterval, func() bool {
+	s.T().Helper()
+	pollUntil(convergencePollInterval, func() bool {
 		var state string
-		if err := s.db.QueryRow("SELECT state FROM request WHERE queue = ? AND id = ?", queue, id).Scan(&state); err != nil {
+		if err := s.db.QueryRowContext(s.ctx, "SELECT state FROM request WHERE queue = ? AND id = ?", queue, id).Scan(&state); err != nil {
 			s.log.Logf("request queue=%s id=%s state not readable yet: %v", queue, id, err)
 			return false
 		}
@@ -146,30 +95,96 @@ func (s *StovepipeE2ESuite) awaitRequestState(queue, id, want string) {
 	})
 }
 
-// inFlightCount returns the queue row's in_flight_count, the process concurrency
-// gate's counter.
 func (s *StovepipeE2ESuite) inFlightCount(queue string) int32 {
-	t := s.T()
+	s.T().Helper()
 	var count int32
-	require.NoError(t, s.db.QueryRow("SELECT in_flight_count FROM queue WHERE name = ?", queue).Scan(&count),
-		"failed to read in_flight_count for queue %s", queue)
+	require.NoError(s.T(), s.db.QueryRowContext(s.ctx, "SELECT in_flight_count FROM queue WHERE name = ?", queue).Scan(&count))
 	return count
 }
 
-// awaitBuildStatus blocks until the build row for a request reaches want. The
-// pipeline runs inside the stovepipe-service container, so the build's own status
-// column is the durable, black-box signal that the poll loop converged: buildsignal
-// is its only writer after build creates the row.
 func (s *StovepipeE2ESuite) awaitBuildStatus(queue, requestID, want string) {
-	pollUntil(processPollInterval, func() bool {
+	s.T().Helper()
+	pollUntil(convergencePollInterval, func() bool {
 		var status string
-		err := s.db.QueryRow("SELECT status FROM build WHERE queue = ? AND request_id = ?", queue, requestID).Scan(&status)
+		err := s.db.QueryRowContext(s.ctx, "SELECT status FROM build WHERE queue = ? AND request_id = ?", queue, requestID).Scan(&status)
 		if err != nil {
-			// sql.ErrNoRows means the build row is not created yet.
 			s.log.Logf("build for queue=%s request=%s not readable yet: %v", queue, requestID, err)
 			return false
 		}
 		s.log.Logf("build for queue=%s request=%s status = %q (want %q)", queue, requestID, status, want)
 		return status == want
 	})
+}
+
+func (s *StovepipeE2ESuite) listRequests(req *pb.ListRequest) *pb.ListResponse {
+	s.T().Helper()
+	response, err := s.client.List(s.ctx, req)
+	require.NoError(s.T(), err, "List failed for queue %s", req.Queue)
+	require.NotNil(s.T(), response)
+	return response
+}
+
+func (s *StovepipeE2ESuite) awaitListedRequest(queue, requestID, state string) *pb.RequestSummary {
+	s.T().Helper()
+	var found *pb.RequestSummary
+	pollUntil(convergencePollInterval, func() bool {
+		response := s.listRequests(&pb.ListRequest{Queue: queue, PageSize: 200})
+		require.Empty(s.T(), response.NextPageToken)
+		found = nil
+		matches := 0
+		for _, summary := range response.Requests {
+			require.Equal(s.T(), queue, summary.Queue)
+			if summary.RequestId == requestID {
+				found = summary
+				matches++
+			}
+		}
+		require.LessOrEqual(s.T(), matches, 1, "duplicate listing for %s", requestID)
+		s.log.Logf("List queue=%s id=%s matches=%d state=%q (want %q)",
+			queue, requestID, matches, found.GetRequestState(), state)
+		return matches == 1 && (state == "" || found.RequestState == state)
+	})
+	return found
+}
+
+func (s *StovepipeE2ESuite) assertListSummaries(response *pb.ListResponse, want ...*pb.RequestSummary) {
+	s.T().Helper()
+	require.Len(s.T(), response.Requests, len(want))
+	for i, summary := range response.Requests {
+		assert.True(s.T(), proto.Equal(want[i], summary), "want %v, got %v", want[i], summary)
+	}
+}
+
+// Fixed read-path fixtures guarantee timestamp ties without depending on clock resolution.
+// Projection behavior is covered by the real-ingest scenarios, not these seeded records.
+func (s *StovepipeE2ESuite) seedListSummary(queue, requestID string, acceptedAtMs int64) *pb.RequestSummary {
+	s.T().Helper()
+	summary := entity.RequestSummary{
+		Queue: queue, RequestID: requestID, URI: "git://" + queue + "/" + requestID,
+		BaseURI: "git://repo/base", State: entity.RequestStateSucceeded, StateTimestampMs: acceptedAtMs + 100,
+		AcceptedAtMs: acceptedAtMs, OutcomeReason: entity.RequestOutcomeReasonBuildSucceeded,
+		RequestVersion: 3, Version: 1,
+	}
+	stores, err := s.appStorage.For(queue)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), stores.GetRequestSummaryStore().Create(s.ctx, summary))
+	if acceptedAtMs > 0 {
+		require.NoError(s.T(), stores.GetRequestAcceptanceStore().Create(s.ctx, entity.RequestAcceptance{
+			Queue: queue, AcceptedAtMs: acceptedAtMs, RequestID: requestID,
+		}))
+	}
+	return &pb.RequestSummary{
+		Queue: queue, RequestId: requestID, ChangeUri: summary.URI, BaseUri: summary.BaseURI,
+		RequestState: string(summary.State), StateUpdatedAtMs: summary.StateTimestampMs,
+		AcceptedAtMs: acceptedAtMs, OutcomeReason: string(summary.OutcomeReason),
+	}
+}
+
+func (s *StovepipeE2ESuite) seedListPaginationSummaries(queue string) []*pb.RequestSummary {
+	s.T().Helper()
+	lower := s.seedListSummary(queue, "list/lower", 1000)
+	ten := s.seedListSummary(queue, "list/10", 1500)
+	z := s.seedListSummary(queue, "list/z", 1500)
+	nine := s.seedListSummary(queue, "list/9", 1500)
+	return []*pb.RequestSummary{z, nine, ten, lower}
 }
