@@ -152,8 +152,8 @@ ad hoc updates at each call site.
 
 Request-log events should carry `queue` as first-class data. The log sink only
 receives the log event, so relying on `sqid` parsing would make the read model
-depend on an ID-format convention. Legacy backfills may parse queue from `sqid`
-as a fallback, but new events should be queue-attributable at the source.
+depend on an ID-format convention. Request IDs carry no queue, so every event
+must be queue-attributable at the source.
 
 ## Change URIs
 

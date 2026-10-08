@@ -33,7 +33,7 @@ A Queue is *not* tied to trunk specifically — any branch can be a Queue. "Queu
 
 ### Request — one validation of one head
 
-When the poller reports that a Queue has a new head, Stovepipe mints a **Request** (an ID namespaced by the Queue, exactly as the SQ gateway mints a request ID) representing "validate this Queue at this head URI". The Request, not the URI, is the thing that flows through the pipeline and accumulates state (the chosen build strategy, the build outcome, the recorded greenness).
+When the poller reports that a Queue has a new head, Stovepipe mints a **Request** (its ID scoped by the Queue, minted exactly as the SQ gateway mints a request ID; see [Resource IDs](../submitqueue/workflow.md#resource-ids)) representing "validate this Queue at this head URI". The Request, not the URI, is the thing that flows through the pipeline and accumulates state (the chosen build strategy, the build outcome, the recorded greenness).
 
 Identity for the *head* is the `(Queue, head URI)` pair, and that pair is the **dedup key**: if the poller reports the same head twice, or a future webhook producer races the poller, both resolve to the same Request and the work happens once. The minted Request ID is the routing handle; the dedup key is what makes ingestion idempotent.
 
