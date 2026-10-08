@@ -91,114 +91,6 @@ func setupGitFixture(t *testing.T) gitFixture {
 	}
 }
 
-func TestGitRuntimeValidate(t *testing.T) {
-	abs, err := filepath.Abs("git")
-	require.NoError(t, err)
-	tests := []struct {
-		name    string
-		runtime GitRuntime
-		wantErr bool
-	}{
-		{
-			name: "valid",
-			runtime: GitRuntime{
-				Executable:  abs,
-				ExecPath:    abs,
-				TemplateDir: abs,
-			},
-		},
-		{
-			name: "missing executable",
-			runtime: GitRuntime{
-				ExecPath:    abs,
-				TemplateDir: abs,
-			},
-			wantErr: true,
-		},
-		{
-			name: "relative exec path",
-			runtime: GitRuntime{
-				Executable:  abs,
-				ExecPath:    "git-core",
-				TemplateDir: abs,
-			},
-			wantErr: true,
-		},
-		{
-			name: "relative template dir",
-			runtime: GitRuntime{
-				Executable:  abs,
-				ExecPath:    abs,
-				TemplateDir: "templates",
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.runtime.validate()
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestNewGitCommandDoesNotInheritEnvironment(t *testing.T) {
-	t.Setenv("SUBMITQUEUE_GIT_AMBIENT", "ambient")
-	runtime := testGitRuntime(t)
-
-	cmd := newGitCommand(context.Background(), runtime, t.TempDir(), "--version")
-
-	assert.Equal(t, runtime.Executable, cmd.Path)
-	assert.NotContains(t, cmd.Env, "SUBMITQUEUE_GIT_AMBIENT=ambient")
-	assert.Contains(t, cmd.Env, "GIT_CONFIG_NOSYSTEM=1")
-	assert.Contains(t, cmd.Env, "GIT_EXEC_PATH="+runtime.ExecPath)
-}
-
-func TestNewGitCommandPreservesAuthEnvironment(t *testing.T) {
-	// Scrubbing denies git ambient configuration; it must not also deny it the
-	// means to reach the remote. Without the agent socket an SSH remote cannot
-	// authenticate, and without PATH git cannot even exec ssh.
-	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
-	t.Setenv("PATH", "/usr/bin:/bin")
-	t.Setenv("HTTPS_PROXY", "http://proxy.example.com:3128")
-	t.Setenv("SUBMITQUEUE_GIT_AMBIENT", "ambient")
-
-	cmd := newGitCommand(context.Background(), testGitRuntime(t), t.TempDir(), "--version")
-
-	assert.Contains(t, cmd.Env, "SSH_AUTH_SOCK=/tmp/agent.sock")
-	assert.Contains(t, cmd.Env, "PATH=/usr/bin:/bin")
-	assert.Contains(t, cmd.Env, "HTTPS_PROXY=http://proxy.example.com:3128")
-	assert.NotContains(t, cmd.Env, "SUBMITQUEUE_GIT_AMBIENT=ambient")
-}
-
-func TestNewGitCommandOmitsUnsetAuthEnvironment(t *testing.T) {
-	// An unset variable must be omitted rather than exported empty: an empty
-	// SSH_AUTH_SOCK tells ssh there is no agent instead of letting it look.
-	t.Setenv("SSH_AUTH_SOCK", "")
-	require.NoError(t, os.Unsetenv("SSH_AUTH_SOCK"))
-
-	cmd := newGitCommand(context.Background(), testGitRuntime(t), t.TempDir(), "--version")
-
-	for _, entry := range cmd.Env {
-		assert.False(t, strings.HasPrefix(entry, "SSH_AUTH_SOCK="), "unset variable leaked as %q", entry)
-	}
-}
-
-func TestNewGitCommandPassesThroughExtraEnvironment(t *testing.T) {
-	t.Setenv("SUBMITQUEUE_CUSTOM_TRANSPORT", "value")
-	runtime := testGitRuntime(t)
-	runtime.PassthroughEnv = []string{"SUBMITQUEUE_CUSTOM_TRANSPORT"}
-
-	cmd := newGitCommand(context.Background(), runtime, t.TempDir(), "--version")
-
-	assert.Contains(t, cmd.Env, "SUBMITQUEUE_CUSTOM_TRANSPORT=value")
-}
-
 func TestCherryPickRange_NonConflictFailureIsRetryable(t *testing.T) {
 	// A cherry-pick can exit non-zero for reasons that have nothing to do with
 	// the change colliding — a bad revision here, standing in for a missing
@@ -1745,7 +1637,7 @@ func (f gitFixture) pushMultiCommitPRAs(t *testing.T, branch string, commits ...
 
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := newGitCommand(context.Background(), testGitRuntime(t), dir, args...)
+	cmd := testGitRuntime(t).Command(context.Background(), dir, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	require.NoError(t, cmd.Run(), "git %s: %s", strings.Join(args, " "), stderr.String())
@@ -1753,7 +1645,7 @@ func mustGit(t *testing.T, dir string, args ...string) {
 
 func mustGitOutput(t *testing.T, dir string, args ...string) []byte {
 	t.Helper()
-	cmd := newGitCommand(context.Background(), testGitRuntime(t), dir, args...)
+	cmd := testGitRuntime(t).Command(context.Background(), dir, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -1761,11 +1653,11 @@ func mustGitOutput(t *testing.T, dir string, args ...string) []byte {
 	return stdout.Bytes()
 }
 
-func testGitRuntime(t *testing.T) GitRuntime {
+func testGitRuntime(t *testing.T) gitexec.Runtime {
 	t.Helper()
 	executable := gitexectest.Git(t)
 	templateDescription := gitexectest.Runfile(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
-	return GitRuntime{
+	return gitexec.Runtime{
 		Executable:  executable,
 		ExecPath:    filepath.Dir(executable),
 		TemplateDir: filepath.Dir(templateDescription),
