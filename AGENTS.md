@@ -188,6 +188,21 @@ Paths follow the directory layout: shared packages live under `platform/` at the
 - Shared extensions: `github.com/uber/submitqueue/platform/extension/{ext}[/{impl}]` (e.g. `.../platform/extension/messagequeue/mysql`)
 - Cross-domain infra: `github.com/uber/submitqueue/platform/{pkg}` (e.g. `.../platform/errs`, `.../platform/metrics`, `.../platform/http`)
 
+### Design Defaults
+
+Reviews send changes back for these more often than for anything else. Get them right in the first draft.
+
+- **Build only for consumers in scope.** Do not add a package, interface, adapter, option, or second supported path for a consumer the change does not ship, such as a second host, a framework that "can't" import CSS, or a caller nobody has asked for. Extract shared code when the second real consumer arrives. When two ways of doing something would both be supported, pick one and enforce it.
+- **Every file, dependency, and call has a job you can name.** Skip work the behavior does not need: an upfront validation pass when each item is validated before use, an RPC whose result does not reach the output, a config file that restates defaults. If nothing breaks when you delete it, delete it.
+- **Use ecosystem types directly.** Library code takes `*zap.SugaredLogger` and tally in Go, and a pino `Logger` and OpenTelemetry meter and tracer in web code, with a silent or no-op default. Do not define a homegrown `Logger` interface. Wrap a dependency only where the repository actually swaps implementations, which is what an extension contract is for.
+- **The library owns behavior; the host owns integration.** `platform/` and domain library code are framework-neutral and ship the complete behavior. In web code that includes layout, styling, pages, and API calls. A host supplies the server, auth, logging, metrics, transport, and configuration, and stays thin. Framework adapters (Next.js and the like) live in the host that uses them. Library code depends on the structural shape of a client, not on generated bindings or a transport. Only the host chooses implementations.
+- **Enforce boundaries; do not just document them.** Use Bazel `visibility` and tests that fail on forbidden imports. Generated bindings shared by in-repo consumers (such as a host and its e2e test) stay with the contract and are private to those consumers. Consumers outside the repository generate their own from the `.proto` sources.
+- **Mirror the repository layout in every language.** Go code uses the root tree. A workspace for another language repeats that layout inside itself: `web/platform`, `web/service`, `web/test/e2e`, and `web/tool`, not the repo-level `test/` or `tool/`. Do not substitute a framework's default layout (`web/e2e`), and do not call one host's wiring `platform`.
+- **Bazel builds and runs everything.** A new language or tool gets Bazel targets with pinned toolchains for dependencies, codegen, build, tests, and images, not a side-car `go.mod`, virtualenv, or package-manager-only build. A package-manager workspace may exist for editors only. Logic belongs in a Go or Python target, not a shell launcher. A shell function in the docs means the program should take that flag itself. Local servers bind a free port the way the Compose services do.
+- **Identifiers are opaque and shown verbatim.** Do not base64-encode, hash, or otherwise re-encode an ID for a URL or the UI. A path follows the ID's own scope (`/<queue>/request/<id>`) or mirrors the URI it names, so users can read it and paste it; escape only what a browser would normalize away. Do not pack auxiliary data into an identifier, such as a file list inside a change URI; give it its own field.
+- **URLs are shareable and live.** A page URL carries no timestamps or transient window, and refreshing it shows current data. An older page is an opaque cursor, and a view a user may share (such as a history tab) is a query parameter.
+- **This is a public repository.** Code, tests, docs, commit messages, and PR bodies do not name Uber-internal systems, hosts, repositories, libraries, or services. Describe an internal consumer by its properties ("an internal monorepo", "a house RPC client").
+
 ## Development
 
 ### Build System
@@ -224,6 +239,9 @@ SubmitQueue's internal pipeline contract lives at `submitqueue/core/messagequeue
 - **Proto files**: `{service}.proto`
 - **Test compose contexts**: the `testContext` passed to `NewComposeStack` (and thus the `sq-test-{context}-…` Docker project/container names) must be **domain-qualified** — `{category}-{domain}-{name}` where `{category}` is `svc`/`ext`/`core`/`e2e` and `{domain}` is `submitqueue`/`stovepipe`/… (omit the domain only for shared/cross-domain suites, e.g. `ext-messagequeue-sql`). This keeps containers unambiguous and lets suites run in parallel. See [doc/howto/TESTING.md](doc/howto/TESTING.md#container-naming).
 - **README files**: Do not duplicate interface or type definitions as code blocks in READMEs. Describe behavior in prose and let readers navigate to the source. Only include code samples when explicitly instructed.
+- **Name what a thing is, not a metaphor**: `githubtestrepo` and `SQ_GITHUB_TEST_REPO`, not `sandbox`.
+- **RFCs describe what is on main**: an RFC is the current design of the system, not a record of the discussion. Once a proposal ships, fold its decision into the RFC that owns that part of the system, update every reference, and delete the proposal. Do not keep superseded proposals or "current vs proposed" tables.
+- **Docs are concise**: an RFC records the decision and the alternatives it rejected, not a tour of the code. A UX section is a mock image plus a one-line description.
 - **Markdown prose width**: Do not hard-wrap prose in Markdown docs (RFCs under `doc/`, READMEs). Write one line per paragraph and one line per list item, and let the editor soft-wrap — hard wrapping at a fixed column renders as a narrow fixed-width column regardless of window size. Code blocks, tables, and ASCII diagrams keep their own line breaks.
 
 ### Makefile
@@ -344,9 +362,13 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 3. `make check-tidy` — ensure `go.mod` and `MODULE.bazel` are tidy
 4. `make check-gazelle` — ensure `BUILD.bazel` files are up to date
 
+New CI work is a job in `.github/workflows/ci.yml` that runs alongside the existing e2e and integration jobs, not a separate workflow or a nightly schedule. A test that needs a credential reads a repository secret plus a repository variable naming its target, so any contributor or fork can point it at their own resources. Do not use a GitHub environment, which records deployments, and do not hard-code a repository. Such a test skips only when the repository has not opted in, and fails when it has opted in but the credential is missing, so a deleted or expired secret cannot leave CI silently green.
+
 ### Commit Style
 
 1. Use conventional commits specification
+2. For a large change, ask the user whether to split it into a stack (for example foundation first, then one feature per PR) or keep one PR; it depends on the change.
+3. A PR that adds anything runnable says in its Test Plan how to run it locally.
 
 ### Code Style
 

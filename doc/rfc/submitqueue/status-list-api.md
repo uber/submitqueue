@@ -4,7 +4,7 @@
 
 Implemented. The gateway RPCs `GetRequestSummaryByID`, `GetRequestSummaryByChangeURI`, and `List` follow this contract (`submitqueue/gateway/controller/request_summary.go`, `submitqueue/gateway/controller/list.go`).
 
-This RFC replaces the unimplemented design in [list-api.md](list-api.md). That file is superseded and kept only as the earlier lifecycle-overlap proposal. This document is the gateway-owned request context and materialized status model used by request-summary retrieval and `List`.
+This document is the gateway-owned request context and materialized status model used by request-summary retrieval and `List`.
 
 ## Problem
 

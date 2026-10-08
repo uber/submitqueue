@@ -111,7 +111,7 @@ Stovepipe calls `requestlog.Materializer.PersistLog` directly, without an interm
 
 ## Ordering and Consistency
 
-Events are returned by `(timestamp_ms ASC, event_id ASC)`. URI histories are ordered by the numeric request-ID counter ascending, then request ID ascending. Timestamps are display order, not conflict resolution. Persisted Request versions provide internal causal ordering for state transitions, while Build identity and write-once terminal status ensure one triggered and one finished occurrence per build.
+Events are returned by `(timestamp_ms ASC, event_id ASC)`. URI histories are ordered by request ID ascending, compared numerically (see [Resource IDs](../submitqueue/workflow.md#resource-ids)). Timestamps are display order, not conflict resolution. Persisted Request versions provide internal causal ordering for state transitions, while Build identity and write-once terminal status ensure one triggered and one finished occurrence per build.
 
 History may briefly lag a source entity between the source write and history creation. The pipeline blocks its dependent handoff during that window, and retry or reconciliation repairs the missing entry. The read API never fabricates an occurrence from current state.
 

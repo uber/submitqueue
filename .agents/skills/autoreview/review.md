@@ -1,31 +1,36 @@
-# Autoreview worker
+# Autoreview phases
 
-Review the change. Do not edit it, do not commit, and do not post to the pull request. Findings are advice. A clean verdict covers only the target below, and a review that did not finish is not clean.
+Review the change. Do not edit it, do not commit, and do not post to the pull request. Findings are advice. A clean verdict covers only the planned target, and a review that did not finish is not clean.
 
-Run the four stages in order. `AGENTS.md` is the source of truth; `CLAUDE.md` is a copy, so do not read it separately.
+`AGENTS.md` in the repository is the source of truth; `CLAUDE.md` is a copy, so do not read it separately. Execute only the section your prompt names.
 
-## 1. Scope and intent
+## Plan
 
-Run `bazel run //.agents/skills/autoreview/scripts:review-scope --` from the repository, followed by any arguments below. The tool is read-only and does not fetch. Its source is [`scripts/review-scope.py`](scripts/review-scope.py).
+### Review tree
+
+Checks and reading run against a tree that is exactly the reviewed target, so local edits never block or skew them.
+
+- When the target includes uncommitted work (the default, or `--uncommitted`), the review tree is the repository working tree.
+- Otherwise resolve the head SHA: `headRefOid` for a pull request, the named commit for `--commit`, `HEAD` for `--range`. Then create a detached tree outside the repository: `work=$(mktemp -d -t autoreview)` and `git -C <repository> worktree add --detach "$work/tree" <sha>`. Bazel gives the new tree a fresh output base, so its first build is slow; that is expected.
+- For uncommitted targets, still create `work=$(mktemp -d -t autoreview)` for the plan's files.
+
+### Scope and intent
+
+Run the repository's copy of the scope script from inside the review tree: `python3 -I <repository>/.agents/skills/autoreview/scripts/review-scope.py <args> > "$work/scope.txt"`. It is read-only and does not fetch.
 
 - By default it reviews committed changes since the merge-base with `origin/main`, plus staged, unstaged, and untracked files.
 - `--base REF` when the user names a different base.
-- `--range REF` when the target is committed work only; dirty work is excluded.
-- `--commit REV` when the user names one commit. Dirty work is excluded.
+- `--range REF` when the target is committed work only.
+- `--commit REV` when the user names one commit.
 - `--uncommitted` when the user wants only uncommitted work.
-- When the user names a pull request, read it with `gh pr view N --json baseRefName,baseRefOid,headRefOid,title,body`. Verify local `HEAD` equals `headRefOid` and `baseRefOid` exists locally, then pass `--range <baseRefOid>` so unrelated dirty work is excluded. Do not fetch. If either check fails, stop and report the review as incomplete rather than reviewing a different revision.
+- When the user names a pull request, read it with `gh pr view N --json baseRefName,baseRefOid,headRefOid,title,body`. Confirm both `headRefOid` and `baseRefOid` exist locally (`git cat-file -e`), create the review tree at `headRefOid`, and pass `--range <baseRefOid>`. Do not fetch. If either object is missing, stop and return a plan that marks the review incomplete rather than reviewing a different revision.
 
-Read the full commit messages (`git log <base>..HEAD`) or the pull request body, not just the subjects the script prints. Write a one-line intent and record whether it came from the PR body, commit messages, or the user. Use `unspecified` when none states an intent; do not invent one. Hold the change to that intent, including changes that do not belong in it.
+Read the full commit messages (`git log <base>..<head>`) or the pull request body, not just the subjects the script prints. Write a one-line intent and record whether it came from the PR body, commit messages, or the user. Use `unspecified` when none states an intent; do not invent one.
 
-The script's `## smells` lines are leads. A hit is not a finding until a lens confirms it in the code. `## hints` means an interface declaration or mock-generation source changed.
+### Mechanical checks
 
-Read context from the reviewed snapshot. Branch and uncommitted targets use the working tree. A range target uses `git show HEAD:<path>` and its merge-base for before-state; a commit target uses `git show <commit>:<path>` and its parent. Do not open the working-tree copy for a committed-only target when dirty work is excluded or the named commit is not `HEAD`. If required context cannot be read from the Git objects, mark coverage incomplete.
+Run only the checks that match the file list, from the review tree, and write each result to `$work/checks.txt`.
 
-## 2. Mechanical checks
-
-Run only the checks that match the file list.
-
-- Run checks only when the filesystem materializes the reviewed target. A branch or uncommitted review uses the current tree. For `--range`, any dirty work means all checks are skipped. For `--commit`, all checks are skipped unless the named commit equals `HEAD` and the tree is clean. Record `skipped: reviewed target is not materialized` and mark verification limited; never report results from a different tree.
 - `make check-gazelle` when `go` or `build` is not `none`.
 - `make check-mocks` when `## hints` is not `none`, or a file under `mock/` changed.
 - `make check-tidy` when `MODULE.bazel`, `go.mod`, or `go.sum` changed.
@@ -34,46 +39,96 @@ Run only the checks that match the file list.
 - `bazel build` (or `./tool/bazel build` when `bazel` is not on `PATH`) on each package under `## packages`: append `:all`, so `//` becomes `//:all` and `//pkg` becomes `//pkg:all`.
 - For each affected package, query `tests(<package>:all)`. Run `bazel test` only on the returned labels. An empty query is `not applicable`, not a failure. Exclude `integration` and `e2e` tags unless a changed file is an integration or e2e test. Do not test `//...`.
 
-`make lint`, `make check-gazelle`, `make check-mocks`, `make check-tidy`, and `make proto` rewrite files and then require a clean tree. Skip them when `dirty: true`, record `skipped: dirty tree`, and mark verification limited. When the tree is clean, record `git status --porcelain` first and compare it after every command. A successful command that leaves changes is a failed stale-output check. Restore the tracked paths with `git restore` and remove only untracked paths that were not in the earlier status, whether the command failed or merely left edits. Do not leave the rewrite in the worktree.
+`make lint`, `make check-gazelle`, `make check-mocks`, `make check-tidy`, and `make proto` rewrite files and then require a clean tree. A detached review tree is always clean. In the repository working tree, skip them when `dirty: true`, record `skipped: dirty tree`, and mark verification limited. When the tree is clean, record `git status --porcelain` first and compare it after every command. A successful command that leaves changes is a failed stale-output check. Restore the tracked paths with `git restore` and remove only untracked paths that were not in the earlier status. Do not leave the rewrite in the tree.
 
-`bazel test` does not edit source. Run it on a dirty tree too.
+`bazel test` does not edit source; run it on a dirty tree too. A failed check is a fact: record the target and the first error. Do not turn a smell into a failed check.
 
-A failed check is a fact. Report the target and the first error. Do not turn a smell into a failed check.
+### Assignments
 
-## 3. Independent lenses
+Every changed file a reviewer must read lands in exactly one assignment, and each assignment is small enough for one reviewer to read completely.
 
-Read [`lenses.md`](lenses.md). Run a lens only when its files changed:
+- Readable files are the changed files except generated ones (kind `generated`, plus `*_pb.ts`) and lockfiles (`pnpm-lock.yaml`, `go.sum`, `MODULE.bazel.lock`, `*requirements_lock.txt`). Generated files are judged only for staleness, by the checks above or by the reviewer of their source.
+- Group readable files by Bazel package (the nearest `BUILD.bazel`), and docs by directory. Merge small groups in the same top-level area; split a group above 15 files or about 1,200 changed lines.
+- Give each group the lenses whose kinds it contains, by this table:
+  - **Architecture and boundaries**: `go`, `web`, `proto`, `sql`, `build`, or `config`.
+  - **Correctness and failure modes**: `go`, `web`, `tests`, `python`, `shell`, `proto`, `sql`, or `config`.
+  - **Simplicity and clarity**: `go`, `web`, `tests`, `python`, `shell`, `proto`, `sql`, `build`, `config`, or `other`.
+  - **Tests and hermeticness**: `go`, `web`, `tests`, `python`, `shell`, `build`, `config`, `generated`, or `other`.
+  - **Operability**: the group's diff changes logging, metrics, or an error returned to a caller.
+  - **Docs and RFCs**: `docs`.
+- Give each group the smells for its files that match its lenses: `secondary-index`, `extension-factory`, and `internal-reference` to architecture; `narration-comment` to simplicity; `sleep`, `error-string-assert`, `external-test-package`, `repo-root`, `shell-script`, and `new-workflow` to tests and hermeticness; `formatted-log` to operability.
+- When the change spans more than one package, add one cross-cutting architecture assignment. It reviews the seams between groups (import direction, Bazel visibility, layering, layout against `AGENTS.md`) from `BUILD.bazel` files, package entry points, and imports, not every line.
+- Aim for at most 12 assignments. Past that, raise the group size; never drop a file.
 
-- **Architecture and boundaries** — `go`, `proto`, `sql`, `build`, or `config` is not `none`.
-- **Correctness and failure modes** — `go`, `tests`, `python`, `shell`, `proto`, `sql`, or `config` is not `none`.
-- **Simplicity and clarity** — `go`, `tests`, `python`, `shell`, `proto`, `sql`, `build`, `config`, or `other` is not `none`.
-- **Tests and hermeticness** — `go`, `tests`, `python`, `shell`, `build`, `config`, `generated`, or `other` is not `none`.
-- **Operability** — the diff changes logging, metrics, or an error returned to a caller.
-- **Docs and RFCs** — `docs` is not `none`.
+### Plan block
 
-Generated files (`protopb/`, `mock/`, `*_mock.go`, `*.pb.go`) are not a lens of their own. Each lens checks whether they were regenerated, and does not review them line by line.
+Return exactly this, with the header ending at the `Excluded` line:
 
-When you can start subagents, start one per applicable lens in parallel. Give each the lens brief, the normalized intent and its source, the `review-scope` output, the diff, and nothing from the conversation that wrote the change. When you cannot, finish one lens and set it aside before reading the next brief.
+```text
+# Autoreview plan
+Repository: <absolute path>
+Review tree: <absolute path> (<detached at SHA> | repository working tree)
+Work dir: <absolute path> (scope.txt, checks.txt)
+Base: <SHA>  Head: <SHA>[ plus working tree]
+Target: <as the user named it>
+Intent: <one line> (<source>)
+Checks: passed <list>; failed <target: first error>; skipped <target: why>
+Excluded from reading: <generated and lockfile paths>
 
-Pass a lens the smells that match it: `secondary-index` and `extension-factory` to architecture; `narration-comment` to simplicity; `sleep`, `error-string-assert`, `external-test-package`, `repo-root`, and `shell-script` to tests and hermeticness; `formatted-log` to operability. The lens confirms or drops each one.
+## Assignment A1
+Lenses: <list>
+Smells: <script lines, or none>
+Files:
+- <path> (+<added>/-<removed>)
+```
 
-If the diff is too large to pass, give the reviewer the file list and have it read the files. Anything unread is listed in the report, and the verdict is incomplete.
+## Lens
 
-## 4. Verify and consolidate
+Work only in the review tree from the plan header. Read the briefs in [`lenses.md`](lenses.md) for the lenses your assignment lists, and the repository's `AGENTS.md`.
 
+- Read `scope.txt` in the work dir for context, and `git -C <review tree> diff <base> -- <files>` for your files.
+- Read every assigned file in full from the review tree, then whatever surrounding code each claim needs. The changed line alone is not evidence of a system-level defect.
+- Run your lenses one at a time: finish one and set its notes aside before reading the next brief.
+- Confirm or drop every smell you were given.
+- If you cannot read a file in full, name it and say why. Never skip one silently.
+- `Read` lists only files you read end to end. A file you skimmed, read only partly, or know only by its test names goes under `Partial` with the line ranges you did read, even if you judge the rest unimportant.
+
+Return exactly this:
+
+```text
+## Lens result <assignment id>
+Read: <every file read end to end>
+Partial: <path: line ranges read>, or none
+Unread: <path: reason>, or none
+Findings:
+- <lens> | <blocker | should-fix> | <high | medium | low> | `path:line`
+  - Impact: <observable consequence>
+  - Evidence: <reproduction, interleaving, caller trace, supporting locations>
+  - Fix: <smallest safe correction in this change>
+  - Verify: <specific test or command>
+Questions: <exact missing fact>, or none
+Smells dropped: <smell: why>, or none
+```
+
+## Consolidate
+
+- Recheck before you admit. For every candidate finding, open its cited `path:line` in the review tree and the supporting locations its evidence names, and confirm the causal claim yourself. A finding you did not open is dropped, not admitted on the reviewer's word. Record each one in the recheck log: admitted with the location you opened, merged into another, or dropped with the reason.
 - Admit a finding only when the changed code creates a reachable material impact. It must state the impact, the shortest reproducing scenario or static caller trace, supporting evidence, the smallest safe fix in this change, and a verification step. If impact or reachability is not established, turn it into a question or drop it.
-- Open every cited location and enough surrounding code to verify the causal claim. Ordering findings need the relevant producer and consumer; concurrency findings need a concrete interleaving; rollout findings need the incompatible old/new combination; missing-test findings need the uncovered observable behavior.
+- Open every cited location in the review tree and enough surrounding code to verify the causal claim. Ordering findings need the relevant producer and consumer; concurrency findings need a concrete interleaving; rollout findings need the incompatible old/new combination; missing-test findings need the uncovered observable behavior.
 - Consolidate by root cause, not wording. Merge multiple symptoms and their evidence into one finding. Resolve contradictory recommendations against the code, intent, and `AGENTS.md`; if the evidence does not decide, keep one question.
 - Severity is based on consequence: **Blocker** means reproducible merge-unsafe behavior such as data loss, incorrect state, outage, security exposure, or incompatible rollout. **Should-fix** means a reachable material defect with a bounded fix appropriate to this change. **Nit** means style, preference, or process consistency without behavioral impact. Confidence is high, medium, or low.
 - A question is a missing fact, not a severity. A material unresolved question makes coverage incomplete.
 - Nits stay out unless the user asked for a wider pass.
-- Sweep `AGENTS.md` for rules no lens covered: layout and import paths, committed proto generation, entity field comments, string enums, int64 milliseconds, Makefile target order, and commit shape when the range has commits (conventional, subject under 70 characters, one line per paragraph, no `Co-Authored-By` / `Co-authored-by`).
-- Commit-shape findings must quote the offending subject or trailer from `git log <base>..HEAD` (or the named commit). Drop any claim that contradicts the message body you just read. A `Co-authored-by` trailer is a **Nit** (process/policy), never Blocker or Should-fix, and belongs under Nits only when the user asked for nits or for a commit-message pass.
-- List files in scope that were not read, checks that were skipped, and lenses that did not finish.
+- Sweep `AGENTS.md` for rules no lens covered: layout and import paths, committed proto generation, entity field comments, string enums, int64 milliseconds, Makefile target order, the Design Defaults, and commit shape when the range has commits (conventional, subject under 70 characters, one line per paragraph, no `Co-Authored-By` / `Co-authored-by`, no leftover `# Conflicts:` or rebase-editor lines).
+- The repository is public. An Uber-internal name in the diff, a commit message, or the PR body is a **Should-fix** under Architecture and contracts, whether or not `internal-reference` fired; grep the commit messages yourself, since the script scans only the diff.
+- Commit-shape findings must quote the offending subject or trailer from `git log <base>..<head>`. Drop any claim that contradicts the message body you just read. A `Co-authored-by` trailer is a **Nit**, never Blocker or Should-fix, and belongs under Nits only when the user asked for nits or for a commit-message pass.
+- Build the coverage ledger by counting, not judging. For each assignment, every file under `Files` is in exactly one bucket: `Read`, `Partial`, `Unread`, or missing from all three. A failed assignment puts all its files in `Unread`. Coverage is `complete` only when `Partial`, `Unread`, and missing are all zero and no material question is open. Do not reclassify a partial read as complete because the unread part looks minor; list it under Not reviewed instead.
+- Take check results from the plan's `Checks` line; any applicable skipped check makes verification limited.
+- When the plan created a detached review tree, remove it once verification is done: `git -C <repository> worktree remove --force <review tree>`, then delete the work dir. Never remove the repository working tree.
 
 ## Report
 
-Lead with three separate statuses. **Verdict** is `clean` or `findings`; a blocker, should-fix, or failed check makes it `findings`. **Coverage** is `complete` or `incomplete`; unread files, unfinished lenses, or material unresolved questions make it `incomplete`. **Verification** is `complete` or `limited`; any applicable skipped check makes it `limited`. Call the review clean without qualification only when all three are clean/complete/complete.
+Lead with three separate statuses, derived mechanically from the ledger and the checks. **Verdict** is `clean` or `findings`; a blocker, should-fix, or failed check makes it `findings`. **Coverage** is `complete` or `incomplete`; unread files, failed assignments, or material unresolved questions make it `incomplete`. **Verification** is `complete` or `limited`; any applicable skipped check makes it `limited`. Call the review clean without qualification only when all three are clean/complete/complete.
 
 Within each priority, group findings by the concern they affect, not by which reviewer found them. Use these dimensions when applicable:
 
@@ -114,6 +169,11 @@ Verdict: clean | findings | Coverage: complete | incomplete | Verification: comp
 - Failed: <target and first error>
 - Skipped: <target and why>
 ## Not reviewed
+<partial, unread, and missing files with the reason; "None" only when the ledger counts are all zero>
+## Recheck log
+- Coverage ledger: <assigned> files; <read> read, <partial> partial, <unread> unread, <missing> missing
+- Findings: <admitted> admitted, <merged> merged, <dropped> dropped
+- Dropped: <reviewer finding: reason>, or none
 
 ---
 _Generated with the repository's `.agents/skills/autoreview` workflow; findings were rechecked against <scope> at <head SHA>[ plus working tree]._

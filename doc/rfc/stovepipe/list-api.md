@@ -1,8 +1,8 @@
 # Stovepipe List API
 
-The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) defines the approved API. Summary fields, acceptance-mapping storage, the List controller, RPC/server wiring, and end-to-end coverage are implemented.
+The [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) defines the API. Summary fields, acceptance-mapping storage, the List controller, RPC/server wiring, and end-to-end coverage are implemented.
 
-## Proposal
+## Overview
 
 `List(ListRequest) -> ListResponse` returns current request summaries for one queue, newest acceptance time first. This is a request listing, not scheduler position or historical state.
 
