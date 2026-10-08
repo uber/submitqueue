@@ -13,6 +13,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Scoped Sequential Resource IDs](scoped-resource-ids.md) - Queue-scoped positive numeric IDs allocated by durable per-domain, per-kind counters, stored without queue/kind prefixes, and rendered directly in resource URL segments
 - [Hooks Framework](hook-framework.md) - Implemented fire-and-forget side effects: one shared `HookEvent` contract (`api/base/hook/`) on a durable per-domain hook topic, dispatched by `platform/hook` to `platform/extension/hook`. Stovepipe `process` and `record` publish repository events; the SubmitQueue orchestrator registers the stage and does not publish events yet
 - [Service-Scoped Extensions](service-scoped-extensions.md) - Implemented for SubmitQueue storage: gateway and orchestrator aggregates, schemas, and the core packages that serve one service have moved, while store contracts stay at `submitqueue/extension/storage`. Domain-level `buildrunner`, `conflict`, and `speculation` have not moved, and `changeset` still declares its own store slice
+- [Model Checking with TLA+](tla-plus.md) - Proposed: write cross-stage and cross-service protocols as TLA+ specs and check every ordering with TLC; when a spec is required, `spec/` layout, CI, staged ties to the Go code, and why e2e and integration tests cannot find these bugs (#819 and #820 found this way)
 
 ## SubmitQueue
 

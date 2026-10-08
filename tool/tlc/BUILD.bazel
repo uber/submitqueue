@@ -1,0 +1,26 @@
+load("@rules_java//java:defs.bzl", "java_binary", "java_import")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+exports_files(["tlc.py"])
+
+java_import(
+    name = "tla2tools",
+    jars = ["@tla2tools//file"],
+)
+
+java_binary(
+    name = "tlc_java",
+    jvm_flags = ["-XX:+UseParallelGC"],
+    main_class = "tlc2.TLC",
+    visibility = ["//spec:__subpackages__"],
+    runtime_deps = [":tla2tools"],
+)
+
+py_binary(
+    name = "tlc",
+    srcs = ["tlc.py"],
+    data = [":tlc_java"],
+    legacy_create_init = 0,
+    main = "tlc.py",
+    deps = ["@rules_python//python/runfiles"],
+)

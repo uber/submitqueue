@@ -1,0 +1,23 @@
+{
+  "spec": "LandOutcome.tla",
+  "specification": "Spec",
+  "fixed": {
+    "MaxFaults": "2"
+  },
+  "vary": {
+    "DLQPolicy": ["\"FailAlways\"", "\"SkipLanding\"", "\"ResendMerge\""],
+    "RunwayDLQ": ["\"AnswerFailed\"", "\"CheckBranch\""],
+    "RunwayRemembers": ["FALSE", "TRUE"],
+    "AnswerDedup": ["TRUE", "FALSE"]
+  },
+  "invariants": ["TypeOK", "FailedMeansNotMerged", "SucceededMeansMerged"],
+  "properties": ["TerminalIsFinal", "LandingSettles"],
+  "expect": [
+    {"when": {"DLQPolicy": "\"FailAlways\""}, "violates": "FailedMeansNotMerged"},
+    {"when": {"RunwayDLQ": "\"AnswerFailed\""}, "violates": "FailedMeansNotMerged"},
+    {"when": {"DLQPolicy": "\"SkipLanding\""}, "violates": "LandingSettles"},
+    {"when": {"RunwayRemembers": "FALSE"}, "violates": "FailedMeansNotMerged"},
+    {"when": {"AnswerDedup": "TRUE"}, "violates": "LandingSettles"},
+    {"when": {}, "violates": null}
+  ]
+}

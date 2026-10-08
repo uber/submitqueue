@@ -22,3 +22,7 @@ common --sandbox_default_allow_network=false
 # containers running after a failure for inspection.
 test --test_env=DOCKER_HOST
 test --test_env=SKIP_CLEANUP
+
+# Run Java (TLC under //tool/tlc) on a downloaded JDK rather than whatever is
+# installed locally, so model checking needs no host Java and behaves the same in CI.
+common --java_runtime_version=remotejdk_21

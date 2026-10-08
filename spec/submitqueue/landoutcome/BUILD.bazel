@@ -1,0 +1,7 @@
+load("//tool/tlc:defs.bzl", "tlc_matrix_test")
+
+tlc_matrix_test(
+    name = "matrix_test",
+    matrix = "matrix.json",
+    spec = "LandOutcome.tla",
+)
