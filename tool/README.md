@@ -23,6 +23,10 @@ bazel build //...
 
 The Bazel version is controlled by `.bazelversion` at the repository root. Update that file to change the Bazel version used by the wrapper.
 
+## Documentation site
+
+`tool/docsite` holds the MkDocs Material configuration that renders `doc/` as the site published at https://uber.github.io/submitqueue/. The site reads `doc/` in place; `doc/index.md` is its landing page. Links that leave `doc/` (code, package READMEs, `AGENTS.md`) are rewritten to GitHub by `hooks/repo_links.py`, so the strict build still fails on a broken link between pages. The nav is generated from the directory tree; `hooks/nav_titles.py` maps directory names to section titles (`howto` → Guides, `rfc` → Design (RFCs)), and `overrides/home.html` renders the landing-page hero. MkDocs runs under Bazel with a hermetic Python toolchain and locked dependencies: `make docs-serve` previews the site locally, `make docs-build` runs the strict build into `tool/docsite/build`, and `//tool/docsite:site_test` runs that strict build as part of `make test`. To change dependency versions, edit `requirements.txt` and run `bazel run //tool/docsite:requirements.update` to regenerate `requirements_lock.txt`. `.github/workflows/docs.yml` builds the site on pull requests and deploys it from `main`.
+
 ## Git sandbox
 
 `tool/gitsandbox` creates the bare repository that `make local-submitqueue-start PROVIDER=git` merges into. It runs before the stack starts, because Runway clones that repository at boot and fails if the target does not already exist. The result is one seed commit on the target branch. Running it again leaves an existing repository unchanged, so a restart keeps commits that earlier runs landed. The Makefile invokes it; `bazel run //tool/gitsandbox -- -sandbox-dir <dir>` is the direct form.

@@ -73,3 +73,19 @@ use_repo(
     "org_uber_go_yarpc",
     "org_uber_go_zap",
 )
+
+# Python toolchain and PyPI packages for the documentation site (//tool/docsite).
+# Its targets pin this version, so the default toolchain other Python targets use
+# is unchanged. Regenerate the lock with: bazel run //tool/docsite:requirements.update
+DOCSITE_PYTHON_VERSION = "3.13"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = DOCSITE_PYTHON_VERSION)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "docsite_pip",
+    python_version = DOCSITE_PYTHON_VERSION,
+    requirements_lock = "//tool/docsite:requirements_lock.txt",
+)
+use_repo(pip, "docsite_pip")

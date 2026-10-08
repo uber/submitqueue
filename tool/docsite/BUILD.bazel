@@ -1,0 +1,53 @@
+load("@docsite_pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+DOCSITE_PYTHON_VERSION = "3.13"
+
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.txt",
+    python_version = DOCSITE_PYTHON_VERSION,
+    requirements_txt = "requirements_lock.txt",
+    # The generated lock-freshness test downloads from PyPI; keep it out of //... runs.
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "site_sources",
+    srcs = [
+        "mkdocs.yml",
+        "//doc:all_files",
+    ] + glob(
+        [
+            "hooks/*.py",
+            "overrides/**",
+        ],
+    ),
+)
+
+py_binary(
+    name = "mkdocs",
+    srcs = ["mkdocs_main.py"],
+    legacy_create_init = 0,
+    main = "mkdocs_main.py",
+    python_version = DOCSITE_PYTHON_VERSION,
+    deps = [
+        requirement("mkdocs"),
+        requirement("mkdocs-material"),
+    ],
+)
+
+py_test(
+    name = "site_test",
+    size = "small",
+    srcs = ["site_test.py"],
+    data = [":site_sources"],
+    legacy_create_init = 0,
+    main = "site_test.py",
+    python_version = DOCSITE_PYTHON_VERSION,
+    deps = [
+        requirement("mkdocs"),
+        requirement("mkdocs-material"),
+    ],
+)

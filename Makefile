@@ -148,7 +148,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps docs-build docs-serve e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -262,6 +262,12 @@ demo-requests: ## Create N changes, enqueue each as it is created, and watch (PR
 
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
+
+docs-build: ## Build the documentation site into tool/docsite/build (fails on broken links)
+	@$(BAZEL) run //tool/docsite:mkdocs -- build --strict --config-file $(CURDIR)/tool/docsite/mkdocs.yml --site-dir $(CURDIR)/tool/docsite/build
+
+docs-serve: ## Serve the documentation site with live reload on a free localhost port (DOCS_PORT=8000 to pin one)
+	@$(BAZEL) run //tool/docsite:mkdocs -- serve --config-file $(CURDIR)/tool/docsite/mkdocs.yml $(if $(DOCS_PORT),--dev-addr 127.0.0.1:$(DOCS_PORT))
 
 e2e-git-test: ## Run the hermetic git E2E (real merger against a bare repo; no credentials)
 	@echo "Running hermetic git end-to-end tests..."

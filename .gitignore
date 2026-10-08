@@ -23,3 +23,7 @@ bin/
 
 # Make completion cache
 .make_targets_cache
+
+# Documentation site build output
+/tool/docsite/build/
+/tool/docsite/hooks/__pycache__/

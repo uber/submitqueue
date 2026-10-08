@@ -1,6 +1,7 @@
 # SubmitQueue
 
 [![CI](https://github.com/uber/submitqueue/actions/workflows/ci.yml/badge.svg)](https://github.com/uber/submitqueue/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-uber.github.io%2Fsubmitqueue-blue)](https://uber.github.io/submitqueue/)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/uber/submitqueue)](go.mod)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Slack](https://img.shields.io/badge/Slack-join%20the%20community-4A154B?logo=slack&logoColor=white)](https://join.slack.com/t/submitqueue/shared_invite/zt-46gkqj682-7zcQphxm2pYqkjDo9lbmYA)
