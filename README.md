@@ -10,6 +10,8 @@ SubmitQueue is a high-performance speculative submission queue that keeps your t
 
 Designed for large monorepos and fast-moving teams where concurrent changes can introduce subtle conflicts and destabilize builds.
 
+**Documentation:** [uber.github.io/submitqueue](https://uber.github.io/submitqueue/) has guides, design docs (RFCs) and search.
+
 ## Repository layout
 
 Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …). Multi-service domains may split into `gateway/` and `orchestrator/`; single-service domains keep controllers directly under the domain root. Stovepipe currently exposes ingestion behavior and runs its own queue pipeline. See [AGENTS.md](AGENTS.md) for conventions and import paths.
@@ -43,6 +45,8 @@ The queue's own logic is real in all three: validation, batching, conflict analy
 [Quickstart](doc/howto/QUICKSTART.md) walks all three rungs — proving a change landed with `git log`, making one fail on demand, and what a live provider needs. See [service/README.md](service/README.md) for running individual services and clients.
 
 ## Documentation
+
+The documentation site at [uber.github.io/submitqueue](https://uber.github.io/submitqueue/) renders everything under [`doc/`](doc/). The same documents, in the repository:
 
 | Document | Description |
 |----------|-------------|
