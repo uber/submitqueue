@@ -6,6 +6,7 @@ bazel_dep(name = "rules_go", version = "0.57.0")
 bazel_dep(name = "gazelle", version = "0.45.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
 bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "rules_java", version = "8.14.0")
 
 single_version_override(
     module_name = "git",
@@ -89,3 +90,14 @@ pip.parse(
     requirements_lock = "//tool/docsite:requirements_lock.txt",
 )
 use_repo(pip, "docsite_pip")
+
+# TLA+ tools for the TLC model checker (//tool/tlc). TLC runs on the hermetic JDK
+# rules_java provides, so neither a local Java install nor a manual download is needed.
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_file(
+    name = "tla2tools",
+    downloaded_file_path = "tla2tools.jar",
+    sha256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88",
+    urls = ["https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar"],
+)

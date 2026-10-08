@@ -31,6 +31,10 @@ The Bazel version is controlled by `.bazelversion` at the repository root. Updat
 
 `tool/gitsandbox` creates the bare repository that `make local-submitqueue-start PROVIDER=git` merges into. It runs before the stack starts, because Runway clones that repository at boot and fails if the target does not already exist. The result is one seed commit on the target branch. Running it again leaves an existing repository unchanged, so a restart keeps commits that earlier runs landed. The Makefile invokes it; `bazel run //tool/gitsandbox -- -sandbox-dir <dir>` is the direct form.
 
+## TLC model checking
+
+`tool/tlc` model-checks the TLA+ specs under `spec/` (see `doc/rfc/tla-plus.md`). The TLA+ tools JAR is pinned in `MODULE.bazel` and runs on the JDK Bazel downloads, so no local Java install is needed. Each spec has a `matrix.json` naming its fixed and varied constants, the invariants and temporal properties to check, and the expected verdict for every combination. `tlc_matrix_test` in `tool/tlc/defs.bzl` turns a matrix into a test that `make test` runs and that fails when a verdict changes. `bazel run //tool/tlc -- spec/submitqueue/landoutcome/matrix.json` prints the table.
+
 ## Proto generation
 
 `tool/proto` is the Bazel codegen for the committed protobuf Go stubs. `make proto` builds `//tool/proto:generated` and copies each package's output into its `protopb/` directory. The package list and per-source outputs live in `tool/proto/BUILD.bazel`. Change the `.proto` sources and regenerate; do not edit the generated files. `make clean-proto` removes those stubs, and `make proto` writes them again.
