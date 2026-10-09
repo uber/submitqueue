@@ -2,8 +2,8 @@
 # which is pulled in transitively by rules_go/rules_proto.
 bazel_dep(name = "toolchains_protoc", version = "0.6.1")
 bazel_dep(name = "git", version = "2.55.0")
-bazel_dep(name = "rules_go", version = "0.57.0")
-bazel_dep(name = "gazelle", version = "0.45.0")
+bazel_dep(name = "rules_go", version = "0.59.0")
+bazel_dep(name = "gazelle", version = "0.53.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
 bazel_dep(name = "aspect_rules_js", version = "3.5.0")
 bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
@@ -14,6 +14,8 @@ bazel_dep(name = "rules_playwright", version = "0.5.3")
 bazel_dep(name = "rules_python", version = "2.2.0")
 bazel_dep(name = "bazel_lib", version = "3.7.2")
 bazel_dep(name = "platforms", version = "1.1.0")
+
+bazel_dep(name = "rules_docker_compose", version = "0.4.0", dev_dependency = True)
 
 single_version_override(
     module_name = "git",

@@ -18,7 +18,7 @@ Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared 
 
 ## Quick Start
 
-Put traffic through the queue and watch it land. Requires Docker and Docker Compose, and nothing else — no repository, no account, no token.
+Put traffic through the queue and watch it land. Requires Docker; Bazel supplies Docker Compose. No repository, no account, no token.
 
 ```bash
 # Start the full stack (Gateway + Orchestrator + Runway + MySQL)

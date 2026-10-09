@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Go 1.25+** — needed for `gopls`, `go mod`, and installing protoc plugins. Download from [go.dev/dl](https://go.dev/dl/). Note: Bazel manages its own Go toolchain for builds, but a local Go installation is required for editor tooling and dependency management.
-- **Docker** and **Docker Compose** — for integration and e2e tests, and for running services locally.
+- **Docker** — for integration and e2e tests, and for running services locally. Bazel supplies Docker Compose.
 - **direnv** (recommended) — automatically loads `.envrc` so you can use `bazel` directly instead of `./tool/bazel`.
 
 The project includes `./tool/bazel` (Bazelisk wrapper) and `.bazelversion`, so you don't need to install Bazel separately. Bazel manages its own Go toolchain for building and testing.
