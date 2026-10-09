@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -83,7 +82,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 		if summary.Status == entity.RequestStatusAccepting {
 			return nil
 		}
-		if err := m.repairPublicProjections(ctx, stores, summary); err != nil {
+		if err := ensureRequestURIMappings(ctx, stores.GetRequestURIStore(), summary); err != nil {
 			return err
 		}
 		if err := ensureRequestReceiptMapping(ctx, stores.GetRequestReceiptStore(), summary); err != nil {
@@ -93,47 +92,8 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 	}
 }
 
-// repairPublicProjections activates and repairs the public query projections.
-// URI mappings are created before the queue summary, which acts as the marker that activation completed.
-func (m *Materializer) repairPublicProjections(ctx context.Context, stores gwstorage.Storage, authoritative entity.RequestSummary) error {
-	desired := queueSummaryFromSummary(authoritative)
-	queueSummaries := stores.GetRequestQueueSummaryStore()
-	for {
-		current, err := queueSummaries.Get(ctx, desired.ReceivedAtMs, desired.RequestID)
-		if errors.Is(err, basestorage.ErrNotFound) {
-			if err := m.createURIMappings(ctx, stores, authoritative); err != nil {
-				return err
-			}
-			if err := queueSummaries.Create(ctx, desired); err != nil {
-				if errors.Is(err, basestorage.ErrAlreadyExists) {
-					continue
-				}
-				return fmt.Errorf("failed to recreate queue summary request_id=%s: %w", desired.RequestID, err)
-			}
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("failed to get queue summary request_id=%s: %w", desired.RequestID, err)
-		}
-		if current.Version == desired.Version {
-			return nil
-		}
-		if current.Version > desired.Version {
-			// Another materializer already projected a newer authoritative snapshot.
-			return nil
-		}
-		if err := queueSummaries.Update(ctx, desired, current.Version, desired.Version); err != nil {
-			if errors.Is(err, basestorage.ErrVersionMismatch) {
-				continue
-			}
-			return fmt.Errorf("failed to update queue summary request_id=%s: %w", desired.RequestID, err)
-		}
-		return nil
-	}
-}
-
-func (m *Materializer) createURIMappings(ctx context.Context, stores gwstorage.Storage, summary entity.RequestSummary) error {
-	uris := stores.GetRequestURIStore()
+// ensureRequestURIMappings retries every immutable mapping, including after partial activation.
+func ensureRequestURIMappings(ctx context.Context, uris basestorage.RequestURIStore, summary entity.RequestSummary) error {
 	for _, changeURI := range summary.ChangeURIs {
 		mapping := entity.RequestURI{
 			ChangeURI:    changeURI,
@@ -188,19 +148,6 @@ func isVersionedTerminalSummary(summary entity.RequestSummary) bool {
 
 func isVersionedTerminal(log entity.RequestLog) bool {
 	return log.RequestVersion > 0 && entity.IsRequestStateTerminal(entity.RequestState(log.Status))
-}
-
-func queueSummaryFromSummary(summary entity.RequestSummary) entity.RequestQueueSummary {
-	return entity.RequestQueueSummary{
-		RequestID:    summary.RequestID,
-		Queue:        summary.Queue,
-		ChangeURIs:   slices.Clone(summary.ChangeURIs),
-		ReceivedAtMs: summary.ReceivedAtMs,
-		Status:       summary.Status,
-		Version:      summary.Version,
-		LastError:    summary.LastError,
-		Metadata:     cloneMetadata(summary.Metadata),
-	}
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {

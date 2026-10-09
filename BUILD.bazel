@@ -10,6 +10,7 @@ load("@gazelle//:def.bzl", "gazelle")
 # Exclude nested worktrees (created under .claude/worktrees) so gazelle does not
 # index them as duplicate rule definitions and corrupt the canonical BUILD files.
 # gazelle:exclude .claude
+# gazelle:exclude web
 
 # Disable Gazelle proto rule generation globally. We rely on the checked-in
 # .pb.go files in protopb/ dirs (plain go_library) rather than Bazel proto

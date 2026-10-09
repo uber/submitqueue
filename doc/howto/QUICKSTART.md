@@ -22,7 +22,7 @@ The queue's own logic is real on every rung; what changes is how much of the wor
 make local-submitqueue-start
 ```
 
-This builds the Linux binaries, brings up Gateway, Orchestrator, Runway and two MySQL databases, and applies their schemas. The first run spends most of its time in the Bazel build; later ones start in seconds.
+This uses Bazel to build the Linux binaries and load the web OCI image, brings up Gateway, Orchestrator, Runway, the web host, and two MySQL databases, and applies their schemas. The first run spends most of its time in the Bazel build; later ones start in seconds.
 
 Compose publishes each service on a **random** host port so several stacks can run side by side, which means there is no fixed address to hard-code. The start-up output ends with the ports, and `make local-submitqueue-ps` prints them again at any time:
 
@@ -30,9 +30,14 @@ Compose publishes each service on a **random** host port so several stacks can r
 ✅ Stack is running against provider 'fake'.
 
 Gateway gRPC port: 58537
+Web UX:            http://localhost:58538
+Web username:      test
+Web token:         test
 ```
 
 You do not have to note it down. Every command below finds the running stack's port for itself, which matters because Compose picks a fresh one on every start — a number copied from an earlier run is the most common reason a demo command cannot connect. Set `GATEWAY_ADDR=host:port` only to reach a gateway this Makefile did not start.
+
+The Web UX is a read-only reference host for the same gateway. Run `make demo-requests`, then open the printed URL with username `test` and password `test` and select a row to see its current status and retained lifecycle history. The list uses a rolling 24-hour receipt window; Refresh includes newly created traffic without adding time bounds to the URL. The host and its default credentials are deliberately local-demo wiring, not a production authentication design. Override the password with `SUBMITQUEUE_WEB_TOKEN=<password> make local-submitqueue-start` when desired.
 
 ## Put traffic through it
 

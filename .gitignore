@@ -27,3 +27,13 @@ bin/
 # Documentation site build output
 /tool/docsite/build/
 /tool/docsite/hooks/__pycache__/
+
+# Web workspace build output
+/web/node_modules/
+/web/**/node_modules/
+/web/**/dist/
+/web/**/.next/
+/web/**/coverage/
+/web/**/playwright-report/
+/web/**/test-results/
+/web/**/*.tsbuildinfo

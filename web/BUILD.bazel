@@ -1,0 +1,70 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages(name = "node_modules")
+
+test_suite(
+    name = "check",
+    tests = [
+        "//web/api:generate_tests",
+        "//web/api:test",
+        "//web/test/package:consumer_typecheck_typecheck_test",
+        "//web/test/package:consumer_runtime_test",
+        "//web/test/package:pack_contents_test",
+        "//web/test/package/react18:react18_runtime_test",
+        "//web/service/submitqueue:lint",
+        "//web/service/submitqueue:test",
+        "//web/service/submitqueue:typecheck_typecheck_test",
+        "//web/submitqueue:test",
+        "//web/submitqueue:typecheck_typecheck_test",
+        ":e2e_typecheck_typecheck_test",
+    ],
+)
+
+js_library(
+    name = "vitest_config",
+    srcs = ["vitest.config.ts"],
+    deps = [":node_modules/vitest"],
+)
+
+exports_files([
+    "package.json",
+    "playwright.config.ts",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "tsconfig.e2e.json",
+    "vitest.config.ts",
+])
+
+ts_config(
+    name = "tsconfig_base",
+    src = "tsconfig.base.json",
+)
+
+ts_config(
+    name = "tsconfig_e2e",
+    src = "tsconfig.e2e.json",
+    deps = [":tsconfig_base"],
+)
+
+ts_project(
+    name = "e2e_typecheck",
+    srcs = [
+        "playwright.config.ts",
+        "//web/test/e2e:srcs_for_typecheck",
+    ],
+    declaration = True,
+    no_emit = True,
+    tsconfig = ":tsconfig_e2e",
+    deps = [
+        ":node_modules/@axe-core/playwright",
+        ":node_modules/@connectrpc/connect",
+        ":node_modules/@connectrpc/connect-node",
+        ":node_modules/@playwright/test",
+        ":node_modules/@types/node",
+        ":node_modules/@submitqueue/api",
+    ],
+)

@@ -108,6 +108,10 @@ CI runs `make lint`, `make check-tidy`, and `make check-gazelle`. `make lint` in
 | `make gazelle` | Update `BUILD.bazel` files |
 | `make mocks` | Regenerate mockgen files |
 | `make check-mocks` | Fail if generated mocks are stale |
+| `make web-build` | Build the web packages and deployable OCI image with Bazel |
+| `make web-check` | Run web generation drift, package, lint, type, unit, and production image checks with Bazel |
+| `make web-e2e-test` | Run the Bazel-managed real-stack Playwright and axe test |
+| `make web-proto` | Regenerate the committed TypeScript protobuf API with Bazel |
 | `make proto` | Regenerate protobuf files |
 | `make clean` | Remove the Bazel cache and `bin/` |
 | `make clean-proto` | Remove generated protobuf Go files |
@@ -117,6 +121,8 @@ CI runs `make lint`, `make check-tidy`, and `make check-gazelle`. `make lint` in
 | `make local-submitqueue-stop` | Stop the SubmitQueue stack |
 | `make local-stop` | Stop SubmitQueue, Stovepipe, and Runway |
 | `make help` | List every target |
+
+The web build does not require a host Node.js or pnpm installation: Bazel supplies Node, npm packages, Buf, TypeScript, Next.js, Playwright, Chromium, and the container image toolchain. `make web-install` is an optional convenience for editors and direct pnpm development only.
 
 ## Running Specific Tests
 

@@ -5,7 +5,15 @@ bazel_dep(name = "git", version = "2.55.0")
 bazel_dep(name = "rules_go", version = "0.59.0")
 bazel_dep(name = "gazelle", version = "0.53.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "aspect_rules_js", version = "3.5.0")
+bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
+bazel_dep(name = "rules_nodejs", version = "6.7.3")
+bazel_dep(name = "rules_oci", version = "2.3.0")
+bazel_dep(name = "rules_pkg", version = "1.0.1")
+bazel_dep(name = "rules_playwright", version = "0.5.3")
 bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "bazel_lib", version = "3.7.2")
+bazel_dep(name = "platforms", version = "1.1.0")
 
 bazel_dep(name = "rules_docker_compose", version = "0.4.0", dev_dependency = True)
 
@@ -30,6 +38,52 @@ protoc.toolchain(
 use_repo(protoc, "toolchains_protoc_hub")
 
 register_toolchains("@toolchains_protoc_hub//:all")
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
+node.toolchain(node_version = "22.20.0")
+
+typescript = use_extension("@aspect_rules_ts//ts:extensions.bzl", "typescript")
+typescript.deps(version_from = "//web:package.json")
+use_repo(typescript, "npm_typescript")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//web:pnpm-lock.yaml",
+)
+use_repo(npm, "npm")
+
+playwright = use_extension("@rules_playwright//playwright:extensions.bzl", "playwright")
+playwright.repo(
+    name = "playwright",
+    integrity_path_map = {
+        "builds/chromium/1193/chromium-linux.zip": "sha256-AzVW84unLl+wfBqcmm4P9WtYI8LMQF4DS6V2OmLirRI=",
+        "builds/chromium/1193/chromium-mac-arm64.zip": "sha256-v7p0571A21zCoO9gPsm6kXNs9ragg2wnpZabV7gES2E=",
+    },
+    playwright_version = "1.55.1",
+)
+use_repo(playwright, "playwright")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci.pull(
+    name = "node_22_20_0_bookworm_slim",
+    digest = "sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e",
+    image = "node",
+    platforms = ["linux/amd64"],
+)
+oci.pull(
+    name = "mysql_8_0",
+    digest = "sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+    image = "mysql",
+    platforms = ["linux/amd64"],
+)
+use_repo(
+    oci,
+    "mysql_8_0",
+    "mysql_8_0_linux_amd64",
+    "node_22_20_0_bookworm_slim",
+    "node_22_20_0_bookworm_slim_linux_amd64",
+)
 
 GO_VERSION = "1.25.0"
 

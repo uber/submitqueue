@@ -1,5 +1,5 @@
 name: Upload Bazel test logs
-description: Upload bazel-testlogs on job failure so truncated CI output is not the only diagnostic.
+description: Upload bazel-testlogs and test outputs (for example Playwright traces and compose logs) on job failure so truncated CI output is not the only diagnostic.
 
 runs:
   using: composite
@@ -8,6 +8,8 @@ runs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: testlogs-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-        path: bazel-testlogs/**/test.log
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.outputs/**
         if-no-files-found: warn
         retention-days: 7

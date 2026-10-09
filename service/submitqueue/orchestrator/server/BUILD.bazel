@@ -91,6 +91,7 @@ go_cross_binary(
     name = "orchestrator_linux",
     platform = "@rules_go//go/toolchain:linux_amd64",
     target = ":orchestrator",
+    visibility = ["//web/test/e2e:__pkg__"],
 )
 
 # Everything a Docker-based test needs to build the orchestrator image from a
@@ -103,7 +104,10 @@ filegroup(
         "Dockerfile",
         ":orchestrator_linux",
     ],
-    visibility = ["//test:__subpackages__"],
+    visibility = [
+        "//test:__subpackages__",
+        "//web/test/e2e:__pkg__",
+    ],
 )
 
 go_test(

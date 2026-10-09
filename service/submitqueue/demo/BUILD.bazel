@@ -1,5 +1,11 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+filegroup(
+    name = "fake_provider_config",
+    srcs = glob(["provider/fake/*.yaml"]),
+    visibility = ["//web/test/e2e:__pkg__"],
+)
+
 go_library(
     name = "go_default_library",
     srcs = [

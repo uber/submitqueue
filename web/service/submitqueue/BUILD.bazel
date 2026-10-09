@@ -1,0 +1,188 @@
+load("@aspect_rules_js//contrib/nextjs:defs.bzl", "nextjs_standalone_build", "nextjs_standalone_server")
+load("@aspect_rules_js//js:defs.bzl", "js_image_layer")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//web/service/submitqueue:eslint/package_json.bzl", eslint = "bin")
+load("@npm//web/service/submitqueue:next/package_json.bzl", next = "bin")
+load("@npm//web/service/submitqueue:vitest/package_json.bzl", vitest = "bin")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+
+package(default_visibility = ["//web:__subpackages__"])
+
+npm_link_all_packages(name = "node_modules")
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+)
+
+ts_project(
+    name = "typecheck",
+    srcs = glob([
+        "src/**/*.ts",
+        "src/**/*.tsx",
+    ]) + [
+        "next-env.d.ts",
+        "next.config.ts",
+        "vitest.config.ts",
+    ],
+    declaration = False,
+    incremental = True,
+    no_emit = True,
+    tsconfig = ":tsconfig",
+    deps = [
+        ":node_modules/@bufbuild/protobuf",
+        ":node_modules/@connectrpc/connect",
+        ":node_modules/@connectrpc/connect-node",
+        ":node_modules/@opentelemetry/api",
+        ":node_modules/@opentelemetry/exporter-prometheus",
+        ":node_modules/@opentelemetry/sdk-metrics",
+        ":node_modules/@submitqueue/api",
+        ":node_modules/@submitqueue/web-submitqueue",
+        ":node_modules/@types/node",
+        ":node_modules/pino",
+        ":node_modules/@types/react",
+        ":node_modules/@types/react-dom",
+        ":node_modules/next",
+        ":node_modules/react",
+        ":node_modules/react-dom",
+        ":node_modules/server-only",
+        ":node_modules/vitest",
+    ],
+)
+
+eslint.eslint_test(
+    name = "lint",
+    args = ["."],
+    chdir = package_name(),
+    data = [
+        ":node_modules",
+        ":node_modules/eslint",
+        ":node_modules/eslint-config-next",
+        "//web:node_modules/next",
+        "eslint.config.mjs",
+        "next-env.d.ts",
+        "next.config.ts",
+        "package.json",
+        "tsconfig.json",
+        "vitest.config.ts",
+    ] + glob([
+        "src/**/*.ts",
+        "src/**/*.tsx",
+    ]),
+)
+
+vitest.vitest_test(
+    name = "test",
+    args = [
+        "run",
+        "--config",
+        "vitest.config.ts",
+    ],
+    chdir = package_name(),
+    data = [
+        ":node_modules",
+        ":node_modules/vitest",
+        "//web:node_modules/@connectrpc/connect",
+        "//web:node_modules/@connectrpc/connect-node",
+        "//web:node_modules/@opentelemetry/api",
+        "//web:node_modules/next",
+        "//web:node_modules/pino",
+        "//web:node_modules/react",
+        "//web:node_modules/react-dom",
+        "vitest.config.ts",
+    ] + glob([
+        "src/**/*.ts",
+        "src/**/*.tsx",
+    ]),
+)
+
+next.next_binary(
+    name = "next",
+)
+
+nextjs_standalone_build(
+    name = "standalone",
+    args = ["--webpack"],
+    config = "next.config.ts",
+    data = [
+        ":node_modules",
+        ":node_modules/@bufbuild/protobuf",
+        ":node_modules/@connectrpc/connect",
+        ":node_modules/@connectrpc/connect-node",
+        ":node_modules/@opentelemetry/api",
+        ":node_modules/@opentelemetry/exporter-prometheus",
+        ":node_modules/@opentelemetry/sdk-metrics",
+        ":node_modules/@submitqueue/api",
+        ":node_modules/@submitqueue/web-submitqueue",
+        ":node_modules/next",
+        ":node_modules/react",
+        ":node_modules/react-dom",
+        ":node_modules/server-only",
+        "//web:node_modules/@connectrpc/connect",
+        "//web:node_modules/@connectrpc/connect-node",
+        "//web:node_modules/@opentelemetry/api",
+        "//web:node_modules/next",
+        "//web:node_modules/pino",
+        "//web:node_modules/react",
+        "//web:node_modules/react-dom",
+        "//web/submitqueue:lib",
+        "//web/submitqueue:lib_types",
+        "package.json",
+        "tsconfig.json",
+    ],
+    env = {"NEXT_TELEMETRY_DISABLED": "1"},
+    next_js_binary = ":next",
+    srcs = ["next-env.d.ts"] + glob([
+        "src/**",
+    ]),
+)
+
+nextjs_standalone_server(
+    name = "server",
+    app = ":standalone",
+    # Next.js leaves pino unbundled, so the runtime layer must supply it.
+    data = [
+        ":node_modules/next",
+        ":node_modules/pino",
+        ":node_modules/react",
+        ":node_modules/react-dom",
+        ":node_modules/server-only",
+    ],
+    pkg = "service/submitqueue",
+)
+
+platform(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+js_image_layer(
+    name = "server_layers",
+    binary = ":server",
+    platform = ":linux_amd64",
+    root = "/app",
+)
+
+oci_image(
+    name = "image",
+    base = "@node_22_20_0_bookworm_slim_linux_amd64",
+    entrypoint = ["/app/web/service/submitqueue/server"],
+    env = {
+        "HOSTNAME": "0.0.0.0",
+        "NODE_ENV": "production",
+        "PORT": "3000",
+    },
+    tars = [":server_layers"],
+    user = "node",
+    workdir = "/app/web/service/submitqueue/server.runfiles/_main",
+)
+
+oci_load(
+    name = "image_load",
+    image = ":image",
+    repo_tags = ["submitqueue-web-service:latest"],
+)
