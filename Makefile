@@ -1,26 +1,26 @@
 # Bazel wrapper
 BAZEL = ./tool/bazel
 
-# Docker Compose wrapper
-COMPOSE = docker-compose
+# Bazel supplies the pinned Docker Compose release for every local stack.
+COMPOSE = $(BAZEL) run @rules_docker_compose//docker_compose --
 
 # SubmitQueue compose files
-COMPOSE_FILE = service/submitqueue/docker-compose.yml
-GATEWAY_COMPOSE_FILE = service/submitqueue/gateway/server/docker-compose.yml
-ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compose.yml
+COMPOSE_FILE = $(abspath service/submitqueue/docker-compose.yml)
+GATEWAY_COMPOSE_FILE = $(abspath service/submitqueue/gateway/server/docker-compose.yml)
+ORCHESTRATOR_COMPOSE_FILE = $(abspath service/submitqueue/orchestrator/server/docker-compose.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
 # Stovepipe compose file (single Ping-only service)
-STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
-STOVEPIPE_DEBUG_COMPOSE_FILE = service/stovepipe/docker-compose.debug.yml
+STOVEPIPE_COMPOSE_FILE = $(abspath service/stovepipe/docker-compose.yml)
+STOVEPIPE_DEBUG_COMPOSE_FILE = $(abspath service/stovepipe/docker-compose.debug.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
 STOVEPIPE_LOCAL_PROJECT = stovepipe
 
 # Runway compose files
-RUNWAY_COMPOSE_FILE = service/runway/server/docker-compose.yml
+RUNWAY_COMPOSE_FILE = $(abspath service/runway/server/docker-compose.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
 RUNWAY_LOCAL_PROJECT = runway
@@ -55,9 +55,9 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 # Which compose overlay each mode needs. This cannot live in the provider
 # directory: the two config files say how the services are configured, not what
 # has to be mounted or which credential has to be present for them to start.
-PROVIDER_COMPOSE_FILE_fake = service/submitqueue/docker-compose.fake.yml
-PROVIDER_COMPOSE_FILE_git = service/submitqueue/docker-compose.git.yml
-PROVIDER_COMPOSE_FILE_github = service/submitqueue/docker-compose.provider.yml
+PROVIDER_COMPOSE_FILE_fake = $(abspath service/submitqueue/docker-compose.fake.yml)
+PROVIDER_COMPOSE_FILE_git = $(abspath service/submitqueue/docker-compose.git.yml)
+PROVIDER_COMPOSE_FILE_github = $(abspath service/submitqueue/docker-compose.provider.yml)
 PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
 
 # Where PROVIDER=git keeps the bare repository it lands into. Outside the

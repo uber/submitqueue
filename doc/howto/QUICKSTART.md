@@ -178,9 +178,13 @@ SQ_TOKEN=$(cat ~/.sq-token) bazel run //service/submitqueue/gateway/client:gatew
 
 ### Service logs
 
+Follow logs from every service, or just Runway:
+
 ```bash
-make local-submitqueue-logs                  # every service
-docker compose -p submitqueue logs -f runway-service   # one of them
+make local-submitqueue-logs
+REPO_ROOT="$PWD" ./tool/bazel run @rules_docker_compose//docker_compose -- \
+  -f "$PWD/service/submitqueue/docker-compose.yml" \
+  -p submitqueue logs -f runway-service
 ```
 
 The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn it back up:

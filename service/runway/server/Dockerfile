@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y ca-certificates git && rm -rf /var/lib/
 WORKDIR /app
 
 # Built via: make build-runway-linux
-COPY --chmod=0555 .docker-bin/runway ./runway
+COPY .docker-bin/runway ./runway
+RUN chmod 0555 ./runway
 
 EXPOSE 8080
 

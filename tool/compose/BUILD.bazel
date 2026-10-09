@@ -1,0 +1,11 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+py_test(
+    name = "compose_test",
+    size = "small",
+    srcs = ["compose_test.py"],
+    data = ["@rules_docker_compose//docker_compose"],
+    legacy_create_init = 0,
+    python_version = "3.13",
+    deps = ["@rules_python//python/runfiles"],
+)
