@@ -1,6 +1,6 @@
-# Applied queue policy lookup
+# Queue status lookup
 
-Up must choose its Stovepipe workflow and production gate when it ingests a commit. Validation events can arrive after a build and cover only batch heads; intermediate commits often have no request. Neither the current enablement flag, last-green, nor a pause flag supplies the policy interval covering a delayed commit after disable/re-enable.
+Callers need to look up whether a queue is enabled, the commit at which that state took effect, and whether execution is currently paused. They may also need the enablement policy covering a particular commit, including an intermediate commit with no validation request. A current enablement flag loses earlier intervals after disable/re-enable; validation events and last-green describe validation results rather than queue enablement. A pause flag describes execution only. `GetQueueStatus` provides these queue-status answers through one lookup endpoint.
 
 ## Lookup contract
 
@@ -8,7 +8,7 @@ Up must choose its Stovepipe workflow and production gate when it ingests a comm
 
 Each policy has an enabled/disabled state, a monotonically increasing revision, an inclusive commit boundary, and application time in Unix milliseconds. Initial explicitly registered queues have disabled revision 1 with no boundary. Lookup never registers a queue or creates history. Both policy fields resolve from the same pinned current pointer, even if a concurrent change commits during the lookup.
 
-Execution is separate: RUNNING means unpaused at queue scope, PAUSED does not remove deployment gates, and UNKNOWN means the control could not be determined. Its timestamp is observation time, not the pause transition time. Scoped stage or partition pauses need separate reporting. Execution read failure preserves a valid policy; caller cancellation ends the lookup.
+Execution is separate: RUNNING means unpaused at queue scope, PAUSED means queue-wide execution is paused, and UNKNOWN means the control could not be determined. Pausing does not change enablement. Its timestamp is observation time, not the pause transition time. Scoped stage or partition pauses need separate reporting. Execution read failure preserves a valid policy; caller cancellation ends the lookup.
 
 ## Boundaries and history
 
@@ -24,16 +24,16 @@ Host configuration or administration calls `queuepolicy.Writer.Initialize` for e
 
 The writer creates an immutable transition, then conditionally advances the current pointer with a controller-computed storage version. A losing proposal is unreachable and never applied. The predecessor chain provides committed history using only primary-key operations; no cross-record transaction, secondary index, or multi-record atomic write is required. Partial initialization and interrupted writes can be retried. Unreachable proposals are retained to preserve idempotency; future cleanup needs a retention policy that preserves retry guarantees.
 
-This write path changes Up's validation requirement, not Stovepipe admission: disabled queues may continue shadow validation. Keep disabled queues and their history readable. Publish optional notifications only after the pointer update succeeds; durable notification delivery and a public history/replay RPC are outside this change.
+The applied policy records queue enablement independently of admission and validation execution; disabled queues may continue shadow validation. Keep disabled queues and their history readable. Publish optional notifications only after the pointer update succeeds; durable notification delivery and a public history/replay RPC are outside this change.
 
 ## Host integration and rollout
 
 1. Apply the new MySQL schema before using the policy store. Register configured queues before serving lookups; the standalone example initializes them as disabled and reports RUNNING because it uses the no-op execution gate.
 2. In the production host, wire the lookup controller to its existing queue-bound code-gateway SourceControl factory. Supply a queueexecution.Reader using the same Flipr control as the consumer gate, evaluating only queue-wide constraints. Do not turn a stage-scoped pause into a whole-queue answer.
-3. Connect the actual enable/disable administration path to Writer.Apply and expose only durably applied state to Up. For queues already enabled at migration time, initialize and apply their agreed activation boundary before serving the endpoint or enrolling Up. Do not replace an existing applied policy with a bare desired flag or startup default.
-4. Have Up perform the commit lookup at ingestion and retain the returned revision. ENABLED selects Stovepipe handling and gating; explicit DISABLED selects normal handling. Hold and retry a policy-dependent decision when resolution fails. An answer is relative to its revision; later transitions can cover the same commit, so reconciliation must refresh it.
+3. Connect the actual enable/disable administration path to Writer.Apply and expose only durably applied state. For queues already enabled at migration time, initialize and apply their agreed activation boundary before serving the endpoint. Do not replace an existing applied policy with a bare desired flag or startup default.
+4. Callers can omit the commit for a current-status lookup or supply an immutable commit URI for the policy covering that commit. Retain the returned revision and defer policy-dependent decisions when resolution fails. An answer is relative to its revision; later transitions can cover the same commit, so reconciliation must refresh it.
 
-Strict activation needs coordination with Up; choosing today's head cannot recover a deployment already released. Releasing previously created pending gates during disablement is a separate Up decision. This implementation does not release them or turn a bypass into a green validation verdict. If operational bypass is adopted, add a durable history/replay contract so Up can recover a missed disable/re-enable cycle.
+The endpoint reports status; each caller defines how that status affects its workflow. A current-status response alone cannot enumerate transitions missed between polls. Callers that need every enable/disable occurrence require a durable history/replay contract in a follow-up change.
 
 ## Failure contract
 
