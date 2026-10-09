@@ -26,7 +26,7 @@
     "@playwright/test": "1.55.1",
     "@submitqueue/api": "workspace:*",
     "@types/node": "22.18.6",
-    "next": "16.3.6",
+    "next": "16.3.8",
     "pino": "10.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
