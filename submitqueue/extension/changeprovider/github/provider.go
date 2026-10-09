@@ -106,10 +106,6 @@ func (p *provider) fetchAllPRs(
 			return nil, fmt.Errorf("failed to fetch PR #%d: %w", cid.PRNumber, err)
 		}
 
-		if err := validatePRStaleness(cid, prData); err != nil {
-			return nil, err
-		}
-
 		changeInfo := convertToChangeInfo(cid, prData)
 		changeInfos = append(changeInfos, changeInfo)
 
@@ -134,6 +130,10 @@ func (p *provider) fetchPullRequest(ctx context.Context, parsed entitygithub.Cha
 	for {
 		data, err := p.fetchPullRequestPage(ctx, parsed.Org, parsed.Repo, parsed.PRNumber, cursor)
 		if err != nil {
+			return nil, err
+		}
+
+		if err := validatePRStaleness(parsed, data); err != nil {
 			return nil, err
 		}
 
