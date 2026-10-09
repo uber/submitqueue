@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["noop.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/queueexecution/noop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/queueexecution:go_default_library",
+    ],
+)

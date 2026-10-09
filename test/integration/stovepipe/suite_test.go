@@ -72,7 +72,7 @@ func (s *StovepipeIntegrationSuite) SetupSuite() {
 			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
 		}))
 
-	err := s.stack.Up()
+	err := s.stack.Up("mysql-app", "mysql-queue")
 	require.NoError(t, err, "failed to start compose stack")
 
 	s.db, err = s.stack.ConnectMySQLService("mysql-app")
@@ -81,11 +81,11 @@ func (s *StovepipeIntegrationSuite) SetupSuite() {
 	s.queueDB, err = s.stack.ConnectMySQLService("mysql-queue")
 	require.NoError(t, err, "failed to connect to queue MySQL")
 
-	// Apply schemas after the stack is up; the service connects lazily and the
-	// consumer retries, so the boot ordering is tolerated.
+	// Queue policy registration requires its schema before the service starts.
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("stovepipe/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
+	require.NoError(t, s.stack.Up(), "failed to start Stovepipe after schema initialization")
 
 	var conn *grpc.ClientConn
 	conn, err = s.stack.ConnectGRPC("stovepipe-service", 8080)

@@ -21,3 +21,7 @@ A `Get` immediately following a successful write (`Create`/`Update`) — by the 
 Same design space as [`submitqueue/extension/storage`](../../../submitqueue/extension/storage/README.md#key-value-contract): every method must be satisfiable by a plain key-value backend as cheaply as by MySQL — get/put/conditional-update by primary key only, no query-by-attribute or server-side filtering. `RequestURIStore` is the reverse-lookup example here (which request owns a given commit URI), kept as its own store rather than a secondary index on `RequestStore`.
 
 `RequestAcceptanceStore` is the ordered lookup mapping for List: immutable `(queue, accepted_at_ms, request_id)` keys with bounded primary-key range scans, not a secondary index or a second status projection. The request-log materializer ensures each known acceptance has a mapping after summary persistence, including retries where the summary is unchanged. Unknown acceptance times are not mapped; historical backfill is separate.
+
+## Applied queue policy
+
+`QueuePolicyStore` stores a queue's versioned current pointer and immutable transitions keyed by queue plus operation ID. Only the chain reachable from the pointer is committed history. `queuepolicy.Writer` creates the occurrence before advancing the pointer under optimistic locking; failed competing proposals remain unreachable. The store performs supplied version guards and writes without arithmetic. See the [lookup and host integration contract](../../../doc/rfc/stovepipe/queue-status.md).

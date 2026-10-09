@@ -9,6 +9,8 @@ go_library(
         "project_status.go",
         "queue.go",
         "queue_config.go",
+        "queue_policy.go",
+        "queue_status.go",
         "request.go",
         "request_acceptance.go",
         "request_history.go",

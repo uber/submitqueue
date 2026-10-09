@@ -66,7 +66,7 @@ type SourceControl interface {
 	// the queue or ref cannot be resolved.
 	Latest(ctx context.Context) (string, error)
 
-	// IsAncestor reports whether ancestor is an ancestor of descendant in the
+	// IsAncestor reports whether ancestor is an ancestor of or equal to descendant in the
 	// queue's history. Stovepipe uses it to decide the build strategy: when the
 	// last-green URI is no longer an ancestor of the latest commit (false),
 	// history was rewritten and a full build is required instead of an

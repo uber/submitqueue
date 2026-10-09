@@ -93,6 +93,20 @@ func (mr *MockStorageMockRecorder) GetBuildStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBuildStore", reflect.TypeOf((*MockStorage)(nil).GetBuildStore))
 }
 
+// GetQueuePolicyStore mocks base method.
+func (m *MockStorage) GetQueuePolicyStore() storage.QueuePolicyStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQueuePolicyStore")
+	ret0, _ := ret[0].(storage.QueuePolicyStore)
+	return ret0
+}
+
+// GetQueuePolicyStore indicates an expected call of GetQueuePolicyStore.
+func (mr *MockStorageMockRecorder) GetQueuePolicyStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQueuePolicyStore", reflect.TypeOf((*MockStorage)(nil).GetQueuePolicyStore))
+}
+
 // GetQueueStore mocks base method.
 func (m *MockStorage) GetQueueStore() storage.QueueStore {
 	m.ctrl.T.Helper()

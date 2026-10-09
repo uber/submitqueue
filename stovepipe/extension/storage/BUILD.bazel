@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "build_store.go",
+        "queue_policy_store.go",
         "queue_store.go",
         "request_acceptance_store.go",
         "request_log_store.go",

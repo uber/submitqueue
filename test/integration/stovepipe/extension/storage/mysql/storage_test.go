@@ -66,6 +66,11 @@ func TestMySQLStorage(t *testing.T) {
 		})
 	})
 
+	t.Run("QueuePolicyStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testQueuePolicyStore(t, ctx, factory)
+	})
+
 	t.Run("QueueStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLQueueStoreSuite)
@@ -135,6 +140,8 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
 		"TRUNCATE TABLE queue",
+		"TRUNCATE TABLE queue_policy",
+		"TRUNCATE TABLE queue_policy_transition",
 		"TRUNCATE TABLE validation_fact",
 	} {
 		_, err := db.ExecContext(context.Background(), statement)

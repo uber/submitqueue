@@ -53,11 +53,13 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queuepolicy"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
 	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	queueexecutionnoop "github.com/uber/submitqueue/stovepipe/extension/queueexecution/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -245,6 +247,12 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
+	policyWriter := queuepolicy.NewWriter(storageFty, sourceControl)
+	for _, queue := range tenants {
+		if _, err := policyWriter.Initialize(ctx, queue); err != nil {
+			return fmt.Errorf("initialize queue policy for %q: %w", queue, err)
+		}
+	}
 	materializer := requestlog.NewMaterializer(scope)
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
@@ -287,7 +295,8 @@ func run() error {
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	projectStatusController := controller.NewGetProjectStatusByURIController(logger.Sugar(), scope, storageFty)
 	listController := controller.NewListController(logger.Sugar(), scope, storageFty, tenants)
-	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController, listController)
+	queueStatusController := controller.NewGetQueueStatusController(logger.Sugar(), scope, storageFty, sourceControl, queueexecutionnoop.New())
+	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController, listController, queueStatusController)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
 	// Register reflection service for debugging with grpcurl

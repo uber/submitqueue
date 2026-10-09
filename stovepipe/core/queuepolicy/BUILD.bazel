@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["queuepolicy.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/queuepolicy",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/errs:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["queuepolicy_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/sourcecontrol/fake:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

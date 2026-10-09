@@ -187,13 +187,13 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	return stack
 }
 
-// Up starts all services in the compose stack.
+// Up starts the named services and their dependencies, or the entire stack when none are named.
 // Uses --wait to block until all services with healthcheck directives are healthy.
-func (s *ComposeStack) Up() error {
+func (s *ComposeStack) Up(services ...string) error {
 	s.t.Helper()
 	s.log.Logf("Starting compose stack from %s", strings.Join(s.composeFiles, " + "))
 
-	args := s.command("up", "-d", "--build", "--wait")
+	args := append(s.command("up", "-d", "--build", "--wait"), services...)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
@@ -204,6 +204,7 @@ func (s *ComposeStack) Up() error {
 	}
 
 	s.log.Logf("Compose stack started successfully")
+	s.stopLogs()
 	s.tailLogs()
 	return nil
 }

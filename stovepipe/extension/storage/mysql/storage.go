@@ -52,6 +52,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		requestSummaryStore:    NewRequestSummaryStore(s.db, queueScope.SubScope("request_summary_store"), queueName),
 		requestAcceptanceStore: NewRequestAcceptanceStore(s.db, queueScope.SubScope("request_acceptance_store"), queueName),
 		queueStore:             NewQueueStore(s.db, queueScope.SubScope("queue_store"), queueName),
+		queuePolicyStore:       NewQueuePolicyStore(s.db, queueScope.SubScope("queue_policy_store"), queueName),
 		buildStore:             NewBuildStore(s.db, queueScope.SubScope("build_store"), queueName),
 		validationFactStore:    NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
 	}, nil
@@ -70,6 +71,7 @@ type mysqlStorage struct {
 	requestSummaryStore    storage.RequestSummaryStore
 	requestAcceptanceStore storage.RequestAcceptanceStore
 	queueStore             storage.QueueStore
+	queuePolicyStore       storage.QueuePolicyStore
 	buildStore             storage.BuildStore
 	validationFactStore    storage.ValidationFactStore
 }
@@ -105,6 +107,11 @@ func (f *mysqlStorage) GetRequestAcceptanceStore() storage.RequestAcceptanceStor
 // GetQueueStore returns the MySQL-backed QueueStore.
 func (f *mysqlStorage) GetQueueStore() storage.QueueStore {
 	return f.queueStore
+}
+
+// GetQueuePolicyStore returns the queue's policy pointer and immutable transitions.
+func (f *mysqlStorage) GetQueuePolicyStore() storage.QueuePolicyStore {
+	return f.queuePolicyStore
 }
 
 // GetBuildStore returns the MySQL-backed BuildStore.
