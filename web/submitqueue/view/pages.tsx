@@ -1,5 +1,7 @@
 "use client";
 
+import { HeadingSmall } from "baseui/typography";
+
 import { WebRefreshControl } from "./refresh-control.js";
 import { WebShell, type WebShellProps } from "./shell.js";
 import { Timestamp } from "./timestamp.js";
@@ -24,7 +26,7 @@ export function SubmitQueuePage({ model }: SubmitQueuePageProps) {
     return <main className="shell">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Queue activity</p><h1>{model.queue}</h1>
+          <p className="eyebrow">Queue activity</p><HeadingSmall as="h1" marginTop="0" marginBottom="scale400">{model.queue}</HeadingSmall>
           <p>{model.paged ? "Older requests · snapshot" : "Last 24 hours · updates on refresh"}: <Timestamp value={model.window.fromMs} /> — <Timestamp value={model.window.toMs} /></p>
         </div>
         <div className="page-actions"><WebLink href={model.latestHref}>Latest 24 hours</WebLink>{refreshControl}</div>
@@ -58,7 +60,7 @@ export function SubmitQueueStatePage({ kind, homeHref = "/", message }: {
     <main className="shell centered-state">
       <section className="state-card" aria-labelledby="state-title">
         <p className="eyebrow">{notFound ? "Request lookup" : "SubmitQueue"}</p>
-        <h1 id="state-title">{notFound ? "Request not found" : "Authentication required"}</h1>
+        <HeadingSmall as="h1" marginTop="0" marginBottom="scale400" id="state-title">{notFound ? "Request not found" : "Authentication required"}</HeadingSmall>
         <p>{message ?? (notFound ? "The queue or request may not exist, or its retained data may have expired." : "Use the credentials configured for this host.")}</p>
         {notFound ? <a className="button-link" href={homeHref}>Return to queues</a> : null}
       </section>

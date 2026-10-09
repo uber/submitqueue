@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { SubmitQueueFrame } from "./theme.js";
 
 export interface WebShellProps {
   children: ReactNode;
@@ -12,15 +13,13 @@ export interface WebShellProps {
   brandMark?: string;
   environmentLabel?: string;
   footer?: ReactNode;
-  /** Color scheme: `system` follows the viewer's preference. */
-  theme?: "light" | "dark" | "system";
 }
 
 export function WebShell({
   children, homeHref = "/", homeLabel, brand, brandMark = "", environmentLabel = "Read-only",
-  footer = "Read-only · updates automatically", theme = "light",
+  footer = "Read-only · updates automatically",
 }: WebShellProps) {
-  return <div className="sq-app site-frame" data-theme={theme}>
+  return <SubmitQueueFrame className="site-frame">
     <header className="site-header">
       <a className="brand" href={homeHref} {...(homeLabel ? { "aria-label": homeLabel } : {})}>
         {brandMark ? <span className="brand-mark" aria-hidden="true">{brandMark}</span> : null}<span>{brand}</span>
@@ -29,5 +28,5 @@ export function WebShell({
     </header>
     {children}
     {footer ? <footer className="site-footer">{footer}</footer> : null}
-  </div>;
+  </SubmitQueueFrame>;
 }

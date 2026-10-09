@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ReferenceStyleProvider } from "../next/styles";
 import type { ReactNode } from "react";
 
 import "@submitqueue/web-submitqueue/styles.css";
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0 }}>{children}</body>
+      <body style={{ margin: 0 }}><ReferenceStyleProvider>{children}</ReferenceStyleProvider></body>
     </html>
   );
 }

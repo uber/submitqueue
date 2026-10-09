@@ -10,6 +10,20 @@ const queue = "demo-queue";
 const gatewayURL = process.env.SUBMITQUEUE_E2E_GATEWAY_URL as string;
 const webURL = process.env.SUBMITQUEUE_E2E_WEB_URL as string;
 
+const browserErrors = new Map<object, string[]>();
+test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  browserErrors.set(page, errors);
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => {
+    if (message.type() === "error" && /hydration|hydrated|server rendered/i.test(message.text())) errors.push(message.text());
+  });
+});
+test.afterEach(async ({ page }) => {
+  expect(browserErrors.get(page)).toEqual([]);
+  browserErrors.delete(page);
+});
+
 const gateway = createClient(
   SubmitQueueGateway,
   createGrpcTransport({ baseUrl: gatewayURL }),
@@ -53,6 +67,23 @@ test("challenges anonymous requests", async () => {
   });
   expect(response.status).toBe(401);
   expect(response.headers.get("www-authenticate")).toContain("Basic");
+});
+
+test("renders Base Web styles before JavaScript starts", async ({ browser }) => {
+  const context = await browser.newContext({
+    javaScriptEnabled: false,
+    httpCredentials: { username: "test", password: process.env.SUBMITQUEUE_WEB_TOKEN! },
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(`/${queue}`);
+    await expect(page.getByRole("heading", { name: queue, exact: true })).toBeVisible();
+    expect(await page.locator("style[data-submitqueue-styletron]").count()).toBeGreaterThan(0);
+    const background = await page.getByRole("button", { name: "Refresh", exact: true }).evaluate(button => getComputedStyle(button).backgroundColor);
+    expect(background).not.toBe("rgba(0, 0, 0, 0)");
+  } finally {
+    await context.close();
+  }
 });
 
 test("discovers gateway queues including empty queues and rejects unknown queues", async ({ page }) => {
@@ -143,7 +174,8 @@ test("shows newest requests and an accessible readable detail history", async ({
   expect(detailAccessibility.violations).toEqual([]);
   await page.screenshot({ path: test.info().outputPath("request-history.png"), fullPage: true });
 
-  await page.getByRole("combobox").selectOption("event");
+  await page.getByRole("combobox").click();
+  await page.getByRole("option", { name: "Occurrence events" }).click();
   await expect(page.getByRole("list", { name: "Request history" }).getByText("Accepted")).toHaveCount(0);
   await page.getByRole("link", { name: "Summary", exact: true }).click();
   await page.getByRole("link", { name: "github://github.com/uber/submitqueue/pull/123/2222222222222222222222222222222222222222", exact: true }).click();
@@ -151,7 +183,8 @@ test("shows newest requests and an accessible readable detail history", async ({
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(3);
   expect(new URL(page.url()).search).toBe("");
   await page.screenshot({ path: test.info().outputPath("change-submissions.png"), fullPage: true });
-  await page.getByRole("combobox", { name: "Filter submissions by version" }).selectOption({ label: "2222222222222222222222222222222222222222" });
+  await page.getByRole("combobox", { name: "Filter submissions by version" }).click();
+  await page.getByRole("option", { name: "2222222222222222222222222222222222222222" }).click();
   await expect(page.getByText("Retained submissions for this exact version")).toBeVisible();
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(2);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -177,9 +210,8 @@ test("shows newest requests and an accessible readable detail history", async ({
   const logicalChangeUrl = page.url();
   await page.reload();
   await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "Filter submissions by version" }).selectOption({
-    label: "3333333333333333333333333333333333333333",
-  });
+  await page.getByRole("combobox", { name: "Filter submissions by version" }).click();
+  await page.getByRole("option", { name: "3333333333333333333333333333333333333333" }).click();
   await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(1);
   await page.goto(logicalChangeUrl);

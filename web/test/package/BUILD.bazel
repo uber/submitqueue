@@ -1,5 +1,5 @@
-load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@rules_python//python:defs.bzl", "py_test")
 
@@ -26,33 +26,40 @@ ts_project(
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@opentelemetry/api",
-        "//web:node_modules/pino",
         "//web:node_modules/@types/node",
+        "//web:node_modules/@types/react",
+        "//web:node_modules/@types/react-dom",
+        "//web:node_modules/baseui",
+        "//web:node_modules/pino",
         "//web:node_modules/react",
         "//web:node_modules/react-dom",
+        "//web:node_modules/styletron-react",
     ],
 )
 
 py_test(
     name = "pack_contents_test",
     srcs = ["pack_contents_test.py"],
-    main = "pack_contents_test.py",
-    legacy_create_init = 0,
     args = ["$(rootpath //web/submitqueue:pkg.pack)"],
     data = ["//web/submitqueue:pkg.pack"],
+    legacy_create_init = 0,
+    main = "pack_contents_test.py",
 )
 
 js_test(
     name = "consumer_runtime_test",
-    entry_point = "consumer-runtime.mjs",
     data = [
         ":node_modules/@submitqueue/web-submitqueue",
-        "//web/submitqueue:node_modules",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@opentelemetry/api",
+        "//web:node_modules/baseui",
         "//web:node_modules/pino",
         "//web:node_modules/react",
         "//web:node_modules/react-dom",
+        "//web:node_modules/styletron-engine-atomic",
+        "//web:node_modules/styletron-react",
+        "//web/submitqueue:node_modules",
     ],
+    entry_point = "consumer-runtime.mjs",
 )

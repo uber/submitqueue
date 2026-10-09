@@ -1,6 +1,6 @@
 # SubmitQueue web
 
-A read-only browser UI for SubmitQueue, shipped as a **module** any server can mount. The module owns the whole UX (routing, data loading, pages, styles, navigation, polling); the **host** that mounts it owns infrastructure (identity, gateway transport, logging, metrics, framework). Design decisions are in [the RFC](../doc/rfc/web-ui.md).
+A read-only browser UI for SubmitQueue, shipped as a **module** any server can mount. The module owns the whole UX (routing, data loading, pages, styles, navigation, polling); the **host** that mounts it owns infrastructure (identity, gateway transport, logging, metrics, framework) and the Base Web theme and Styletron engine. Design decisions are in [the RFC](../doc/rfc/web-ui.md).
 
 ## Layers
 
@@ -32,7 +32,7 @@ Dependencies only point down. The module never imports generated protos, a trans
 
 ## Build, test, run
 
-Bazel is the build (it pins Node 22); the pnpm workspace exists only for editors (`make web-install`).
+Bazel is the build (it pins Node 24.8.0, matching Base Web's Node 24 requirement); the pnpm workspace exists only for editors (`make web-install`).
 
 ```bash
 make web-check                 # unit, type, lint, drift, and package checks

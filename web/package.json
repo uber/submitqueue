@@ -5,7 +5,7 @@
   "version": "0.0.0",
   "packageManager": "pnpm@10.17.1",
   "engines": {
-    "node": ">=22.20.0 <23",
+    "node": ">=24.8.0 <25",
     "pnpm": ">=10.17.1 <11"
   },
   "scripts": {
@@ -25,11 +25,16 @@
     "@opentelemetry/api": "1.9.0",
     "@playwright/test": "1.55.1",
     "@submitqueue/api": "workspace:*",
-    "@types/node": "22.18.6",
+    "@types/node": "24.8.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "baseui": "18.2.0",
     "next": "16.3.6",
     "pino": "10.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "styletron-engine-atomic": "1.6.2",
+    "styletron-react": "6.1.1",
     "typescript": "5.9.3",
     "vitest": "4.0.7"
   }

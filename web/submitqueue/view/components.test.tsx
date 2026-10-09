@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render } from "../test-render.js";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "./navigation.js";
 import { WebApp } from "./web-app.js";
@@ -30,7 +31,7 @@ describe("request components", () => {
     expect(link.getAttribute("href")).toBe(
       "/demo-queue/request/demo-queue/1",
     );
-    expect(screen.getByText("Speculating").getAttribute("data-tone")).toBe("progress");
+    expect(screen.getByText("Speculating").closest(".sq-status")?.getAttribute("data-tone")).toBe("progress");
     expect(screen.getByText("Nov 14, 2023, 10:13:20 PM UTC")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Next page" }).getAttribute("href")).toBe(
       "/demo-queue?page=opaque-token",
@@ -83,7 +84,8 @@ describe("request components", () => {
     expect(within(history).getByText("Building")).toBeTruthy();
     fireEvent.click(within(history).getByText("Building"));
     expect(within(history).getByText("https://build.example/1")).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "event" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Show history events" }));
+    fireEvent.click(screen.getByRole("option", { name: "Occurrence events" }));
     expect(within(history).getAllByRole("listitem")).toHaveLength(1);
   });
 
@@ -171,7 +173,8 @@ describe("request components", () => {
     render(<WebNavigationProvider value={{ push }}>
       <WebApp model={page} Page={() => <ChangeSubmissions model={change} />} />
     </WebNavigationProvider>);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: `/logical/${version}` } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Filter submissions by version" }));
+    fireEvent.click(screen.getByRole("option", { name: version }));
     expect(push).toHaveBeenCalledWith(`/logical/${version}`);
     expect(screen.getByRole("link", { name: version }).getAttribute("href")).toBe(`/logical/${version}`);
   });
@@ -199,6 +202,6 @@ describe("request components", () => {
 
   it("shows unknown statuses safely", () => {
     render(<RequestStatus status="new_pipeline_step" />);
-    expect(screen.getByText("New Pipeline Step").getAttribute("data-tone")).toBe("neutral");
+    expect(screen.getByText("New Pipeline Step").closest(".sq-status")?.getAttribute("data-tone")).toBe("neutral");
   });
 });

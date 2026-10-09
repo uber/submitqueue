@@ -38,7 +38,7 @@ use_repo(protoc, "toolchains_protoc_hub")
 register_toolchains("@toolchains_protoc_hub//:all")
 
 node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
-node.toolchain(node_version = "22.20.0")
+node.toolchain(node_version = "24.8.0")
 
 typescript = use_extension("@aspect_rules_ts//ts:extensions.bzl", "typescript")
 typescript.deps(version_from = "//web:package.json")
@@ -64,8 +64,8 @@ use_repo(playwright, "playwright")
 
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
-    name = "node_22_20_0_bookworm_slim",
-    digest = "sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e",
+    name = "node_24_8_0_bookworm_slim",
+    digest = "sha256:cadbfafeb6baf87eaaffa40b3640209c4b7fd38cebde65059d15bc39cd636b85",
     image = "node",
     platforms = ["linux/amd64"],
 )
@@ -79,8 +79,8 @@ use_repo(
     oci,
     "mysql_8_0",
     "mysql_8_0_linux_amd64",
-    "node_22_20_0_bookworm_slim",
-    "node_22_20_0_bookworm_slim_linux_amd64",
+    "node_24_8_0_bookworm_slim",
+    "node_24_8_0_bookworm_slim_linux_amd64",
 )
 
 GO_VERSION = "1.25.0"

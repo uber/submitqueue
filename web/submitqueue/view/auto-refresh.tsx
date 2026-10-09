@@ -1,5 +1,6 @@
 "use client";
 
+import { Button, KIND, SIZE } from "baseui/button";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface AutoRefreshProps {
@@ -97,9 +98,9 @@ export function AutoRefresh({
 
   return (
     <div className="sq-refresh" data-paused={paused || terminal}>
-      <button disabled={refreshing || paused} onClick={() => void runRefresh()} type="button">
+      <Button size={SIZE.compact} kind={KIND.secondary} disabled={refreshing || paused} onClick={() => void runRefresh()} type="button">
         {refreshing ? "Refreshing…" : "Refresh"}
-      </button>
+      </Button>
       <span aria-live="polite">
         {terminal ? "Automatic refresh stopped" : !automatic ? "Manual refresh" : paused ? "Automatic refresh paused" :
           transientFailureCount > 0 || localFailures.current > 0 ? "Updates unavailable · retrying" : "Live"}

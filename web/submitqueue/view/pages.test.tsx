@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render } from "../test-render.js";
+import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "./navigation.js";
 import { SubmitQueueApp } from "./app.js";
@@ -79,7 +80,8 @@ describe("default reusable application views", () => {
     }
     const navigate = vi.fn();
     render(<WebNavigationProvider value={{ push: navigate }}><SubmitQueueApp model={result.model} /></WebNavigationProvider>);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: `/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}` } });
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("option", { name: sha }));
     expect(navigate).toHaveBeenCalledWith(`/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}`);
   });
 

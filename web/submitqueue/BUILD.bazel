@@ -18,6 +18,7 @@ _SRCS = glob(
         "dist/**",
         "node_modules/**",
         "test-setup.ts",
+        "test-render.tsx",
         "vitest.config.ts",
     ],
 )
@@ -45,21 +46,28 @@ ts_project(
     declaration_map = True,
     no_emit = False,
     out_dir = "dist",
+    resolve_json_module = True,
     root_dir = ".",
     transpiler = "tsc",
     tsconfig = ":tsconfig_build",
     deps = [
+        # Base Web declarations resolve React types from the shared npm store.
+        "//web:node_modules/@types/react",
+        "//web:node_modules/@types/react-dom",
         ":node_modules/@opentelemetry/api",
         ":node_modules/@types/node",
         ":node_modules/@types/react",
         ":node_modules/pino",
         ":node_modules/react",
+        ":node_modules/baseui",
+        ":node_modules/styletron-react",
     ],
 )
 
 ts_project(
     name = "typecheck",
     srcs = _SRCS + _TESTS + [
+        "test-render.tsx",
         "test-setup.ts",
         "vitest.config.ts",
     ],
@@ -74,25 +82,30 @@ ts_project(
         ":node_modules/@types/node",
         ":node_modules/@types/react",
         ":node_modules/@types/react-dom",
+        ":node_modules/baseui",
         ":node_modules/jsdom",
         ":node_modules/pino",
         ":node_modules/react",
         ":node_modules/react-dom",
+        ":node_modules/styletron-engine-atomic",
+        ":node_modules/styletron-react",
         ":node_modules/vitest",
+        "//web:node_modules/@types/react",
+        "//web:node_modules/@types/react-dom",
     ],
 )
 
 npm_package(
     name = "pkg",
-    package = "@submitqueue/web-submitqueue",
-    packable = True,
     srcs = [
-        ":lib",
-        ":lib_types",
-        "view/styles.css",
         "README.md",
         "package.json",
+        "view/styles.css",
+        ":lib",
+        ":lib_types",
     ],
+    packable = True,
+    package = "@submitqueue/web-submitqueue",
 )
 
 vitest.vitest_test(
@@ -113,6 +126,7 @@ vitest.vitest_test(
         # jest-dom resolves its vitest peer from the workspace root.
         "//web:node_modules/vitest",
         "test-setup.ts",
+        "test-render.tsx",
         "vitest.config.ts",
     ],
 )

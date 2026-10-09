@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render } from "../test-render.js";
+import { fireEvent, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -74,6 +75,7 @@ describe("WebLink", () => {
 describe("WebRefreshControl", () => {
   it("renders nothing outside a WebApp", () => {
     const { container } = render(<WebRefreshControl refresh={pageModel("Alone").refresh} />);
-    expect(container.innerHTML).toBe("");
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("button")).toBeNull();
   });
 });

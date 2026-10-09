@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "baseui": "18.2.0",
     "jsdom": "^26.1.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "styletron-engine-atomic": "1.6.2",
+    "styletron-react": "6.1.1"
   }
 }

@@ -2,7 +2,7 @@
   "name": "@submitqueue/web-submitqueue",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "sideEffects": [
     "./view/styles.css"
   ],
@@ -14,19 +14,23 @@
     "./styles.css": "./view/styles.css",
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     },
     "./server": {
       "types": "./dist/server.d.ts",
-      "import": "./dist/server.js"
+      "import": "./dist/server.js",
+      "require": "./dist/server.js"
     },
     "./extension/gateway/mock": {
       "types": "./dist/extension/gateway/mock/index.d.ts",
-      "import": "./dist/extension/gateway/mock/index.js"
+      "import": "./dist/extension/gateway/mock/index.js",
+      "require": "./dist/extension/gateway/mock/index.js"
     },
     "./extension/cursor/hmac": {
       "types": "./dist/extension/cursor/hmac/index.d.ts",
-      "import": "./dist/extension/cursor/hmac/index.js"
+      "import": "./dist/extension/cursor/hmac/index.js",
+      "require": "./dist/extension/cursor/hmac/index.js"
     }
   },
   "scripts": {
@@ -37,21 +41,27 @@
   },
   "peerDependencies": {
     "@opentelemetry/api": ">=1.9 <2",
+    "baseui": ">=18.2 <19 || 0.0.0-monorepo",
     "pino": ">=10 <11",
-    "react": ">=18 <20"
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20",
+    "styletron-react": ">=6.1.0-beta.2 <7"
   },
   "devDependencies": {
     "@connectrpc/connect": "^2.1.1",
     "@opentelemetry/api": "^1.9.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
-    "@types/node": "22.18.6",
+    "@types/node": "24.8.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "baseui": "18.2.0",
     "jsdom": "^26.1.0",
     "pino": "^10.4.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "styletron-engine-atomic": "1.6.2",
+    "styletron-react": "6.1.1",
     "typescript": "^5.8.3",
     "vitest": "4.0.7"
   }

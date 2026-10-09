@@ -5,11 +5,13 @@ A local/demo Next.js host for the SubmitQueue module, and the composition root t
 | Path | Holds |
 |---|---|
 | `src/server/` | Wiring, free of Next.js: environment config, demo Basic auth, the Connect gateway client and transport, pino, opt-in Prometheus, and `resolveReferenceWebHost` |
-| `src/next/` | Everything Next.js-specific: catch-all page and metadata, the per-request auth check, navigation provider (`next/link` without prefetch, transition-aware refresh), readiness route |
+| `src/next/` | Everything Next.js-specific: catch-all page and metadata, the per-request auth check, navigation provider (`next/link` without prefetch, transition-aware refresh), readiness route, Base Web provider and streamed Styletron SSR/hydration |
 | `src/app/` | Routes: one optional catch-all page, `/healthz`, layouts, not-found and unauthorized pages |
 | `src/proxy.ts` | Challenges anonymous browsers with HTTP Basic auth |
 
-Two Next.js specifics: `next.config.ts` sets `htmlLimitedBots: /.*/` so page titles resolve before streaming, and Next leaves pino unbundled, so the image's runtime layer declares it.
+The host selects Base Web's light theme and owns one Styletron engine per server render or browser session. Server style chunks are collected through `useServerInsertedHTML` and combined before browser hydration. Other hosts reuse their existing Base Web and Styletron providers.
+
+Two other Next.js specifics: `next.config.ts` sets `htmlLimitedBots: /.*/` so page titles resolve before streaming, and Next leaves pino unbundled, so the image's runtime layer declares it.
 
 | Variable | Meaning |
 |---|---|
