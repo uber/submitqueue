@@ -1,8 +1,9 @@
 # Stovepipe Service
 
-Runnable wiring for the **Stovepipe** domain — a single-service domain (the domain *is* the service). The server exposes four RPCs and runs the internal pipeline stages as queue consumers:
+Runnable wiring for the **Stovepipe** domain — a single-service domain (the domain *is* the service). The server exposes RPCs and runs the internal pipeline stages as queue consumers:
 
 - **`Ping`** — health check.
+- **`GetQueueStatus`** — applied enablement, optional commit policy, and independent queue-level execution status.
 - **`Ingest`** — resolves a queue's head commit, persists a `Request` (and its head URI) to storage, and publishes the request to the **process** stage.
 - **`GetRequestHistoryByID`** — returns the retained request log for one request ID.
 - **`GetRequestHistoryByURI`** — returns retained histories selected by an exact commit URI.
@@ -16,6 +17,8 @@ Runnable wiring for the **Stovepipe** domain — a single-service domain (the do
 The ingest → process → build → buildsignal → record flow stays inside one service and one store, so messages carry thin identifiers: request IDs on process, build, and record; a build ID on buildsignal. Consumers reload the full entity from storage, which keeps messages small and redelivery idempotent. The topic keys and internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
 
 Stovepipe therefore needs two MySQL databases: a **storage** database (the `queue`, `request`, `request_uri`, `request_log`, `build`, and `validation_fact` tables) and a **queue** database (messaging infrastructure).
+
+Configured queues are explicitly registered with initial disabled policy before the server starts. Apply the storage schema first; the local Make targets handle this ordering. Policy changes use `stovepipe/core/queuepolicy.Writer`; production code-gateway and Flipr wiring is described in the [queue-status contract](../../doc/rfc/stovepipe/queue-status.md).
 
 ## Wiring notes
 

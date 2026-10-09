@@ -203,6 +203,60 @@ message ListResponse {
     string next_page_token = 2;
 }
 
+// GetQueueStatusRequest selects applied policy, optionally for an exact commit.
+message GetQueueStatusRequest {
+    // Required stable repo-and-ref queue name.
+    string queue = 1;
+    // Optional exact commit URI; intermediate commits need no validation request.
+    // Empty selects current policy only.
+    string change_uri = 2;
+}
+
+// QueuePolicyState describes whether covered commits require Stovepipe handling.
+enum QueuePolicyState {
+    QUEUE_POLICY_STATE_UNKNOWN = 0;
+    QUEUE_POLICY_STATE_ENABLED = 1;
+    QUEUE_POLICY_STATE_DISABLED = 2;
+}
+
+// QueuePolicy is an applied enable/disable occurrence, not a validation verdict.
+message QueuePolicy {
+    // Monotonic policy revision; pause changes do not advance it.
+    int64 revision = 1;
+    QueuePolicyState state = 2;
+    // Inclusive first covered commit. Empty only for initial DISABLED.
+    string effective_from_commit_uri = 3;
+    // Application time in Unix milliseconds, not commit time.
+    int64 changed_at_ms = 4;
+}
+
+// QueueExecutionState describes queue-level pause control, not service health.
+enum QueueExecutionState {
+    QUEUE_EXECUTION_STATE_UNKNOWN = 0;
+    QUEUE_EXECUTION_STATE_RUNNING = 1;
+    QUEUE_EXECUTION_STATE_PAUSED = 2;
+}
+
+// QueueExecutionStatus is independent of policy and validation results.
+message QueueExecutionStatus {
+    // RUNNING means unpaused; PAUSED never releases deployment gates.
+    QueueExecutionState state = 1;
+    // Evaluation time in Unix milliseconds, not pause/resume transition time.
+    int64 observed_at_ms = 2;
+}
+
+// GetQueueStatusResponse uses one pinned policy revision for both policy fields.
+message GetQueueStatusResponse {
+    string queue = 1;
+    // Latest applied policy, including for queues without validation requests.
+    QueuePolicy current_policy = 2;
+    // Present exactly when change_uri was supplied and resolved successfully.
+    // Unresolved commits fail the lookup; they never imply DISABLED.
+    QueuePolicy policy_for_commit = 3;
+    // Independently observed queue-level control; UNKNOWN preserves valid policy.
+    QueueExecutionStatus execution = 4;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -216,6 +270,8 @@ service Stovepipe {
     rpc GetRequestHistoryByURI(GetRequestHistoryByURIRequest) returns (GetRequestHistoryByURIResponse) {}
     // GetProjectStatusByURI returns the current validation status for an exact commit URI.
     rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
+    // GetQueueStatus returns applied policy and current queue-level execution control.
+    rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
     // List returns a queue-scoped page of current request summaries.
     rpc List(ListRequest) returns (ListResponse) {}
 }

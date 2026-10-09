@@ -87,6 +87,9 @@ type Storage interface {
 	// GetQueueStore returns the QueueStore instance.
 	GetQueueStore() QueueStore
 
+	// GetQueuePolicyStore returns the queue's policy pointer and immutable transitions.
+	GetQueuePolicyStore() QueuePolicyStore
+
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 

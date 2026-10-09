@@ -64,7 +64,7 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	s.log = testutil.NewTestLogger(t)
 	t.Setenv("MQ_TENANTS", strings.Join([]string{
 		"monorepo/main", "monorepo/release", "monorepo/slow?buildrunner-fake=build-slow",
-		listPaginationQueue, listTimeBoundsQueue, listPrimaryQueue, listOtherQueue, listValidationQueue,
+		listPaginationQueue, listTimeBoundsQueue, listPrimaryQueue, listOtherQueue, listValidationQueue, queuePolicyTestQueue,
 	}, ","))
 
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")
@@ -76,7 +76,7 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
 		}))
 
-	err := s.stack.Up()
+	err := s.stack.Up("mysql-app", "mysql-queue")
 	require.NoError(t, err, "failed to start compose stack")
 
 	s.db, err = s.stack.ConnectMySQLService("mysql-app")
@@ -85,11 +85,11 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	s.queueDB, err = s.stack.ConnectMySQLService("mysql-queue")
 	require.NoError(t, err, "failed to connect to queue MySQL")
 
-	// Apply schemas after the stack is up; the service connects lazily and the
-	// consumer retries, so the boot ordering is tolerated.
+	// Queue policy registration requires its schema before the service starts.
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("stovepipe/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
+	require.NoError(t, s.stack.Up(), "failed to start Stovepipe after schema initialization")
 	s.appStorage, err = storagemysql.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)
 

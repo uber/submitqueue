@@ -68,7 +68,7 @@ func TestList(t *testing.T) {
 				}, req)
 				return tt.result, tt.err
 			}}
-			srv := NewStovepipeServer(nil, nil, nil, nil, fake)
+			srv := NewStovepipeServer(nil, nil, nil, nil, fake, nil)
 			response, err := srv.List(ctx, &pb.ListRequest{
 				Queue: "queue", PageSize: 25, PageToken: "token",
 				AcceptedLowerBound: &pb.ListRequest_AcceptedAtOrAfterMs{},

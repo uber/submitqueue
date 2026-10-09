@@ -560,9 +560,10 @@ local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway
 
 local-stovepipe-debug-start: build-stovepipe-linux-debug ## Start Stovepipe under delve in Docker (attach IDE to :2345)
 	@echo "Starting Stovepipe service with compose (debug)..."
-	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_DEBUG_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_DEBUG_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --wait mysql-app mysql-queue
 	@echo "Applying storage and queue schemas..."
 	@$(MAKE) -s local-init-stovepipe-schemas
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_DEBUG_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
 	@echo ""
 	@echo "✅ Stovepipe debug is running (delve :2345)!"
 	@echo ""
@@ -576,9 +577,10 @@ local-stovepipe-logs: ## View logs from the running Stovepipe service
 
 local-stovepipe-start: build-stovepipe-linux ## Start Stovepipe service (gRPC service + MySQL storage + MySQL queue)
 	@echo "Starting Stovepipe service with compose..."
-	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --wait mysql-app mysql-queue
 	@echo "Applying storage and queue schemas..."
 	@$(MAKE) -s local-init-stovepipe-schemas
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
 	@echo ""
 	@echo "✅ Stovepipe service is running!"
 	@echo ""
@@ -603,6 +605,7 @@ GO_GENERATE_PACKAGES := \
 	./stovepipe/extension/buildrunner/... \
 	./stovepipe/extension/projectstatus/... \
 	./stovepipe/extension/queueconfig/... \
+	./stovepipe/extension/queueexecution/... \
 	./stovepipe/extension/sourcecontrol/... \
 	./stovepipe/extension/storage/... \
 	./submitqueue/core/changeset/... \

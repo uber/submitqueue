@@ -29,7 +29,8 @@ var ErrInvalidRequest = errs.NewUserError(errors.New("invalid request"))
 
 // IsInvalidRequest reports whether err contains an invalid request classification.
 func IsInvalidRequest(err error) bool {
-	return errors.Is(err, ErrInvalidRequest)
+	// Framework wrappers match by classification; compare the underlying sentinel.
+	return errors.Is(err, errors.Unwrap(ErrInvalidRequest))
 }
 
 func validateHistoryIdentifier(name, value string) error {
