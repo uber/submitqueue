@@ -53,9 +53,6 @@ type Storage interface {
 	// GetRequestReceiptStore returns the RequestReceiptStore instance.
 	GetRequestReceiptStore() basestorage.RequestReceiptStore
 
-	// GetRequestQueueSummaryStore returns the RequestQueueSummaryStore instance.
-	GetRequestQueueSummaryStore() basestorage.RequestQueueSummaryStore
-
 	// GetRequestURIStore returns the RequestURIStore instance.
 	GetRequestURIStore() basestorage.RequestURIStore
 }

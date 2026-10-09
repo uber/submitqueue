@@ -40,7 +40,6 @@ func TestNewStorage(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, bound.GetRequestLogStore())
 	assert.NotNil(t, bound.GetRequestSummaryStore())
-	assert.NotNil(t, bound.GetRequestQueueSummaryStore())
 	assert.NotNil(t, bound.GetRequestURIStore())
 
 	_, err = s.For("")

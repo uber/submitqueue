@@ -23,164 +23,77 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 )
 
 func TestMaterializer_PersistLog(t *testing.T) {
 	base := testRequestSummary()
-	log := entity.RequestLog{RequestID: "1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 2, Metadata: map[string]string{}}
-	t.Run("winning log updates both projections", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(base, nil)
-		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
-			assert.Equal(t, entity.RequestStatusLanded, updated.Status)
-			assert.Equal(t, int32(2), updated.RequestVersion)
+	log := entity.RequestLog{Queue: base.Queue, RequestID: base.RequestID, TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 2, Metadata: map[string]string{"build_id": "b/7"}}
+
+	t.Run("winning log updates the authoritative summary", func(t *testing.T) {
+		f := newMaterializerReceiptFixture(gomock.NewController(t))
+		f.logs.EXPECT().Insert(gomock.Any(), log).Return(nil)
+		f.summaries.EXPECT().Get(gomock.Any(), base.RequestID).Return(base, nil)
+		f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
+			want := base
+			want.Status, want.RequestVersion, want.StatusTimestampMs = log.Status, log.RequestVersion, log.TimestampMs
+			want.Metadata = log.Metadata
+			assert.Equal(t, want, updated)
+			updated.Metadata["build_id"] = "other"
 			return nil
 		})
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(base), nil)
-		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
-		require.NoError(t, m.PersistLog(context.Background(), log))
+		f.expectURIMappings(base, nil)
+		f.receipts.EXPECT().Create(gomock.Any(), receiptFromTestSummary(base)).Return(nil)
+		require.NoError(t, f.materializer.PersistLog(context.Background(), log))
+		assert.Equal(t, "b/7", log.Metadata["build_id"])
+		assert.Equal(t, testRequestSummary(), base)
 	})
 
-	t.Run("unversioned terminal status does not receive terminal precedence", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-		current := base
-		current.Status = entity.RequestStatusLanded
-		current.RequestVersion = 0
-		incoming := entity.RequestLog{RequestID: "1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, Metadata: map[string]string{}}
-		logStore.EXPECT().Insert(gomock.Any(), incoming).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(current, nil)
-		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
-			assert.Equal(t, entity.RequestStatusSpeculating, updated.Status)
-			return nil
-		})
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(current), nil)
-		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
-		require.NoError(t, m.PersistLog(context.Background(), incoming))
+	t.Run("CAS conflict reloads the concurrent winner", func(t *testing.T) {
+		f := newMaterializerReceiptFixture(gomock.NewController(t))
+		advanced := base
+		advanced.Status, advanced.RequestVersion, advanced.StatusTimestampMs, advanced.Version = entity.RequestStatusError, 3, 30, 2
+		gomock.InOrder(
+			f.logs.EXPECT().Insert(gomock.Any(), log).Return(nil),
+			f.summaries.EXPECT().Get(gomock.Any(), base.RequestID).Return(base, nil),
+			f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(storage.ErrVersionMismatch),
+			f.summaries.EXPECT().Get(gomock.Any(), base.RequestID).Return(advanced, nil),
+			f.expectURIMappings(advanced, nil),
+			f.receipts.EXPECT().Create(gomock.Any(), receiptFromTestSummary(advanced)).Return(nil),
+		)
+		require.NoError(t, f.materializer.PersistLog(context.Background(), log))
 	})
+}
 
-	t.Run("build event reaches history without moving the summary", func(t *testing.T) {
-		for _, buildEvent := range []entity.RequestEvent{entity.RequestEventBuilding, entity.RequestEventBuilt} {
-			t.Run(string(buildEvent), func(t *testing.T) {
-				ctrl := gomock.NewController(t)
-				m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-				current := base
-				current.Status = entity.RequestStatusSpeculating
-				current.StatusTimestampMs = 10
-				// Newer than the summary, so only the entry's type keeps it out.
-				event := entity.RequestLog{
-					RequestID: "1", TimestampMs: 20,
-					Type: entity.RequestLogTypeEvent, Event: buildEvent,
-					Metadata: map[string]string{"build_id": "b/7"},
+func TestMaterializer_PersistenceFailures(t *testing.T) {
+	writeErr := errors.New("storage unavailable")
+	tests := []struct {
+		name                         string
+		insertErr, getErr, updateErr error
+	}{
+		{name: "audit insert", insertErr: writeErr},
+		{name: "summary read", getErr: writeErr},
+		{name: "missing summary", getErr: storage.ErrNotFound},
+		{name: "summary update", updateErr: writeErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newMaterializerReceiptFixture(gomock.NewController(t))
+			current := testRequestSummary()
+			log := entity.RequestLog{Queue: current.Queue, RequestID: current.RequestID, TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted}
+			f.logs.EXPECT().Insert(gomock.Any(), log).Return(tt.insertErr)
+			wantErr := tt.insertErr
+			if tt.insertErr == nil {
+				f.summaries.EXPECT().Get(gomock.Any(), current.RequestID).Return(current, tt.getErr)
+				wantErr = tt.getErr
+				if tt.getErr == nil {
+					f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(tt.updateErr)
+					wantErr = tt.updateErr
 				}
-
-				// Inserted: the entry is the request's history.
-				logStore.EXPECT().Insert(gomock.Any(), event).Return(nil)
-				summaryStore.EXPECT().Get(gomock.Any(), "1").Return(current, nil)
-				// No summaryStore.Update expectation — gomock fails the test if
-				// the event moves the request's current status.
-				queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(current), nil)
-
-				require.NoError(t, m.PersistLog(context.Background(), event))
-			})
-		}
-	})
-
-	t.Run("CAS conflict reloads and repairs winner", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(base, nil)
-		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-		advanced := base
-		advanced.Status = entity.RequestStatusLanded
-		advanced.RequestVersion = 2
-		advanced.StatusTimestampMs = 20
-		advanced.Version = 2
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil)
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(base), nil)
-		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
-		require.NoError(t, m.PersistLog(context.Background(), log))
-	})
-
-	t.Run("non-winning redelivery repairs stale queue projection", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		advanced := base
-		advanced.Status = entity.RequestStatusLanded
-		advanced.RequestVersion = 2
-		advanced.StatusTimestampMs = 20
-		advanced.Version = 2
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil)
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(base), nil)
-		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
-		require.NoError(t, m.PersistLog(context.Background(), log))
-	})
-
-	t.Run("first public event activates URI and queue projections", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, uriStore, logStore := materializerStores(ctrl)
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(base, nil)
-		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
-		activated := base
-		activated.Status = entity.RequestStatusLanded
-		activated.RequestVersion = 2
-		activated.StatusTimestampMs = 20
-		activated.Version = 2
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(entity.RequestQueueSummary{}, storage.ErrNotFound)
-		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/1", Queue: "q", ReceivedAtMs: 10, RequestID: "1"}).Return(nil)
-		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/2", Queue: "q", ReceivedAtMs: 10, RequestID: "1"}).Return(nil)
-		queueStore.EXPECT().Create(gomock.Any(), queueSummaryFromSummary(activated)).Return(nil)
-		require.NoError(t, m.PersistLog(context.Background(), log))
-	})
-
-	t.Run("retry after projection failure appends another audit row", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-		materializer := m
-		advanced := base
-		advanced.Status = entity.RequestStatusLanded
-		advanced.RequestVersion = 2
-		advanced.StatusTimestampMs = 20
-		advanced.Version = 2
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil).Times(2)
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil).Times(2)
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(entity.RequestQueueSummary{}, errors.New("queue store down"))
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueSummaryFromSummary(advanced), nil)
-
-		require.Error(t, materializer.PersistLog(context.Background(), log))
-		require.NoError(t, materializer.PersistLog(context.Background(), log))
-	})
-
-	t.Run("missing authoritative summary fails", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, _, _, logStore := materializerStores(ctrl)
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, storage.ErrNotFound)
-		require.Error(t, m.PersistLog(context.Background(), log))
-	})
-
-	t.Run("queue projection already ahead succeeds", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
-		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		advanced := base
-		advanced.Status = entity.RequestStatusLanded
-		advanced.RequestVersion = 2
-		advanced.StatusTimestampMs = 20
-		advanced.Version = 2
-		summaryStore.EXPECT().Get(gomock.Any(), "1").Return(advanced, nil)
-		queueAhead := queueSummaryFromSummary(advanced)
-		queueAhead.Version = 3
-		queueStore.EXPECT().Get(gomock.Any(), int64(10), "1").Return(queueAhead, nil)
-		require.NoError(t, m.PersistLog(context.Background(), log))
-	})
+			}
+			require.ErrorIs(t, f.materializer.PersistLog(context.Background(), log), wantErr)
+		})
+	}
 }
 
 func TestLogWins(t *testing.T) {
@@ -251,6 +164,14 @@ func TestLogWins(t *testing.T) {
 			want: true,
 		},
 		{
+			name:    "unversioned terminal status has no terminal precedence",
+			current: entity.RequestSummary{Status: entity.RequestStatusLanded, StatusTimestampMs: 100},
+			incoming: entity.RequestLog{
+				Status: entity.RequestStatusSpeculating, TimestampMs: 200,
+			},
+			want: true,
+		},
+		{
 			name:    "nonterminal cannot replace versioned terminal",
 			current: entity.RequestSummary{Status: entity.RequestStatusLanded, RequestVersion: 1, StatusTimestampMs: 100},
 			incoming: entity.RequestLog{
@@ -309,12 +230,6 @@ func TestLogWins(t *testing.T) {
 			assert.Equal(t, tt.want, logWins(incoming, tt.current))
 		})
 	}
-}
-
-func materializerStores(ctrl *gomock.Controller) (*Materializer, *storagemock.MockRequestSummaryStore, *storagemock.MockRequestQueueSummaryStore, *storagemock.MockRequestURIStore, *storagemock.MockRequestLogStore) {
-	fixture := newMaterializerReceiptFixture(ctrl)
-	fixture.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return fixture.materializer, fixture.summaries, fixture.queueSummaries, fixture.uris, fixture.logs
 }
 
 func testRequestSummary() entity.RequestSummary {

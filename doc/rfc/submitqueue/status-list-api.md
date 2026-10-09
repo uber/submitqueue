@@ -67,7 +67,7 @@ Page size is optional and subject to a server default and maximum.
 
 New requests may appear before the first page while a caller is paging. The immutable tuple cursor prevents duplicates within the caller's traversal.
 
-The first version does not filter by current status. Current status is mutable, while the queue receipt projection is ordered by immutable receipt time. Efficient status filtering requires an additional application-maintained membership projection keyed by queue, status, receipt time, and sqid. That projection is deferred until a concrete server-side filtering use case justifies its write and reconciliation cost. Clients may filter a returned page for presentation, but client-side filtering is not equivalent to a server-side filtered query.
+The first version does not filter by current status. Current status is mutable, while the receipt lookup is ordered by immutable receipt time. Efficient status filtering requires an additional application-maintained membership projection keyed by queue, status, receipt time, and sqid. That projection is deferred until a concrete server-side filtering use case justifies its write and reconciliation cost. Clients may filter a returned page for presentation, but client-side filtering is not equivalent to a server-side filtered query.
 
 ## Errors
 
@@ -77,7 +77,7 @@ The transport representation of these errors follows the gateway-wide RPC error 
 
 ## Gateway-Owned Read Model
 
-The gateway owns the append-only request log and three new logical read models. The orchestrator's request and change stores are pipeline working state with different retention semantics, so neither API reads them.
+The gateway owns the append-only request log, materialized request summaries, and lookup stores. The orchestrator's request and change stores are pipeline working state with different retention semantics, so neither API reads them.
 
 ### Request Summary by Sqid
 
@@ -87,17 +87,17 @@ The immutable context is queue, change URIs, and receipt time. The mutable respo
 
 The key supports authoritative lookup and conditional status updates for one request without a secondary index, and leads with the queue so the table is shardable by queue.
 
-### Request Summaries by Queue
+### Requests by Receipt Time
 
-The queue projection is logically keyed by `(queue, received_at_ms, sqid)` and must support a bounded descending scan over `(received_at_ms, sqid)`. A backend may satisfy that contract with a reverse range scan or by descending-encoding the ordered key components; cursors always carry the original receipt time and sqid values.
+The immutable `request_receipt` lookup contains only `(queue, received_at_ms, request_id)` as its primary key and supports a bounded descending scan over `(received_at_ms, request_id)`. Request IDs break timestamp ties in string order, not numeric order. A backend may use a reverse range scan or descending-encode the ordered key components; cursors always carry the original receipt time and request ID.
 
-The row duplicates the complete `List` response deliberately. A page is served by one bounded range scan rather than one follow-up authoritative-summary read per result. Status updates propagate from the authoritative sqid summary to this projection.
+List resolves these keys through `request_summary`; the lookup does not duplicate response fields.
 
 The logical key covers the `List` queue predicate, receipt-time range, newest-first ordering, and complete keyset cursor in one bounded scan.
 
 ### Requests by Change URI
 
-The URI reverse mapping is logically keyed by `(queue, change_uri, received_at_ms, sqid)` and must support a bounded descending scan over `(received_at_ms, sqid)` within one queue. As with the queue projection, a backend may use a reverse range scan or descending-encoded key components while exposing cursors and results in the original values. The mapping contains immutable lookup data and does not duplicate mutable status fields.
+The URI reverse mapping is logically keyed by `(queue, change_uri, received_at_ms, sqid)` and must support a bounded descending scan over `(received_at_ms, sqid)` within one queue. As with the receipt lookup, a backend may use a reverse range scan or descending-encoded key components while exposing cursors and results in the original values. The mapping contains immutable lookup data and does not duplicate mutable status fields.
 
 The mapping repeats `received_at_ms` because receipt time is part of the promised newest-first ordering. This allows the gateway to perform a bounded ordered scan before resolving the matching authoritative summaries. Without receipt time in the mapping, the gateway would have to fetch and sort every request associated with a URI before enforcing the result maximum.
 
@@ -109,9 +109,9 @@ The URI is stored in the canonical form received from the validated Land request
 
 ### Land Receipt
 
-After synchronous validation, Land generates the sqid and one receipt timestamp. The gateway persists the authoritative summary in the internal `accepting` state, then publishes the request to the orchestrator. It does not create the URI or queue projections while the request remains `accepting`.
+After synchronous validation, Land generates the sqid and one receipt timestamp. The gateway persists the authoritative summary in the internal `accepting` state, then publishes the request to the orchestrator. It does not create the URI or receipt mappings while the request remains `accepting`.
 
-After publication succeeds, Land appends the initial `accepted` request log. Materializing `accepted`, `started`, or any later event promotes the authoritative summary out of `accepting` and creates the URI and queue projections. This handles the race where the orchestrator emits `started` before Land finishes persisting `accepted`.
+After publication succeeds, Land appends the initial `accepted` request log. Materializing `accepted`, `started`, or any later lifecycle state promotes the authoritative summary out of `accepting`, ensures each immutable URI mapping, then ensures the receipt lookup key exists. This handles the race where the orchestrator emits `started` before Land finishes persisting `accepted`.
 
 An `accepted` event is the lowest public lifecycle state. A late `accepted` event is retained in request history but must not replace `started` or any later materialized status.
 
@@ -119,7 +119,7 @@ Pipeline publication is the Land success boundary. If publication fails, Land re
 
 ### Request-Log Materialization
 
-Every gateway request-log persistence path uses the same materialization component. It appends the audit log, compares the incoming entry with the authoritative summary, conditionally advances the winner, and propagates the authoritative value to the queue projection.
+Every gateway request-log persistence path uses the same materialization component. It appends the audit log, compares the incoming entry with the authoritative summary, and conditionally advances the winner. For public summaries, it idempotently ensures URI mappings before the receipt key, including on unchanged or stale-log retries. Lookup-write failures are returned for retry.
 
 The winner comparison preserves the existing current-status reconciliation behavior:
 
@@ -127,7 +127,7 @@ The winner comparison preserves the existing current-status reconciliation behav
 2. Between versioned terminal entries, the greater request version wins.
 3. Equal terminal versions use the greater log timestamp as a tie-breaker.
 4. When no versioned terminal winner exists, the greater log timestamp wins.
-5. Any retained lifecycle event promotes an `accepting` summary into the public projections.
+5. A retained lifecycle status entry promotes an `accepting` summary into the public projections; audit-only events do not.
 6. `accepted` cannot replace `started` or any later status, even when the accepted log arrives later.
 
 Materialization uses optimistic concurrency so stale or out-of-order consumers cannot replace a newer winner. Version arithmetic and reconciliation decisions belong to the materialization component; stores perform only mechanical creates, reads, conditional updates, and bounded page queries.
@@ -144,15 +144,17 @@ The gateway performs a bounded newest-first scan of the URI reverse mapping and 
 
 ### List by Queue and Receipt Time
 
-The gateway performs one bounded range scan of the queue projection using queue, receipt-time bounds, and an optional keyset cursor. Queue projections are created only when the request reaches `accepted` or a later state, so `accepting` receipts are absent by construction. The ordering key is immutable, so later status updates cannot move an item across an issued cursor.
+The gateway scans `request_receipt` using the queue, receipt-time bounds, and optional keyset cursor, then point-reads `request_summary` for each returned request. Results preserve receipt-key order; the next token uses the last returned receipt. Later status updates cannot move an item across the immutable cursor.
+
+Receipt keys are created only for public summaries. A missing or inconsistent summary fails the page as an internal consistency error rather than silently omitting the request.
 
 ## Consistency
 
-The request log remains the append-only audit record. The authoritative summary and queue projection are eventually consistent views of its winning current state.
+The request log remains the append-only audit record. The authoritative summary is an eventually consistent view of its winning current state.
 
-Because the authoritative summary and queue projection are separate writes, a short interval can exist where request-summary retrieval and `List` show different statuses. Retried materialization repairs the queue projection from the authoritative sqid summary until both converge. Neither API reconciles logs during reads to hide this interval.
+List and request-summary retrieval read the same authoritative projection. List membership may lag until the receipt key is written; retries repair partial writes. Separate calls and per-item reads are not a shared snapshot and may observe different lifecycle versions. Neither API reconciles logs during reads.
 
-Request context has a stronger guarantee than status convergence: the authoritative receipt is persisted before the request is published to the orchestrator. Public URI and queue projections are activated only by `accepted` or a later event. Once a queue projection is visible, its queue, sqid, change URIs, and receipt time are complete.
+Request context has a stronger guarantee than status convergence: the authoritative receipt is persisted before the request is published to the orchestrator. Public lookup keys are activated only by `accepted` or a later lifecycle state. Once a receipt key is visible, its authoritative summary has complete queue, sqid, change URIs, and receipt time.
 
 ## Compatibility and Rollout
 

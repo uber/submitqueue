@@ -16,7 +16,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -30,31 +29,26 @@ import (
 
 // controllerStorageFixture provides shared stateful storage behavior for gateway controller tests.
 type controllerStorageFixture struct {
-	storage        *gwstoragemock.MockStorage
-	summaryStore   *storagemock.MockRequestSummaryStore
-	queueStore     *storagemock.MockRequestQueueSummaryStore
-	receiptStore   *storagemock.MockRequestReceiptStore
-	uriStore       *storagemock.MockRequestURIStore
-	logStore       *storagemock.MockRequestLogStore
-	mu             sync.Mutex
-	summaries      map[string]entity.RequestSummary
-	queueSummaries map[string]entity.RequestQueueSummary
-	logs           []entity.RequestLog
-	logInsertErr   error
+	storage      *gwstoragemock.MockStorage
+	summaryStore *storagemock.MockRequestSummaryStore
+	receiptStore *storagemock.MockRequestReceiptStore
+	uriStore     *storagemock.MockRequestURIStore
+	logStore     *storagemock.MockRequestLogStore
+	mu           sync.Mutex
+	summaries    map[string]entity.RequestSummary
+	logs         []entity.RequestLog
+	logInsertErr error
 }
 
 func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixture {
 	fixture := &controllerStorageFixture{
-		storage:        gwstoragemock.NewMockStorage(ctrl),
-		summaryStore:   storagemock.NewMockRequestSummaryStore(ctrl),
-		queueStore:     storagemock.NewMockRequestQueueSummaryStore(ctrl),
-		receiptStore:   storagemock.NewMockRequestReceiptStore(ctrl),
-		uriStore:       storagemock.NewMockRequestURIStore(ctrl),
-		logStore:       storagemock.NewMockRequestLogStore(ctrl),
-		summaries:      make(map[string]entity.RequestSummary),
-		queueSummaries: make(map[string]entity.RequestQueueSummary),
+		storage:      gwstoragemock.NewMockStorage(ctrl),
+		summaryStore: storagemock.NewMockRequestSummaryStore(ctrl),
+		receiptStore: storagemock.NewMockRequestReceiptStore(ctrl),
+		uriStore:     storagemock.NewMockRequestURIStore(ctrl),
+		logStore:     storagemock.NewMockRequestLogStore(ctrl),
+		summaries:    make(map[string]entity.RequestSummary),
 	}
-	fixture.storage.EXPECT().GetRequestQueueSummaryStore().Return(fixture.queueStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestReceiptStore().Return(fixture.receiptStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestSummaryStore().Return(fixture.summaryStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestLogStore().Return(fixture.logStore).AnyTimes()
@@ -93,42 +87,6 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		return nil
 	}).AnyTimes()
 
-	fixture.queueStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.RequestQueueSummary) error {
-		fixture.mu.Lock()
-		defer fixture.mu.Unlock()
-		key := queueSummaryTestKey(summary.Queue, summary.ReceivedAtMs, summary.RequestID)
-		if _, ok := fixture.queueSummaries[key]; ok {
-			return basestorage.ErrAlreadyExists
-		}
-		fixture.queueSummaries[key] = summary
-		return nil
-	}).AnyTimes()
-	fixture.queueStore.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, receivedAtMs int64, requestID string) (entity.RequestQueueSummary, error) {
-		fixture.mu.Lock()
-		defer fixture.mu.Unlock()
-		for _, summary := range fixture.queueSummaries {
-			if summary.ReceivedAtMs == receivedAtMs && summary.RequestID == requestID {
-				return summary, nil
-			}
-		}
-		return entity.RequestQueueSummary{}, basestorage.ErrNotFound
-	}).AnyTimes()
-	fixture.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.RequestQueueSummary, oldVersion, newVersion int32) error {
-		fixture.mu.Lock()
-		defer fixture.mu.Unlock()
-		key := queueSummaryTestKey(summary.Queue, summary.ReceivedAtMs, summary.RequestID)
-		current, ok := fixture.queueSummaries[key]
-		if !ok {
-			return basestorage.ErrNotFound
-		}
-		if current.Version != oldVersion {
-			return basestorage.ErrVersionMismatch
-		}
-		summary.Version = newVersion
-		fixture.queueSummaries[key] = summary
-		return nil
-	}).AnyTimes()
-
 	fixture.uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	fixture.receiptStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	fixture.logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
@@ -153,14 +111,6 @@ func (f *controllerStorageFixture) addSummary(summary entity.RequestSummary) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.summaries[summary.RequestID] = summary
-	f.queueSummaries[queueSummaryTestKey(summary.Queue, summary.ReceivedAtMs, summary.RequestID)] = entity.RequestQueueSummary{
-		RequestID: summary.RequestID, Queue: summary.Queue, ChangeURIs: summary.ChangeURIs, ReceivedAtMs: summary.ReceivedAtMs,
-		Status: summary.Status, Version: summary.Version, LastError: summary.LastError, Metadata: summary.Metadata,
-	}
-}
-
-func queueSummaryTestKey(queue string, receivedAtMs int64, requestID string) string {
-	return fmt.Sprintf("%s\x00%d\x00%s", queue, receivedAtMs, requestID)
 }
 
 // newFactory returns a storage.Factory that resolves every queue to the
