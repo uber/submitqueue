@@ -1,0 +1,62 @@
+import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { createClient } from "@connectrpc/connect";
+import { createGrpcTransport } from "@connectrpc/connect-node";
+import { Stovepipe } from "@submitqueue/api/stovepipe";
+const client = createClient(Stovepipe, createGrpcTransport({ baseUrl: process.env.STOVEPIPE_E2E_URL!, defaultTimeoutMs: 5_000 }));
+test("real ingestion, queue selection, cursors, project results, history and refresh", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const { id } = await client.ingest({ queue: "monorepo/main" });
+  await expect.poll(async () => (await client.list({ queue: "monorepo/main" })).requests.some(request => request.requestId === id), { timeout: 0 }).toBe(true);
+  await page.goto("/monorepo%2Fmain");
+  await expect(page.getByRole("heading", { name: "monorepo/main", exact: true })).toBeVisible();
+  await page.getByRole("table", { name: "Requests", exact: true }).getByRole("row").filter({ has: page.getByRole("cell", { name: id, exact: true }) }).getByRole("link").click();
+  await expect(page.getByRole("heading", { name: `Request ${id}`, exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Request history" }).locator("tbody tr")).not.toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole("navigation", { name: "Queues" }).getByRole("link", { name: "web/pagination", exact: true }).click();
+  const requests = page.getByRole("table", { name: "Requests", exact: true });
+  await expect(requests.locator("tbody tr")).toHaveCount(50);
+  await expect.poll(() => page.locator("time").evaluateAll(elements => {
+    const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "long" });
+    return Intl.DateTimeFormat().resolvedOptions().timeZone === "America/Los_Angeles" &&
+      elements.every(element => element.textContent === formatter.format(new Date(element.getAttribute("datetime")!)));
+  })).toBe(true);
+  await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-queue.png`, fullPage: true });
+  await requests.getByRole("link", { name: "git://web/pagination/51?file=src%2Fmain#fragment", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/web%2Fpagination/change/git%3A%2F%2Fweb%2Fpagination%2F51%3Ffile%3Dsrc%252Fmain%23fragment");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Request 51", exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Project results" }).locator("tbody tr")).toHaveCount(10);
+  await expect(page.getByText("Green (0)")).toHaveCount(2);
+  await expect(page.getByText("No recorded result")).toHaveCount(9);
+  await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request.png`, fullPage: true });
+  const rawHref = await page.getByRole("link", { name: "Raw project JSON" }).getAttribute("href");
+  const response = await page.request.get(rawHref!);
+  expect(response.ok()).toBe(true);
+  const raw = await response.json();
+  expect(raw).toHaveLength(51);
+  expect(raw[50]).toEqual({ project: "project-51" });
+  expect(raw[0]).toEqual({ project: "project-1", breakageDegree: 0 });
+  expect(raw[1]).toEqual({ project: "project-2" });
+  for (let pageNumber = 2; pageNumber <= 6; pageNumber++) {
+    await page.getByRole("link", { name: "Next 10 projects →" }).click();
+    await expect(page.getByRole("table", { name: "Project results" }).getByText(`project-${(pageNumber - 1) * 10 + 1}`, { exact: true })).toBeVisible();
+    await expect(page.getByRole("table", { name: "Project results" }).locator("tbody tr")).toHaveCount(pageNumber === 6 ? 1 : 10);
+  }
+  await expect(page.getByRole("table", { name: "Project results" }).locator("tbody tr")).toHaveCount(1);
+  await expect(page.getByText("project-51", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Raw project JSON" })).toHaveAttribute("href", rawHref!);
+  await page.getByRole("link", { name: "← Queue requests" }).click();
+  await page.getByRole("link", { name: "Older requests →" }).click();
+  await expect(requests.locator("tbody tr")).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.has("page")).toBe(true);
+  await page.reload();
+  await expect(requests.locator("tbody tr")).toHaveCount(1);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole("navigation", { name: "Queues" }).getByRole("link", { name: "web/empty", exact: true }).click();
+  await expect(page.getByText("No retained requests on this queue.")).toBeVisible();
+  expect(errors).toEqual([]);
+});

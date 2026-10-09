@@ -10,6 +10,7 @@ npm_link_all_packages(name = "node_modules")
         src = target,
     )
     for package, target in {
+        "@submitqueue/web-stovepipe": "//web/stovepipe:pkg",
         "@submitqueue/web-submitqueue": "//web/submitqueue:pkg",
     }.items()
 ]
@@ -21,6 +22,7 @@ js_test(
     data = [
         ":node_modules",
         ":node_modules/@submitqueue/web-submitqueue",
+        ":node_modules/@submitqueue/web-stovepipe",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@opentelemetry/api",

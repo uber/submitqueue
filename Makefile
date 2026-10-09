@@ -697,15 +697,15 @@ tidy-go: ## Run go mod tidy
 	@echo "Running go mod tidy..."
 	@$(BAZEL) run @rules_go//go -- mod tidy -e
 
-web-build: ## Build the web packages and deployable Next.js image with Bazel
-	@$(BAZEL) build //web/submitqueue:pkg //web/service/submitqueue:image
+web-build: ## Build the web packages and deployable Next.js images with Bazel
+	@$(BAZEL) build //web/stovepipe:pkg //web/submitqueue:pkg //web/service/submitqueue:image //web/service/stovepipe:image
 
 web-check: ## Run web generation, packaging, lint, type, unit, and image checks with Bazel
 	@$(BAZEL) test //web:check --test_output=errors
-	@$(BAZEL) build //web/service/submitqueue:image
+	@$(BAZEL) build //web/service/submitqueue:image //web/service/stovepipe:image
 
-web-e2e-test: ## Run the Bazel-managed real-stack Playwright and axe web test
-	@$(BAZEL) test //web/test/e2e:web_test --test_output=errors
+web-e2e-test: ## Run real-stack browser tests with Playwright and axe
+	@$(BAZEL) test //web/test/e2e:web_test //web/test/e2e/stovepipe:web_test --test_output=errors
 
 web-image-load: ## Build and load the deployable web image into Docker with Bazel (also tagged with SQ_DOCKER_IMAGE_PREFIX)
 	@$(BAZEL) run //web/service/submitqueue:image_load

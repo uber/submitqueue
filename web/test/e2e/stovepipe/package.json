@@ -1,0 +1,12 @@
+{
+  "name": "@submitqueue/stovepipe-web-e2e",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@submitqueue/api": "workspace:*",
+    "@connectrpc/connect": "2.1.1",
+    "@connectrpc/connect-node": "2.1.1",
+    "@playwright/test": "1.55.1",
+    "@axe-core/playwright": "4.10.2"
+  }
+}

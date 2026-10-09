@@ -1,0 +1,76 @@
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_go//go:def.bzl", "go_cross_binary")
+
+package(default_visibility = ["//web:__subpackages__"], default_testonly = True)
+npm_link_all_packages(name = "node_modules")
+
+go_cross_binary(
+    name = "stovepipe_linux",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = "//service/stovepipe/server:stovepipe",
+)
+
+pkg_files(
+    name = "stovepipe_binary",
+    srcs = [":stovepipe_linux"],
+    attributes = pkg_attributes(mode = "0555"),
+    prefix = "app",
+    renames = {":stovepipe_linux": "stovepipe"},
+)
+
+pkg_tar(name = "stovepipe_layer", srcs = [":stovepipe_binary"])
+
+oci_image(
+    name = "stovepipe_image",
+    architecture = "amd64",
+    entrypoint = ["/app/stovepipe"],
+    os = "linux",
+    tars = [":stovepipe_layer"],
+    workdir = "/app",
+)
+
+oci_load(
+    name = "stovepipe_image_load",
+    image = ":stovepipe_image",
+    repo_tags = ["stovepipe-web-e2e-service:latest"],
+)
+
+py_library(name = "run_e2e_lib", srcs = ["run_e2e.py"])
+py_test(
+    name = "run_e2e_test",
+    srcs = ["run_e2e_test.py"],
+    main = "run_e2e_test.py",
+    deps = [":run_e2e_lib"],
+    legacy_create_init = 0,
+)
+
+py_test(
+    name = "web_test",
+    size = "large",
+    srcs = ["run_e2e_main.py"],
+    main = "run_e2e_main.py",
+    deps = [":run_e2e_lib"],
+    legacy_create_init = 0,
+    args = ["$(rootpath :stovepipe_image_load)", "$(rootpath //web/test/e2e:mysql_image_load)", "$(rootpath //web/service/stovepipe:image_load)", "$(rootpath @playwright//:chromium)", "$(rootpath //web/test/e2e:playwright)"],
+    data = [
+        ":node_modules", "package.json", "docker-compose.yml", "playwright.config.ts", "stovepipe.spec.ts",
+        "//web/test/e2e:playwright", "//web/api:lib", "//web/api:lib_types",
+        "//web/service/stovepipe:image_load", "@playwright//:chromium",
+        "//service/stovepipe:docker-compose.yml", ":stovepipe_image_load", "//web/test/e2e:mysql_image_load",
+        "//platform/extension/counter/mysql/schema", "//platform/extension/messagequeue/mysql/schema",
+        "//stovepipe/extension/storage/mysql/schema",
+    ],
+    tags = ["e2e", "integration", "requires-network"],
+)
+
+ts_config(name = "tsconfig", src = "tsconfig.json", deps = ["//web:tsconfig_base"])
+ts_project(
+    name = "typecheck", srcs = ["playwright.config.ts", "stovepipe.spec.ts"],
+    declaration = True, no_emit = True, tsconfig = ":tsconfig",
+    deps = [":node_modules", "//web:node_modules/@types/node"],
+)

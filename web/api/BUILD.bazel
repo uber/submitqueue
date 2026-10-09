@@ -12,6 +12,8 @@ load("//web/tool:generate_api.bzl", "generate_web_api")
 package(default_visibility = [
     "//web:__pkg__",
     "//web/service/submitqueue:__pkg__",
+    "//web/service/stovepipe:__pkg__",
+    "//web/test/e2e/stovepipe:__pkg__",
     "//web/test/e2e:__pkg__",
 ])
 
@@ -29,6 +31,7 @@ generate_web_api(
         "//api/base/change/proto:change.proto",
         "//api/base/mergestrategy/proto:mergestrategy.proto",
         "//api/submitqueue/gateway/proto:gateway.proto",
+        "//api/stovepipe/proto:stovepipe.proto",
     ],
 )
 

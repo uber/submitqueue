@@ -8,7 +8,7 @@ from pathlib import Path
 
 # The module reads the gateway through a structural contract; the transport,
 # generated protos, and web framework belong to the host.
-_FORBIDDEN_IMPORTS = ("@submitqueue/api", "@connectrpc/", "@bufbuild/", "next")
+_FORBIDDEN_IMPORTS = ("@submitqueue/api", "@submitqueue/web-submitqueue", "@connectrpc/", "@bufbuild/", "next")
 
 # Modules the client-safe root entry must never reach, directly or transitively.
 _CLIENT_FORBIDDEN_MODULES = ("package/dist/controller/", "package/dist/module.js", "package/dist/server.js")
@@ -60,17 +60,18 @@ def _imports_forbidden(specifier: str) -> bool:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         raise RuntimeError("expected the module package archive")
 
     with tarfile.open(Path(sys.argv[1])) as archive:
-        missing = sorted(_EXPECTED_FILES - {member.name for member in archive.getmembers()})
+        expected = _EXPECTED_FILES if len(sys.argv) == 2 else {"package/dist/index.d.ts", "package/dist/server.d.ts", "package/README.md"}
+        missing = sorted(expected - {member.name for member in archive.getmembers()})
         if missing:
             print(f"The package is missing: {', '.join(missing)}", file=sys.stderr)
             return 1
         package = json.load(archive.extractfile("package/package.json"))
-        if "next" in package.get("peerDependencies", {}) or "next" in package.get("dependencies", {}):
-            print("The module must not require Next.js.", file=sys.stderr)
+        if any(_imports_forbidden(name) for group in ("peerDependencies", "dependencies", "optionalDependencies") for name in package.get(group, {})):
+            print("The core module must not require framework or transport dependencies.", file=sys.stderr)
             return 1
         stylesheet = package.get("exports", {}).get("./styles.css")
         if stylesheet != "./view/styles.css" or stylesheet not in package.get("sideEffects", []):

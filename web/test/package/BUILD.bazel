@@ -10,6 +10,7 @@ npm_link_package(
     src = "//web/submitqueue:pkg",
 )
 
+
 ts_config(
     name = "tsconfig",
     src = "tsconfig.json",
@@ -55,4 +56,13 @@ js_test(
         "//web:node_modules/react",
         "//web:node_modules/react-dom",
     ],
+)
+
+py_test(
+    name = "stovepipe_pack_contents_test",
+    srcs = ["pack_contents_test.py"],
+    main = "pack_contents_test.py",
+    legacy_create_init = 0,
+    args = ["$(rootpath //web/stovepipe:pkg.pack)", "stovepipe"],
+    data = ["//web/stovepipe:pkg.pack"],
 )

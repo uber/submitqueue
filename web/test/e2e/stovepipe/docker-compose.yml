@@ -1,0 +1,16 @@
+services:
+  mysql-app:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue-web-e2e}-mysql:8.0
+  mysql-queue:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue-web-e2e}-mysql:8.0
+  web-service:
+    image: ${STOVEPIPE_WEB_IMAGE:-stovepipe-web-service:latest}
+    ports:
+      - "3000"
+    environment:
+      STOVEPIPE_URL: http://stovepipe-service:8080
+      STOVEPIPE_ALLOW_PLAINTEXT: "true"
+      STOVEPIPE_WEB_TOKEN: test
+      STOVEPIPE_WEB_QUEUES: ${STOVEPIPE_WEB_QUEUES}
+    depends_on:
+      - stovepipe-service
