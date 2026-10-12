@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { WebNavigationProvider } from "./navigation.js";
+import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { SubmitQueueApp } from "./app.js";
 import { SubmitQueuePage, SubmitQueueShell, SubmitQueueStatePage } from "./pages.js";
 import { createSubmitQueueWeb } from "../module.js";

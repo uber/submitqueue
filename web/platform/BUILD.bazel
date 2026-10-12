@@ -1,0 +1,30 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//web/platform:vitest/package_json.bzl", vitest = "bin")
+load("@npm//web/service/submitqueue:eslint/package_json.bzl", eslint = "bin")
+load("//web/tool:library.bzl", "web_library")
+
+package(default_visibility = ["//web:__subpackages__"])
+
+npm_link_all_packages(name = "node_modules")
+
+web_library(
+    assets = ["styles.css"],
+    eslint = eslint,
+    package = "@submitqueue/web-platform",
+    test_deps = [
+        ":node_modules/@testing-library/jest-dom",
+        ":node_modules/@testing-library/react",
+        ":node_modules/@types/react-dom",
+        ":node_modules/jsdom",
+        ":node_modules/react-dom",
+        ":node_modules/vitest",
+    ],
+    vitest = vitest,
+    deps = [
+        ":node_modules/@types/node",
+        ":node_modules/@types/react",
+        ":node_modules/react",
+    ],
+)
+
+exports_files(["styles.css"])

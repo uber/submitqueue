@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "*": ["**/node_modules/**"],
   },
-  transpilePackages: ["@submitqueue/api", "@submitqueue/web-submitqueue"],
+  transpilePackages: ["@submitqueue/web-platform", "@submitqueue/web-service-shared", "@submitqueue/api", "@submitqueue/web-submitqueue"],
 };
 
 export default nextConfig;

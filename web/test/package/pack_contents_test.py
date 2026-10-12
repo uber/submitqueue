@@ -8,7 +8,7 @@ from pathlib import Path
 
 # The module reads the gateway through a structural contract; the transport,
 # generated protos, and web framework belong to the host.
-_FORBIDDEN_IMPORTS = ("@submitqueue/api", "@connectrpc/", "@bufbuild/", "next")
+_FORBIDDEN_IMPORTS = ("@submitqueue/api", "@submitqueue/web-submitqueue", "@connectrpc/", "@bufbuild/", "next")
 
 # Modules the client-safe root entry must never reach, directly or transitively.
 _CLIENT_FORBIDDEN_MODULES = ("package/dist/controller/", "package/dist/module.js", "package/dist/server.js")
@@ -69,8 +69,12 @@ def main() -> int:
             print(f"The package is missing: {', '.join(missing)}", file=sys.stderr)
             return 1
         package = json.load(archive.extractfile("package/package.json"))
-        if "next" in package.get("peerDependencies", {}) or "next" in package.get("dependencies", {}):
-            print("The module must not require Next.js.", file=sys.stderr)
+        if any(
+            _imports_forbidden(name)
+            for group in ("peerDependencies", "dependencies", "optionalDependencies")
+            for name in package.get(group, {})
+        ):
+            print("The core module must not require framework or transport dependencies.", file=sys.stderr)
             return 1
         stylesheet = package.get("exports", {}).get("./styles.css")
         if stylesheet != "./view/styles.css" or stylesheet not in package.get("sideEffects", []):

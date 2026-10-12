@@ -4,7 +4,7 @@ import { connection } from "next/server";
 import { cache } from "react";
 import { SubmitQueueApp } from "@submitqueue/web-submitqueue";
 import type { SubmitQueueWeb, WebSearchParams } from "@submitqueue/web-submitqueue/server";
-import { NextNavigationProvider } from "./navigation";
+import { NextNavigationProvider } from "@submitqueue/web-service-shared/navigation";
 
 export interface NextPageProps {
   params: Promise<{ path?: string[] }>;

@@ -21,6 +21,8 @@ const html = renderToStaticMarkup(createElement(SubmitQueueShell, { homeHref: "/
 assert.ok(html.includes('href="/queues/demo-queue/request/demo-queue/1"'));
 assert.ok(html.includes('aria-label="Queue requests"'));
 const stylesheet = await readFile(new URL(import.meta.resolve("@submitqueue/web-submitqueue/styles.css")), "utf8");
-assert.ok(stylesheet.includes(".sq-app.site-frame"));
+assert.ok(stylesheet.includes("@submitqueue/web-platform/styles.css"));
+const commonStyles = await readFile(new URL(import.meta.resolve("@submitqueue/web-platform/styles.css")), "utf8");
+assert.ok(commonStyles.includes(".sq-app.site-frame"));
 assert.ok(stylesheet.includes(".sq-app .sq-history"));
 console.log("An ordinary Node/React host loaded and rendered the application with its packaged stylesheet.");

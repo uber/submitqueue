@@ -20,6 +20,13 @@ test_suite(
         "//web/service/submitqueue:typecheck_typecheck_test",
         "//web/submitqueue:test",
         "//web/submitqueue:typecheck_typecheck_test",
+        "//web/platform:lint",
+        "//web/platform:test",
+        "//web/platform:typecheck_typecheck_test",
+        "//web/service/shared:lint",
+        "//web/service/shared:test",
+        "//web/service/shared:typecheck_typecheck_test",
+        "//web/submitqueue:lint",
         ":e2e_typecheck_typecheck_test",
     ],
 )

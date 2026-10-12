@@ -5,7 +5,7 @@ export {
   SubmitQueueApp, SubmitQueuePage, SubmitQueueShell, SubmitQueueStatePage,
   type SubmitQueuePageProps, type SubmitQueueShellProps,
 } from "./view/index.js";
-export { WebNavigationProvider, type WebLinkProps, type WebNavigation } from "./view/navigation.js";
+export { WebNavigationProvider, type WebLinkProps, type WebNavigation } from "@submitqueue/web-platform";
 export type {
   ChangeDetailModel, ChangePageModel, ChangeSubmissionModel, HistoryEventModel, HistoryEventType, LoadResult,
   QueueDirectoryPageModel, QueueModel, QueueRequestsPageModel, RequestDetailModel, RequestListModel,

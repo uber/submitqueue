@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { safeInt64ToNumber } from "./int64.js";
-import { decodePathSegment, encodePathSegment } from "./path-segment.js";
+import { decodePathSegment, encodePathSegment } from "@submitqueue/web-platform/path-segment";
 
 describe("safeInt64ToNumber", () => {
   it.each([

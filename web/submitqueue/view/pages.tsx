@@ -2,7 +2,7 @@
 
 import { WebRefreshControl } from "./refresh-control.js";
 import { WebShell, type WebShellProps } from "./shell.js";
-import { Timestamp } from "./timestamp.js";
+import { Timestamp } from "@submitqueue/web-platform";
 import { WebLink } from "./web-app.js";
 import { ChangeSubmissions, LastSuccessfulData, QueueDirectory, RequestDetailView, RequestListView } from "./components.js";
 import type { SubmitQueuePageModel } from "../entity/index.js";

@@ -1,4 +1,5 @@
 packages:
+  - platform
   - api
   - service/*
   - submitqueue

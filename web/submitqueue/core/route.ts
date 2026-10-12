@@ -1,4 +1,4 @@
-import { decodePathSegment } from "./path-segment.js";
+import { decodePathSegment } from "@submitqueue/web-platform/path-segment";
 
 /** Raw query parameters of a page URL, as frameworks commonly expose them. */
 export type WebSearchParams = Readonly<Record<string, string | string[] | undefined>>;

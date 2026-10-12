@@ -24,7 +24,8 @@
     "pino": "^10.4.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "@submitqueue/web-service-shared": "0.0.0"
   },
   "devDependencies": {
     "@types/node": "22.18.6",

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { WebNavigationProvider } from "./navigation.js";
+import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { WebApp } from "./web-app.js";
 import { ChangeSubmissions, QueueDirectory, RequestDetail, RequestList, RequestListView, RequestStatus } from "./components.js";
 import type { ChangeDetailModel, RequestDetailModel, RequestListModel } from "../entity/index.js";

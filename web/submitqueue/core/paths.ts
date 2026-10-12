@@ -1,6 +1,4 @@
-import { encodePathSegment } from "./path-segment.js";
-
-export { decodePathSegment } from "./path-segment.js";
+import { encodePathSegment } from "@submitqueue/web-platform/path-segment";
 
 export interface RequestsPathOptions {
   pageToken?: string | null;

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useMemo, useRef, type ComponentType } from "react";
 import type { WebPageModel } from "../entity/index.js";
-import { useWebNavigation, type WebLinkProps } from "./navigation.js";
+import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
 
 /** Client-side controls of the enclosing {@link WebApp}. */
 export interface WebAppControls {

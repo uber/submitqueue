@@ -10,6 +10,11 @@ npm_link_package(
     src = "//web/submitqueue:pkg",
 )
 
+npm_link_package(
+    name = "node_modules/@submitqueue/web-platform",
+    src = "//web/platform:pkg",
+)
+
 ts_config(
     name = "tsconfig",
     src = "tsconfig.json",
@@ -23,6 +28,7 @@ ts_project(
     tsconfig = ":tsconfig",
     deps = [
         ":node_modules/@submitqueue/web-submitqueue",
+        ":node_modules/@submitqueue/web-platform",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@opentelemetry/api",
@@ -47,6 +53,7 @@ js_test(
     entry_point = "consumer-runtime.mjs",
     data = [
         ":node_modules/@submitqueue/web-submitqueue",
+        ":node_modules/@submitqueue/web-platform",
         "//web/submitqueue:node_modules",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",

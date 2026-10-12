@@ -1,6 +1,6 @@
 import "server-only";
 
-import { parseGatewayBaseUrl } from "./transport";
+import { parseServiceBaseUrl } from "@submitqueue/web-service-shared/transport";
 
 export const GATEWAY_DEADLINE_MS = 5_000;
 export const GATEWAY_HEALTH_DEADLINE_MS = 1_000;
@@ -18,7 +18,7 @@ export function loadGatewayConfiguration(environment: Environment = process.env)
     throw new Error("SUBMITQUEUE_GATEWAY_URL is required");
   }
   const allowPlaintext = environment.SUBMITQUEUE_GATEWAY_ALLOW_PLAINTEXT === "true";
-  return { baseUrl: parseGatewayBaseUrl(rawBaseUrl, allowPlaintext), allowPlaintext };
+  return { baseUrl: parseServiceBaseUrl(rawBaseUrl, allowPlaintext), allowPlaintext };
 }
 
 /** The key that signs pagination cursors; independent of any viewer credential so either can rotate alone. */

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useTransition, type ReactNode } from "react";
-import { WebNavigationProvider, type WebLinkProps, type WebNavigation } from "@submitqueue/web-submitqueue";
+import { WebNavigationProvider, type WebLinkProps, type WebNavigation } from "@submitqueue/web-platform";
 
 // Prefetching dynamic pages would turn every visible link into a backend read.
 function NextWebLink(props: WebLinkProps) {

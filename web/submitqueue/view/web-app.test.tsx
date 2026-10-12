@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { WebPageModel } from "../entity/index.js";
-import { WebNavigationProvider, type WebNavigation } from "./navigation.js";
+import { WebNavigationProvider, type WebNavigation } from "@submitqueue/web-platform";
 import { WebRefreshControl } from "./refresh-control.js";
 import { useWebApp, WebApp, WebLink } from "./web-app.js";
 

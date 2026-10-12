@@ -1,4 +1,4 @@
-import { createNextHealthRoute } from "../../next/health";
+import { createNextHealthRoute } from "@submitqueue/web-service-shared/health";
 import { loadAuthConfiguration } from "../../server/auth";
 import { loadCursorSecret, loadGatewayConfiguration } from "../../server/config";
 import { pingReferenceGateway } from "../../server/gateway";

@@ -11,7 +11,7 @@ export default defineConfig({
     environment: "node",
     server: {
       deps: {
-        inline: ["@submitqueue/web-submitqueue"],
+        inline: ["@submitqueue/web-service-shared", "@submitqueue/web-submitqueue"],
       },
     },
   },

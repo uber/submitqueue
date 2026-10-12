@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient, type Client } from "@connectrpc/connect";
 import { SubmitQueueGateway } from "@submitqueue/api/submitqueue/gateway";
-import { newConnectTransport } from "./transport";
+import { newConnectTransport } from "@submitqueue/web-service-shared/transport";
 import { GATEWAY_DEADLINE_MS, GATEWAY_HEALTH_DEADLINE_MS, loadGatewayConfiguration } from "./config";
 
 let client: Client<typeof SubmitQueueGateway> | undefined;

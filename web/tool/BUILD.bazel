@@ -1,3 +1,13 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+
 exports_files([
     "generate_api.bzl",
+    "library.bzl",
+    "eslint.config.mjs",
 ])
+
+js_library(
+    name = "eslint_config",
+    srcs = ["eslint.config.mjs"],
+    visibility = ["//web:__subpackages__"],
+)

@@ -10,6 +10,7 @@ npm_link_all_packages(name = "node_modules")
         src = target,
     )
     for package, target in {
+        "@submitqueue/web-platform": "//web/platform:pkg",
         "@submitqueue/web-submitqueue": "//web/submitqueue:pkg",
     }.items()
 ]
@@ -20,6 +21,7 @@ js_test(
     name = "react18_runtime_test",
     data = [
         ":node_modules",
+        ":node_modules/@submitqueue/web-platform",
         ":node_modules/@submitqueue/web-submitqueue",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",

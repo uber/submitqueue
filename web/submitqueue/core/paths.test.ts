@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decodePathSegment, WebPaths } from "./paths";
+import { decodePathSegment } from "@submitqueue/web-platform/path-segment";
+import { WebPaths } from "./paths";
 
 describe("WebPaths", () => {
   it("keeps the queue and complete sqid readable in the request path", () => {

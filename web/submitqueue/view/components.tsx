@@ -2,7 +2,7 @@
 
 import { ErrorState } from "./error-state.js";
 import { useLastSuccessfulData } from "./last-successful-data.js";
-import { Timestamp } from "./timestamp.js";
+import { Timestamp } from "@submitqueue/web-platform";
 import { useWebApp, WebLink } from "./web-app.js";
 import { useState, type ReactNode } from "react";
 import type {

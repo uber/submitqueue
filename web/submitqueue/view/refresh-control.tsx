@@ -1,7 +1,7 @@
 "use client";
 
 import type { WebRefreshModel } from "../entity/index.js";
-import { AutoRefresh } from "./auto-refresh.js";
+import { AutoRefresh } from "@submitqueue/web-platform";
 import { useWebApp } from "./web-app.js";
 
 /** Refresh button and polling status for the page rendered by the enclosing `WebApp`; renders nothing outside one. */
