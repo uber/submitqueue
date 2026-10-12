@@ -121,14 +121,6 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 	}
 }
 
-type fakeProjectStatusController struct {
-	getStatus func(context.Context, entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error)
-}
-
-func (f *fakeProjectStatusController) GetProjectStatus(ctx context.Context, req entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error) {
-	return f.getStatus(ctx, req)
-}
-
 func TestGetProjectStatus(t *testing.T) {
 	controllerErr := errors.New("controller failed")
 	for _, selector := range []string{"ID", "URI"} {
@@ -144,13 +136,11 @@ func TestGetProjectStatus(t *testing.T) {
 				} else {
 					wantReq.ChangeURI = "uri"
 				}
-				fake := &fakeProjectStatusController{getStatus: func(_ context.Context, req entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error) {
-					assert.Equal(t, wantReq, req)
-					return entity.GetProjectStatusResult{
-						RequestSummary: entity.RequestSummary{RequestID: "7", Queue: "queue", URI: "uri", State: entity.RequestStateSucceeded},
-					}, callErr
-				}}
-				srv := &StovepipeServer{projectStatusController: fake}
+				projectStatusController := controllermock.NewMockProjectStatusController(gomock.NewController(t))
+				projectStatusController.EXPECT().GetProjectStatus(gomock.Any(), wantReq).Return(entity.GetProjectStatusResult{
+					RequestSummary: entity.RequestSummary{RequestID: "7", Queue: "queue", URI: "uri", State: entity.RequestStateSucceeded},
+				}, callErr)
+				srv := &StovepipeServer{projectStatusController: projectStatusController}
 				if selector == "ID" {
 					response, err := srv.GetProjectStatusByID(context.Background(), &pb.GetProjectStatusByIDRequest{
 						Queue: "queue", RequestId: "7", Projects: []string{"project-a"}, PageSize: 25, PageToken: "token",

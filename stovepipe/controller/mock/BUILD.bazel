@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
-    srcs = ["request_history_mock.go"],
+    srcs = [
+        "project_status_mock.go",
+        "request_history_mock.go",
+    ],
     importpath = "github.com/uber/submitqueue/stovepipe/controller/mock",
     visibility = ["//visibility:public"],
     deps = [

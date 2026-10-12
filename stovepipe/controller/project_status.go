@@ -14,6 +14,8 @@
 
 package controller
 
+//go:generate mockgen -source=project_status.go -destination=mock/project_status_mock.go -package=mock
+
 import (
 	"context"
 	"encoding/base64"
