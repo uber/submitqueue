@@ -39,6 +39,7 @@ import (
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 type StovepipeIntegrationSuite struct {
@@ -186,13 +187,32 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAPIs() {
 	require.Zero(t, requestRows)
 
 	byID, err := s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: queue, RequestId: requestID})
-	require.NoError(t, err)
-	assertHistoryEvents(t, byID.Events)
+	require.Error(t, err)
+	assert.Nil(t, byID)
 
 	byURI, err := s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: uri})
+	require.Error(t, err)
+	assert.Nil(t, byURI)
+
+	const baseURI = "git://history-api/main/base"
+	_, err = s.db.Exec(`INSERT INTO request_summary
+		(queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version, accepted_at_ms, outcome_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		queue, requestID, uri, baseURI, "succeeded", 3, 2000, 1, 1000, "build_succeeded")
+	require.NoError(t, err)
+	byID, err = s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: queue, RequestId: requestID})
+	require.NoError(t, err)
+	byURI, err = s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: uri})
 	require.NoError(t, err)
 	require.Len(t, byURI.Histories, 1)
+	wantSummary := &pb.RequestSummary{
+		RequestId: requestID, Queue: queue, ChangeUri: uri, BaseUri: baseURI, RequestState: "succeeded",
+		StateUpdatedAtMs: 2000, AcceptedAtMs: 1000, OutcomeReason: "build_succeeded",
+	}
+	assert.True(t, proto.Equal(wantSummary, byID.RequestSummary))
+	assert.True(t, proto.Equal(wantSummary, byURI.Histories[0].RequestSummary))
 	assert.Equal(t, requestID, byURI.Histories[0].RequestId)
+	assertHistoryEvents(t, byID.Events)
 	assertHistoryEvents(t, byURI.Histories[0].Events)
 }
 
@@ -220,6 +240,11 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAbsence() {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		queue, scopedID, "occurrence/001", 1000, "accepted", "", 1, "", `{}`,
 	)
+	require.NoError(t, err)
+
+	_, err = s.db.Exec(`INSERT INTO request_summary
+		(queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, queue, missingID, missingURI, "", "accepted", 1, 1000, 1)
 	require.NoError(t, err)
 
 	tests := []struct {

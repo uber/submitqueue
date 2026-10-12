@@ -86,18 +86,22 @@ message HistoryEvent {
     string outcome_reason = 5;
 }
 
-// RequestHistory identifies one request and contains its ordered events.
+// RequestHistory identifies one request and contains its ordered events and current summary.
 message RequestHistory {
     // Queue-scoped decimal request identifier.
     string request_id = 1;
     // Events ordered by occurrence time and stable event identity.
     repeated HistoryEvent events = 2;
+    // Current materialized lifecycle summary. Always present in successful responses.
+    RequestSummary request_summary = 3;
 }
 
-// GetRequestHistoryByIDResponse contains all retained events for one request.
+// GetRequestHistoryByIDResponse contains retained events and the current summary for one request.
 message GetRequestHistoryByIDResponse {
     // Events ordered by occurrence time and stable event identity.
     repeated HistoryEvent events = 1;
+    // Current materialized lifecycle summary. Always present in successful responses.
+    RequestSummary request_summary = 2;
 }
 
 // GetRequestHistoryByURIResponse contains all retained request histories for an exact URI.

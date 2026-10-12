@@ -613,6 +613,7 @@ GO_GENERATE_PACKAGES := \
 	./platform/extension/hook/... \
 	./platform/extension/messagequeue/... \
 	./runway/extension/merger/... \
+	./stovepipe/controller/... \
 	./stovepipe/core/requestlog/... \
 	./stovepipe/extension/buildrunner/... \
 	./stovepipe/extension/projectstatus/... \

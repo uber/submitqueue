@@ -81,6 +81,20 @@ func IsRequestHistoryNotFound(err error) bool {
 	return errors.As(err, &byURI)
 }
 
+// RequestHistoryConsistencyError indicates that a summary disagrees with the selected history.
+type RequestHistoryConsistencyError struct {
+	// Queue is the selected queue.
+	Queue string
+	// RequestID identifies the selected request.
+	RequestID string
+	// Reason describes the disagreement with the persisted summary.
+	Reason string
+}
+
+func (e *RequestHistoryConsistencyError) Error() string {
+	return fmt.Sprintf("request history %s queue=%q request_id=%q", e.Reason, e.Queue, e.RequestID)
+}
+
 // ListConsistencyError indicates an invalid acceptance mapping, a missing summary,
 // or disagreement between the two. It represents an infrastructure failure, not a user lookup miss.
 type ListConsistencyError struct {

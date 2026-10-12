@@ -147,19 +147,20 @@ func TestRequestHistoriesToProto(t *testing.T) {
 		{
 			name: "maps groups in order",
 			histories: []entity.RequestHistory{
-				{RequestID: "1", Events: logs},
-				{RequestID: "2", Events: []entity.RequestLog{}},
+				{RequestID: "1", Events: logs, RequestSummary: entity.RequestSummary{RequestID: "1"}},
+				{RequestID: "2", Events: []entity.RequestLog{}, RequestSummary: entity.RequestSummary{RequestID: "2"}},
 			},
 			want: []*pb.RequestHistory{
 				{
-					RequestId: "1",
+					RequestId:      "1",
+					RequestSummary: &pb.RequestSummary{RequestId: "1"},
 					Events: []*pb.HistoryEvent{{
 						EventId:     "state/1",
 						TimestampMs: 10,
 						Occurrence:  &pb.HistoryEvent_RequestState{RequestState: "accepted"},
 					}},
 				},
-				{RequestId: "2", Events: []*pb.HistoryEvent{}},
+				{RequestId: "2", Events: []*pb.HistoryEvent{}, RequestSummary: &pb.RequestSummary{RequestId: "2"}},
 			},
 		},
 		{name: "nil input", histories: nil, want: []*pb.RequestHistory{}},
@@ -171,4 +172,23 @@ func TestRequestHistoriesToProto(t *testing.T) {
 			assert.Equal(t, tt.want, RequestHistoriesToProto(tt.histories))
 		})
 	}
+}
+
+func TestRequestHistorySummaryMapping(t *testing.T) {
+	history := entity.RequestHistory{
+		RequestID: "7", Events: []entity.RequestLog{{ID: "accepted", State: entity.RequestStateAccepted}},
+		RequestSummary: entity.RequestSummary{
+			RequestID: "7", Queue: "queue", URI: "uri", BaseURI: "base", State: "future-state",
+			StateTimestampMs: 200, AcceptedAtMs: 100, OutcomeReason: "future-reason",
+		},
+	}
+	byID := RequestHistoryByIDToProto(history)
+	byURI := RequestHistoriesToProto([]entity.RequestHistory{history})[0]
+	assert.Equal(t, byID.Events, byURI.Events)
+	want := &pb.RequestSummary{
+		RequestId: "7", Queue: "queue", ChangeUri: "uri", BaseUri: "base", RequestState: "future-state",
+		StateUpdatedAtMs: 200, AcceptedAtMs: 100, OutcomeReason: "future-reason",
+	}
+	assert.Equal(t, want, byID.RequestSummary)
+	assert.Equal(t, want, byURI.RequestSummary)
 }

@@ -22,24 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
-	"github.com/uber/submitqueue/stovepipe/controller"
+	controllermock "github.com/uber/submitqueue/stovepipe/controller/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"go.uber.org/mock/gomock"
 )
-
-type fakeRequestHistoryController struct {
-	getByID  func(context.Context, entity.GetRequestHistoryByIDRequest) ([]entity.RequestLog, error)
-	getByURI func(context.Context, entity.GetRequestHistoryByURIRequest) ([]entity.RequestHistory, error)
-}
-
-var _ controller.RequestHistoryController = (*fakeRequestHistoryController)(nil)
-
-func (f *fakeRequestHistoryController) GetRequestHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) ([]entity.RequestLog, error) {
-	return f.getByID(ctx, req)
-}
-
-func (f *fakeRequestHistoryController) GetRequestHistoryByURI(ctx context.Context, req entity.GetRequestHistoryByURIRequest) ([]entity.RequestHistory, error) {
-	return f.getByURI(ctx, req)
-}
 
 func TestGetRequestHistoryByID(t *testing.T) {
 	controllerErr := errors.New("controller failed")
@@ -60,20 +46,18 @@ func TestGetRequestHistoryByID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotReq entity.GetRequestHistoryByIDRequest
-			fake := &fakeRequestHistoryController{
-				getByID: func(_ context.Context, req entity.GetRequestHistoryByIDRequest) ([]entity.RequestLog, error) {
-					gotReq = req
-					return tt.logs, tt.err
-				},
+			history := entity.RequestHistory{
+				RequestID: "1", Events: tt.logs,
+				RequestSummary: entity.RequestSummary{RequestID: "1", Queue: "monorepo/main", URI: "uri", State: entity.RequestStateSucceeded},
 			}
-			srv := &StovepipeServer{requestHistoryController: fake}
+			historyController := controllermock.NewMockRequestHistoryController(gomock.NewController(t))
+			historyController.EXPECT().GetRequestHistoryByID(gomock.Any(), entity.GetRequestHistoryByIDRequest{Queue: "monorepo/main", ID: "1"}).Return(history, tt.err)
+			srv := &StovepipeServer{requestHistoryController: historyController}
 
 			resp, err := srv.GetRequestHistoryByID(context.Background(), &pb.GetRequestHistoryByIDRequest{
 				Queue: "monorepo/main", RequestId: "1",
 			})
 
-			assert.Equal(t, entity.GetRequestHistoryByIDRequest{Queue: "monorepo/main", ID: "1"}, gotReq)
 			if tt.err != nil {
 				require.ErrorIs(t, err, tt.err)
 				assert.Nil(t, resp)
@@ -81,6 +65,8 @@ func TestGetRequestHistoryByID(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Len(t, resp.Events, tt.wantLogs)
+			require.NotNil(t, resp.RequestSummary)
+			assert.Equal(t, "succeeded", resp.RequestSummary.GetRequestState())
 			if tt.wantLogs > 0 {
 				assert.Equal(t, "accepted", resp.Events[0].GetRequestState())
 				assert.Equal(t, "build_triggered", resp.Events[1].GetEvent())
@@ -92,8 +78,9 @@ func TestGetRequestHistoryByID(t *testing.T) {
 func TestGetRequestHistoryByURI(t *testing.T) {
 	controllerErr := errors.New("controller failed")
 	histories := []entity.RequestHistory{{
-		RequestID: "1",
-		Events:    []entity.RequestLog{{ID: "occurrence/1", State: entity.RequestStateAccepted}},
+		RequestID:      "1",
+		Events:         []entity.RequestLog{{ID: "occurrence/1", State: entity.RequestStateAccepted}},
+		RequestSummary: entity.RequestSummary{RequestID: "1", Queue: "monorepo/main", URI: "git://monorepo/abc", State: entity.RequestStateProcessing},
 	}}
 	tests := []struct {
 		name          string
@@ -108,20 +95,14 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotReq entity.GetRequestHistoryByURIRequest
-			fake := &fakeRequestHistoryController{
-				getByURI: func(_ context.Context, req entity.GetRequestHistoryByURIRequest) ([]entity.RequestHistory, error) {
-					gotReq = req
-					return tt.histories, tt.err
-				},
-			}
-			srv := &StovepipeServer{requestHistoryController: fake}
+			historyController := controllermock.NewMockRequestHistoryController(gomock.NewController(t))
+			historyController.EXPECT().GetRequestHistoryByURI(gomock.Any(), entity.GetRequestHistoryByURIRequest{Queue: "monorepo/main", URI: "git://monorepo/abc"}).Return(tt.histories, tt.err)
+			srv := &StovepipeServer{requestHistoryController: historyController}
 
 			resp, err := srv.GetRequestHistoryByURI(context.Background(), &pb.GetRequestHistoryByURIRequest{
 				Queue: "monorepo/main", Uri: "git://monorepo/abc",
 			})
 
-			assert.Equal(t, entity.GetRequestHistoryByURIRequest{Queue: "monorepo/main", URI: "git://monorepo/abc"}, gotReq)
 			if tt.err != nil {
 				require.ErrorIs(t, err, tt.err)
 				assert.Nil(t, resp)
@@ -130,6 +111,8 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, resp.Histories, tt.wantHistories)
 			if tt.wantHistories > 0 {
+				require.NotNil(t, resp.Histories[0].RequestSummary)
+				assert.Equal(t, "processing", resp.Histories[0].RequestSummary.GetRequestState())
 				assert.Equal(t, "1", resp.Histories[0].RequestId)
 				require.Len(t, resp.Histories[0].Events, 1)
 				assert.Equal(t, "accepted", resp.Histories[0].Events[0].GetRequestState())

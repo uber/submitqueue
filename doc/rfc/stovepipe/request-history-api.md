@@ -1,159 +1,48 @@
 # Stovepipe Request History API
 
-## Summary
+## Contract
 
-Stovepipe exposes retained request history through queue-scoped point lookups by request ID and exact URI. URI lookup returns every retained request history associated with that commit; the current insert-once mapping produces exactly one. Both selectors return complete ordered events, and URI lookup groups them by request ID.
+Stovepipe exposes retained request history through queue-scoped point lookups by request ID and exact URI. Both selectors return complete ordered events and the current materialized `RequestSummary`. The published [protobuf contract](../../../api/stovepipe/proto/stovepipe.proto) defines the fields.
 
-The API reads the append-only model defined by [Stovepipe Request Log](request-log.md) directly. It does not replay history into current state or introduce a second persisted history projection. Current commit status remains a separate read concern derived from operational entities rather than request history.
+`GetRequestHistoryByIDResponse` contains `events` and `request_summary`. `GetRequestHistoryByURIResponse` contains repeated histories, each with its request ID, events, and `request_summary`. These summary fields are additive; existing event fields and field numbers remain unchanged.
 
-## API Coverage
+Both methods require a queue. A selector belonging to another queue is not resolved across shards. URI lookup retains its plural response; the insert-once `RequestURIStore` resolves exactly one request per `(queue, URI)`.
 
-The API supports the same selectors as [SubmitQueue Gateway Request History APIs](../submitqueue/history-api.md):
+## Selection and Current State
 
-1. request ID, for callers retaining the receipt returned by `Ingest`;
-2. exact URI, for callers starting from a commit identity.
+Request-ID lookup validates the queue and ID, then reads that queue's `RequestLogStore` and `RequestSummaryStore` by request ID. URI lookup validates the queue and URI, resolves the existing request-URI primary-key mapping, and uses the same history reader. It also verifies that the summary's URI matches the selector.
 
-Both methods require a queue because Stovepipe storage and authorization are queue-scoped. A selector belonging to another queue is not found rather than resolved across shards.
+At least one retained log record defines the existence of a history. A summary alone does not establish a retained history, and the operational `Request` entity is not required for either read. A returned summary must match the selected queue and request ID; disagreement is an infrastructure consistency error.
 
-SubmitQueue's URI method returns several histories because the same change may be submitted repeatedly. Stovepipe uses the same plural response shape. Its current insert-once `RequestURIStore` permits only one request per `(queue, URI)`, so the initial implementation returns one history. If revalidation later retains multiple attempts, the URI index must enumerate their request IDs, but the public contract does not need to change.
+The summary is the existing current lifecycle projection maintained by the request-log materializer. It includes request identity, queue, commit URI, baseline URI, current state, state timestamp, acceptance timestamp, and outcome reason. The mapper reuses the public summary representation exposed by List, omitting internal storage versions.
 
-## Representative Contract
+History is read before its summary. The two reads are eventually consistent, not a transactional snapshot: the current summary can represent newer state than the retained events returned by the earlier read, or lag a newly appended state event. The API does not replay the returned events to derive a summary or fabricate missing occurrences from current state.
 
-The protobuf contract is:
+A successful response always includes the summary. Initial state-log persistence precedes summary creation, so a concurrent read or a failed projection write can temporarily expose history without its summary. That gap fails the lookup with a retryable infrastructure error; ingestion retries complete the projection. Other summary-read failures also fail the lookup.
 
-```proto
-message GetRequestHistoryByIDRequest {
-    string queue = 1;
-    string request_id = 2;
-}
+## Events and Ordering
 
-message GetRequestHistoryByURIRequest {
-    string queue = 1;
-    string uri = 2;
-}
+The append-only history model is defined by [Stovepipe Request Log](request-log.md). Event IDs are opaque; clients may compare them but never parse them. Request-state, outcome-reason, and event strings tolerate additive vocabulary changes.
 
-message HistoryEvent {
-    string event_id = 1;
-    int64 timestamp_ms = 2;
-    oneof occurrence {
-        string request_state = 3;
-        string event = 4;
-    }
-    string outcome_reason = 7;
-}
+Events are returned by `(timestamp_ms ASC, event_id ASC)`. URI histories are ordered by numeric request ID ascending. Timestamps determine display order; persisted request versions determine causal ordering internally and are not exposed as history-event fields. Later repair may insert an older occurrence into its chronological position.
 
-message RequestHistory {
-    string request_id = 1;
-    repeated HistoryEvent events = 2;
-}
+## Retention and Errors
 
-message GetRequestHistoryByIDResponse {
-    repeated HistoryEvent events = 1;
-}
+History, request-summary, and request-URI mapping retention must support the same advertised lookup period. Neither endpoint promises a lifetime longer than the records required by its selector.
 
-message GetRequestHistoryByURIResponse {
-    repeated RequestHistory histories = 1;
-}
-
-service Stovepipe {
-    rpc GetRequestHistoryByID(GetRequestHistoryByIDRequest) returns (GetRequestHistoryByIDResponse) {}
-    rpc GetRequestHistoryByURI(GetRequestHistoryByURIRequest) returns (GetRequestHistoryByURIResponse) {}
-}
-```
-
-The response shapes and `HistoryEvent` name match their SubmitQueue equivalents: request-ID lookup returns events directly, while URI lookup groups each request's events under a `RequestHistory` in a repeated field. Stovepipe retains `GetRequestHistoryByURI` because URI is its VCS-agnostic commit identity; SubmitQueue's corresponding selector is specifically named `GetRequestHistoryByChangeURI` after its change model.
-
-Event IDs are opaque. Clients may compare them but never parse their format. Request-state and event values are strings so clients can tolerate additive vocabulary changes. Request version remains persisted for internal transition ordering but is not part of the public event, matching SubmitQueue's API boundary.
-
-## Selection Flow
-
-Request-ID lookup validates the queue and ID and lists the queue's `RequestLogStore` records. At least one retained log record defines the existence of a history; the API does not consult the operational `Request` entity. Its response projects only the ordered events, matching SubmitQueue's equivalent API.
-
-URI lookup currently resolves one request ID from the existing `RequestURIStore` primary key and delegates to the same retained-log read. Supporting multiple retained attempts later requires the URI index to enumerate their request IDs; each history still uses a primary-key log read. The API does not scan the request log by URI. A missing mapping or a mapped request ID with no retained log is not found.
-
-Every request-URI mapping must be retained for the same advertised period as its history. Otherwise URI lookup could lose coverage while request-ID lookup still succeeds. Each `RequestHistory` contains only the selected request ID and its events; operational request context is not duplicated in the history response.
-
-## Public Projection
-
-Each stored `RequestLog` maps to exactly one public `HistoryEvent`. The API does not deduplicate, coalesce, or infer missing occurrences.
-
-History events representing state changes set `request_state` and preserve each durable transition. The public vocabulary is:
-
-| Public request state | Meaning |
-|---|---|
-| `accepted` | The request was durably admitted. |
-| `processing` | The request was admitted to validation with a selected strategy. |
-| `superseded` | A newer request replaced this request before validation completed. |
-| `succeeded` | The request's validation work completed successfully. |
-| `failed` | The request's validation work failed or could not continue. |
-| `cancelled` | The request's validation work was cancelled. |
-
-These strings intentionally match the current domain states one-to-one, but they are a stable public history vocabulary: an internal refactor cannot rename or reinterpret an existing wire value. In particular, `succeeded` and `failed` remain distinct rather than collapsing into a derived snapshot phase such as `finalizing`.
-
-Build and validation-fact occurrences set `event`. The `occurrence` oneof makes state and event mutually exclusive without a redundant type field. A terminal Request state entry never substitutes for the fact event.
-
-The raw `RequestLog.Metadata` map, request version, dependency errors, credentials, and stack traces are not exposed. Typed metadata projections can be added later when a concrete client need defines their contract. `outcome_reason` uses a bounded public vocabulary.
-
-## Materialization
-
-SubmitQueue's `PersistLog` operation performs two jobs after receiving a log message:
-
-1. append the `RequestLog` row that is itself returned as history;
-2. consider status rows for a gateway-owned `RequestSummary`, resolve out-of-order candidates using request version, terminal precedence, and timestamp, then update URI and queue-list projections.
-
-Event rows remain in SubmitQueue history but never participate in current-status materialization. The materializer exists because the gateway owns public reads but cannot read the orchestrator's mutable Request store.
-
-Stovepipe has no equivalent ownership gap. The same service owns the queue-scoped `Request`, `ValidationFact`, request-URI mapping, and request-log store. Operational reads use their owning entities, while request history reads retained log records directly.
-
-Stovepipe calls `requestlog.Materializer.PersistLog` directly, without an intermediate topic. Its initial materializer appends only the request log: it does not add `RequestSummary`, replay history to determine current state, or materialize another history table. The controller performs only an in-memory wire projection from stored log records to protobuf messages. This avoids a second winner-selection algorithm competing with Request CAS state.
-
-`PersistLog` receives the whole queue-scoped storage aggregate so a future current-status or queue-list API can add SubmitQueue-style summary and index projections behind the same write boundary without changing request-log producers. Such projections remain deferred until a concrete read path needs them; `Request` remains authoritative in the initial implementation.
-
-## Ordering and Consistency
-
-Events are returned by `(timestamp_ms ASC, event_id ASC)`. URI histories are ordered by request ID ascending, compared numerically (see [Resource IDs](../submitqueue/workflow.md#resource-ids)). Timestamps are display order, not conflict resolution. Persisted Request versions provide internal causal ordering for state transitions, while Build identity and write-once terminal status ensure one triggered and one finished occurrence per build.
-
-History may briefly lag a source entity between the source write and history creation. The pipeline blocks its dependent handoff during that window, and retry or reconciliation repairs the missing entry. The read API never fabricates an occurrence from current state.
-
-Request-ID lookup and the corresponding history within URI lookup return the same stored records and event ordering. A later repair may insert an older occurrence into its correct chronological position.
-
-## Retention
-
-Request-ID lookup returns all currently retained events for the selected request. URI lookup returns every retained request history associated with the exact URI. This matches SubmitQueue's request-history response shapes. The bounded lifecycle vocabulary and reasonable per-request build limits keep each history modest.
-
-History and request-URI mapping retention must support the same advertised lookup period. The API does not promise a lifetime longer than every record required by its selector. The initial rollout exposes only requests accepted after all history writers and repair paths are active; older requests without retained logs are outside the lookup period and are not backfilled.
-
-## Errors and Authorization
-
-- Empty queue or selector is invalid.
-- An unknown request ID or URI, including one scoped to the wrong queue, is not found.
-- A request ID or URI with no retained history is not found, including a URI mapping whose request ID has no retained log rows.
-- Retryable storage failures are unavailable; context cancellation and deadline errors retain their canonical codes.
+- An empty queue or selector is invalid.
+- A request ID without retained logs is not found, including when its summary exists.
+- An unknown queue-scoped URI mapping is not found.
+- A URI mapping without retained logs is an infrastructure inconsistency.
+- An absent summary is a retryable infrastructure error; summary identity or URI mismatches are infrastructure consistency errors.
+- Storage failures propagate with their underlying error classifications.
 
 Authorization follows the same queue policy as other Stovepipe reads. Possession of a request ID alone does not bypass queue authorization.
 
 ## Testing
 
-Contract and controller tests cover:
-
-- matching request-ID events and the corresponding history inside the plural URI response;
-- deterministic equal-timestamp ordering;
-- state, build-event, and fact-event public mapping;
-- queue isolation and cross-queue not found;
-- unknown selectors and URI mappings without retained logs;
-- a repaired older occurrence appearing in chronological position;
-- unknown future request-state and event strings remaining readable.
+Tests cover matching events and summaries across selectors, required summaries and retryable materialization gaps, current summaries independent of retained event subsets, queue and URI consistency, storage-read failures, histories absent despite a stored summary, stable event ordering, and unknown future state and outcome-reason strings.
 
 ## Alternatives Considered
 
-### Materialize current status from history
-
-Rejected because `Request` and `ValidationFact` already own current operational state and verdicts. Replaying history would add another reconciliation path without enabling either selector.
-
-### Query history directly by URI
-
-Rejected because it would add query-by-attribute capability to `RequestLogStore`. The existing exact request-URI mapping resolves the primary request key for any backend.
-
-### Return only the authoritative history by URI
-
-Rejected because a singular response would require another API or a breaking shape change if Stovepipe later retains multiple validation attempts for one URI. The repeated response accurately contains one history under the current invariant and can grow without changing existing clients.
+Replaying returned history into current state is rejected because retention can remove events and the existing materialized summary already owns that projection. Querying history directly by URI is rejected because it would require an attribute query in `RequestLogStore`; the existing mapping resolves the primary request key for any backend. Returning events without a summary is rejected because a successful lookup must include current request status; callers can retry a temporary projection gap.

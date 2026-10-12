@@ -473,15 +473,17 @@ func (*HistoryEvent_RequestState) isHistoryEvent_Occurrence() {}
 
 func (*HistoryEvent_Event) isHistoryEvent_Occurrence() {}
 
-// RequestHistory identifies one request and contains its ordered events.
+// RequestHistory identifies one request and contains its ordered events and current summary.
 type RequestHistory struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Queue-scoped decimal request identifier.
 	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Events ordered by occurrence time and stable event identity.
-	Events        []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Events []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
+	// Current materialized lifecycle summary. Always present in successful responses.
+	RequestSummary *RequestSummary `protobuf:"bytes,3,opt,name=request_summary,json=requestSummary,proto3" json:"request_summary,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RequestHistory) Reset() {
@@ -528,13 +530,22 @@ func (x *RequestHistory) GetEvents() []*HistoryEvent {
 	return nil
 }
 
-// GetRequestHistoryByIDResponse contains all retained events for one request.
+func (x *RequestHistory) GetRequestSummary() *RequestSummary {
+	if x != nil {
+		return x.RequestSummary
+	}
+	return nil
+}
+
+// GetRequestHistoryByIDResponse contains retained events and the current summary for one request.
 type GetRequestHistoryByIDResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Events ordered by occurrence time and stable event identity.
-	Events        []*HistoryEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Events []*HistoryEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	// Current materialized lifecycle summary. Always present in successful responses.
+	RequestSummary *RequestSummary `protobuf:"bytes,2,opt,name=request_summary,json=requestSummary,proto3" json:"request_summary,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetRequestHistoryByIDResponse) Reset() {
@@ -570,6 +581,13 @@ func (*GetRequestHistoryByIDResponse) Descriptor() ([]byte, []int) {
 func (x *GetRequestHistoryByIDResponse) GetEvents() []*HistoryEvent {
 	if x != nil {
 		return x.Events
+	}
+	return nil
+}
+
+func (x *GetRequestHistoryByIDResponse) GetRequestSummary() *RequestSummary {
+	if x != nil {
+		return x.RequestSummary
 	}
 	return nil
 }
@@ -1252,13 +1270,15 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x05event\x18\x04 \x01(\tH\x00R\x05event\x12%\n" +
 	"\x0eoutcome_reason\x18\x05 \x01(\tR\routcomeReasonB\f\n" +
 	"\n" +
-	"occurrence\"q\n" +
+	"occurrence\"\xc6\x01\n" +
 	"\x0eRequestHistory\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12@\n" +
-	"\x06events\x18\x02 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\"a\n" +
+	"\x06events\x18\x02 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\x12S\n" +
+	"\x0frequest_summary\x18\x03 \x01(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\x0erequestSummary\"\xb6\x01\n" +
 	"\x1dGetRequestHistoryByIDResponse\x12@\n" +
-	"\x06events\x18\x01 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\"j\n" +
+	"\x06events\x18\x01 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\x12S\n" +
+	"\x0frequest_summary\x18\x02 \x01(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\x0erequestSummary\"j\n" +
 	"\x1eGetRequestHistoryByURIResponse\x12H\n" +
 	"\thistories\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestHistoryR\thistories\"\xab\x01\n" +
 	"\x1cGetProjectStatusByURIRequest\x12\x14\n" +
@@ -1353,27 +1373,29 @@ var file_stovepipe_proto_goTypes = []any{
 }
 var file_stovepipe_proto_depIdxs = []int32{
 	6,  // 0: uber.submitqueue.stovepipe.RequestHistory.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
-	6,  // 1: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
-	7,  // 2: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
-	11, // 3: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
-	13, // 4: uber.submitqueue.stovepipe.ListResponse.requests:type_name -> uber.submitqueue.stovepipe.RequestSummary
-	0,  // 5: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	2,  // 6: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	4,  // 7: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	5,  // 8: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	10, // 9: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	14, // 10: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
-	1,  // 11: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	3,  // 12: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	8,  // 13: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	9,  // 14: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	12, // 15: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
-	15, // 16: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
-	11, // [11:17] is the sub-list for method output_type
-	5,  // [5:11] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	13, // 1: uber.submitqueue.stovepipe.RequestHistory.request_summary:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	6,  // 2: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
+	13, // 3: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.request_summary:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	7,  // 4: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
+	11, // 5: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
+	13, // 6: uber.submitqueue.stovepipe.ListResponse.requests:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	0,  // 7: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	2,  // 8: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	4,  // 9: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	5,  // 10: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	10, // 11: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	14, // 12: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
+	1,  // 13: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	3,  // 14: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	8,  // 15: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	9,  // 16: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	12, // 17: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	15, // 18: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
