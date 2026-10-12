@@ -1,0 +1,12 @@
+@import "@submitqueue/web-platform/styles.css";
+
+/* Stovepipe pages. */
+.sq-app .sq-stacked-sections {
+  display: grid;
+  gap: 38px;
+}
+@media (max-width: 680px) {
+  .sq-app .sq-stacked-sections {
+    gap: 20px;
+  }
+}

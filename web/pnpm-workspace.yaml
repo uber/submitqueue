@@ -3,6 +3,7 @@ packages:
   - api
   - service/*
   - submitqueue
+  - stovepipe
   - test/package/react18
 
 hoist: false

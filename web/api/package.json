@@ -18,6 +18,10 @@
     "./submitqueue/gateway": {
       "types": "./dist/api/submitqueue/gateway/proto/gateway_pb.d.ts",
       "import": "./dist/api/submitqueue/gateway/proto/gateway_pb.js"
+    },
+    "./stovepipe": {
+      "types": "./dist/api/stovepipe/proto/stovepipe_pb.d.ts",
+      "import": "./dist/api/stovepipe/proto/stovepipe_pb.js"
     }
   },
   "scripts": {

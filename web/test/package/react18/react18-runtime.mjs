@@ -7,6 +7,9 @@ import { createSubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/cursor/hmac";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
 
+import { StovepipeApp } from "@submitqueue/web-stovepipe";
+import { createStovepipeWeb } from "@submitqueue/web-stovepipe/server";
+
 assert.match(React.version, /^18\./u);
 
 const web = createSubmitQueueWeb({
@@ -25,6 +28,17 @@ for (const route of routes) {
   assert.equal(result.kind, "render", `${JSON.stringify(route)} did not render`);
   const page = createElement(SubmitQueueShell, null, createElement(SubmitQueueApp, { model: result.model }));
   pages.push({ route, page, html: renderToString(page) });
+}
+
+const stovepipe = createStovepipeWeb({ queues: [{ name: "repo/main" }], service: {
+  list: async () => ({ requests: [], nextPageToken: "" }),
+  getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "" }, events: [] }),
+} });
+for (const path of ["/repo%2Fmain", "/repo%2Fmain/request/1"]) {
+  const result = await stovepipe.handle({ path, search: new URLSearchParams() });
+  assert.equal(result.kind, "render");
+  const page = createElement(StovepipeApp, { model: result.model });
+  pages.push({ route: path, page, html: renderToString(page) });
 }
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://submitqueue.test/" });

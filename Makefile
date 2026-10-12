@@ -15,6 +15,7 @@ SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
 # Stovepipe compose file (single Ping-only service)
 STOVEPIPE_COMPOSE_FILE = $(abspath service/stovepipe/docker-compose.yml)
+STOVEPIPE_WEB_COMPOSE_FILE = $(abspath web/service/stovepipe/docker-compose.yml)
 STOVEPIPE_DEBUG_COMPOSE_FILE = $(abspath service/stovepipe/docker-compose.debug.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
@@ -568,7 +569,7 @@ local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sand
 local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
-	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(RUNWAY_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
 	@echo "Services stopped. Anonymous database volumes are not reused on the next start."
 
@@ -586,7 +587,7 @@ local-stovepipe-debug-start: build-stovepipe-linux-debug ## Start Stovepipe unde
 	@echo "Delve: 127.0.0.1:2345 — run launch config \"Debug: attach (dlv in docker)\""
 
 local-stovepipe-logs: ## View logs from the running Stovepipe service
-	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) logs -f
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) logs -f
 
 local-stovepipe-start: build-stovepipe-linux ## Start Stovepipe service (gRPC service + MySQL storage + MySQL queue)
 	@echo "Starting Stovepipe service with compose..."
@@ -602,8 +603,14 @@ local-stovepipe-start: build-stovepipe-linux ## Start Stovepipe service (gRPC se
 
 local-stovepipe-stop: ## Stop the Stovepipe service
 	@echo "Stopping Stovepipe service..."
-	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@echo "Stovepipe service stopped."
+
+local-stovepipe-web-start: local-stovepipe-start ## Start Stovepipe and its web UI on free ports
+	@$(BAZEL) run //web/service/stovepipe:image_load
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --no-build --wait web-service
+	@echo "Web UX: http://localhost:$$($(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) port web-service 3000 | sed 's/.*://')"
+	@echo "Web username: test; password: $${STOVEPIPE_WEB_TOKEN:-test}"
 
 # go generate does not walk the module; every tree with a //go:generate directive is listed here.
 GO_GENERATE_PACKAGES := \
@@ -698,12 +705,12 @@ tidy-go: ## Run go mod tidy
 	@echo "Running go mod tidy..."
 	@$(BAZEL) run @rules_go//go -- mod tidy -e
 
-web-build: ## Build the web packages and deployable Next.js image with Bazel
-	@$(BAZEL) build //web/submitqueue:pkg //web/service/submitqueue:image
+web-build: ## Build the web packages and deployable Next.js images with Bazel
+	@$(BAZEL) build //web/stovepipe:pkg //web/submitqueue:pkg //web/service/submitqueue:image //web/service/stovepipe:image
 
 web-check: ## Run web generation, packaging, lint, type, unit, and image checks with Bazel
 	@$(BAZEL) test //web:check --test_output=errors
-	@$(BAZEL) build //web/service/submitqueue:image
+	@$(BAZEL) build //web/service/submitqueue:image //web/service/stovepipe:image
 
 web-e2e-test: ## Run the Bazel-managed real-stack Playwright and axe web test
 	@$(BAZEL) test //web/test/e2e:web_test --test_output=errors

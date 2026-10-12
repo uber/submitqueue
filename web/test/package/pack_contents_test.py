@@ -60,11 +60,18 @@ def _imports_forbidden(specifier: str) -> bool:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         raise RuntimeError("expected the module package archive")
 
+    profile = sys.argv[2] if len(sys.argv) == 3 else "submitqueue"
+    if profile not in ("submitqueue", "stovepipe"):
+        raise RuntimeError(f"unknown package profile: {profile}")
+
     with tarfile.open(Path(sys.argv[1])) as archive:
-        missing = sorted(_EXPECTED_FILES - {member.name for member in archive.getmembers()})
+        expected = _EXPECTED_FILES if profile == "submitqueue" else {
+            "package/dist/index.d.ts", "package/dist/server.d.ts", "package/README.md",
+        }
+        missing = sorted(expected - {member.name for member in archive.getmembers()})
         if missing:
             print(f"The package is missing: {', '.join(missing)}", file=sys.stderr)
             return 1

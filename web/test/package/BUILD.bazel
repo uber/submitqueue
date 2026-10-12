@@ -63,3 +63,15 @@ js_test(
         "//web:node_modules/react-dom",
     ],
 )
+
+py_test(
+    name = "stovepipe_pack_contents_test",
+    srcs = ["pack_contents_test.py"],
+    args = [
+        "$(rootpath //web/stovepipe:pkg.pack)",
+        "stovepipe",
+    ],
+    data = ["//web/stovepipe:pkg.pack"],
+    legacy_create_init = 0,
+    main = "pack_contents_test.py",
+)
