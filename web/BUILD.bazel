@@ -1,5 +1,5 @@
 load("@aspect_rules_js//js:defs.bzl", "js_library")
-load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 
 package(default_visibility = ["//visibility:public"])
@@ -33,8 +33,12 @@ test_suite(
         "//web/stovepipe:test",
         "//web/stovepipe:typecheck_typecheck_test",
         "//web/submitqueue:lint",
+        "//web/test/e2e/stovepipe:run_e2e_test",
+        "//web/test/e2e/stovepipe:typecheck_typecheck_test",
+        "//web/test/testutil:compose_test",
         "//web/test/package:stovepipe_pack_contents_test",
-        ":e2e_typecheck_typecheck_test",
+        "//web/test/e2e/submitqueue:run_e2e_test",
+        "//web/test/e2e/submitqueue:typecheck_typecheck_test",
     ],
 )
 
@@ -46,39 +50,12 @@ js_library(
 
 exports_files([
     "package.json",
-    "playwright.config.ts",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
-    "tsconfig.e2e.json",
     "vitest.config.ts",
 ])
 
 ts_config(
     name = "tsconfig_base",
     src = "tsconfig.base.json",
-)
-
-ts_config(
-    name = "tsconfig_e2e",
-    src = "tsconfig.e2e.json",
-    deps = [":tsconfig_base"],
-)
-
-ts_project(
-    name = "e2e_typecheck",
-    srcs = [
-        "playwright.config.ts",
-        "//web/test/e2e:srcs_for_typecheck",
-    ],
-    declaration = True,
-    no_emit = True,
-    tsconfig = ":tsconfig_e2e",
-    deps = [
-        ":node_modules/@axe-core/playwright",
-        ":node_modules/@connectrpc/connect",
-        ":node_modules/@connectrpc/connect-node",
-        ":node_modules/@playwright/test",
-        ":node_modules/@types/node",
-        ":node_modules/@submitqueue/api",
-    ],
 )

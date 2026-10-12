@@ -4,6 +4,8 @@ packages:
   - service/*
   - submitqueue
   - stovepipe
+  - test/e2e/stovepipe
+  - test/e2e/submitqueue
   - test/package/react18
 
 hoist: false

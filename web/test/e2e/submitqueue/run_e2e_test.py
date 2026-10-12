@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from web.test.e2e.run_e2e import _capture_compose_logs, _compose_command
+from web.test.e2e.submitqueue.run_e2e import _capture_compose_logs
 
 
 class CaptureComposeLogsTest(unittest.TestCase):
@@ -18,8 +18,8 @@ class CaptureComposeLogsTest(unittest.TestCase):
                 stdout="web-service | gateway readiness check failed\n",
             )
 
-            with patch("web.test.e2e.run_e2e.subprocess.run", return_value=result), patch(
-                "web.test.e2e.run_e2e.sys.stderr", stderr
+            with patch("web.test.e2e.submitqueue.run_e2e.subprocess.run", return_value=result), patch(
+                "web.test.e2e.submitqueue.run_e2e.sys.stderr", stderr
             ):
                 _capture_compose_logs(
                     ["docker-compose", "-p", "e2e-submitqueue-web-test"],
@@ -29,20 +29,6 @@ class CaptureComposeLogsTest(unittest.TestCase):
             expected = "web-service | gateway readiness check failed\n"
             self.assertEqual(stderr.getvalue(), expected)
             self.assertEqual((Path(output_dir) / "compose.log").read_text(), expected)
-
-
-class ComposeCommandTest(unittest.TestCase):
-    def test_prefers_the_compose_plugin(self) -> None:
-        with patch("web.test.e2e.run_e2e.shutil.which", return_value="/usr/bin/docker"), patch(
-            "web.test.e2e.run_e2e.subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)
-        ):
-            self.assertEqual(_compose_command(env={}), ["docker", "compose"])
-
-    def test_falls_back_to_the_standalone_binary(self) -> None:
-        with patch("web.test.e2e.run_e2e.shutil.which", return_value="/usr/bin/docker"), patch(
-            "web.test.e2e.run_e2e.subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=1)
-        ):
-            self.assertEqual(_compose_command(env={}), ["docker-compose"])
 
 
 if __name__ == "__main__":

@@ -85,11 +85,11 @@ make build-all-linux                # Build Linux binaries for the local docker-
 - Containers: Each suite's required services and dependencies; SubmitQueue E2E includes Gateway, Orchestrator, Runway, and MySQL
 - Tests end-to-end behavior, including cross-service communication where applicable
 
-**4. Web E2E Test** - Browser behavior against the complete SubmitQueue stack
-- Location: `web/test/e2e/`
+**4. Web E2E Tests** - Browser behavior against each domain stack
+- Location: `web/test/e2e/{submitqueue,stovepipe}/`
 - Run: `make web-e2e-test`
-- Containers: Bazel-built Gateway, Orchestrator, Runway, web OCI image, and MySQL
-- Coverage: Basic authentication, h2c gateway access, newest-first queue requests, encoded SQID navigation, ordered history, and axe accessibility checks
+- Containers: Each domain's Bazel-built services, web OCI image, and MySQL
+- Coverage: Authentication, queue and change navigation, pagination, status and history, project JSON export, and axe accessibility checks
 - Tooling: Bazel supplies Node, Playwright, and Chromium; no host Node install or browser download is required
 
 ### Live GitHub Tests
@@ -122,7 +122,7 @@ Go integration and domain E2E tests use **docker-compose** via `ComposeStack` to
 3. Tests run against those containers with **real-time log output**
 4. On cleanup, containers are torn down automatically (set `SKIP_CLEANUP=true` to keep them for inspection)
 
-The web E2E target uses the Bazel `py_test` runner in `web/test/e2e/run_e2e.py`. It stages runfiles into a temporary Compose context, loads the Bazel-built web image, applies the gateway and orchestrator schemas, runs Playwright, and removes its `e2e-submitqueue-web-<pid>` project unless `SKIP_CLEANUP=true`. It does not auto-tail service logs; inspect retained containers with `docker ps` and `docker logs` when cleanup is disabled.
+The SubmitQueue web E2E target uses the Bazel `py_test` runner in `web/test/e2e/submitqueue/run_e2e.py`. It stages runfiles into a temporary Compose context, loads the Bazel-built web image, applies the gateway and orchestrator schemas, runs Playwright, and removes its `e2e-submitqueue-web-<pid>` project unless `SKIP_CLEANUP=true`. It does not auto-tail service logs; inspect retained containers with `docker ps` and `docker logs` when cleanup is disabled.
 
 ---
 

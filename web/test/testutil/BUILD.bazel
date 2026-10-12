@@ -1,0 +1,20 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(
+    default_testonly = True,
+    default_visibility = ["//web/test:__subpackages__"],
+)
+
+py_library(
+    name = "compose",
+    srcs = ["compose.py"],
+    data = ["@rules_docker_compose//docker_compose"],
+    deps = ["@rules_python//python/runfiles"],
+)
+
+py_test(
+    name = "compose_test",
+    srcs = ["compose_test.py"],
+    deps = [":compose"],
+    legacy_create_init = 0,
+)

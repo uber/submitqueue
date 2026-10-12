@@ -368,6 +368,42 @@ importers:
         specifier: 4.0.7
         version: 4.0.7(@types/node@22.18.6)(jsdom@26.1.0)
 
+  test/e2e/stovepipe:
+    dependencies:
+      '@axe-core/playwright':
+        specifier: 4.10.2
+        version: 4.10.2(playwright-core@1.55.1)
+      '@connectrpc/connect':
+        specifier: 2.1.1
+        version: 2.1.1(@bufbuild/protobuf@2.15.0)
+      '@connectrpc/connect-node':
+        specifier: 2.1.1
+        version: 2.1.1(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.1.1(@bufbuild/protobuf@2.15.0))
+      '@playwright/test':
+        specifier: 1.55.1
+        version: 1.55.1
+      '@submitqueue/api':
+        specifier: workspace:*
+        version: link:../../../api
+
+  test/e2e/submitqueue:
+    dependencies:
+      '@axe-core/playwright':
+        specifier: 4.10.2
+        version: 4.10.2(playwright-core@1.55.1)
+      '@connectrpc/connect':
+        specifier: 2.1.1
+        version: 2.1.1(@bufbuild/protobuf@2.15.0)
+      '@connectrpc/connect-node':
+        specifier: 2.1.1
+        version: 2.1.1(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.1.1(@bufbuild/protobuf@2.15.0))
+      '@playwright/test':
+        specifier: 1.55.1
+        version: 1.55.1
+      '@submitqueue/api':
+        specifier: workspace:*
+        version: link:../../../api
+
   test/package/react18:
     dependencies:
       jsdom:

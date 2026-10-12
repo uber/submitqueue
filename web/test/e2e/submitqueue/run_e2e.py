@@ -1,4 +1,3 @@
-import fcntl
 import os
 import shutil
 import signal
@@ -6,6 +5,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from web.test.testutil.compose import (
+    compose_command as _compose_command,
+    load_project_images,
+    apply_schemas,
+    published_port as _published_port,
+)
 
 
 _PROJECT = f"e2e-submitqueue-web-{os.getpid()}"
@@ -48,11 +54,6 @@ def _output(command: list[str], *, env: dict[str, str]) -> str:
     return subprocess.check_output(command, env=env, text=True).strip()
 
 
-def _published_port(container: str, container_port: str, *, env: dict[str, str]) -> str:
-    address = _output(["docker", "port", container, container_port], env=env)
-    return address.splitlines()[0].rsplit(":", 1)[-1]
-
-
 def _stage_provider_configuration(workspace: Path, context: Path) -> None:
     copies = {
         "service/submitqueue/demo/provider/fake/merge.yaml": "provider/merge.yaml",
@@ -64,9 +65,9 @@ def _stage_provider_configuration(workspace: Path, context: Path) -> None:
 
 def _stage_playwright(workspace: Path, context: Path) -> Path:
     playwright_root = context / "playwright"
-    _copy(workspace / "web/package.json", playwright_root / "package.json")
-    _copy(workspace / "web/playwright.config.ts", playwright_root / "playwright.config.ts")
-    _copy(workspace / "web/test/e2e/submitqueue.spec.ts", playwright_root / "test/e2e/submitqueue.spec.ts")
+    _copy(workspace / "web/test/e2e/submitqueue/package.json", playwright_root / "package.json")
+    _copy(workspace / "web/test/e2e/submitqueue/playwright.config.ts", playwright_root / "playwright.config.ts")
+    _copy(workspace / "web/test/e2e/submitqueue/submitqueue.spec.ts", playwright_root / "submitqueue.spec.ts")
 
     links = {
         "web/node_modules/@axe-core/playwright": "node_modules/@axe-core/playwright",
@@ -74,7 +75,7 @@ def _stage_playwright(workspace: Path, context: Path) -> Path:
         "web/node_modules/@connectrpc/connect": "node_modules/@connectrpc/connect",
         "web/node_modules/@connectrpc/connect-node": "node_modules/@connectrpc/connect-node",
         "web/node_modules/@playwright/test": "node_modules/@playwright/test",
-        "web/test/e2e/node_modules/@submitqueue/api": "node_modules/@submitqueue/api",
+        "web/test/e2e/submitqueue/node_modules/@submitqueue/api": "node_modules/@submitqueue/api",
     }
     for source, destination in links.items():
         _link(workspace / source, playwright_root / destination)
@@ -96,65 +97,25 @@ def _stage_docker_config(destination: Path) -> None:
         (destination / "cli-plugins").symlink_to(plugins, target_is_directory=True)
 
 
-def _compose_command(*, env: dict[str, str]) -> list[str]:
-    # Mirrors test/testutil/compose.go: prefer the Compose plugin, which CI runners ship,
-    # and fall back to the standalone binary.
-    if shutil.which("docker", path=env.get("PATH")) is None:
-        return ["docker-compose"]
-    probe = subprocess.run(
-        ["docker", "compose", "version"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    return ["docker", "compose"] if probe.returncode == 0 else ["docker-compose"]
-
-
 def _load_project_images(image_loaders: list[Path], *, env: dict[str, str]) -> None:
-    lock_path = Path(tempfile.gettempdir()) / "submitqueue-web-e2e-image.lock"
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        for image_loader in image_loaders:
-            _run([str(image_loader)], env=env)
-        _run(
-            [
-                "docker",
-                "tag",
-                "submitqueue-web-e2e-mysql:8.0",
-                f"{_PROJECT}-mysql:8.0",
-            ],
-            env=env,
+    tags = {"submitqueue-web-e2e-mysql:8.0": f"{_PROJECT}-mysql:8.0"}
+    for service in ("gateway", "orchestrator", "runway", "web"):
+        source = (
+            f"submitqueue-web-e2e-{service}-service:latest"
+            if service != "web"
+            else "submitqueue-web-service:latest"
         )
-        for service in ("gateway", "orchestrator", "runway", "web"):
-            _run(
-                [
-                    "docker",
-                    "tag",
-                    f"submitqueue-web-e2e-{service}-service:latest"
-                    if service != "web"
-                    else "submitqueue-web-service:latest",
-                    f"{_PROJECT}-{service}-service:latest",
-                ],
-                env=env,
-            )
+        tags[source] = f"{_PROJECT}-{service}-service:latest"
+    load_project_images(image_loaders, tags, env=env)
 
 
 def _apply_schemas(workspace: Path, *, env: dict[str, str]) -> None:
-    schema_groups = (
+    apply_schemas([
         (workspace / "submitqueue/gateway/extension/storage/mysql/schema", f"{_PROJECT}-mysql-app-1"),
         (workspace / "submitqueue/orchestrator/extension/storage/mysql/schema", f"{_PROJECT}-mysql-app-1"),
         (workspace / "platform/extension/counter/mysql/schema", f"{_PROJECT}-mysql-app-1"),
         (workspace / "platform/extension/messagequeue/mysql/schema", f"{_PROJECT}-mysql-queue-1"),
-    )
-    for schema_dir, container in schema_groups:
-        for schema in sorted(schema_dir.glob("*.sql")):
-            with schema.open("r", encoding="utf-8") as statements:
-                _run(
-                    ["docker", "exec", "-i", container, "mysql", "-uroot", "-proot", "submitqueue"],
-                    env=env,
-                    stdin=statements,
-                )
+    ], env=env)
 
 
 def _chromium_executable(chromium: Path) -> Path:
@@ -199,7 +160,7 @@ def main() -> int:
     image_loaders = [_runfile(path) for path in sys.argv[1:6]]
     playwright = _runfile(sys.argv[6])
     chromium = _runfile(sys.argv[7])
-    workspace = _runfile("web/package.json").parents[1]
+    workspace = _runfile("web/test/e2e/submitqueue/package.json").parents[4]
     context = Path(tempfile.mkdtemp(prefix="submitqueue-web-e2e."))
     gate_dir = context / "consumer-gate"
     gate_dir.mkdir()
@@ -210,7 +171,7 @@ def main() -> int:
     env["DOCKER_CONFIG"] = str(docker_config)
 
     compose = [
-        *_compose_command(env=env),
+        *_compose_command(),
         "-f",
         str(workspace / "service/submitqueue/docker-compose.yml"),
         "-f",
@@ -218,7 +179,7 @@ def main() -> int:
         "-f",
         str(workspace / "service/submitqueue/docker-compose.web.yml"),
         "-f",
-        str(workspace / "web/test/e2e/docker-compose.e2e.yml"),
+        str(workspace / "web/test/e2e/submitqueue/docker-compose.e2e.yml"),
         "-p",
         _PROJECT,
     ]

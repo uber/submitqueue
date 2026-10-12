@@ -94,7 +94,7 @@ The workspace lives under `web/` and repeats the Go root layout; the UI is a gat
 
 - Unit tests cover route round-trips, readable paths, timestamp conversion, stable list bounds, cursor scoping and tampering, error classification and host classifiers, catalog caching, request-scoped logging, gateway and page metrics, mount paths and authorization, client navigation, and polling (transition-aware single flight, progressive backoff, hidden and offline pause, history-aware terminal stop).
 - Every protected host layout and route repeats the authentication check rather than relying only on the Next.js proxy.
-- `//web/test/e2e:web_test` runs the Bazel-built Go services, the Bazel-built web image, and a digest-pinned MySQL image with pulls and Dockerfile builds disabled. It covers the Basic-auth challenge, explicit h2c, newest-first lists, client-side navigation, a slash-containing request ID, lifecycle and build history, paginated change history, and axe checks.
+- `//web/test/e2e/submitqueue:web_test` runs the Bazel-built Go services, the Bazel-built web image, and a digest-pinned MySQL image with pulls and Dockerfile builds disabled. It covers the Basic-auth challenge, explicit h2c, newest-first lists, client-side navigation, a slash-containing request ID, lifecycle and build history, paginated change history, and axe checks.
 - Built package tarballs are inspected for contents and forbidden imports, typechecked by a consumer written only against public entry points, rendered by a plain Node consumer through `handle`, and server-rendered and hydrated under React 18.
 
 ## Deferred

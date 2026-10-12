@@ -14,7 +14,8 @@ if (!baseURL || !gatewayURL || !token || !chromiumExecutablePath) {
 
 export default defineConfig({
   outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR ?? "test-results",
-  testDir: "./test/e2e",
+  testDir: ".",
+  testMatch: "*.spec.ts",
   // No per-test limit: the Bazel test timeout bounds the run.
   timeout: 0,
   fullyParallel: false,

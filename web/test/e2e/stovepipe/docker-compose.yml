@@ -1,0 +1,5 @@
+services:
+  mysql-app:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue-web-e2e}-mysql:8.0
+  mysql-queue:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue-web-e2e}-mysql:8.0
