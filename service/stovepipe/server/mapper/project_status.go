@@ -19,9 +19,21 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
+// ProtoToGetProjectStatusByIDRequest maps a wire selector to its domain form.
+func ProtoToGetProjectStatusByIDRequest(req *pb.GetProjectStatusByIDRequest) entity.GetProjectStatusRequest {
+	result := entity.GetProjectStatusRequest{
+		Queue:     req.GetQueue(),
+		RequestID: req.GetRequestId(),
+		PageSize:  req.GetPageSize(),
+		PageToken: req.GetPageToken(),
+	}
+	result.Projects = req.GetProjects()
+	return result
+}
+
 // ProtoToGetProjectStatusByURIRequest maps a wire selector to its domain form.
-func ProtoToGetProjectStatusByURIRequest(req *pb.GetProjectStatusByURIRequest) entity.GetProjectStatusByURIRequest {
-	result := entity.GetProjectStatusByURIRequest{
+func ProtoToGetProjectStatusByURIRequest(req *pb.GetProjectStatusByURIRequest) entity.GetProjectStatusRequest {
+	result := entity.GetProjectStatusRequest{
 		Queue:     req.GetQueue(),
 		ChangeURI: req.GetChangeUri(),
 		PageSize:  req.GetPageSize(),
@@ -31,8 +43,29 @@ func ProtoToGetProjectStatusByURIRequest(req *pb.GetProjectStatusByURIRequest) e
 	return result
 }
 
+// GetProjectStatusByIDResultToProto maps a domain status projection to its wire response.
+func GetProjectStatusByIDResultToProto(result entity.GetProjectStatusResult) *pb.GetProjectStatusByIDResponse {
+	response := &pb.GetProjectStatusByIDResponse{
+		RequestId:              result.RequestSummary.RequestID,
+		Queue:                  result.RequestSummary.Queue,
+		ChangeUri:              result.RequestSummary.URI,
+		BaseUri:                result.RequestSummary.BaseURI,
+		RequestState:           string(result.RequestSummary.State),
+		UpdatedAtMs:            result.UpdatedAtMs,
+		ProjectResultsComplete: result.ProjectResultsComplete,
+		NextPageToken:          result.NextPageToken,
+	}
+	if result.HasRepositoryValidationFact {
+		response.RepositoryResult = &pb.GetProjectStatusByIDResponse_RepositoryBreakageDegree{
+			RepositoryBreakageDegree: result.RepositoryValidationFact.Degree,
+		}
+	}
+	response.Projects = validationFactsToProto(result.ProjectValidationFacts)
+	return response
+}
+
 // GetProjectStatusByURIResultToProto maps a domain status projection to its wire response.
-func GetProjectStatusByURIResultToProto(result entity.GetProjectStatusByURIResult) *pb.GetProjectStatusByURIResponse {
+func GetProjectStatusByURIResultToProto(result entity.GetProjectStatusResult) *pb.GetProjectStatusByURIResponse {
 	response := &pb.GetProjectStatusByURIResponse{
 		RequestId:              result.RequestSummary.RequestID,
 		Queue:                  result.RequestSummary.Queue,
@@ -48,15 +81,20 @@ func GetProjectStatusByURIResultToProto(result entity.GetProjectStatusByURIResul
 			RepositoryBreakageDegree: result.RepositoryValidationFact.Degree,
 		}
 	}
-	response.Projects = make([]*pb.ProjectValidation, 0, len(result.ProjectValidationFacts))
-	for _, fact := range result.ProjectValidationFacts {
+	response.Projects = validationFactsToProto(result.ProjectValidationFacts)
+	return response
+}
+
+func validationFactsToProto(facts []entity.ValidationFact) []*pb.ProjectValidation {
+	projects := make([]*pb.ProjectValidation, 0, len(facts))
+	for _, fact := range facts {
 		degree := fact.Degree
-		response.Projects = append(response.Projects, &pb.ProjectValidation{
+		projects = append(projects, &pb.ProjectValidation{
 			Project: fact.Project,
 			Result: &pb.ProjectValidation_BreakageDegree{
 				BreakageDegree: degree,
 			},
 		})
 	}
-	return response
+	return projects
 }

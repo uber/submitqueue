@@ -14,11 +14,13 @@
 
 package entity
 
-// GetProjectStatusByURIRequest selects a validation request by queue and commit URI.
-type GetProjectStatusByURIRequest struct {
+// GetProjectStatusRequest selects a validation request by queue and exactly one of request ID or commit URI.
+type GetProjectStatusRequest struct {
 	// Queue identifies the queue containing the validation request.
 	Queue string
-	// ChangeURI identifies the exact commit under validation.
+	// RequestID is the queue-scoped decimal identifier, empty when selecting by URI.
+	RequestID string
+	// ChangeURI identifies the exact commit under validation, empty when selecting by request ID.
 	ChangeURI string
 	// Projects limits results to the supplied consumer-defined project IDs.
 	Projects []string
@@ -28,8 +30,8 @@ type GetProjectStatusByURIRequest struct {
 	PageToken string
 }
 
-// GetProjectStatusByURIResult is the current validation projection for one request.
-type GetProjectStatusByURIResult struct {
+// GetProjectStatusResult is the current validation projection for one request.
+type GetProjectStatusResult struct {
 	// RequestSummary is the authoritative validation projection selected by the lookup.
 	RequestSummary RequestSummary
 	// RepositoryValidationFact is the repository result when HasRepositoryValidationFact is true.

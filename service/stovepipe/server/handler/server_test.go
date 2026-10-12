@@ -120,3 +120,63 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 		})
 	}
 }
+
+type fakeProjectStatusController struct {
+	getStatus func(context.Context, entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error)
+}
+
+func (f *fakeProjectStatusController) GetProjectStatus(ctx context.Context, req entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error) {
+	return f.getStatus(ctx, req)
+}
+
+func TestGetProjectStatus(t *testing.T) {
+	controllerErr := errors.New("controller failed")
+	for _, selector := range []string{"ID", "URI"} {
+		for _, callErr := range []error{nil, controllerErr} {
+			name := selector + "/success"
+			if callErr != nil {
+				name = selector + "/controller error"
+			}
+			t.Run(name, func(t *testing.T) {
+				wantReq := entity.GetProjectStatusRequest{Queue: "queue", Projects: []string{"project-a"}, PageSize: 25, PageToken: "token"}
+				if selector == "ID" {
+					wantReq.RequestID = "7"
+				} else {
+					wantReq.ChangeURI = "uri"
+				}
+				fake := &fakeProjectStatusController{getStatus: func(_ context.Context, req entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error) {
+					assert.Equal(t, wantReq, req)
+					return entity.GetProjectStatusResult{
+						RequestSummary: entity.RequestSummary{RequestID: "7", Queue: "queue", URI: "uri", State: entity.RequestStateSucceeded},
+					}, callErr
+				}}
+				srv := &StovepipeServer{projectStatusController: fake}
+				if selector == "ID" {
+					response, err := srv.GetProjectStatusByID(context.Background(), &pb.GetProjectStatusByIDRequest{
+						Queue: "queue", RequestId: "7", Projects: []string{"project-a"}, PageSize: 25, PageToken: "token",
+					})
+					if callErr != nil {
+						require.ErrorIs(t, err, callErr)
+						assert.Nil(t, response)
+						return
+					}
+					require.NoError(t, err)
+					assert.Equal(t, "7", response.GetRequestId())
+					assert.Equal(t, "succeeded", response.GetRequestState())
+				} else {
+					response, err := srv.GetProjectStatusByURI(context.Background(), &pb.GetProjectStatusByURIRequest{
+						Queue: "queue", ChangeUri: "uri", Projects: []string{"project-a"}, PageSize: 25, PageToken: "token",
+					})
+					if callErr != nil {
+						require.ErrorIs(t, err, callErr)
+						assert.Nil(t, response)
+						return
+					}
+					require.NoError(t, err)
+					assert.Equal(t, "7", response.GetRequestId())
+					assert.Equal(t, "succeeded", response.GetRequestState())
+				}
+			})
+		}
+	}
+}
