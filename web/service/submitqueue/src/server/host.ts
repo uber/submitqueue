@@ -4,7 +4,7 @@ import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/curso
 import { createSubmitQueueWeb, type SubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { loadCursorSecret } from "./config";
 import { resolveReferenceGateway } from "./gateway";
-import { resolveReferenceLogger, resolveReferenceMeter } from "./observability";
+import { resolveReferenceMeter } from "./observability";
 
 let web: SubmitQueueWeb | undefined;
 
@@ -17,7 +17,6 @@ export function resolveReferenceWeb(): SubmitQueueWeb {
   web ??= createSubmitQueueWeb({
     gateway: resolveReferenceGateway,
     cursors: newHmacCursorCodec(loadCursorSecret()),
-    logger: resolveReferenceLogger(),
     meter: resolveReferenceMeter(),
   });
   return web;

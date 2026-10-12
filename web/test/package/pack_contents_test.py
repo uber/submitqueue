@@ -8,7 +8,7 @@ from pathlib import Path
 
 # The module reads the gateway through a structural contract; the transport,
 # generated protos, and web framework belong to the host.
-_FORBIDDEN_IMPORTS = ("@submitqueue/api", "@submitqueue/web-submitqueue", "@connectrpc/", "@bufbuild/", "next")
+_FORBIDDEN_IMPORTS = ("@submitqueue/api", "@submitqueue/web-submitqueue", "@connectrpc/", "@bufbuild/", "next", "pino", "fusion-core", "fusion-tokens")
 
 # Modules the client-safe root entry must never reach, directly or transitively.
 _CLIENT_FORBIDDEN_MODULES = ("package/dist/controller/", "package/dist/module.js", "package/dist/server.js")
@@ -81,7 +81,7 @@ def main() -> int:
             for group in ("peerDependencies", "dependencies", "optionalDependencies")
             for name in package.get(group, {})
         ):
-            print("The core module must not require framework or transport dependencies.", file=sys.stderr)
+            print("The core module must not require framework, transport, or logging dependencies.", file=sys.stderr)
             return 1
         stylesheet = package.get("exports", {}).get("./styles.css")
         if stylesheet != "./view/styles.css" or stylesheet not in package.get("sideEffects", []):

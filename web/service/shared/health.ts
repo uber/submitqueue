@@ -1,4 +1,4 @@
-import type { Logger } from "pino";
+import { createLogCallback, type LogCallback } from "@submitqueue/web-platform/logging";
 
 export type HealthChecks = Readonly<Record<string, () => void | Promise<void>>>;
 
@@ -9,8 +9,9 @@ const NO_STORE = { "Cache-Control": "no-store" };
  * when all pass, otherwise 503. Each check's failure is logged once until it
  * recovers, so a polling orchestrator does not flood the logs.
  */
-export function createNextHealthRoute(checks: HealthChecks, logger: Logger) {
+export function createNextHealthRoute(checks: HealthChecks, onLog?: LogCallback) {
   const failing = new Set<string>();
+  const log = createLogCallback(onLog);
   return async function GET(): Promise<Response> {
     for (const [name, check] of Object.entries(checks)) {
       try {
@@ -18,7 +19,7 @@ export function createNextHealthRoute(checks: HealthChecks, logger: Logger) {
       } catch (cause) {
         if (!failing.has(name)) {
           failing.add(name);
-          logger.error({ check: name, err: cause }, "Web readiness check failed");
+          log("error", "Web readiness check failed", { check: name, error: cause });
         }
         return Response.json({ status: "unavailable" }, { status: 503, headers: NO_STORE });
       }

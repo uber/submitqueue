@@ -1,6 +1,6 @@
 import { forbidden, notFound, redirect } from "next/navigation";
 import { requireAuthorization } from "./authorize";
-import { resolveHost } from "../server/host";
+import { onLog, resolveHost } from "../server/host";
 import { StovepipeApp } from "@submitqueue/web-stovepipe";
 import { NextNavigationProvider } from "@submitqueue/web-service-shared/navigation";
 export async function StovepipePage({
@@ -22,6 +22,7 @@ export async function StovepipePage({
   const result = await resolveHost().handle({
     path: `/${path.join("/")}`,
     search,
+    onLog,
   });
   if (result.kind === "not-found") notFound();
   if (result.kind === "forbidden") forbidden();

@@ -28,7 +28,6 @@ js_test(
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@opentelemetry/api",
-        "//web:node_modules/pino",
     ],
     entry_point = "react18-runtime.mjs",
 )

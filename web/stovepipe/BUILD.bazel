@@ -28,7 +28,6 @@ web_library(
         ":node_modules/@submitqueue/web-platform",
         ":node_modules/@types/node",
         ":node_modules/@types/react",
-        ":node_modules/pino",
         ":node_modules/react",
     ],
 )

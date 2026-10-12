@@ -4,6 +4,7 @@ import { metrics, type Meter } from "@opentelemetry/api";
 import { PrometheusExporter } from "@opentelemetry/exporter-prometheus";
 import { MeterProvider } from "@opentelemetry/sdk-metrics";
 import { pino, type Logger } from "pino";
+import { createPinoLogCallback } from "@submitqueue/web-service-shared/logging";
 import { loadMetricsPort } from "./config";
 
 let logger: Logger | undefined;
@@ -12,6 +13,10 @@ let logger: Logger | undefined;
 export function resolveReferenceLogger(): Logger {
   logger ??= pino({ name: "submitqueue-web", level: process.env.LOG_LEVEL ?? "info" });
   return logger;
+}
+
+export function resolveReferenceLogCallback() {
+  return createPinoLogCallback(resolveReferenceLogger());
 }
 
 let meter: Meter | undefined;

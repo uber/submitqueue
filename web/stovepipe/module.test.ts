@@ -42,6 +42,76 @@ function createPageTestContext() {
   return { service, paths, app };
 }
 describe("Stovepipe page loading", () => {
+  it("keeps overlapping loads bound to their own host logging callbacks", async () => {
+    const { app, service, paths } = createPageTestContext();
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const error = new Error("private upstream detail");
+    vi.mocked(service.list).mockImplementation(async () => {
+      await ready;
+      throw error;
+    });
+    const first = vi.fn();
+    const second = vi.fn();
+    const path = paths.queue("repo/main");
+    const pending = [
+      app.handle({
+        path, search: new URLSearchParams(),
+        requestId: "first", onLog: first,
+      }),
+      app.handle({
+        path, search: new URLSearchParams(),
+        requestId: "second", onLog: second,
+      }),
+    ];
+    release();
+    const results = await Promise.all(pending);
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(first).toHaveBeenCalledWith("warn", "Stovepipe page section failed", {
+      requestId: "first", path, section: "queue requests", error,
+    });
+    expect(second).toHaveBeenCalledWith("warn", "Stovepipe page section failed", {
+      requestId: "second", path, section: "queue requests", error,
+    });
+    expect(JSON.stringify(results)).not.toContain("private upstream detail");
+  });
+
+  it("retains the page result when log delivery throws", async () => {
+    const { app, service, paths } = createPageTestContext();
+    vi.mocked(service.list).mockRejectedValue(new Error("private upstream detail"));
+    const result = await app.handle({
+      path: paths.queue("repo/main"), search: new URLSearchParams(),
+      onLog: () => {
+        throw new Error("logging unavailable");
+      },
+    });
+    expect(result).toMatchObject({ kind: "render", model: { requests: { ok: false } } });
+    expect(JSON.stringify(result)).not.toContain("private upstream detail");
+  });
+
+  it("reports and rethrows unexpected page failures without replacing the cause", async () => {
+    const { service, paths } = createPageTestContext();
+    const error = new Error("invalid host configuration");
+    const onLog = vi.fn(() => {
+      throw new Error("logging unavailable");
+    });
+    const app = createStovepipeWeb({
+      service: () => { throw error; },
+      paths,
+      queues: [{ name: "repo/main" }],
+    });
+    const path = paths.queue("repo/main");
+    await expect(app.handle({
+      path, search: new URLSearchParams(), requestId: "failed", onLog,
+    })).rejects.toBe(error);
+    expect(onLog).toHaveBeenCalledWith("error", "Web page load failed", {
+      requestId: "failed", path, error,
+    });
+  });
   it("uses backend queue cursors and links each request by its ID", async () => {
     const { service, app, paths } = createPageTestContext();
     vi.mocked(service.list).mockResolvedValue({

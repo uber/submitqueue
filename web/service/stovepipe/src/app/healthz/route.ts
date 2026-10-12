@@ -4,7 +4,7 @@ import { createNextHealthRoute } from "@submitqueue/web-service-shared/health";
 import { loadConfiguration } from "../../server/config";
 import { loadAuthConfiguration } from "../../server/auth";
 import { newConnectTransport } from "@submitqueue/web-service-shared/transport";
-import { logger } from "../../server/host";
+import { onLog } from "../../server/host";
 
 export const dynamic = "force-dynamic";
 
@@ -25,5 +25,5 @@ export const GET = createNextHealthRoute(
       await client.ping({ message: "stovepipe-web-readiness" });
     },
   },
-  logger,
+  onLog,
 );

@@ -1,5 +1,4 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { Logger } from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeGatewayReader, gatewayHistoryFixture, gatewayRequestFixture } from "../extension/gateway/mock/index.js";
 
@@ -13,12 +12,6 @@ import { loadRequestList } from "./queue.js";
 import { loadRequestDetail, requestDetailIsComplete, requestDetailRefreshState } from "./request.js";
 
 const FAILURE_MESSAGE = "SubmitQueue gateway call failed";
-
-function recordingLogger() {
-  const warn = vi.fn();
-  const logger = { child: () => logger, debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() } as unknown as Logger;
-  return { logger, warn };
-}
 
 describe("queue discovery mapping", () => {
   it("lists gateway-configured queues, including ones without requests", async () => {
@@ -34,15 +27,15 @@ describe("queue discovery mapping", () => {
   });
 
   it("classifies discovery failures without leaking the gateway message", async () => {
-    const { logger, warn } = recordingLogger();
+    const onLog = vi.fn();
     const cause = new ConnectError("private upstream detail", Code.Unavailable);
     const result = await loadQueueDirectory(
       createFakeGatewayReader({ queuesError: cause }),
-      { logger },
+      { onLog },
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "transient", retryable: true } });
     expect(JSON.stringify(result)).not.toContain("private upstream detail");
-    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ operation: "queues", err: cause }), FAILURE_MESSAGE);
+    expect(onLog).toHaveBeenCalledWith("warn", FAILURE_MESSAGE, expect.objectContaining({ operation: "queues", error: cause }));
   });
 
   it.each([{ queues: [{ name: "" }] }, { queues: [{ name: "same" }, { name: "same" }] }])("rejects malformed discovery data", async ({ queues }) => {
@@ -129,7 +122,7 @@ describe("server presentation mapping", () => {
   });
 
   it("keeps the summary available when history has a transient failure", async () => {
-    const { logger, warn } = recordingLogger();
+    const onLog = vi.fn();
     const historyCause = new ConnectError("private upstream text", Code.Unavailable);
     const reader = createFakeGatewayReader({
       summary: gatewayRequestFixture({ status: "landed" }),
@@ -141,7 +134,7 @@ describe("server presentation mapping", () => {
         queue: "demo-queue",
         sqid: "demo-queue/1",
       },
-      { logger },
+      { onLog },
     );
 
     expect(result).toMatchObject({
@@ -152,13 +145,13 @@ describe("server presentation mapping", () => {
         historyError: { kind: "transient", retryable: true },
       },
     });
-    expect(warn).toHaveBeenCalledWith({
+    expect(onLog).toHaveBeenCalledWith("warn", FAILURE_MESSAGE, {
       operation: "history",
       queue: "demo-queue",
       sqid: "demo-queue/1",
       code: "unavailable",
-      err: historyCause,
-    }, FAILURE_MESSAGE);
+      error: historyCause,
+    });
     expect(JSON.stringify(result)).not.toContain("private upstream text");
     if (result.ok) {
       expect(requestDetailIsComplete(result.data)).toBe(false);
@@ -238,6 +231,14 @@ describe("server presentation mapping", () => {
 });
 
 describe("gateway error classification", () => {
+  it("returns the sanitized upstream error even when log delivery throws", async () => {
+    const result = await loadQueueDirectory(
+      createFakeGatewayReader({ queuesError: new ConnectError("private upstream detail", Code.Unavailable) }),
+      { onLog: () => { throw new Error("logging unavailable"); } },
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: "transient", retryable: true } });
+    expect(JSON.stringify(result)).not.toContain("private upstream detail");
+  });
   it.each([
     [Code.InvalidArgument, "user", false],
     [Code.NotFound, "not-found", false],
@@ -253,25 +254,25 @@ describe("gateway error classification", () => {
   });
 
   it("uses a host classifier for transports without gRPC status codes", async () => {
-    const { logger, warn } = recordingLogger();
+    const onLog = vi.fn();
     const result = await loadRequestList(
       createFakeGatewayReader({ listError: new Error("custom transport: upstream timed out") }),
       { queue: "demo-queue", receivedAtOrAfterMs: 100, receivedBeforeMs: 200 },
-      { classifyError: () => "unavailable", logger },
+      { classifyError: () => "unavailable", onLog },
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "transient", retryable: true } });
-    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ code: "unavailable" }), FAILURE_MESSAGE);
+    expect(onLog).toHaveBeenCalledWith("warn", FAILURE_MESSAGE, expect.objectContaining({ code: "unavailable" }));
   });
 
   it("treats a throwing host classifier as an internal failure", async () => {
-    const { logger, warn } = recordingLogger();
+    const onLog = vi.fn();
     const result = await loadRequestList(
       createFakeGatewayReader({ listError: new Error("upstream") }),
       { queue: "demo-queue", receivedAtOrAfterMs: 100, receivedBeforeMs: 200 },
-      { classifyError: () => { throw new Error("classifier bug"); }, logger },
+      { classifyError: () => { throw new Error("classifier bug"); }, onLog },
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "internal", retryable: false } });
-    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ code: "internal" }), FAILURE_MESSAGE);
+    expect(onLog).toHaveBeenCalledWith("warn", FAILURE_MESSAGE, expect.objectContaining({ code: "internal" }));
   });
 
   it("does not expose arbitrary errors", () => {
@@ -283,7 +284,7 @@ describe("gateway error classification", () => {
 
   it("logs one structured failure without exposing the cause", async () => {
     const cause = new ConnectError("private upstream detail", Code.Unavailable);
-    const { logger, warn } = recordingLogger();
+    const onLog = vi.fn();
     const result = await loadRequestList(
       createFakeGatewayReader({ listError: cause }),
       {
@@ -291,11 +292,11 @@ describe("gateway error classification", () => {
         receivedAtOrAfterMs: 100,
         receivedBeforeMs: 200,
       },
-      { logger },
+      { onLog },
     );
 
-    expect(warn).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith({ operation: "list", queue: "demo-queue", code: "unavailable", err: cause }, FAILURE_MESSAGE);
+    expect(onLog).toHaveBeenCalledOnce();
+    expect(onLog).toHaveBeenCalledWith("warn", FAILURE_MESSAGE, { operation: "list", queue: "demo-queue", code: "unavailable", error: cause });
     expect(JSON.stringify(result)).not.toContain("private upstream detail");
   });
 });

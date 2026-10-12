@@ -1,8 +1,4 @@
 import { metrics, trace, type Attributes, type Meter, type Tracer } from "@opentelemetry/api";
-import { pino, type Logger } from "pino";
-
-/** Discards every entry; the default when a host supplies no logger. */
-export const silentLogger: Logger = pino({ level: "silent" });
 
 /** Instrumentation scope for meters and tracers the web packages create by default. */
 export const INSTRUMENTATION_SCOPE = "submitqueue-web";

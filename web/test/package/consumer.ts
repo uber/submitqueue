@@ -8,7 +8,10 @@ const gateway: SubmitQueueGateway = createFakeGatewayReader();
 const web = createSubmitQueueWeb({ gateway, cursors: newHmacCursorCodec("consumer-owned-secret") });
 
 export async function render() {
-  const result = await web.handle({ path: "/demo-queue", search: {} });
+  const result = await web.handle({
+    path: "/demo-queue", search: {},
+    onLog: (level, message, metadata) => { console[level](message, metadata); },
+  });
   if (result.kind !== "render") {
     return null;
   }

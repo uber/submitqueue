@@ -1,6 +1,6 @@
 import { SpanStatusCode, type Meter, type Tracer } from "@opentelemetry/api";
-import type { Logger } from "pino";
-import { beginOperation, defaultMeter, defaultTracer, silentLogger } from "./core/observability.js";
+import { createLogCallback, type LogCallback } from "@submitqueue/web-platform/logging";
+import { beginOperation, defaultMeter, defaultTracer } from "./core/observability.js";
 import { WebPaths } from "./core/paths.js";
 import { parseRoute, type SubmitQueueWebRoute, type WebSearchParams } from "./core/route.js";
 import { loadChangePage } from "./controller/change.js";
@@ -23,6 +23,8 @@ export interface SubmitQueueRequestContext {
   requestId?: string;
   /** Aborted when the viewer's request is abandoned. */
   signal?: AbortSignal;
+  /** Logging callback scoped to this page load. */
+  onLog?: LogCallback;
 }
 
 /** One page request, in framework-neutral terms. */
@@ -34,6 +36,8 @@ export interface SubmitQueueWebRequest {
   /** Correlation ID; generated when absent. */
   requestId?: string;
   signal?: AbortSignal;
+  /** Host callback bound to this request's logging context; absent means silent. */
+  onLog?: LogCallback;
 }
 
 /** Caches successful catalogs per key; the key must separate viewers whose gateway visibility differs. */
@@ -55,7 +59,6 @@ export interface SubmitQueueWebOptions {
   classifyError?: GatewayErrorClassifier;
   /** Caches the queue catalog (`ListQueues`) across loads; absent means every load reads it. */
   queuesCache?: QueueCatalogCache;
-  logger?: Logger;
   meter?: Meter;
   tracer?: Tracer;
   now?: () => number;
@@ -106,7 +109,6 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
   const paths = options.paths ?? new WebPaths();
   const mount = paths.basePath.split("/").filter(Boolean);
   const now = () => options.now?.() ?? Date.now();
-  const logger = options.logger ?? silentLogger;
   const meter = options.meter ?? defaultMeter();
   const tracer = options.tracer ?? defaultTracer();
   const newRequestId = options.newRequestId ?? (() => globalThis.crypto.randomUUID());
@@ -116,12 +118,18 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
     tracer,
   };
   const readQueues: QueueCatalogLoader = (gateway, context) =>
-    loadQueueDirectory(gateway, { ...baseGatewayOptions, logger: logger.child({ requestId: context.requestId }) });
+    loadQueueDirectory(gateway, {
+      ...baseGatewayOptions,
+      ...(context.onLog ? { onLog: context.onLog } : {}),
+    });
   const loadQueues = options.queuesCache ? cacheQueueCatalog(readQueues, options.queuesCache, now) : readQueues;
 
   async function load(route: SubmitQueueWebRoute, context: SubmitQueueRequestContext): Promise<SubmitQueueWebResult> {
     const gateway = typeof options.gateway === "function" ? options.gateway(context) : options.gateway;
-    const gatewayOptions = { ...baseGatewayOptions, logger: logger.child({ requestId: context.requestId }) };
+    const gatewayOptions = {
+      ...baseGatewayOptions,
+      ...(context.onLog ? { onLog: context.onLog } : {}),
+    };
     const catalog = await loadQueues(gateway, context);
     const deps: PageDependencies = { gateway, cursors: options.cursors, paths, now, gatewayOptions, catalog };
     if (route.kind === "queues") {
@@ -152,13 +160,14 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
         return notFound;
       }
       const requestId = request.requestId ?? newRequestId();
-      const requestLogger = logger.child({ requestId });
+      const onLog = createLogCallback(request.onLog, { requestId, path: request.path });
       if (options.authorize && !(await options.authorize(request.principal, route))) {
-        requestLogger.info({ path: request.path }, "Web page request was not authorized");
+        onLog("info", "Web page request was not authorized", {});
         return { kind: "forbidden" };
       }
       const context: SubmitQueueRequestContext = {
         requestId,
+        onLog,
         ...(request.principal === undefined ? {} : { principal: request.principal }),
         ...(request.signal ? { signal: request.signal } : {}),
       };
@@ -173,7 +182,7 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
           operation.end("exception");
           span.recordException(cause instanceof Error ? cause : String(cause));
           span.setStatus({ code: SpanStatusCode.ERROR });
-          requestLogger.error({ path: request.path, err: cause }, "Web page load failed");
+          onLog("error", "Web page load failed", { error: cause });
           throw cause;
         } finally {
           span.end();

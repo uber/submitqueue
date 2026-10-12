@@ -3,7 +3,7 @@ import { forbidden, notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import { cache } from "react";
 import { SubmitQueueApp } from "@submitqueue/web-submitqueue";
-import type { SubmitQueueWeb, WebSearchParams } from "@submitqueue/web-submitqueue/server";
+import type { SubmitQueueWeb, SubmitQueueWebRequest, WebSearchParams } from "@submitqueue/web-submitqueue/server";
 import { NextNavigationProvider } from "@submitqueue/web-service-shared/navigation";
 
 export interface NextPageProps {
@@ -19,6 +19,7 @@ export interface NextPageOptions {
    * It may call Next's `unauthorized()`; it runs before every load.
    */
   authenticate?: () => Promise<unknown>;
+  onLog?: SubmitQueueWebRequest["onLog"];
 }
 
 /**
@@ -36,6 +37,7 @@ export function createNextPage(options: NextPageOptions) {
     return web.handle({
       path, search: JSON.parse(encodedSearch) as WebSearchParams,
       ...(principal === undefined ? {} : { principal }),
+      ...(options.onLog ? { onLog: options.onLog } : {}),
     });
   });
 

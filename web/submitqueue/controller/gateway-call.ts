@@ -1,7 +1,7 @@
 import { SpanStatusCode, type Meter, type Span, type Tracer } from "@opentelemetry/api";
 import type { WebError } from "../entity/index.js";
-import { beginOperation, defaultMeter, defaultTracer, silentLogger } from "../core/observability.js";
-import type { Logger } from "pino";
+import { beginOperation, defaultMeter, defaultTracer } from "../core/observability.js";
+import { createLogCallback, type LogCallback } from "@submitqueue/web-platform/logging";
 import type { GatewayErrorClassifier, GatewayErrorCode } from "../extension/gateway/index.js";
 import { grpcStatusErrorCode } from "../extension/gateway/grpcstatus/index.js";
 import { webErrorForGatewayCode } from "./error.js";
@@ -12,7 +12,7 @@ export interface GatewayLoadOptions {
   /** Maps transport errors to codes; defaults to {@link grpcStatusErrorCode}. */
   classifyError?: GatewayErrorClassifier;
   /** Receives one warning per failed call, with the raw cause. */
-  logger?: Logger;
+  onLog?: LogCallback;
   meter?: Meter;
   tracer?: Tracer;
 }
@@ -50,7 +50,7 @@ export async function callGateway<T>(
       const code = classifyGatewayError(options.classifyError ?? grpcStatusErrorCode, cause);
       timing.end(code);
       span.setStatus({ code: SpanStatusCode.ERROR, message: code });
-      (options.logger ?? silentLogger).warn({ operation, ...target, code, err: cause }, "SubmitQueue gateway call failed");
+      createLogCallback(options.onLog)("warn", "SubmitQueue gateway call failed", { operation, ...target, code, error: cause });
       return { ok: false, error: webErrorForGatewayCode(code) };
     } finally {
       span.end();

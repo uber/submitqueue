@@ -1,18 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { Logger } from "pino";
 import { createNextHealthRoute } from "./health";
 
-function recordingLogger() {
-  const error = vi.fn();
-  const logger = { child: () => logger, debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error } as unknown as Logger;
-  return { logger, error };
-}
-
 describe("createNextHealthRoute", () => {
+  it("still returns unavailable if log delivery throws", async () => {
+    const GET = createNextHealthRoute(
+      { gateway: () => { throw new Error("gateway unavailable"); } },
+      () => { throw new Error("logging unavailable"); },
+    );
+    expect((await GET()).status).toBe(503);
+  });
   it("is ready and uncached when every check passes", async () => {
-    const { logger } = recordingLogger();
-    const response = await createNextHealthRoute({ configuration: () => {}, gateway: async () => {} }, logger)();
+    const response = await createNextHealthRoute({ configuration: () => {}, gateway: async () => {} })();
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({ status: "ok" });
@@ -23,16 +22,16 @@ describe("createNextHealthRoute", () => {
     const gateway = vi.fn().mockRejectedValueOnce(cause).mockRejectedValueOnce(cause)
       .mockResolvedValueOnce(undefined).mockRejectedValueOnce(cause);
     const later = vi.fn();
-    const { logger, error } = recordingLogger();
-    const GET = createNextHealthRoute({ gateway, later }, logger);
+    const onLog = vi.fn();
+    const GET = createNextHealthRoute({ gateway, later }, onLog);
 
     expect((await GET()).status).toBe(503);
     expect((await GET()).status).toBe(503);
-    expect(error).toHaveBeenCalledOnce();
-    expect(error).toHaveBeenCalledWith({ check: "gateway", err: cause }, "Web readiness check failed");
+    expect(onLog).toHaveBeenCalledOnce();
+    expect(onLog).toHaveBeenCalledWith("error", "Web readiness check failed", { check: "gateway", error: cause });
     expect(later).not.toHaveBeenCalled();
     expect((await GET()).status).toBe(200);
     expect((await GET()).status).toBe(503);
-    expect(error).toHaveBeenCalledTimes(2);
+    expect(onLog).toHaveBeenCalledTimes(2);
   });
 });

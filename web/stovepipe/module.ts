@@ -1,5 +1,5 @@
-import { metrics, trace, type Meter, type Tracer } from "@opentelemetry/api";
-import { pino, type Logger } from "pino";
+import { metrics, trace, SpanStatusCode, type Meter, type Tracer } from "@opentelemetry/api";
+import { createLogCallback, type LogCallback } from "@submitqueue/web-platform/logging";
 import { parseStovepipeRoute } from "./core/route.js";
 import type { StovepipeService } from "./extension/service/index.js";
 import type { Queue, StovepipePageModel } from "./entity/index.js";
@@ -14,6 +14,10 @@ export interface StovepipeWebRequest {
   search: URLSearchParams;
   principal?: unknown;
   signal?: AbortSignal;
+  /** Correlation ID for logs; generated when absent. */
+  requestId?: string;
+  /** Host callback bound to this request's logging context; absent means silent. */
+  onLog?: LogCallback;
 }
 export type StovepipeWebResult =
   | { kind: "render"; model: StovepipePageModel }
@@ -27,13 +31,11 @@ export interface StovepipeWebOptions {
   queues: readonly Queue[];
   paths?: StovepipePaths;
   authorize?(principal: unknown, queue: string): boolean | Promise<boolean>;
-  logger?: Logger;
   meter?: Meter;
   tracer?: Tracer;
 }
 export function createStovepipeWeb(options: StovepipeWebOptions) {
   const paths = options.paths ?? new StovepipePaths();
-  const logger = options.logger ?? pino({ enabled: false });
   const meter = options.meter ?? metrics.getMeter("stovepipe-web");
   const tracer = options.tracer ?? trace.getTracer("stovepipe-web");
   const loads = meter.createCounter("stovepipe.web.page_loads");
@@ -43,6 +45,10 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
   return {
     async handle(request: StovepipeWebRequest): Promise<StovepipeWebResult> {
       const started = Date.now();
+      const onLog = createLogCallback(request.onLog, {
+        requestId: request.requestId ?? globalThis.crypto.randomUUID(),
+        path: request.path,
+      });
       return tracer.startActiveSpan(
         "stovepipe.web.page_load",
         async (span): Promise<StovepipeWebResult> => {
@@ -93,7 +99,7 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
                     request.search.get("page") ?? "",
                     request.signal,
                   ),
-                logger,
+                onLog,
                 "queue requests",
               );
               return {
@@ -110,7 +116,7 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
                   requestId,
                   request.signal,
                 ),
-              logger,
+              onLog,
               "request history",
             );
             return {
@@ -122,6 +128,11 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
                 history,
               },
             };
+          } catch (error) {
+            onLog("error", "Web page load failed", { error });
+            span.recordException(error instanceof Error ? error : String(error));
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            throw error;
           } finally {
             loads.add(1);
             latency.record(Date.now() - started);

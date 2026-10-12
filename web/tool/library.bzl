@@ -64,7 +64,6 @@ def web_library(package, vitest, eslint, deps, test_deps = [], assets = []):
             # jest-dom resolves its vitest peer from the workspace root.
             "//web:node_modules/vitest",
             "//web:node_modules/@opentelemetry/api",
-            "//web:node_modules/pino",
         ] + deps,
     )
     eslint.eslint_test(
