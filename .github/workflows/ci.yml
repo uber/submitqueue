@@ -47,7 +47,7 @@ jobs:
         run: make lint
 
   # ---------------------------------------------------------------------------
-  # TIDY (module files + BUILD files in sync)
+  # TIDY (module files + BUILD files + mocks in sync)
   # ---------------------------------------------------------------------------
   tidy:
     name: Tidy
@@ -66,6 +66,9 @@ jobs:
 
       - name: Check BUILD files are up to date
         run: make check-gazelle
+
+      - name: Check mocks are up to date
+        run: make check-mocks
 
   # ---------------------------------------------------------------------------
   # BUILD AND UNIT TESTS (parallel jobs, separate Bazel caches)
