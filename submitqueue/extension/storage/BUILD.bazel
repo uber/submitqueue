@@ -17,6 +17,8 @@ go_library(
         "request_uri_store.go",
         "speculation_path_set_store.go",
         "storage.go",
+        "target_dictionary_store.go",
+        "target_signature_store.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/storage",
     visibility = ["//visibility:public"],
