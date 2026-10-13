@@ -20,13 +20,49 @@ import (
 
 	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/stovepipe/controller"
+	"github.com/uber/submitqueue/stovepipe/core/queuelog"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func TestQueueStatusContractIsUnimplemented(t *testing.T) {
-	server := &StovepipeServer{}
-	response, err := server.GetQueueStatus(context.Background(), &pb.GetQueueStatusRequest{Queue: "repo/main"})
-	require.Nil(t, response)
-	require.Equal(t, codes.Unimplemented, status.Code(err))
+type fakeQueueStatusController struct {
+	get func(context.Context, entity.GetQueueStatusRequest) (entity.GetQueueStatusResult, error)
+}
+
+func (f fakeQueueStatusController) GetQueueStatus(ctx context.Context, req entity.GetQueueStatusRequest) (entity.GetQueueStatusResult, error) {
+	return f.get(ctx, req)
+}
+
+func TestGetQueueStatus(t *testing.T) {
+	for _, tt := range []struct {
+		err  error
+		code codes.Code
+	}{
+		{nil, codes.OK}, {controller.ErrInvalidRequest, codes.InvalidArgument},
+		{controller.ErrQueueStateNotFound, codes.NotFound}, {controller.ErrCommitStateUnresolved, codes.FailedPrecondition},
+		{queuelog.ErrInconsistentHistory, codes.Internal}, {context.Canceled, codes.Canceled}, {context.DeadlineExceeded, codes.DeadlineExceeded},
+	} {
+		wantErr := tt.err
+		if wantErr == controller.ErrQueueStateNotFound || wantErr == controller.ErrCommitStateUnresolved {
+			wantErr = errs.NewUserError(wantErr)
+		}
+		fake := fakeQueueStatusController{get: func(ctx context.Context, req entity.GetQueueStatusRequest) (entity.GetQueueStatusResult, error) {
+			require.Equal(t, entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: "C"}, req)
+			return entity.GetQueueStatusResult{Queue: "repo/main", State: entity.QueueState{Version: 1, State: entity.QueueEnablementDisabled}}, wantErr
+		}}
+		server := NewStovepipeServer(nil, nil, nil, nil, nil, fake)
+		response, err := server.GetQueueStatus(context.Background(), &pb.GetQueueStatusRequest{Queue: "repo/main", ChangeUri: "C"})
+		if wantErr != nil {
+			require.Equal(t, tt.code, status.Code(err))
+			require.Nil(t, response)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, "repo/main", response.Queue)
+			require.Equal(t, int64(1), response.State.Version)
+			require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, response.State.State)
+		}
+	}
 }
