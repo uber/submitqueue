@@ -17,6 +17,11 @@ package handler
 
 import (
 	"context"
+	"errors"
+
+	"github.com/uber/submitqueue/stovepipe/core/queuelog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
@@ -31,6 +36,7 @@ type StovepipeServer struct {
 	requestHistoryController controller.RequestHistoryController
 	projectStatusController  controller.ProjectStatusController
 	listController           controller.ListController
+	queueStatusController    controller.GetQueueStatusController
 }
 
 // NewStovepipeServer creates a gRPC service handler from Stovepipe controllers.
@@ -40,6 +46,7 @@ func NewStovepipeServer(
 	requestHistoryController controller.RequestHistoryController,
 	projectStatusController controller.ProjectStatusController,
 	listController controller.ListController,
+	queueStatusController controller.GetQueueStatusController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
@@ -47,6 +54,7 @@ func NewStovepipeServer(
 		requestHistoryController: requestHistoryController,
 		projectStatusController:  projectStatusController,
 		listController:           listController,
+		queueStatusController:    queueStatusController,
 	}
 }
 
@@ -108,4 +116,26 @@ func (s *StovepipeServer) List(ctx context.Context, req *pb.ListRequest) (*pb.Li
 		return nil, err
 	}
 	return mapper.ListResultToProto(result), nil
+}
+
+// GetQueueStatus returns applied enablement separately from execution control.
+func (s *StovepipeServer) GetQueueStatus(ctx context.Context, req *pb.GetQueueStatusRequest) (*pb.GetQueueStatusResponse, error) {
+	result, err := s.queueStatusController.GetQueueStatus(ctx, mapper.ProtoToGetQueueStatusRequest(req))
+	if err != nil {
+		switch {
+		case controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case errors.Is(err, controller.ErrQueueStateNotFound):
+			return nil, status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, controller.ErrCommitStateUnresolved):
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		case errors.Is(err, queuelog.ErrInconsistentHistory):
+			return nil, status.Error(codes.Internal, err.Error())
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil, status.FromContextError(err).Err()
+		default:
+			return nil, err
+		}
+	}
+	return mapper.GetQueueStatusResultToProto(result), nil
 }
