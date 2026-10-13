@@ -14,7 +14,7 @@
 # Quick start:
 #   make local-stovepipe-start
 #
-# After `up`, the storage and queue schemas are applied (local-init-stovepipe-schemas).
+# Start the databases, apply schemas (local-init-stovepipe-schemas), then start the service.
 
 services:
   # Storage database - Stovepipe's request and request_uri tables.

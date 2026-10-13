@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "go_default_test",
     srcs = [
+        "queue_state_transitions_test.go",
         "queue_summary_test.go",
         "request_acceptance_test.go",
         "storage_test.go",
@@ -16,8 +17,12 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//stovepipe/core/queuelog:go_default_library",
+        "//stovepipe/core/queuestate:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/sourcecontrol/fake:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mysql:go_default_library",
         "//test/integration/stovepipe/extension/storage:go_default_library",

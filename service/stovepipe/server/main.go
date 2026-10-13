@@ -53,6 +53,8 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queuelog"
+	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
@@ -245,6 +247,12 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
+	stateTransitions := queuestate.NewTransitionController(storageFty, sourceControl, queuelog.NewMaterializer(scope))
+	for _, queue := range tenants {
+		if _, err := stateTransitions.Initialize(ctx, queue); err != nil {
+			return fmt.Errorf("initialize queue enablement %q: %w", queue, err)
+		}
+	}
 	materializer := requestlog.NewMaterializer(scope)
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
