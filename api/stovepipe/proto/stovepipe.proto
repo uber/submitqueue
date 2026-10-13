@@ -247,6 +247,45 @@ message ListResponse {
     string next_page_token = 2;
 }
 
+// GetQueueStatusRequest selects applied enablement for a queue and optional commit.
+message GetQueueStatusRequest {
+    // Required stable repo-and-ref queue name.
+    string queue = 1;
+    // Optional immutable commit URI. Empty selects the latest materialized state.
+    // Intermediate commits need no validation request of their own.
+    string change_uri = 2;
+}
+
+// QueueEnablement is independent of validation results and execution controls.
+enum QueueEnablement {
+    // Unspecified is never an explicit disablement.
+    QUEUE_ENABLEMENT_UNKNOWN = 0;
+    QUEUE_ENABLEMENT_ENABLED = 1;
+    QUEUE_ENABLEMENT_DISABLED = 2;
+}
+
+// QueueState is one durably applied enablement occurrence.
+message QueueState {
+    // Internally assigned positive queue-state version; orders applied changes.
+    int64 version = 1;
+    // Applied enablement. Successful lookups never return UNKNOWN.
+    QueueEnablement state = 2;
+    // Inclusive first covered commit. Empty only for initial DISABLED version 1.
+    string effective_from_commit_uri = 3;
+    // Application timestamp in Unix milliseconds, not source-control commit time.
+    int64 changed_at_ms = 4;
+}
+
+// GetQueueStatusResponse contains the enablement selected by the request.
+message GetQueueStatusResponse {
+    // Queue selected by the request.
+    string queue = 1;
+    // Latest materialized state when change_uri is empty; otherwise the state covering that commit.
+    // Resolution uses one pinned summary, which may lag internal state until persistence is repaired.
+    // Unresolved commits fail the call and never imply DISABLED.
+    QueueState state = 2;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -264,4 +303,6 @@ service Stovepipe {
     rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
     // List returns a queue-scoped page of current request summaries.
     rpc List(ListRequest) returns (ListResponse) {}
+    // GetQueueStatus returns current and optional commit-specific enablement.
+    rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
 }

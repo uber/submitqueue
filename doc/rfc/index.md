@@ -39,6 +39,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Request History API](stovepipe/request-history-api.md) - Queue-scoped request-ID and URI lookup, public projection, materialization decision, ordering, and retention
 - [List API](stovepipe/list-api.md) - Queue-scoped request listing by acceptance time, immutable acceptance time in summaries, cursor pagination, and a portable time-to-request mapping
 - [Project Status APIs](stovepipe/project-status-api.md) - Queue-scoped current validation lookup by request ID or commit URI, with repository and future project-level results
+- [Queue State](stovepipe/queue-state.md) - Internal queue enablement, materialized summary and history, and current or commit-specific status lookup
 
 ## Runway
 
