@@ -51,6 +51,8 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		requestLogStore:        NewRequestLogStore(s.db, queueScope.SubScope("request_log_store"), queueName),
 		requestSummaryStore:    NewRequestSummaryStore(s.db, queueScope.SubScope("request_summary_store"), queueName),
 		requestAcceptanceStore: NewRequestAcceptanceStore(s.db, queueScope.SubScope("request_acceptance_store"), queueName),
+		queueSummaryStore:      NewQueueSummaryStore(s.db, queueScope.SubScope("queue_summary_store"), queueName),
+		queueLogStore:          NewQueueLogStore(s.db, queueScope.SubScope("queue_log_store"), queueName),
 		queueStore:             NewQueueStore(s.db, queueScope.SubScope("queue_store"), queueName),
 		buildStore:             NewBuildStore(s.db, queueScope.SubScope("build_store"), queueName),
 		validationFactStore:    NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
@@ -70,6 +72,8 @@ type mysqlStorage struct {
 	requestSummaryStore    storage.RequestSummaryStore
 	requestAcceptanceStore storage.RequestAcceptanceStore
 	queueStore             storage.QueueStore
+	queueSummaryStore      storage.QueueSummaryStore
+	queueLogStore          storage.QueueLogStore
 	buildStore             storage.BuildStore
 	validationFactStore    storage.ValidationFactStore
 }
@@ -115,4 +119,12 @@ func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 // GetValidationFactStore returns the MySQL-backed ValidationFactStore.
 func (f *mysqlStorage) GetValidationFactStore() storage.ValidationFactStore {
 	return f.validationFactStore
+}
+
+// GetQueueSummaryStore returns the bound queue-summary store.
+func (f *mysqlStorage) GetQueueSummaryStore() storage.QueueSummaryStore { return f.queueSummaryStore }
+
+// GetQueueLogStore returns the bound immutable-history store.
+func (f *mysqlStorage) GetQueueLogStore() storage.QueueLogStore {
+	return f.queueLogStore
 }

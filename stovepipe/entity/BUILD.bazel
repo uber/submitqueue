@@ -9,6 +9,9 @@ go_library(
         "project_status.go",
         "queue.go",
         "queue_config.go",
+        "queue_log.go",
+        "queue_state.go",
+        "queue_summary.go",
         "request.go",
         "request_acceptance.go",
         "request_history.go",
@@ -26,6 +29,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "build_test.go",
+        "queue_state_test.go",
         "request_id_test.go",
         "request_log_test.go",
         "request_test.go",

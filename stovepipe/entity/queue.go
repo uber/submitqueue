@@ -43,7 +43,26 @@ type Queue struct {
 	// Empty until the first request is created. Coalescing compares IDs via CompareRequestID.
 	LatestRequestID string `json:"latest_request_id"`
 
+	// Enablement is the applied enabled/disabled state; empty means unregistered.
+	Enablement QueueEnablement `json:"enablement"`
+
+	// EnablementVersion is the queue-scoped enablement sequence; zero means unregistered.
+	// Operational changes do not advance this sequence.
+	EnablementVersion int64 `json:"enablement_version"`
+
+	// EffectiveFromCommitURI is the inclusive immutable enablement boundary; empty for initial registration.
+	EffectiveFromCommitURI string `json:"effective_from_commit_uri"`
+
+	// EnablementChangedAtMs is the enablement application timestamp in Unix milliseconds.
+	EnablementChangedAtMs int64 `json:"enablement_changed_at_ms"`
+
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`
+}
+
+// EnablementState returns the applied occurrence independently of operational row version.
+func (q Queue) EnablementState() QueueState {
+	return QueueState{Queue: q.Name, State: q.Enablement, Version: q.EnablementVersion,
+		EffectiveFromCommitURI: q.EffectiveFromCommitURI, ChangedAtMs: q.EnablementChangedAtMs}
 }

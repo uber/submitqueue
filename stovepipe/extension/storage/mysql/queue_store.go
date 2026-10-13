@@ -49,14 +49,15 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 	}
 
 	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		queue.Name,
 		queue.LastGreenURI,
 		queue.InFlightCount,
 		queue.LatestRequestID,
 		queue.Version,
 		queue.LastGreenRequestID,
+		queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs,
 	)
 	if err != nil {
 		if isDuplicateEntry(err) {
@@ -78,7 +79,7 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 
 	var queue entity.Queue
 	err := q.db.QueryRowContext(ctx,
-		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id FROM queue WHERE name = ?",
+		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue WHERE name = ?",
 		name,
 	).Scan(
 		&queue.Name,
@@ -87,6 +88,7 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 		&queue.LatestRequestID,
 		&queue.Version,
 		&queue.LastGreenRequestID,
+		&queue.Enablement, &queue.EnablementVersion, &queue.EffectiveFromCommitURI, &queue.EnablementChangedAtMs,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -111,13 +113,14 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue
-		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?, last_green_request_id = ?
+		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?, last_green_request_id = ?, enablement = ?, enablement_version = ?, effective_from_commit_uri = ?, enablement_changed_at_ms = ?
 		 WHERE name = ? AND version = ?`,
 		queue.LastGreenURI,
 		queue.InFlightCount,
 		queue.LatestRequestID,
 		newVersion,
 		queue.LastGreenRequestID,
+		queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs,
 		queue.Name,
 		oldVersion,
 	)

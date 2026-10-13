@@ -1,0 +1,4 @@
+exports_files(
+    ["queue_enablement.sql"],
+    visibility = ["//visibility:public"],
+)
