@@ -25,7 +25,7 @@ import (
 )
 
 func TestAnalyze(t *testing.T) {
-	batch := entity.Batch{ID: "queueA/batch/10"}
+	batch := entity.Batch{ID: "10"}
 
 	tests := []struct {
 		name     string
@@ -45,14 +45,14 @@ func TestAnalyze(t *testing.T) {
 		{
 			name: "every in-flight batch is reported in input order",
 			inFlight: []entity.Batch{
-				{ID: "queueA/batch/1"},
-				{ID: "queueA/batch/2"},
-				{ID: "queueA/batch/3"},
+				{ID: "1"},
+				{ID: "2"},
+				{ID: "3"},
 			},
 			want: []entity.Conflict{
-				{BatchID: "queueA/batch/1", Type: entity.ConflictTypeConservative},
-				{BatchID: "queueA/batch/2", Type: entity.ConflictTypeConservative},
-				{BatchID: "queueA/batch/3", Type: entity.ConflictTypeConservative},
+				{BatchID: "1", Type: entity.ConflictTypeConservative},
+				{BatchID: "2", Type: entity.ConflictTypeConservative},
+				{BatchID: "3", Type: entity.ConflictTypeConservative},
 			},
 		},
 	}

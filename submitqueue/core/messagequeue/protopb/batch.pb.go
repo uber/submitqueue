@@ -40,7 +40,7 @@ const (
 // Batch is the payload mergeconflictsignal publishes to the batch stage: only the request id travels. batch reloads the Request from storage.
 type Batch struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the request id to enroll in a batch. Format: "<queue>/<counter>".
+	// id is the request id to enroll in a batch. Canonical positive decimal string; queue is carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

@@ -79,7 +79,7 @@ Together these guarantee the client's correlation id always resolves: the primar
 
 Runway has no persistent state — no request store, no job store, no database. Idempotency is achieved through the VCS contract: merge detects already-pushed changes (revisions reachable from HEAD) and treats them as already-landed. Merge-conflict check is read-only and naturally idempotent.
 
-A committing merge is also atomic against the merge target: it updates the target at most once per request, and afterwards either every step of the request is reachable from the target or the target is unchanged. A retried redelivery therefore either replays cleanly against the same unchanged target or finds its work already landed.
+Each step of a committing merge lands atomically and in order, and the merge stops at the first step that fails: ordering cannot be guaranteed past a failure, so later steps are not attempted, and the steps before it stay landed and are reported in the `FAILED` result. A retried redelivery therefore finds the steps that landed already on the target and skips them.
 
 ## Ownership by service
 

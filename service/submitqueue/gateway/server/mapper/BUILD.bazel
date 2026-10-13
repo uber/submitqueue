@@ -6,6 +6,7 @@ go_library(
         "cancel.go",
         "land.go",
         "list.go",
+        "list_queues.go",
         "request_history.go",
         "request_summary.go",
     ],

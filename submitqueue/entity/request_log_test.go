@@ -21,7 +21,7 @@ import (
 )
 
 func TestNewRequestLog_NilMetadata(t *testing.T) {
-	log := NewRequestStatusLog("queue1", "queue1/100", RequestStatusStarted, 0, "", nil)
+	log := NewRequestStatusLog("queue1", "100", RequestStatusStarted, 0, "", nil)
 
 	assert.NotNil(t, log.Metadata)
 	assert.Empty(t, log.Metadata)
@@ -32,7 +32,7 @@ func TestNewRequestLog_NilMetadata(t *testing.T) {
 // meant to build them — so this pins what each one sets and leaves unset.
 func TestRequestLogConstructors(t *testing.T) {
 	t.Run("status entry carries a status and no event", func(t *testing.T) {
-		log := NewRequestStatusLog("q", "q/1", RequestStatusSpeculating, 4, "boom", map[string]string{"k": "v"})
+		log := NewRequestStatusLog("q", "1", RequestStatusSpeculating, 4, "boom", map[string]string{"k": "v"})
 
 		assert.Equal(t, RequestLogTypeStatus, log.Type)
 		assert.Equal(t, RequestStatusSpeculating, log.Status)
@@ -43,7 +43,7 @@ func TestRequestLogConstructors(t *testing.T) {
 	})
 
 	t.Run("event entry carries an event and no status", func(t *testing.T) {
-		log := NewRequestEventLog("q", "q/1", RequestEventBuilding, map[string]string{"build_id": "b/7"})
+		log := NewRequestEventLog("q", "1", RequestEventBuilding, map[string]string{"build_id": "b/7"})
 
 		assert.Equal(t, RequestLogTypeEvent, log.Type)
 		assert.Equal(t, RequestEventBuilding, log.Event)

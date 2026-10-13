@@ -12,10 +12,11 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
 - [Hooks Framework](hook-framework.md) - Implemented fire-and-forget side effects: one shared `HookEvent` contract (`api/base/hook/`) on a durable per-domain hook topic, dispatched by `platform/hook` to `platform/extension/hook`. Stovepipe `process` and `record` publish repository events; the SubmitQueue orchestrator registers the stage and does not publish events yet
 - [Service-Scoped Extensions](service-scoped-extensions.md) - Implemented for SubmitQueue storage: gateway and orchestrator aggregates, schemas, and the core packages that serve one service have moved, while store contracts stay at `submitqueue/extension/storage`. Domain-level `buildrunner`, `conflict`, and `speculation` have not moved, and `changeset` still declares its own store slice
+- [Web UI as a Mountable Module](web-ui.md) - Shipping the read-only SubmitQueue UI as a module any React server host mounts, while the host owns identity, gateway transport, telemetry, and its framework
 
 ## SubmitQueue
 
-- [Orchestrator Workflow](submitqueue/workflow.md) - Queue-driven orchestrator pipeline: start, cancel, validate, Runway conflict check, batch, dependency analysis, speculate, build, Runway land, conclude, and a hook stage with no orchestrator publisher yet
+- [Orchestrator Workflow](submitqueue/workflow.md) - Queue-driven orchestrator pipeline: start, cancel, validate, Runway conflict check, batch, dependency analysis, speculate, build, Runway land, conclude, and a hook stage with no orchestrator publisher yet; also defines queue-scoped decimal request and batch IDs
 - [Gateway History APIs](submitqueue/history-api.md) - Request lifecycle history exposed through separate request ID and change ID endpoints
 - [Build Runner](submitqueue/build-runner.md) - Vendor-agnostic BuildRunner interface, provider-neutral BuildStatus lifecycle, and how the orchestrator wires it into the build stage
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
@@ -35,6 +36,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Record stage](stovepipe/steps/record.md) - Immutable validation facts keyed by `(queue, uri, project)`, monotonic last-green bookmark advancement and ref promotion, and the repository hook event. The analyze-stage handoff in that doc is design only
 - [Request Log](stovepipe/request-log.md) - Append-only request lifecycle log, durable source context, idempotent storage, and reliable write and repair paths
 - [Request History API](stovepipe/request-history-api.md) - Queue-scoped request-ID and URI lookup, public projection, materialization decision, ordering, and retention
+- [List API](stovepipe/list-api.md) - Queue-scoped request listing by acceptance time, immutable acceptance time in summaries, cursor pagination, and a portable time-to-request mapping
 - [GetProjectStatusByURI API](stovepipe/get-project-status-by-uri-api.md) - Queue-scoped current validation lookup for a commit, with repository and future project-level results
 
 ## Runway

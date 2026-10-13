@@ -16,10 +16,8 @@ package main
 
 import (
 	"context"
-	"net/url"
-	"path"
 
-	"github.com/uber/submitqueue/platform/fakemarker"
+	"github.com/uber/submitqueue/service/submitqueue/demo"
 	"github.com/uber/submitqueue/submitqueue/client"
 )
 
@@ -47,8 +45,8 @@ type changeSource interface {
 }
 
 // changeSpec is one change to create: a branch cut from a parent, carrying
-// files. The caller decides what a change is made of, so every provider
-// produces the same shape of change.
+// files. Real providers commit these files; the fake synthesizes its own
+// metadata instead.
 type changeSpec struct {
 	// branch is the ref to create.
 	branch string
@@ -74,52 +72,6 @@ type changeFile struct {
 	message string
 }
 
-// maxChangeURIBytes is the longest change URI the gateway accepts, because a
-// URI is also a storage key.
-const maxChangeURIBytes = 255
-
-// withFiles appends to a change URI the paths it touches, for sources whose
-// changes no provider can be asked about.
-//
-// The orchestrator's conflict analyzer keys on the files a change reports, and
-// gets them from the change provider. With no provider behind fake and git
-// changes, the run that authored them is the only thing that knows — so it says
-// so on the URI, and the fake provider reads it back. Without this the analyzer
-// sees a change that touches nothing, and a batch that touches nothing conflicts
-// with nothing.
-//
-// One path per directory, not all of them. The demo's analyzer keys on the
-// directory, so a second file in a directory already named adds a key that is
-// already there — while the URI has a fixed byte budget that a change touching
-// eight files would blow straight through. Paths that do not fit are dropped
-// rather than truncated: a shortened path is a different directory, which would
-// be worse than an unreported one.
-func withFiles(base string, files []changeFile) string {
-	seen := make(map[string]struct{}, len(files))
-	marker := "?" + fakemarker.FilesPrefix
-
-	for _, f := range files {
-		dir := path.Dir(f.path)
-		if _, ok := seen[dir]; ok {
-			continue
-		}
-		entry := url.QueryEscape(f.path)
-		if len(seen) > 0 {
-			entry = "," + entry
-		}
-		if len(base)+len(marker)+len(entry) > maxChangeURIBytes {
-			break
-		}
-		seen[dir] = struct{}{}
-		marker += entry
-	}
-
-	if len(seen) == 0 {
-		return base
-	}
-	return base + marker
-}
-
 // openedChange is what a run needs back about a change that now exists.
 type openedChange struct {
 	// headSHA is the commit the change's URI pins, and what the next change in
@@ -129,4 +81,32 @@ type openedChange struct {
 	uri string
 	// cell is what the table shows for this change.
 	cell client.Cell
+}
+
+type pinnedSource struct {
+	source changeSource
+	branch string
+	sha    string
+}
+
+func (s pinnedSource) Open(ctx context.Context, spec demo.ChangeSpec) (demo.Change, error) {
+	parentBranch, parentSHA := s.branch, s.sha
+	if spec.HasParent {
+		parentBranch, parentSHA = spec.Parent.Branch, spec.Parent.HeadSHA
+	}
+	files := make([]changeFile, len(spec.Files))
+	for i, file := range spec.Files {
+		files[i] = changeFile{path: file.Path, body: file.Body, message: file.Message}
+	}
+	opened, err := s.source.open(ctx, changeSpec{
+		branch: spec.Branch, parentBranch: parentBranch, parentSHA: parentSHA,
+		title: spec.Title, files: files, note: spec.Note,
+	})
+	if err != nil {
+		return demo.Change{Branch: spec.Branch, Label: spec.Branch}, err
+	}
+	return demo.Change{
+		Branch: spec.Branch, HeadSHA: opened.headSHA, URI: opened.uri,
+		Label: opened.cell.Text, URL: opened.cell.URL,
+	}, nil
 }

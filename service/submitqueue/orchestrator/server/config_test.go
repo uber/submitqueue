@@ -262,8 +262,8 @@ queues:
 // result to what distinguishes the three kinds from each other.
 func analyzeOutcome(t *testing.T, analyzer conflict.Analyzer) (conflicts int, failed bool) {
 	t.Helper()
-	batch := entity.Batch{ID: "q/batch/2", Queue: "q"}
-	inFlight := []entity.Batch{{ID: "q/batch/1", Queue: "q"}}
+	batch := entity.Batch{ID: "2", Queue: "q"}
+	inFlight := []entity.Batch{{ID: "1", Queue: "q"}}
 
 	found, err := analyzer.Analyze(context.Background(), batch, inFlight)
 	if err != nil {

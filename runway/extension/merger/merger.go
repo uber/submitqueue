@@ -53,11 +53,11 @@ type Merger interface {
 	// CheckMergeability performs a dry-run merge without committing. The
 	// returned MergeResult reports per-step mergeability; Outputs are empty.
 	CheckMergeability(ctx context.Context, req *runwaymq.MergeRequest) (*runwaymq.MergeResult, error)
-	// Merge applies the ordered steps, commits the result to the remote, and
-	// reports per-step Outputs (the VCS-neutral revision identifiers produced).
-	// Merge is all-or-nothing against the target: it updates the target at
-	// most once per request, and afterwards either every step is reachable
-	// from the target or the target is unchanged.
+	// Merge applies the ordered steps, commits them to the remote, and reports
+	// per-step Outputs (the VCS-neutral revision identifiers produced). Each
+	// step lands atomically, in order, and Merge stops at the first that fails:
+	// later steps are not attempted, earlier ones stay landed. On a terminal
+	// error the result, when non-nil, lists the landed steps and the failed one.
 	Merge(ctx context.Context, req *runwaymq.MergeRequest) (*runwaymq.MergeResult, error)
 }
 

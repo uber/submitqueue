@@ -38,7 +38,7 @@ Every store, verified against actual usage rather than intent.
 |---|---|
 | `RequestLogStore` | `request_log` |
 | `RequestSummaryStore` | `request_summary` |
-| `RequestQueueSummaryStore` | `request_summary_by_queue` |
+| `RequestReceiptStore` | `request_receipt` |
 | `RequestURIStore` | `change_uri_request_mapping` |
 
 | Orchestrator | Table |

@@ -15,8 +15,6 @@
 package entity
 
 import (
-	"encoding/json"
-
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
@@ -75,7 +73,7 @@ type Request struct {
 	// Immutable fields, fixed at request entity creation
 	// ****************
 
-	// ID is the globally unique identifier for the land request. Format: "<queue>/<counter_value>".
+	// ID is the canonical decimal request identifier, unique within Queue.
 	ID string `json:"id"`
 	// Queue is the name of the queue processing the land request. Queue name is defined in the configuration and should be unique within the system.
 	Queue string `json:"queue"`
@@ -96,21 +94,9 @@ type Request struct {
 	Version int32 `json:"version"`
 }
 
-// ToBytes serializes the Request to JSON bytes for queue message payload.
-func (r Request) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// RequestFromBytes deserializes a Request from JSON bytes.
-func RequestFromBytes(data []byte) (Request, error) {
-	var req Request
-	err := json.Unmarshal(data, &req)
-	return req, err
-}
-
 // RequestID is a lightweight entity for publishing and consuming just the request identifier via the queue.
 type RequestID struct {
-	// ID is the globally unique identifier for the land request.
+	// ID is the queue-scoped identifier for the land request.
 	ID string `json:"id"`
 	// Queue is the name of the queue processing the land request. Empty on payloads written before the field existed.
 	Queue string `json:"queue"`

@@ -69,7 +69,7 @@ For a delivery carrying request id `R`:
 8. ack.
 ```
 
-`Build.ID` is **minted by the runner at `Trigger`**, exactly as in SubmitQueue's build controller: the runner returns its native id (a Buildkite build number, a CI-gateway job id), `build` adopts it as the `Build`'s key, and that same id travels on every hop that needs a build — `build` → `buildsignal` carries the build id in the message, so the poll loop reaches the `Build` by a direct get on identity it was handed. `buildsignal` → `record` carries the **request id** instead: `record`'s unit of work is a Request, and the build's terminal status is projected onto `Request.State` before the publish, so `record` never reaches a `Build` at all. No reader ever *derives* a build id or needs a reverse index; `Build.RequestID` covers the one navigation the pipeline needs in the other direction (`Build` → `Request`). Another approach is deriving the key from the Request (`buildKey(R)`) and/or passing a caller-supplied idempotency key to `Trigger`; see [Alternatives considered](#alternatives-considered-for-the-build-identity) for what each would buy and cost.
+`Build.ID` is **minted by the runner at `Trigger`**, exactly as in SubmitQueue's build controller: the runner returns its native id (a Buildkite build number, a CI-gateway job id), `build` adopts it as the `Build`'s key, and that same id travels on every hop that needs a build — `build` → `buildsignal` carries the build id in the message, so the poll loop reaches the `Build` by a direct get on identity it was handed. `buildsignal` → `record` carries the **request id** instead: `record`'s unit of work is a Request, and the build's terminal status and id are projected onto that Request before the publish, so `record` never reaches a `Build` at all. No reader derives a build id from a Request; the persisted terminal build id supplies the Request → Build navigation, while `Build.RequestID` supplies the other direction. Another approach is deriving the key from the Request (`buildKey(R)`) and/or passing a caller-supplied idempotency key to `Trigger`; see [Alternatives considered](#alternatives-considered-for-the-build-identity) for what each would buy and cost.
 
 `build` writes only the `Build`, and only at creation; it never mutates `Request.State`. The Request stays `processing` (set by `process`) through `build` until `buildsignal` moves it terminal by recording the build's outcome. `Build.Status` is the fine-grained build lifecycle; `Request.State` is the coarse pipeline lifecycle. This is also what keeps `process.md` step 3 correct: because `build` leaves the Request at `processing`, a redelivered `process` message still matches its "if processing, re-publish to build" guard.
 
@@ -264,12 +264,12 @@ Key the `Build` by identity derived from the Request — `buildKey(R) = R.ID` fo
 | Pros | Cons |
 |---|---|
 | Redelivery dedup by direct get: checking `BuildStore.Get(buildKey(R))` before triggering means at-least-once delivery never starts a second build | A second id concept (`Build.ID` beside `Build.RunnerBuildID`) carried by every entity, signature, and reader forever |
-| `Request` → `Build` navigation with no reverse index, per the KV key-derivation rule in [AGENTS.md](../../../../AGENTS.md) | No current reader needs to *derive* a build id — the id travels in every message hop, so each consumer already holds the key it needs |
+| `Request` → `Build` navigation with no reverse index, per the KV key-derivation rule in [AGENTS.md](../../../../AGENTS.md) | The terminal build id is persisted on the Request so project-result resolution can use it without deriving a build id |
 | Enforces (rather than assumes) the direct-navigation property SubmitQueue's speculate takes on faith | Diverges entity shape and controller flow from SubmitQueue, weakening the "structurally the same controller" claim and dual-implementing-backend symmetry |
 
 Trade-offs: the dedup guards a rare event at a permanent modeling cost. The duplicate it prevents arises only from a redelivery inside the trigger window — rare, and already harmless (identical scope; `buildsignal`'s superseded short-circuit and its first-writer-wins outcome CAS make the loser a no-op — see [Idempotency](#idempotency)). The prospective key-derivers — a future canceller, or `analyze` reaching back to the Phase-1 target graph — would need to be handed the id by their producing stage instead, if those designs land.
 
-Note that moving `record`'s input from the build id to the request id does *not* trigger this alternative, even though it removes the last hop that carried a build id to a Request-scoped consumer. The trigger condition is a stage that must **derive a build's key from a Request**, and `record` does not: the build's terminal status is projected onto `Request.State` before the publish, so `record` reads the Request and never reaches a `Build`.
+Moving `record`'s input from the build id to the request id does not require a caller-derived key. `buildsignal` persists the terminal build id with the Request's terminal state, and `record` reads that id directly from the Request.
 
 #### Alternative B: caller-supplied idempotency key on `Trigger`
 
@@ -318,7 +318,7 @@ The row deliberately carries no scope: `R.URI`, `R.BaseURI`, and `R.BuildStrateg
 
 `IsTerminal()` on `entity.BuildStatus` covers exactly the three terminal rows. Once `buildsignal` persists one of them, that status is **write-once** — a later poll reporting a different terminal value never overwrites it (see [buildsignal.md](buildsignal.md#algorithm), step 6).
 
-Plus the `BuildID{ID string}` wire type in `stovepipe/entity` (same "id only travels" convention as `RequestID`, shaped like SubmitQueue's own `entity.BuildID` but not the same Go type — see the [contract](#stovepipe-buildrunner-contract)), wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, the queue payload, `Status`/`Cancel`'s parameter. `buildsignal` reaches a build by the id carried in its message, and `record` reads the `Request` (whose state carries the build's outcome) rather than a `Build`, so no reverse index from `Request` to its builds is ever needed.
+Plus the `BuildID{ID string}` wire type in `stovepipe/entity` (same "id only travels" convention as `RequestID`, shaped like SubmitQueue's own `entity.BuildID` but not the same Go type — see the [contract](#stovepipe-buildrunner-contract)), wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, the queue payload, `Status`/`Cancel`'s parameter. `buildsignal` reaches a build by the id carried in its message, then persists it on the terminal Request; `record` reads that Request rather than querying builds.
 
 **`BuildStore`** (new, added to the `Storage` aggregator via `GetBuildStore()`), matching stovepipe's existing `RequestStore` conventions — **generic `Update` with caller-owned version arithmetic**:
 
@@ -334,6 +334,7 @@ Single-key reads/writes only — no list-by-request, no query-by-attribute — p
 |---|---|---|
 | `BuildStrategy` | `incremental_since_green` or `full_monorepo`; immutable once set | `process` |
 | `BaseURI` | Last-green URI for incremental; empty for full | `process` |
+| `TerminalBuildID` | The build that established the terminal state; empty when no build established it | `buildsignal` |
 
 `URI` already exists; `process` sets `BuildStrategy`/`BaseURI` at admit (process.md step 7c) and `build` reads them (step 4). Both are immutable for the Request's life.
 

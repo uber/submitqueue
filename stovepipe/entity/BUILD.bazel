@@ -5,10 +5,12 @@ go_library(
     srcs = [
         "build.go",
         "ingest.go",
+        "list.go",
         "project_status.go",
         "queue.go",
         "queue_config.go",
         "request.go",
+        "request_acceptance.go",
         "request_history.go",
         "request_id.go",
         "request_log.go",
@@ -17,6 +19,7 @@ go_library(
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
     visibility = ["//visibility:public"],
+    deps = ["//platform/base/id:go_default_library"],
 )
 
 go_test(

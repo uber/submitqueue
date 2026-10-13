@@ -37,7 +37,7 @@ import (
 func TestGetRequestHistoryByID(t *testing.T) {
 	const (
 		queue     = "monorepo/main"
-		requestID = "request/monorepo/main/42"
+		requestID = "42"
 	)
 	backendErr := errors.New("backend unavailable")
 	ordered := []entity.RequestLog{
@@ -69,6 +69,7 @@ func TestGetRequestHistoryByID(t *testing.T) {
 		{name: "empty queue", req: entity.GetRequestHistoryByIDRequest{ID: requestID}, wantInvalid: true, wantUser: true},
 		{name: "oversized queue", req: entity.GetRequestHistoryByIDRequest{Queue: strings.Repeat("q", maxHistoryIdentifierBytes+1), ID: requestID}, wantInvalid: true, wantUser: true},
 		{name: "empty request ID", req: entity.GetRequestHistoryByIDRequest{Queue: queue}, wantInvalid: true, wantUser: true},
+		{name: "composite request ID", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: "request/monorepo/main/42"}, wantInvalid: true, wantUser: true},
 		{name: "oversized request ID", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: strings.Repeat("r", maxHistoryIdentifierBytes+1)}, wantInvalid: true, wantUser: true},
 		{name: "storage factory failure", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: requestID}, factoryErr: backendErr, wantCause: backendErr},
 		{name: "history not found", req: entity.GetRequestHistoryByIDRequest{Queue: queue, ID: requestID}, listErr: fmt.Errorf("query: %w", storage.ErrNotFound), wantNotFound: true, wantUser: true},
@@ -81,11 +82,16 @@ func TestGetRequestHistoryByID(t *testing.T) {
 			factory := storagemock.NewMockFactory(mockCtrl)
 			stores := storagemock.NewMockStorage(mockCtrl)
 			logStore := storagemock.NewMockRequestLogStore(mockCtrl)
+			summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
 			if !tt.wantInvalid {
 				factory.EXPECT().For(storage.Config{QueueName: tt.req.Queue}).Return(stores, tt.factoryErr)
 				if tt.factoryErr == nil {
 					stores.EXPECT().GetRequestLogStore().Return(logStore)
 					logStore.EXPECT().List(gomock.Any(), tt.req.ID).Return(tt.logs, tt.listErr)
+					if tt.listErr == nil {
+						stores.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+						summaryStore.EXPECT().Get(gomock.Any(), tt.req.ID).Return(entity.RequestSummary{RequestID: requestID, Queue: queue}, nil)
+					}
 				}
 			}
 
@@ -96,7 +102,7 @@ func TestGetRequestHistoryByID(t *testing.T) {
 
 			got, err := controller.GetRequestHistoryByID(ctx, tt.req)
 
-			assert.Equal(t, tt.wantLogs, got)
+			assert.Equal(t, tt.wantLogs, got.Events)
 			if tt.wantInvalid {
 				assert.True(t, IsInvalidRequest(err))
 			}
@@ -139,7 +145,7 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 	const (
 		queue     = "monorepo/main"
 		uri       = "git://example.com/repo.git/commit/deadbeef"
-		requestID = "request/monorepo/main/42"
+		requestID = "42"
 	)
 	backendErr := errors.New("backend unavailable")
 	logs := []entity.RequestLog{
@@ -147,7 +153,8 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 		{ID: "event/a", RequestID: requestID, TimestampMs: 20, Event: entity.RequestEventBuildTriggered},
 		{ID: "event/a", RequestID: requestID, TimestampMs: 20, Event: entity.RequestEventBuildTriggered},
 	}
-	wantHistory := []entity.RequestHistory{{RequestID: requestID, Events: logs}}
+	summary := entity.RequestSummary{RequestID: requestID, Queue: queue, URI: uri}
+	wantHistory := []entity.RequestHistory{{RequestID: requestID, Events: logs, RequestSummary: summary}}
 
 	tests := []struct {
 		name         string
@@ -181,6 +188,7 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 			stores := storagemock.NewMockStorage(mockCtrl)
 			uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
 			logStore := storagemock.NewMockRequestLogStore(mockCtrl)
+			summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
 			if !tt.wantInvalid {
 				factory.EXPECT().For(storage.Config{QueueName: tt.req.Queue}).Return(stores, tt.factoryErr)
 				if tt.factoryErr == nil {
@@ -189,6 +197,10 @@ func TestGetRequestHistoryByURI(t *testing.T) {
 					if tt.mappingErr == nil {
 						stores.EXPECT().GetRequestLogStore().Return(logStore)
 						logStore.EXPECT().List(gomock.Any(), tt.mappedID).Return(logs, tt.listErr)
+						if tt.listErr == nil {
+							stores.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+							summaryStore.EXPECT().Get(gomock.Any(), tt.mappedID).Return(summary, nil)
+						}
 					}
 				}
 			}
@@ -248,11 +260,11 @@ func TestRequestHistoryNotFoundErrors(t *testing.T) {
 	}{
 		{
 			name: "request ID",
-			err:  fmt.Errorf("lookup failed: %w", &RequestHistoryByIDNotFoundError{RequestID: "request/queue/1"}),
+			err:  fmt.Errorf("lookup failed: %w", &RequestHistoryByIDNotFoundError{RequestID: "1"}),
 			assert: func(t *testing.T, err error) {
 				var notFound *RequestHistoryByIDNotFoundError
 				require.ErrorAs(t, err, &notFound)
-				assert.Equal(t, "request/queue/1", notFound.RequestID)
+				assert.Equal(t, "1", notFound.RequestID)
 			},
 		},
 		{
@@ -273,6 +285,108 @@ func TestRequestHistoryNotFoundErrors(t *testing.T) {
 		})
 	}
 	assert.False(t, IsRequestHistoryNotFound(errors.New("other")))
+}
+
+func TestRequestHistoryCurrentSummary(t *testing.T) {
+	const queue, requestID, uri = "monorepo/main", "42", "git://monorepo/main/commit"
+	summary := entity.RequestSummary{
+		RequestID: requestID, Queue: queue, URI: uri, BaseURI: "git://monorepo/main/base", State: entity.RequestStateSucceeded,
+		StateTimestampMs: 200, AcceptedAtMs: 100, OutcomeReason: entity.RequestOutcomeReasonBuildSucceeded,
+	}
+	logs := []entity.RequestLog{{ID: "accepted", RequestID: requestID, TimestampMs: 100, State: entity.RequestStateAccepted}}
+	readErr := errors.New("summary read failed")
+	tests := []struct {
+		name        string
+		modify      func(*entity.RequestSummary)
+		readErr     error
+		consistency bool
+		retryable   bool
+	}{
+		{name: "current summary is independent of retained events"},
+		{name: "missing summary is retryable infrastructure failure", readErr: fmt.Errorf("summary: %w", storage.ErrNotFound), retryable: true},
+		{name: "summary read failure", readErr: readErr},
+		{name: "wrong request ID", modify: func(s *entity.RequestSummary) { s.RequestID = "43" }, consistency: true},
+		{name: "wrong queue", modify: func(s *entity.RequestSummary) { s.Queue = "other/main" }, consistency: true},
+	}
+	for _, selector := range []string{"ID", "URI"} {
+		for _, tt := range tests {
+			t.Run(selector+"/"+tt.name, func(t *testing.T) {
+				mockCtrl := gomock.NewController(t)
+				factory := storagemock.NewMockFactory(mockCtrl)
+				stores := storagemock.NewMockStorage(mockCtrl)
+				logStore := storagemock.NewMockRequestLogStore(mockCtrl)
+				summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
+				factory.EXPECT().For(storage.Config{QueueName: queue}).Return(stores, nil)
+				if selector == "URI" {
+					uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
+					stores.EXPECT().GetRequestURIStore().Return(uriStore)
+					uriStore.EXPECT().GetIDByURI(gomock.Any(), uri).Return(requestID, nil)
+				}
+				stores.EXPECT().GetRequestLogStore().Return(logStore)
+				logStore.EXPECT().List(gomock.Any(), requestID).Return(logs, nil)
+				stores.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+				storedSummary := summary
+				if tt.modify != nil {
+					tt.modify(&storedSummary)
+				}
+				summaryStore.EXPECT().Get(gomock.Any(), requestID).Return(storedSummary, tt.readErr)
+				controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, factory)
+				var history entity.RequestHistory
+				var err error
+				if selector == "ID" {
+					history, err = controller.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{Queue: queue, ID: requestID})
+				} else {
+					var histories []entity.RequestHistory
+					histories, err = controller.GetRequestHistoryByURI(context.Background(), entity.GetRequestHistoryByURIRequest{Queue: queue, URI: uri})
+					if err == nil {
+						require.Len(t, histories, 1)
+						history = histories[0]
+					}
+				}
+				assert.False(t, errs.IsUserError(err))
+				assert.False(t, IsRequestHistoryNotFound(err))
+				assert.Equal(t, tt.retryable, errs.IsRetryable(err))
+				if tt.retryable {
+					require.Error(t, err)
+					assert.Equal(t, entity.RequestHistory{}, history)
+					return
+				}
+				if tt.consistency {
+					var consistency *RequestHistoryConsistencyError
+					require.ErrorAs(t, err, &consistency)
+					return
+				}
+				if tt.readErr != nil {
+					require.ErrorIs(t, err, tt.readErr)
+					assert.False(t, IsRequestHistoryNotFound(err))
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, requestID, history.RequestID)
+				assert.Equal(t, logs, history.Events)
+				assert.Equal(t, summary, history.RequestSummary)
+			})
+		}
+	}
+}
+
+func TestRequestHistoryRejectsMismatchedSummaryURI(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	factory := storagemock.NewMockFactory(mockCtrl)
+	stores := storagemock.NewMockStorage(mockCtrl)
+	uriStore := storagemock.NewMockRequestURIStore(mockCtrl)
+	logStore := storagemock.NewMockRequestLogStore(mockCtrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(mockCtrl)
+	factory.EXPECT().For(storage.Config{QueueName: "queue"}).Return(stores, nil)
+	stores.EXPECT().GetRequestURIStore().Return(uriStore)
+	uriStore.EXPECT().GetIDByURI(gomock.Any(), "uri").Return("1", nil)
+	stores.EXPECT().GetRequestLogStore().Return(logStore)
+	logStore.EXPECT().List(gomock.Any(), "1").Return([]entity.RequestLog{{ID: "accepted"}}, nil)
+	stores.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+	summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{RequestID: "1", Queue: "queue", URI: "other-uri"}, nil)
+	_, err := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, factory).GetRequestHistoryByURI(context.Background(), entity.GetRequestHistoryByURIRequest{Queue: "queue", URI: "uri"})
+	var consistency *RequestHistoryConsistencyError
+	require.ErrorAs(t, err, &consistency)
 }
 
 func assertOperationFinishIncludesContextTag(t *testing.T, snapshot tally.Snapshot, operation string, success bool) {

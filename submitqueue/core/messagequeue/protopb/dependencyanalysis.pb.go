@@ -40,7 +40,7 @@ const (
 // DependencyAnalysis is the payload batch publishes to the dependency-analysis stage: only the batch id travels. The consumer reloads the Batch from storage.
 type DependencyAnalysis struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the batch id to analyze. Format: "<queue>/batch/<counter>".
+	// id is the batch id to analyze. Canonical positive decimal string; queue and kind are carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

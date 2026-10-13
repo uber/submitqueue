@@ -1,0 +1,204 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { WebNavigationProvider } from "./navigation.js";
+import { WebApp } from "./web-app.js";
+import { ChangeSubmissions, QueueDirectory, RequestDetail, RequestList, RequestListView, RequestStatus } from "./components.js";
+import type { ChangeDetailModel, RequestDetailModel, RequestListModel } from "../entity/index.js";
+
+const request = {
+  sqid: "demo-queue/1",
+  queue: "demo-queue",
+  changeUris: ["github://github.com/uber/submitqueue/pull/1/abc"],
+  receivedAtMs: 1_700_000_000_000,
+  status: "speculating",
+  lastError: null,
+  metadata: { batch: "batch-1" },
+};
+
+describe("request components", () => {
+  it("renders a linked queue request with its complete sqid", () => {
+    const model: RequestListModel = {
+      queue: "demo-queue",
+      receivedAtOrAfterMs: 1,
+      receivedBeforeMs: 2,
+      requests: [request],
+      nextPageToken: "opaque-token",
+    };
+    render(<RequestList model={model} />);
+
+    const link = screen.getByRole("link", { name: "demo-queue/1" });
+    expect(link.getAttribute("href")).toBe(
+      "/demo-queue/request/demo-queue/1",
+    );
+    expect(screen.getByText("Speculating").getAttribute("data-tone")).toBe("progress");
+    expect(screen.getByText("Nov 14, 2023, 10:13:20 PM UTC")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Next page" }).getAttribute("href")).toBe(
+      "/demo-queue?page=opaque-token",
+    );
+  });
+
+  it("renders an accessible empty state", () => {
+    render(
+      <RequestList
+        model={{
+          queue: "demo-queue",
+          receivedAtOrAfterMs: 1,
+          receivedBeforeMs: 2,
+          requests: [],
+          nextPageToken: null,
+        }}
+      />,
+    );
+    expect(screen.getByText("No requests were received in this window.")).toBeTruthy();
+  });
+
+  it("renders ordered status/build history with expandable metadata", () => {
+    const model: RequestDetailModel = {
+      request: { ...request, status: "landed" },
+      history: [
+        {
+          timestampMs: 1_700_000_000_000,
+          type: "status",
+          status: "started",
+          event: null,
+          lastError: null,
+          metadata: {},
+        },
+        {
+          timestampMs: 1_700_000_001_000,
+          type: "event",
+          status: null,
+          event: "building",
+          lastError: null,
+          metadata: { build_url: "https://build.example/1" },
+        },
+      ],
+      historyError: null,
+    };
+    render(<RequestDetail model={model} view="history" />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("demo-queue/1");
+    const history = screen.getByRole("list", { name: "Request history" });
+    expect(within(history).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(history).getByText("Building")).toBeTruthy();
+    fireEvent.click(within(history).getByText("Building"));
+    expect(within(history).getByText("https://build.example/1")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "event" } });
+    expect(within(history).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("lists configured queues even when there is only one", () => {
+    render(<QueueDirectory queues={[{ name: "demo-queue", description: "Demo gateway" }]} />);
+    expect(screen.getByRole("link", { name: "demo-queue" }).getAttribute("href")).toBe("/demo-queue");
+  });
+
+  it("filters only the displayed page without discarding its pagination link", () => {
+    render(<RequestList model={{
+      queue: "demo-queue", receivedAtOrAfterMs: 1, receivedBeforeMs: 2,
+      requests: [request, { ...request, sqid: "42", status: "landed" }],
+      nextPageToken: "next",
+    }} />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "landed" } });
+    expect(screen.queryByRole("link", { name: request.sqid })).toBeNull();
+    expect(screen.getByRole("link", { name: "42" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Next page" })).toBeTruthy();
+  });
+
+  it("uses host-supplied change labels and links without exposing fake file hints", () => {
+    const raw = "git://git.example.com/demo/refs%2Fheads%2Fmain/sha?sq-files=demo%2Ffile.txt";
+    const clean = raw.split("?")[0]!;
+    render(<RequestList model={{
+      queue: "demo-queue", receivedAtOrAfterMs: 1, receivedBeforeMs: 2,
+      requests: [{ ...request, changeUris: [raw] }], nextPageToken: null,
+    }} changeLabels={{ [raw]: clean }} changeLinks={{ [raw]: "/change" }} />);
+    expect(screen.getByRole("link", { name: clean }).getAttribute("href")).toBe("/change");
+    expect(screen.queryByText(/sq-files=/)).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "file.txt" } });
+    expect(screen.getByText("No displayed requests match.")).toBeTruthy();
+  });
+
+  it("retains the last successful list on a transient failure, but not a permanent failure", () => {
+    const view = render(<RequestListView result={{ ok: true, data: {
+      queue: "demo-queue", receivedAtOrAfterMs: 1, receivedBeforeMs: 2,
+      requests: [request], nextPageToken: null,
+    } }} />);
+    const error = { kind: "transient" as const, title: "Unavailable", message: "Retry", retryable: true };
+    view.rerender(<RequestListView result={{ ok: false, error }} />);
+    expect(screen.getByRole("link", { name: request.sqid })).toBeTruthy();
+    expect(screen.getByText(/last successful snapshot/)).toBeTruthy();
+    view.rerender(<RequestListView result={{ ok: false, error: { ...error, retryable: false } }} />);
+    expect(screen.queryByRole("link", { name: request.sqid })).toBeNull();
+  });
+
+  it("does not describe unavailable history as empty and copies the opaque ID", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<RequestDetail model={{
+      request, history: [], historyError: {
+        kind: "transient", title: "Unavailable", message: "Try again", retryable: true,
+      },
+    }} />);
+    expect(screen.getByText("History unavailable")).toBeTruthy();
+    expect(screen.queryByText("No history has been retained for this request.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(request.sqid));
+  });
+
+  it("keeps repeated submissions for the same version separate", () => {
+    render(<ChangeSubmissions model={{
+      queue: "demo-queue", provider: "GitHub", host: "github.com",
+      repository: "uber/submitqueue", review: "PR #123", pinnedVersion: null,
+      window: { fromMs: 1, toMs: 2 },
+      submissions: ["42", "38"].map(sqid => ({
+        request: { ...request, sqid }, version: "same-sha", versionHref: "/version",
+      })),
+    }} />);
+    const table = screen.getByRole("table", { name: "Change submissions" });
+    expect(within(table).getAllByText("same-sha")).toHaveLength(2);
+    expect(within(table).getByRole("link", { name: "38" }).getAttribute("href")).toBe("/demo-queue/request/38");
+  });
+
+  it("navigates between versions through the enclosing app and keeps full versions in links", () => {
+    const push = vi.fn();
+    const version = "0123456789abcdef0123456789abcdef01234567";
+    const change: ChangeDetailModel = {
+      queue: "demo-queue", provider: "GitHub", host: "github.com",
+      repository: "uber/submitqueue", review: "PR #123", pinnedVersion: null,
+      logicalHref: "/logical", window: { fromMs: 1, toMs: 2 },
+      submissions: [{ request, version, versionHref: `/logical/${version}` }],
+    };
+    const page = { key: "change", title: "PR #123", refresh: { terminal: true, transientFailureCount: 0, refreshHref: null } };
+    render(<WebNavigationProvider value={{ push }}>
+      <WebApp model={page} Page={() => <ChangeSubmissions model={change} />} />
+    </WebNavigationProvider>);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: `/logical/${version}` } });
+    expect(push).toHaveBeenCalledWith(`/logical/${version}`);
+    expect(screen.getByRole("link", { name: version }).getAttribute("href")).toBe(`/logical/${version}`);
+  });
+
+  it.each([
+    { nextHref: "/change?page=next", latestHref: null },
+    { nextHref: null, latestHref: "/change" },
+  ])("renders page-scoped history and host-provided navigation: %j", pagination => {
+    render(<ChangeSubmissions model={{
+      queue: "demo-queue", provider: "Git", host: "git.example.com",
+      repository: "demo", review: "refs/heads/main", pinnedVersion: null,
+      window: { fromMs: 1, toMs: 2 }, submissions: [], pagination,
+    }} />);
+    expect(screen.getByText("No submissions were found on this page.")).toBeTruthy();
+    expect(screen.queryByText("No submissions were found in this scope.")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Showing matches from this page");
+    if (pagination.nextHref) {
+      expect(screen.getByRole("link", { name: "Continue history scan" }).getAttribute("href")).toBe(pagination.nextHref);
+      expect(screen.getByRole("status").textContent).toContain("More queue requests remain");
+    } else {
+      expect(screen.queryByRole("link", { name: "Continue history scan" })).toBeNull();
+      expect(screen.getByRole("link", { name: "Latest history" }).getAttribute("href")).toBe(pagination.latestHref);
+    }
+  });
+
+  it("shows unknown statuses safely", () => {
+    render(<RequestStatus status="new_pipeline_step" />);
+    expect(screen.getByText("New Pipeline Step").getAttribute("data-tone")).toBe("neutral");
+  });
+});

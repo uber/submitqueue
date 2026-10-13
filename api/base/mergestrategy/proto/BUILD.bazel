@@ -1,4 +1,7 @@
 exports_files(
     ["mergestrategy.proto"],
-    visibility = ["//tool/proto:__pkg__"],
+    visibility = [
+        "//tool/proto:__pkg__",
+        "//web/api:__pkg__",
+    ],
 )

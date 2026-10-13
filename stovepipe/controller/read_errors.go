@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/uber/submitqueue/platform/base/id"
 	"github.com/uber/submitqueue/platform/errs"
 )
 
@@ -37,6 +38,13 @@ func validateHistoryIdentifier(name, value string) error {
 	}
 	if len(value) > maxHistoryIdentifierBytes {
 		return fmt.Errorf("%s exceeds %d bytes: %w", name, maxHistoryIdentifierBytes, ErrInvalidRequest)
+	}
+	return nil
+}
+
+func validateRequestID(value string) error {
+	if err := id.Validate(value); err != nil {
+		return fmt.Errorf("invalid request ID %q: %v: %w", value, err, ErrInvalidRequest)
 	}
 	return nil
 }
@@ -71,4 +79,44 @@ func IsRequestHistoryNotFound(err error) bool {
 	}
 	var byURI *RequestHistoryByURINotFoundError
 	return errors.As(err, &byURI)
+}
+
+// RequestHistoryConsistencyError indicates that a summary disagrees with the selected history.
+type RequestHistoryConsistencyError struct {
+	// Queue is the selected queue.
+	Queue string
+	// RequestID identifies the selected request.
+	RequestID string
+	// Reason describes the disagreement with the persisted summary.
+	Reason string
+}
+
+func (e *RequestHistoryConsistencyError) Error() string {
+	return fmt.Sprintf("request history %s queue=%q request_id=%q", e.Reason, e.Queue, e.RequestID)
+}
+
+// ListConsistencyError indicates an invalid acceptance mapping, a missing summary,
+// or disagreement between the two. It represents an infrastructure failure, not a user lookup miss.
+type ListConsistencyError struct {
+	// Queue is the selected queue.
+	Queue string
+	// RequestID identifies the mapped request; empty when the mapping lacks an ID.
+	RequestID string
+	// Reason describes the inconsistency in the mapping or summary.
+	Reason string
+	// Err is the underlying summary-read failure, if any.
+	Err error
+}
+
+func (e *ListConsistencyError) Error() string {
+	return fmt.Sprintf("List %s queue=%q request_id=%q", e.Reason, e.Queue, e.RequestID)
+}
+
+// Unwrap preserves the underlying summary-read failure, when present.
+func (e *ListConsistencyError) Unwrap() error { return e.Err }
+
+// IsListConsistency reports whether err represents inconsistent listing records.
+func IsListConsistency(err error) bool {
+	var target *ListConsistencyError
+	return errors.As(err, &target)
 }

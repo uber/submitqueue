@@ -107,13 +107,25 @@ func ParseChangeID(raw string) (ChangeID, error) {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: empty repo (expected format: %s)", raw, changeIDFormat)
 	}
 
-	return ChangeID{
+	for _, seg := range segments[:len(segments)-2] {
+		if seg == "" {
+			return ChangeID{}, fmt.Errorf("invalid change ID %q: repo path contains an empty segment (expected format: %s)", raw, changeIDFormat)
+		}
+	}
+
+	id := ChangeID{
 		Scheme:    u.Scheme,
 		Remote:    u.Host,
 		Repo:      repo,
 		Ref:       ref,
 		CommitSHA: sha,
-	}, nil
+	}
+
+	if canonical := id.String(); canonical != raw {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: not in canonical form %q (expected format: %s)", raw, canonical, changeIDFormat)
+	}
+
+	return id, nil
 }
 
 // String returns the string representation of the change ID.

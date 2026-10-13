@@ -43,7 +43,7 @@ func setupBuildStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BuildS
 func TestBuildStore_Get(t *testing.T) {
 	want := entity.Build{
 		ID:      "bk-1001",
-		BatchID: "monorepo/batch/1",
+		BatchID: "1",
 		PathID:  "path-1",
 		Attempt: 1,
 		Status:  entity.BuildStatusRunning,
@@ -117,7 +117,7 @@ func TestBuildStore_Get(t *testing.T) {
 func TestBuildStore_Create(t *testing.T) {
 	build := entity.Build{
 		ID:      "bk-1001",
-		BatchID: "monorepo/batch/1",
+		BatchID: "1",
 		PathID:  "path-1",
 		Attempt: 1,
 		Status:  entity.BuildStatusAccepted,
@@ -182,7 +182,7 @@ func TestBuildStore_Create(t *testing.T) {
 func TestBuildStore_Update(t *testing.T) {
 	build := entity.Build{
 		ID:      "bk-1001",
-		BatchID: "monorepo/batch/2",
+		BatchID: "2",
 		Status:  entity.BuildStatusSucceeded,
 	}
 

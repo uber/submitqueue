@@ -74,7 +74,7 @@ Attach with `.vscode/launch.json` (**Debug: attach (dlv in docker)**), then send
 grpcurl -plaintext -d '{"queue":"monorepo/main"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/Ingest
 
 # Retained history by request ID
-grpcurl -plaintext -d '{"queue":"monorepo/main","request_id":"request/monorepo/main/1"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID
+grpcurl -plaintext -d '{"queue":"monorepo/main","request_id":"1"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID
 
 # Retained history by exact commit URI
 grpcurl -plaintext -d '{"queue":"monorepo/main","uri":"git://monorepo/main/HEAD"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI

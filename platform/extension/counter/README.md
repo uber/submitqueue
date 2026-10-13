@@ -1,6 +1,8 @@
 # Counter
 
-Vendor-agnostic interface for atomic sequential number generation, scoped per queue.
+Vendor-agnostic interface for atomic sequential number generation, scoped by queue and domain.
+
+The domain names a counter sequence (`request` or `batch`), not an application. SubmitQueue and Stovepipe use separate storage backends; the existing MySQL schema and `(queue, domain)` key remain unchanged.
 
 ## Interface
 
@@ -10,12 +12,12 @@ Resolves the Counter bound to one queue. The host wiring decides which backend s
 
 ### Counter
 
-Generates unique, sequential values scoped to a domain string within the bound queue.
+Generates unique, sequential values scoped to a domain within the bound queue.
 
 - **domain**: A string key naming a sequence within the queue (max 255 characters). Each `(queue, domain)` pair maintains its own independent sequence.
 - **Next**: Atomically increments and returns the next value. The first call for a new domain returns 1. Safe for concurrent use; values are unique but ordering is not guaranteed.
 
-The domain is a sequence *name*, not a queue-qualified key — callers pass `"request"` or `"batch"`, never `"request/my-queue"`. Callers that embed the queue in a minted identifier build that string themselves, independently of the domain, so the two cannot drift into each other.
+The domain is not an ID prefix. Callers pass `"request"` or `"batch"`; the returned number is formatted as a decimal string without embedding any scope.
 
 ## Usage
 

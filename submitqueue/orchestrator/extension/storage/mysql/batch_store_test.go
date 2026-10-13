@@ -43,10 +43,10 @@ func setupBatchStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BatchS
 
 func TestBatchStore_Get(t *testing.T) {
 	want := entity.Batch{
-		ID:           "monorepo/batch/1",
+		ID:           "1",
 		Queue:        "monorepo",
-		Contains:     []string{"monorepo/1", "monorepo/2"},
-		Dependencies: []string{"monorepo/batch/0"},
+		Contains:     []string{"1", "2"},
+		Dependencies: []string{"0"},
 		State:        entity.BatchStateCreated,
 		Version:      1,
 	}
@@ -134,9 +134,9 @@ func TestBatchStore_Get(t *testing.T) {
 
 func TestBatchStore_Create(t *testing.T) {
 	batch := entity.Batch{
-		ID:           "monorepo/batch/1",
+		ID:           "1",
 		Queue:        "monorepo",
-		Contains:     []string{"monorepo/1"},
+		Contains:     []string{"1"},
 		Dependencies: nil,
 		State:        entity.BatchStateCreated,
 		Version:      1,
@@ -201,10 +201,10 @@ func TestBatchStore_Create(t *testing.T) {
 func TestBatchStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(1), int32(2)
 	batch := entity.Batch{
-		ID:           "monorepo/batch/1",
+		ID:           "1",
 		Queue:        "monorepo",
-		Contains:     []string{"monorepo/3", "monorepo/4"},
-		Dependencies: []string{"monorepo/batch/1", "monorepo/batch/2"},
+		Contains:     []string{"3", "4"},
+		Dependencies: []string{"1", "2"},
 		State:        entity.BatchStateLanding,
 		Version:      oldVersion,
 	}

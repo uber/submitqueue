@@ -40,7 +40,7 @@ const (
 // Conclude is the payload published to the conclude stage: the id is a batch id. conclude reloads the Batch from storage. A failed batch's reason travels in message metadata, not this payload.
 type Conclude struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the batch id to conclude. Format: "<queue>/batch/<counter>".
+	// id is the batch id to conclude. Canonical positive decimal string; queue and kind are carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue is the name of the queue processing this work, carried so the
 	// consumer can route by queue without loading state first. Empty on

@@ -198,7 +198,7 @@ func (c *Controller) processAccepted(ctx context.Context, store storage.Storage,
 // true so the caller acks. It returns false when request is still the latest head and
 // should proceed to the gate. Superseding consumes no build slot.
 func (c *Controller) coalesce(ctx context.Context, store storage.Storage, request entity.Request, latestRequestID string) (bool, error) {
-	cmp, err := entity.CompareRequestID(request.Queue, request.ID, latestRequestID)
+	cmp, err := entity.CompareRequestID(request.ID, latestRequestID)
 	if err != nil {
 		return false, fmt.Errorf("failed to compare request ids for queue %s: %w", request.Queue, err)
 	}

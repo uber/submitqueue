@@ -42,15 +42,14 @@ message PingResponse {
 // IngestRequest is the request for the Ingest method. The poller reports that a queue
 // (a named repo+ref) has a new commit to validate.
 message IngestRequest {
-    // Logical queue name to validate (e.g. "monorepo/main"). It namespaces the minted
-    // request ID and is the stable handle for the repo+ref being validated.
+    // Logical queue name to validate (e.g. "monorepo/main"). Together with the minted
+    // request ID it identifies the request and is the stable handle for the repo+ref.
     string queue = 1;
 }
 
 // IngestResponse is the response for the Ingest method.
 message IngestResponse {
-    // The minted request ID, namespaced by queue. Format: "request/<queue>/<counter>"
-    // (e.g. "request/monorepo/main/42").
+    // Canonical decimal request ID, unique within the selected queue.
     string id = 1;
 }
 
@@ -58,7 +57,7 @@ message IngestResponse {
 message GetRequestHistoryByIDRequest {
     // Logical queue containing the request.
     string queue = 1;
-    // Globally unique request identifier returned from Ingest.
+    // Canonical decimal request identifier returned from Ingest.
     string request_id = 2;
 }
 
@@ -87,18 +86,22 @@ message HistoryEvent {
     string outcome_reason = 5;
 }
 
-// RequestHistory identifies one request and contains its ordered events.
+// RequestHistory identifies one request and contains its ordered events and current summary.
 message RequestHistory {
-    // Globally unique request identifier.
+    // Queue-scoped decimal request identifier.
     string request_id = 1;
     // Events ordered by occurrence time and stable event identity.
     repeated HistoryEvent events = 2;
+    // Current materialized lifecycle summary. Always present in successful responses.
+    RequestSummary request_summary = 3;
 }
 
-// GetRequestHistoryByIDResponse contains all retained events for one request.
+// GetRequestHistoryByIDResponse contains retained events and the current summary for one request.
 message GetRequestHistoryByIDResponse {
     // Events ordered by occurrence time and stable event identity.
     repeated HistoryEvent events = 1;
+    // Current materialized lifecycle summary. Always present in successful responses.
+    RequestSummary request_summary = 2;
 }
 
 // GetRequestHistoryByURIResponse contains all retained request histories for an exact URI.
@@ -133,7 +136,7 @@ message ProjectValidation {
 
 // GetProjectStatusByURIResponse contains the selected validation's current projection.
 message GetProjectStatusByURIResponse {
-    // Globally unique identifier of the validation request.
+    // Queue-scoped decimal identifier of the validation request.
     string request_id = 1;
     // Logical queue containing the validation request.
     string queue = 2;
@@ -157,6 +160,53 @@ message GetProjectStatusByURIResponse {
     string next_page_token = 9;
 }
 
+// RequestSummary contains one request's current materialized lifecycle state.
+message RequestSummary {
+    // Opaque identifier returned from Ingest.
+    string request_id = 1;
+    // Queue containing the request.
+    string queue = 2;
+    // Exact VCS-agnostic URI of the ingested commit.
+    string change_uri = 3;
+    // Selected baseline URI. Empty before selection or for a full build.
+    string base_uri = 4;
+    // Stable public lifecycle state; clients tolerate future values.
+    string request_state = 5;
+    // Unix millisecond timestamp of the represented state entry.
+    int64 state_updated_at_ms = 6;
+    // Original retained accepted-log timestamp in Unix milliseconds; positive when known, zero if unknown.
+    int64 accepted_at_ms = 7;
+    // Stable reason for the represented state. Empty when unavailable or inapplicable.
+    string outcome_reason = 8;
+}
+
+// ListRequest selects a page of retained request summaries for one queue.
+message ListRequest {
+    // Required configured queue.
+    string queue = 1;
+    oneof accepted_lower_bound {
+        // Inclusive Unix millisecond bound; omitted defaults to zero.
+        int64 accepted_at_or_after_ms = 2;
+    }
+    oneof accepted_upper_bound {
+        // Exclusive Unix millisecond bound; omitted defaults to server now.
+        int64 accepted_before_ms = 3;
+    }
+    // Zero selects 50; nonzero values must be between 1 and 200.
+    int32 page_size = 4;
+    // Opaque continuation token bound to the queue and resolved time bounds.
+    string page_token = 5;
+}
+
+// ListResponse contains a page in acceptance-time order, not a snapshot across pages.
+message ListResponse {
+    // Current summaries ordered by acceptance time descending, then bytewise request ID descending.
+    // Requests with accepted_at_ms = 0 (unknown) are excluded.
+    repeated RequestSummary requests = 1;
+    // Opaque continuation token; empty when no further row was observed.
+    string next_page_token = 2;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -170,4 +220,6 @@ service Stovepipe {
     rpc GetRequestHistoryByURI(GetRequestHistoryByURIRequest) returns (GetRequestHistoryByURIResponse) {}
     // GetProjectStatusByURI returns the current validation status for an exact commit URI.
     rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
+    // List returns a queue-scoped page of current request summaries.
+    rpc List(ListRequest) returns (ListResponse) {}
 }

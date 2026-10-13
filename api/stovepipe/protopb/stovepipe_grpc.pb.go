@@ -39,6 +39,7 @@ const (
 	Stovepipe_GetRequestHistoryByID_FullMethodName  = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID"
 	Stovepipe_GetRequestHistoryByURI_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI"
 	Stovepipe_GetProjectStatusByURI_FullMethodName  = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByURI"
+	Stovepipe_List_FullMethodName                   = "/uber.submitqueue.stovepipe.Stovepipe/List"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -58,6 +59,8 @@ type StovepipeClient interface {
 	GetRequestHistoryByURI(ctx context.Context, in *GetRequestHistoryByURIRequest, opts ...grpc.CallOption) (*GetRequestHistoryByURIResponse, error)
 	// GetProjectStatusByURI returns the current validation status for an exact commit URI.
 	GetProjectStatusByURI(ctx context.Context, in *GetProjectStatusByURIRequest, opts ...grpc.CallOption) (*GetProjectStatusByURIResponse, error)
+	// List returns a queue-scoped page of current request summaries.
+	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
 }
 
 type stovepipeClient struct {
@@ -118,6 +121,16 @@ func (c *stovepipeClient) GetProjectStatusByURI(ctx context.Context, in *GetProj
 	return out, nil
 }
 
+func (c *stovepipeClient) List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_List_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -135,6 +148,8 @@ type StovepipeServer interface {
 	GetRequestHistoryByURI(context.Context, *GetRequestHistoryByURIRequest) (*GetRequestHistoryByURIResponse, error)
 	// GetProjectStatusByURI returns the current validation status for an exact commit URI.
 	GetProjectStatusByURI(context.Context, *GetProjectStatusByURIRequest) (*GetProjectStatusByURIResponse, error)
+	// List returns a queue-scoped page of current request summaries.
+	List(context.Context, *ListRequest) (*ListResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -159,6 +174,9 @@ func (UnimplementedStovepipeServer) GetRequestHistoryByURI(context.Context, *Get
 }
 func (UnimplementedStovepipeServer) GetProjectStatusByURI(context.Context, *GetProjectStatusByURIRequest) (*GetProjectStatusByURIResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetProjectStatusByURI not implemented")
+}
+func (UnimplementedStovepipeServer) List(context.Context, *ListRequest) (*ListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -271,6 +289,24 @@ func _Stovepipe_GetProjectStatusByURI_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).List(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_List_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).List(ctx, req.(*ListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -297,6 +333,10 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProjectStatusByURI",
 			Handler:    _Stovepipe_GetProjectStatusByURI_Handler,
+		},
+		{
+			MethodName: "List",
+			Handler:    _Stovepipe_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

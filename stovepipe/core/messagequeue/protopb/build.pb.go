@@ -44,7 +44,7 @@ const (
 // redelivery stays idempotent). See doc/rfc/stovepipe/steps/build.md.
 type BuildRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the request id to build. Format: "request/<queue>/<counter>".
+	// id is the request id to build. Canonical positive decimal string; queue is carried separately.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue_name is the name of the queue processing the request, carried so
 	// the consumer can route by queue without loading state first. Empty on

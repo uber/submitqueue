@@ -1,0 +1,11 @@
+{
+  "name": "@submitqueue/web-react18-consumer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "jsdom": "^26.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

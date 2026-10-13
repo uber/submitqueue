@@ -97,9 +97,9 @@ func batchIDPayload(t *testing.T, id string) []byte {
 
 func testBatch(state entity.BatchState, deps ...string) entity.Batch {
 	return entity.Batch{
-		ID:           "test-queue/batch/1",
+		ID:           "1",
 		Queue:        "test-queue",
-		Contains:     []string{"test-queue/1"},
+		Contains:     []string{"1"},
 		Dependencies: deps,
 		State:        state,
 		Version:      1,
@@ -200,7 +200,7 @@ func TestNewController(t *testing.T) {
 func TestProcess_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newProcHarness(t, ctrl, nil)
-	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	msg := entityqueue.NewMessage("1", batchIDPayload(t, "1"), "test-queue", nil)
 	msg.Tenant = "other-queue"
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
@@ -227,7 +227,7 @@ func TestProcess_AdmitsCreatedBatch(t *testing.T) {
 	// Admission is the first thing a member hears after being batched: without
 	// it the request reads "batched" for the whole of speculation.
 	require.Len(t, h.logs, 1)
-	assert.Equal(t, "test-queue/1", h.logs[0].RequestID)
+	assert.Equal(t, "1", h.logs[0].RequestID)
 	assert.Equal(t, entity.RequestStatusSpeculating, h.logs[0].Status)
 	assert.Equal(t, batch.ID, h.logs[0].Metadata["batch_id"])
 }
@@ -279,7 +279,7 @@ func TestProcess_TerminalReplansQueue(t *testing.T) {
 	batch := testBatch(entity.BatchStateSucceeded)
 
 	dependent := entity.Batch{
-		ID: "test-queue/batch/2", Queue: "test-queue",
+		ID: "2", Queue: "test-queue",
 		State: entity.BatchStateSpeculating, Dependencies: []string{batch.ID}, Version: 1,
 	}
 
@@ -325,10 +325,10 @@ func TestProcess_Errors(t *testing.T) {
 	t.Run("batch read failure", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		h := newProcHarness(t, ctrl, nil)
-		h.batches.EXPECT().Get(gomock.Any(), "test-queue/batch/1").
+		h.batches.EXPECT().Get(gomock.Any(), "1").
 			Return(entity.Batch{}, storage.ErrNotFound)
 
-		require.Error(t, h.process(t, ctrl, "test-queue/batch/1"))
+		require.Error(t, h.process(t, ctrl, "1"))
 	})
 
 	t.Run("conclude publish failure on a terminal batch", func(t *testing.T) {

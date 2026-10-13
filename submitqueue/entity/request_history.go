@@ -16,7 +16,7 @@ package entity
 
 // GetRequestHistoryByIDRequest identifies one retained request history by request ID.
 type GetRequestHistoryByIDRequest struct {
-	// ID is the globally unique identifier of the request.
+	// ID is the queue-scoped identifier of the request.
 	ID string
 	// Queue is the name of the queue processing the request. It scopes the lookup:
 	// a request is only resolvable within its own queue.
@@ -34,7 +34,7 @@ type GetRequestHistoryByChangeURIRequest struct {
 
 // RequestHistory groups retained events for one request.
 type RequestHistory struct {
-	// RequestID is the globally unique identifier of the request.
+	// RequestID is the queue-scoped identifier of the request.
 	RequestID string
 	// Events are retained request-log events ordered chronologically.
 	Events []RequestLog

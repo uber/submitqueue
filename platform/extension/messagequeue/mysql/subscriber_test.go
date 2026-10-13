@@ -619,7 +619,7 @@ func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 			dlqConfig := extqueue.DLQConfig{Enabled: true, TopicSuffix: "_dlq"}
 			d := newDeliveryForTest(sub, tt.attempt, dlqConfig, tt.retry)
 
-			f := failure.New("boom", failure.Subject{Type: "batch", ID: "q/batch/1"})
+			f := failure.New("boom", failure.Subject{Type: "batch", ID: "1"})
 
 			if tt.wantDLQ {
 				mockMsgStore.EXPECT().MoveToDLQ(

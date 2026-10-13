@@ -34,8 +34,8 @@ func TestGetRequestSummaryByID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
-	summaryStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(entity.RequestSummary{
-		RequestID:    "test-queue/1",
+	summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{
+		RequestID:    "1",
 		Queue:        "test-queue",
 		ChangeURIs:   []string{"github://uber/repo/pull/1/abc"},
 		ReceivedAtMs: 100,
@@ -45,10 +45,10 @@ func TestGetRequestSummaryByID(t *testing.T) {
 	}, nil)
 
 	controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, summaryStore, nil, uriStore))
-	summary, err := controller.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "test-queue/1", Queue: "test-queue"})
+	summary, err := controller.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "1", Queue: "test-queue"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/1", summary.RequestID)
+	assert.Equal(t, "1", summary.RequestID)
 	assert.Equal(t, "test-queue", summary.Queue)
 	assert.Equal(t, []string{"github://uber/repo/pull/1/abc"}, summary.ChangeURIs)
 	assert.Equal(t, int64(100), summary.ReceivedAtMs)
@@ -62,18 +62,18 @@ func TestGetRequestSummaryByChangeURI(t *testing.T) {
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{
-		{ChangeURI: "uri", ReceivedAtMs: 200, RequestID: "queue/2"},
-		{ChangeURI: "uri", ReceivedAtMs: 100, RequestID: "queue/1"},
+		{ChangeURI: "uri", ReceivedAtMs: 200, RequestID: "2"},
+		{ChangeURI: "uri", ReceivedAtMs: 100, RequestID: "1"},
 	}, nil)
-	summaryStore.EXPECT().Get(gomock.Any(), "queue/2").Return(entity.RequestSummary{RequestID: "queue/2", ReceivedAtMs: 200, Status: entity.RequestStatusLanded, ChangeURIs: []string{}}, nil)
-	summaryStore.EXPECT().Get(gomock.Any(), "queue/1").Return(entity.RequestSummary{RequestID: "queue/1", ReceivedAtMs: 100, Status: entity.RequestStatusError, ChangeURIs: []string{}}, nil)
+	summaryStore.EXPECT().Get(gomock.Any(), "2").Return(entity.RequestSummary{RequestID: "2", ReceivedAtMs: 200, Status: entity.RequestStatusLanded, ChangeURIs: []string{}}, nil)
+	summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{RequestID: "1", ReceivedAtMs: 100, Status: entity.RequestStatusError, ChangeURIs: []string{}}, nil)
 
 	controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, summaryStore, nil, uriStore))
 	summaries, err := controller.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 
 	require.NoError(t, err)
 	require.Len(t, summaries, 2)
-	assert.Equal(t, []string{"queue/2", "queue/1"}, []string{summaries[0].RequestID, summaries[1].RequestID})
+	assert.Equal(t, []string{"2", "1"}, []string{summaries[0].RequestID, summaries[1].RequestID})
 }
 
 func TestStatusErrors(t *testing.T) {
@@ -98,6 +98,15 @@ func TestStatusErrors(t *testing.T) {
 			wantUser:    true,
 		},
 		{
+			name: "prefixed sqid",
+			call: func(c RequestSummaryController) error {
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "request.1", Queue: "queue"})
+				return err
+			},
+			wantInvalid: true,
+			wantUser:    true,
+		},
+		{
 			name: "empty change URI",
 			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{})
@@ -109,10 +118,10 @@ func TestStatusErrors(t *testing.T) {
 		{
 			name: "sqid not found",
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, _ *storagemock.MockRequestURIStore) {
-				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, basestorage.ErrNotFound)
+				summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, basestorage.ErrNotFound)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "missing/1", Queue: "missing"})
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "1", Queue: "missing"})
 				return err
 			},
 			wantNotFound: true,
@@ -121,13 +130,13 @@ func TestStatusErrors(t *testing.T) {
 		{
 			name: "sqid still accepting",
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, _ *storagemock.MockRequestURIStore) {
-				summaryStore.EXPECT().Get(gomock.Any(), "queue/1").Return(entity.RequestSummary{
-					RequestID: "queue/1",
+				summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{
+					RequestID: "1",
 					Status:    entity.RequestStatusAccepting,
 				}, nil)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1", Queue: "queue"})
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "1", Queue: "queue"})
 				return err
 			},
 			wantNotFound: true,
@@ -136,10 +145,10 @@ func TestStatusErrors(t *testing.T) {
 		{
 			name: "sqid storage failure",
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, _ *storagemock.MockRequestURIStore) {
-				summaryStore.EXPECT().Get(gomock.Any(), "queue/1").Return(entity.RequestSummary{}, backendErr)
+				summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, backendErr)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1", Queue: "queue"})
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "1", Queue: "queue"})
 				return err
 			},
 		},
@@ -170,8 +179,8 @@ func TestStatusErrors(t *testing.T) {
 		{
 			name: "mapped summary missing",
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, uriStore *storagemock.MockRequestURIStore) {
-				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "missing/1"}}, nil)
-				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, basestorage.ErrNotFound)
+				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "1"}}, nil)
+				summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, basestorage.ErrNotFound)
 			},
 			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})

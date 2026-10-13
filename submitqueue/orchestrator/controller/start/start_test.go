@@ -117,7 +117,7 @@ func TestController_Process_Success(t *testing.T) {
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -129,7 +129,7 @@ func TestController_Process_Success(t *testing.T) {
 func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
-	request := entity.LandRequest{ID: "test-queue/123", Queue: "test-queue"}
+	request := entity.LandRequest{ID: "123", Queue: "test-queue"}
 	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(request))
 	require.NoError(t, err)
 	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
@@ -175,7 +175,7 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 	controller := newTestController(t, ctrl, store, nil)
 
 	landRequest := entity.LandRequest{
-		ID:           "test-queue/42",
+		ID:           "42",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
@@ -224,7 +224,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), fmt.Errorf("publish failed"))
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -244,7 +244,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, store, nil)
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -266,7 +266,7 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 	controller := newTestController(t, ctrl, store, nil)
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "test-queue/123",
+		ID:           "123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,

@@ -120,11 +120,19 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 	if retained.State == entity.RequestStateUnknown {
 		return nil
 	}
-	if err := materializeRequestSummary(ctx, stores, retained); err != nil {
+	if err := materializeRequestProjections(ctx, stores, retained); err != nil {
 		m.count(ctx, "projection_failure")
 		return err
 	}
 	return nil
+}
+
+func materializeRequestProjections(ctx context.Context, stores storage.Storage, log entity.RequestLog) error {
+	summary, err := materializeRequestSummary(ctx, stores, log)
+	if err != nil {
+		return err
+	}
+	return ensureRequestAcceptanceMapping(ctx, stores, summary)
 }
 
 func (m *materializer) retainRequestLog(

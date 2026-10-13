@@ -45,9 +45,9 @@ func testStores(t *testing.T) (*orchstoragemock.MockStorage, *storagemock.MockBa
 
 func TestTransition(t *testing.T) {
 	base := entity.Batch{
-		ID:       "monorepo/batch/7",
+		ID:       "7",
 		Queue:    "monorepo",
-		Contains: []string{"monorepo/1"},
+		Contains: []string{"1"},
 		State:    entity.BatchStateCreated,
 		Version:  3,
 	}
@@ -146,7 +146,7 @@ func TestTransition(t *testing.T) {
 
 func TestEnsureRecord(t *testing.T) {
 	batch := entity.Batch{
-		ID:      "monorepo/batch/7",
+		ID:      "7",
 		Queue:   "monorepo",
 		State:   entity.BatchStateLanding,
 		Version: 5,

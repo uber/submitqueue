@@ -28,16 +28,16 @@ import (
 
 func TestMergeRequestRoundTrip(t *testing.T) {
 	req := &MergeRequest{
-		Id:        "queue-a/42",
+		Id:        "42",
 		QueueName: "queue-a",
 		Steps: []*MergeStep{
 			{
-				StepId:   "queue-a/1",
+				StepId:   "1",
 				Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/repo/pull/1/0123456789abcdef0123456789abcdef01234567"}},
 				Strategy: strategypb.Strategy_REBASE,
 			},
 			{
-				StepId:   "queue-a/2",
+				StepId:   "2",
 				Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/repo/pull/2/89abcdef0123456789abcdef0123456789abcdef"}},
 				Strategy: strategypb.Strategy_MERGE,
 			},
@@ -58,20 +58,20 @@ func TestMergeResultRoundTrip(t *testing.T) {
 	// failure. Both shapes share the one MergeResult contract.
 	cases := map[string]*MergeResult{
 		"merged with produced revisions": {
-			Id:      "queue-a/42",
+			Id:      "42",
 			Outcome: protopb.Outcome_SUCCEEDED,
 			Steps: []*StepResult{
-				{StepId: "queue-a/1", Outputs: []*StepOutput{{Id: "0123456789abcdef0123456789abcdef01234567"}}},
+				{StepId: "1", Outputs: []*StepOutput{{Id: "0123456789abcdef0123456789abcdef01234567"}}},
 			},
 		},
 		"failed with per-step reason": {
-			Id:      "queue-a/42",
+			Id:      "42",
 			Outcome: protopb.Outcome_FAILED,
 			Reason:  "conflict in foo.go",
-			Steps:   []*StepResult{{StepId: "queue-a/2", Reason: "conflict in foo.go"}},
+			Steps:   []*StepResult{{StepId: "2", Reason: "conflict in foo.go"}},
 		},
 		"minimal": {
-			Id:      "queue-a/42",
+			Id:      "42",
 			Outcome: protopb.Outcome_SUCCEEDED,
 		},
 	}
@@ -93,9 +93,9 @@ func TestMergeResultRoundTrip(t *testing.T) {
 // enum values on the wire.
 func TestWireFormat(t *testing.T) {
 	data, err := Marshal(&MergeRequest{
-		Id:        "queue-a/42",
+		Id:        "42",
 		QueueName: "queue-a",
-		Steps:     []*MergeStep{{StepId: "queue-a/1", Strategy: strategypb.Strategy_SQUASH_REBASE}},
+		Steps:     []*MergeStep{{StepId: "1", Strategy: strategypb.Strategy_SQUASH_REBASE}},
 	})
 	require.NoError(t, err)
 

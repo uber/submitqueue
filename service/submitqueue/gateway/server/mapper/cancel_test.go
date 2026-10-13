@@ -30,13 +30,13 @@ func TestProtoToCancelRequest(t *testing.T) {
 	}{
 		{
 			name:     "maps sqid, queue and reason",
-			req:      &pb.CancelRequest{Sqid: "test-queue/42", Queue: "test-queue", Reason: "obsolete change"},
-			expected: entity.CancelRequest{ID: "test-queue/42", Queue: "test-queue", Reason: "obsolete change"},
+			req:      &pb.CancelRequest{Sqid: "42", Queue: "test-queue", Reason: "obsolete change"},
+			expected: entity.CancelRequest{ID: "42", Queue: "test-queue", Reason: "obsolete change"},
 		},
 		{
 			name:     "maps sqid and queue without reason",
-			req:      &pb.CancelRequest{Sqid: "test-queue/1", Queue: "test-queue"},
-			expected: entity.CancelRequest{ID: "test-queue/1", Queue: "test-queue"},
+			req:      &pb.CancelRequest{Sqid: "1", Queue: "test-queue"},
+			expected: entity.CancelRequest{ID: "1", Queue: "test-queue"},
 		},
 		{
 			name:     "empty request yields zero value",

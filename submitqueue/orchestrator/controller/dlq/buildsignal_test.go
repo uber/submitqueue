@@ -48,23 +48,23 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{
-		ID: "build-1", BatchID: "q/batch/2", PathID: "path-1", Attempt: 1,
+		ID: "build-1", BatchID: "2", PathID: "path-1", Attempt: 1,
 		Status: entity.BuildStatusRunning,
 	}, nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batch := entity.Batch{
-		ID: "q/batch/2", Queue: "q", Contains: []string{"q/1"},
+		ID: "2", Queue: "q", Contains: []string{"1"},
 		State: entity.BatchStateSpeculating, Version: 3,
 	}
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/2").Return(batch, nil)
+	batchStore.EXPECT().Get(gomock.Any(), "2").Return(batch, nil)
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(3), int32(4)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{
-		ID: "q/1", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
+		ID: "1", Queue: "q", Version: 1, State: entity.RequestStateProcessing,
 	}
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Get(gomock.Any(), "1").Return(request, nil)
 	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {

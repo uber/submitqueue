@@ -29,7 +29,7 @@ import (
 	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 )
 
-const testRequestID = "monorepo/4"
+const testRequestID = "4"
 
 // association builds a RequestBatch linking testRequestID to a batch.
 func association(batchID string) entity.RequestBatch {

@@ -39,6 +39,7 @@ import (
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 type StovepipeIntegrationSuite struct {
@@ -83,6 +84,7 @@ func (s *StovepipeIntegrationSuite) SetupSuite() {
 
 	// Apply schemas after the stack is up; the service connects lazily and the
 	// consumer retries, so the boot ordering is tolerated.
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("stovepipe/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
@@ -122,7 +124,7 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 
 	// Request persisted.
 	var reqCount int
-	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE id = ?", id).Scan(&reqCount))
+	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE queue = ? AND id = ?", queue, id).Scan(&reqCount))
 	assert.Equal(t, 1, reqCount, "request row should be persisted")
 
 	// (queue, URI) mapping persisted and points at the minted id.
@@ -132,7 +134,7 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 
 	// Message published to the process topic.
 	var msgCount int
-	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", id).Scan(&msgCount))
+	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND topic = ? AND id = ?", queue, "process", id).Scan(&msgCount))
 	assert.Equal(t, 1, msgCount, "should have published one process message")
 
 	// Re-ingesting the same queue resolves the same head URI and dedups.
@@ -158,7 +160,7 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAPIs() {
 	t := s.T()
 	const (
 		queue     = "history-api/main"
-		requestID = "request/history-api/main/7"
+		requestID = "7"
 		uri       = "git://history-api/main/abc123"
 	)
 
@@ -181,17 +183,36 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAPIs() {
 	require.NoError(t, err)
 
 	var requestRows int
-	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE id = ?", requestID).Scan(&requestRows))
+	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE queue = ? AND id = ?", queue, requestID).Scan(&requestRows))
 	require.Zero(t, requestRows)
 
 	byID, err := s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: queue, RequestId: requestID})
-	require.NoError(t, err)
-	assertHistoryEvents(t, byID.Events)
+	require.Error(t, err)
+	assert.Nil(t, byID)
 
 	byURI, err := s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: uri})
+	require.Error(t, err)
+	assert.Nil(t, byURI)
+
+	const baseURI = "git://history-api/main/base"
+	_, err = s.db.Exec(`INSERT INTO request_summary
+		(queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version, accepted_at_ms, outcome_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		queue, requestID, uri, baseURI, "succeeded", 3, 2000, 1, 1000, "build_succeeded")
+	require.NoError(t, err)
+	byID, err = s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: queue, RequestId: requestID})
+	require.NoError(t, err)
+	byURI, err = s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: uri})
 	require.NoError(t, err)
 	require.Len(t, byURI.Histories, 1)
+	wantSummary := &pb.RequestSummary{
+		RequestId: requestID, Queue: queue, ChangeUri: uri, BaseUri: baseURI, RequestState: "succeeded",
+		StateUpdatedAtMs: 2000, AcceptedAtMs: 1000, OutcomeReason: "build_succeeded",
+	}
+	assert.True(t, proto.Equal(wantSummary, byID.RequestSummary))
+	assert.True(t, proto.Equal(wantSummary, byURI.Histories[0].RequestSummary))
 	assert.Equal(t, requestID, byURI.Histories[0].RequestId)
+	assertHistoryEvents(t, byID.Events)
 	assertHistoryEvents(t, byURI.Histories[0].Events)
 }
 
@@ -199,11 +220,11 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAbsence() {
 	t := s.T()
 	const (
 		queue      = "history-api-absence/main"
-		mappedID   = "request/history-api-absence/main/1"
+		mappedID   = "1"
 		mappedURI  = "git://history-api-absence/main/mapped"
-		scopedID   = "request/history-api-absence/main/2"
+		scopedID   = "2"
 		scopedURI  = "git://history-api-absence/main/scoped"
-		missingID  = "request/history-api-absence/main/missing"
+		missingID  = "999"
 		missingURI = "git://history-api-absence/main/missing"
 		wrongQueue = "history-api-absence/other"
 	)
@@ -219,6 +240,11 @@ func (s *StovepipeIntegrationSuite) TestRequestHistoryAbsence() {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		queue, scopedID, "occurrence/001", 1000, "accepted", "", 1, "", `{}`,
 	)
+	require.NoError(t, err)
+
+	_, err = s.db.Exec(`INSERT INTO request_summary
+		(queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, queue, missingID, missingURI, "", "accepted", 1, 1000, 1)
 	require.NoError(t, err)
 
 	tests := []struct {

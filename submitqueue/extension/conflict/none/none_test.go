@@ -25,7 +25,7 @@ import (
 )
 
 func TestAnalyze(t *testing.T) {
-	batch := entity.Batch{ID: "queueA/batch/10"}
+	batch := entity.Batch{ID: "10"}
 
 	tests := []struct {
 		name     string
@@ -36,9 +36,9 @@ func TestAnalyze(t *testing.T) {
 		{
 			name: "many in-flight batches",
 			inFlight: []entity.Batch{
-				{ID: "queueA/batch/1"},
-				{ID: "queueA/batch/2"},
-				{ID: "queueA/batch/3"},
+				{ID: "1"},
+				{ID: "2"},
+				{ID: "3"},
 			},
 		},
 	}

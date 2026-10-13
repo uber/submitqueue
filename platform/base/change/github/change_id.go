@@ -109,13 +109,24 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	}
 
 	prNumber, err := strconv.Atoi(prStr)
+
 	if err != nil {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: PR number %q is not a valid integer (expected format: %s)", raw, prStr, changeIDFormat)
+	}
+
+	if prNumber < 1 || strconv.Itoa(prNumber) != prStr {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: PR number %q must be a positive integer without sign or leading zeros (expected format: %s)", raw, prStr, changeIDFormat)
 	}
 
 	// Split repo path: last segment is repo name, everything before is the owner.
 	if len(repoSegments) < 2 {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: repo path must have at least owner/repo (expected format: %s)", raw, changeIDFormat)
+	}
+
+	for _, seg := range repoSegments {
+		if seg == "" {
+			return ChangeID{}, fmt.Errorf("invalid change ID %q: repo path contains an empty segment (expected format: %s)", raw, changeIDFormat)
+		}
 	}
 
 	repo := repoSegments[len(repoSegments)-1]

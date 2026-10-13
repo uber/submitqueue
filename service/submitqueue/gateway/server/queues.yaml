@@ -24,6 +24,10 @@ queues:
   # Used by the hermetic git E2E, where Runway is wired to a real git merger
   # against a bare repository. See service/submitqueue/demo/provider/git.
   - name: e2e-git-queue
+  # Used by the GitHub E2E, which lands real pull requests in a test
+  # repository through the GitHub API. Its provider configuration is generated
+  # by the test (test/e2e/submitqueue/github_suite_test.go).
+  - name: e2e-github-queue
   # Used by the provider demo stack (make local-submitqueue-start) in every mode —
   # fake, git, and github. See service/submitqueue/demo/provider and
   # doc/howto/QUICKSTART.md.

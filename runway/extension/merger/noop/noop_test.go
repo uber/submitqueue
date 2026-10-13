@@ -34,16 +34,16 @@ var testCfg = merger.Config{QueueName: "test-queue"}
 
 func testRequest() *runwaymq.MergeRequest {
 	return &runwaymq.MergeRequest{
-		Id:        "queue-a/42",
+		Id:        "42",
 		QueueName: "queue-a",
 		Steps: []*runwaymq.MergeStep{
 			{
-				StepId:   "queue-a/1",
+				StepId:   "1",
 				Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 				Strategy: strategypb.Strategy_REBASE,
 			},
 			{
-				StepId:   "queue-a/2",
+				StepId:   "2",
 				Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/repo/pull/2/89abcdef0123456789abcdef0123456789abcdef"}},
 				Strategy: strategypb.Strategy_MERGE,
 			},
@@ -61,9 +61,9 @@ func TestCheckMergeability(t *testing.T) {
 	assert.Equal(t, req.GetId(), res.GetId())
 	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
 	require.Len(t, res.GetSteps(), 2)
-	assert.Equal(t, "queue-a/1", res.GetSteps()[0].GetStepId())
+	assert.Equal(t, "1", res.GetSteps()[0].GetStepId())
 	assert.Empty(t, res.GetSteps()[0].GetOutputs())
-	assert.Equal(t, "queue-a/2", res.GetSteps()[1].GetStepId())
+	assert.Equal(t, "2", res.GetSteps()[1].GetStepId())
 	assert.Empty(t, res.GetSteps()[1].GetOutputs())
 }
 
@@ -77,10 +77,10 @@ func TestMerge(t *testing.T) {
 	assert.Equal(t, req.GetId(), res.GetId())
 	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
 	require.Len(t, res.GetSteps(), 2)
-	assert.Equal(t, "queue-a/1", res.GetSteps()[0].GetStepId())
+	assert.Equal(t, "1", res.GetSteps()[0].GetStepId())
 	require.Len(t, res.GetSteps()[0].GetOutputs(), 1)
 	assert.NotEmpty(t, res.GetSteps()[0].GetOutputs()[0].GetId())
-	assert.Equal(t, "queue-a/2", res.GetSteps()[1].GetStepId())
+	assert.Equal(t, "2", res.GetSteps()[1].GetStepId())
 	require.Len(t, res.GetSteps()[1].GetOutputs(), 1)
 	assert.NotEmpty(t, res.GetSteps()[1].GetOutputs()[0].GetId())
 }

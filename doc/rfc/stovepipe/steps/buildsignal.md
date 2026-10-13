@@ -63,12 +63,12 @@ For a delivery carrying build id `B`:
 7. If the stored status is terminal, and R does not already carry an outcome:
    a. Release the queue's build slot: CAS-decrement Queue.in_flight_count, clamped at zero.
       - failure here aborts the step: R must not go terminal while still holding a slot.
-   b. CAS R from processing to the outcome the stored status projects onto it:
+   b. CAS R from processing to the outcome the stored status projects onto it and persist B as R's terminal build id:
       succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
    Then publish R.ID to the record topic, partitioned by request id; ack, return.
    No re-publish to buildsignal.
-   - record loads the Request directly by this key and derives greenness from its outcome,
-     so it never reaches a Build and no reverse lookup from Request to its builds is needed.
+   - record loads the Request directly by this key, derives greenness from its outcome, and
+     supplies its terminal build id to project-result resolution; it never reaches a Build.
    - the message id is the request id, so a redelivery republishing the same terminal signal
      dedups into the original message; record is idempotent regardless.
    - publish failure -> return raw (non-retryable); the outcome is persisted, operational

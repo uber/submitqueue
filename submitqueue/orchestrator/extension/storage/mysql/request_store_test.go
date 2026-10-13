@@ -45,7 +45,7 @@ func setupRequestStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.Requ
 
 func TestRequestStore_Get(t *testing.T) {
 	want := entity.Request{
-		ID:           "monorepo/1",
+		ID:           "1",
 		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -134,7 +134,7 @@ func TestRequestStore_Get(t *testing.T) {
 
 func TestRequestStore_Create(t *testing.T) {
 	request := entity.Request{
-		ID:           "monorepo/1",
+		ID:           "1",
 		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
@@ -201,7 +201,7 @@ func TestRequestStore_Create(t *testing.T) {
 func TestRequestStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(1), int32(2)
 	request := entity.Request{
-		ID:           "monorepo/1",
+		ID:           "1",
 		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,

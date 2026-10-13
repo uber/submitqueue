@@ -44,9 +44,9 @@ func TestQueueStore_Create(t *testing.T) {
 	queue := entity.Queue{
 		Name:               "monorepo/main",
 		LastGreenURI:       "git://remote/monorepo/main/green",
-		LastGreenRequestID: "request/monorepo/main/1",
+		LastGreenRequestID: "1",
 		InFlightCount:      0,
-		LatestRequestID:    "request/monorepo/main/1",
+		LatestRequestID:    "1",
 		Version:            1,
 	}
 
@@ -110,9 +110,9 @@ func TestQueueStore_Get(t *testing.T) {
 	want := entity.Queue{
 		Name:               "monorepo/main",
 		LastGreenURI:       "git://remote/monorepo/main/green",
-		LastGreenRequestID: "request/monorepo/main/2",
+		LastGreenRequestID: "2",
 		InFlightCount:      2,
-		LatestRequestID:    "request/monorepo/main/3",
+		LatestRequestID:    "3",
 		Version:            3,
 	}
 
@@ -185,9 +185,9 @@ func TestQueueStore_Update(t *testing.T) {
 	queue := entity.Queue{
 		Name:               "monorepo/main",
 		LastGreenURI:       "git://remote/monorepo/main/green",
-		LastGreenRequestID: "request/monorepo/main/1",
+		LastGreenRequestID: "1",
 		InFlightCount:      1,
-		LatestRequestID:    "request/monorepo/main/2",
+		LatestRequestID:    "2",
 	}
 	const oldVersion, newVersion = int32(1), int32(2)
 

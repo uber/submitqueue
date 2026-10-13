@@ -65,7 +65,7 @@ func recordingRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 }
 
 func TestTerminateRequest(t *testing.T) {
-	const requestID = "q/1"
+	const requestID = "1"
 
 	validated := entity.Request{ID: requestID, Queue: "q", State: entity.RequestStateValidated, Version: 3}
 	originalValidated := validated
@@ -101,7 +101,7 @@ func TestTerminateRequest(t *testing.T) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(entity.Request{}, fmt.Errorf("db down"))
 			},
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
-			errMsg:     "failed to get request q/1: db down",
+			errMsg:     "failed to get request 1: db down",
 		},
 		"reconciled from non-terminal state": {
 			targetState: entity.RequestStateError,
@@ -147,7 +147,7 @@ func TestTerminateRequest(t *testing.T) {
 			},
 			publishErr: fmt.Errorf("connection refused"),
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
-			errMsg:     "failed to publish request log for q/1",
+			errMsg:     "failed to publish request log for 1",
 		},
 		"diverged terminal state is left untouched": {
 			targetState: entity.RequestStateError,
@@ -179,7 +179,7 @@ func TestTerminateRequest(t *testing.T) {
 			},
 			publishErr: fmt.Errorf("connection refused"),
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
-			errMsg:     "failed to publish request log for q/1",
+			errMsg:     "failed to publish request log for 1",
 		},
 	}
 

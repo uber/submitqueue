@@ -17,6 +17,7 @@ package gitrepo
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,6 +112,73 @@ func TestNewRepo_RejectsAnIncompleteConfiguration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := NewRepo(tt.cfg)
 			require.Error(t, err)
+		})
+	}
+}
+
+func TestRunRaw_PreservesCommandFailure(t *testing.T) {
+	repo, err := NewRepo(RepoConfig{
+		Git:       gitexectest.Git(t),
+		Path:      t.TempDir(),
+		RemoteURL: "unused",
+		Target:    "main",
+	})
+	require.NoError(t, err)
+
+	_, err = repo.RunRaw(context.Background(), "not-a-git-command")
+
+	var commandErr *gitexec.CommandError
+	require.ErrorAs(t, err, &commandErr)
+	assert.Equal(t, "not-a-git-command", commandErr.Operation())
+	var exitErr *exec.ExitError
+	assert.ErrorAs(t, err, &exitErr)
+}
+
+func TestSetConfig_PreservesCommandFailure(t *testing.T) {
+	t.Setenv("GIT_EXECUTABLE", gitexectest.Git(t))
+	err := SetConfig(context.Background(), t.TempDir(), "user.name", "Test")
+
+	var commandErr *gitexec.CommandError
+	require.ErrorAs(t, err, &commandErr)
+	assert.Equal(t, "config", commandErr.Operation())
+	var exitErr *exec.ExitError
+	assert.ErrorAs(t, err, &exitErr)
+}
+
+func TestCommands_PreserveCancellation(t *testing.T) {
+	git := gitexectest.Git(t)
+	t.Setenv("GIT_EXECUTABLE", git)
+	repo, err := NewRepo(RepoConfig{
+		Git:       git,
+		Path:      t.TempDir(),
+		RemoteURL: "unused",
+		Target:    "main",
+	})
+	require.NoError(t, err)
+
+	for _, tt := range []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{
+			name: "raw command",
+			run: func(ctx context.Context) error {
+				_, err := repo.RunRaw(ctx, "status")
+				return err
+			},
+		},
+		{
+			name: "set config",
+			run: func(ctx context.Context) error {
+				return SetConfig(ctx, repo.cfg.Path, "user.name", "Test")
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			assert.ErrorIs(t, tt.run(ctx), context.Canceled)
 		})
 	}
 }

@@ -19,7 +19,10 @@ go_library(
         "//api/base/hook:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
         "//platform/buildkite:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
+        "//platform/errs/git:go_default_library",
+        "//platform/errs/http:go_default_library",
         "//platform/errs/mysql:go_default_library",
         "//platform/extension/consumergate:go_default_library",
         "//platform/extension/consumergate/file:go_default_library",
@@ -88,6 +91,7 @@ go_cross_binary(
     name = "orchestrator_linux",
     platform = "@rules_go//go/toolchain:linux_amd64",
     target = ":orchestrator",
+    visibility = ["//web/test/e2e:__pkg__"],
 )
 
 # Everything a Docker-based test needs to build the orchestrator image from a
@@ -100,13 +104,17 @@ filegroup(
         "Dockerfile",
         ":orchestrator_linux",
     ],
-    visibility = ["//test:__subpackages__"],
+    visibility = [
+        "//test:__subpackages__",
+        "//web/test/e2e:__pkg__",
+    ],
 )
 
 go_test(
     name = "go_default_test",
     srcs = [
         "config_test.go",
+        "main_test.go",
         "profiles_test.go",
     ],
     # The pinned git, for the tests that resolve a git change provider against a
@@ -118,7 +126,10 @@ go_test(
     },
     deps = [
         "//platform/base/change:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/git/exectest:go_default_library",
+        "//platform/git/repo:go_default_library",
+        "//platform/githubactions:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",

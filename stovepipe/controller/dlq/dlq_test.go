@@ -38,7 +38,7 @@ import (
 
 const (
 	testQueue = "monorepo/main"
-	testID    = "request/monorepo/main/7"
+	testID    = "7"
 )
 
 func queueContext() context.Context {

@@ -1,26 +1,27 @@
 # Bazel wrapper
 BAZEL = ./tool/bazel
 
-# Docker Compose wrapper
-COMPOSE = docker-compose
+# Bazel supplies the pinned Docker Compose release for every local stack.
+COMPOSE = $(BAZEL) run @rules_docker_compose//docker_compose --
 
 # SubmitQueue compose files
-COMPOSE_FILE = service/submitqueue/docker-compose.yml
-GATEWAY_COMPOSE_FILE = service/submitqueue/gateway/server/docker-compose.yml
-ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compose.yml
+COMPOSE_FILE = $(abspath service/submitqueue/docker-compose.yml)
+GATEWAY_COMPOSE_FILE = $(abspath service/submitqueue/gateway/server/docker-compose.yml)
+ORCHESTRATOR_COMPOSE_FILE = $(abspath service/submitqueue/orchestrator/server/docker-compose.yml)
+WEB_COMPOSE_FILE = $(abspath service/submitqueue/docker-compose.web.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
 # Stovepipe compose file (single Ping-only service)
-STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
-STOVEPIPE_DEBUG_COMPOSE_FILE = service/stovepipe/docker-compose.debug.yml
+STOVEPIPE_COMPOSE_FILE = $(abspath service/stovepipe/docker-compose.yml)
+STOVEPIPE_DEBUG_COMPOSE_FILE = $(abspath service/stovepipe/docker-compose.debug.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
 STOVEPIPE_LOCAL_PROJECT = stovepipe
 
 # Runway compose files
-RUNWAY_COMPOSE_FILE = service/runway/server/docker-compose.yml
+RUNWAY_COMPOSE_FILE = $(abspath service/runway/server/docker-compose.yml)
 
 # Fixed project name for local manual testing (tests use unique random names)
 RUNWAY_LOCAL_PROJECT = runway
@@ -41,6 +42,11 @@ PROTO_PACKAGES = api/base/change api/base/hook api/base/mergestrategy api/base/m
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
+# Local-only credential for the reference web host. Override it for manual
+# testing; production authentication is deliberately outside this demo.
+export SUBMITQUEUE_WEB_TOKEN ?= test
+export SUBMITQUEUE_WEB_CURSOR_SECRET ?= local-demo-cursor-secret
+
 # Which provider the demo stack targets, and the only difference between a free
 # local run and a live one. Selects a configuration directory rather than a code
 # path, so adding a provider is mostly adding a directory — see
@@ -55,9 +61,9 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 # Which compose overlay each mode needs. This cannot live in the provider
 # directory: the two config files say how the services are configured, not what
 # has to be mounted or which credential has to be present for them to start.
-PROVIDER_COMPOSE_FILE_fake = service/submitqueue/docker-compose.fake.yml
-PROVIDER_COMPOSE_FILE_git = service/submitqueue/docker-compose.git.yml
-PROVIDER_COMPOSE_FILE_github = service/submitqueue/docker-compose.provider.yml
+PROVIDER_COMPOSE_FILE_fake = $(abspath service/submitqueue/docker-compose.fake.yml)
+PROVIDER_COMPOSE_FILE_git = $(abspath service/submitqueue/docker-compose.git.yml)
+PROVIDER_COMPOSE_FILE_github = $(abspath service/submitqueue/docker-compose.provider.yml)
 PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
 
 # Where PROVIDER=git keeps the bare repository it lands into. Outside the
@@ -148,7 +154,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps docs-build docs-serve e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go web-build web-check web-e2e-test web-image-load web-install web-proto help
 
 
 build: ## Build all services and examples
@@ -263,6 +269,12 @@ demo-requests: ## Create N changes, enqueue each as it is created, and watch (PR
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
+docs-build: ## Build the documentation site into tool/docsite/build (fails on broken links)
+	@$(BAZEL) run //tool/docsite:mkdocs -- build --strict --config-file $(CURDIR)/tool/docsite/mkdocs.yml --site-dir $(CURDIR)/tool/docsite/build
+
+docs-serve: ## Serve the documentation site with live reload on a free localhost port (DOCS_PORT=8000 to pin one)
+	@$(BAZEL) run //tool/docsite:mkdocs -- serve --config-file $(CURDIR)/tool/docsite/mkdocs.yml $(if $(DOCS_PORT),--dev-addr 127.0.0.1:$(DOCS_PORT))
+
 e2e-git-test: ## Run the hermetic git E2E (real merger against a bare repo; no credentials)
 	@echo "Running hermetic git end-to-end tests..."
 	@$(BAZEL) test //test/e2e/submitqueue:go_default_test --test_output=errors \
@@ -294,6 +306,10 @@ integration-test-submitqueue-consumer: ## Run Consumer integration tests
 integration-test-extensions: ## Run extension integration tests (runs in parallel)
 	@echo "Running extension integration tests (parallel)..."
 	@$(BAZEL) test //test/integration/submitqueue/extension/... //test/integration/extension/... --test_output=errors
+
+integration-test-runway-merger: ## Run Runway merger extension tests (GitHub ones need SQ_GITHUB_TOKEN and SQ_GITHUB_TEST_REPO=owner/repo, else skip)
+	@echo "Running Runway merger extension tests..."
+	@$(BAZEL) test //test/integration/runway/... --test_output=errors
 
 integration-test-submitqueue-gateway: ## Run Gateway integration tests
 	@echo "Running Gateway integration tests..."
@@ -361,7 +377,7 @@ local-submitqueue-clean: ## Stop the stack and remove its volumes, images, and P
 	@echo "Cleaning all services and data..."
 	@# The overlay is named so that volumes it declares — Runway's checkouts —
 	@# are removed too, rather than surviving as an orphan.
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
 	@rm -rf "$(SQ_GIT_SANDBOX_DIR)"
 	@echo "All services, volumes, images, and $(SQ_GIT_SANDBOX_DIR) removed."
 
@@ -416,6 +432,10 @@ local-init-runway-queue-schema: ## Apply queue schema only (mysql-queue) for Run
 
 local-init-stovepipe-schemas: ## Apply storage (mysql-app) and queue (mysql-queue) schemas for Stovepipe compose stacks
 	@echo "Applying storage schema to mysql-app..."
+	@for file in platform/extension/counter/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
 	@for file in stovepipe/extension/storage/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
@@ -446,7 +466,7 @@ local-runway-stop: ## Stop Runway service
 	@echo "Runway services stopped."
 
 local-submitqueue-logs: ## View logs from all running services
-	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) logs -f
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) logs -f
 
 local-submitqueue-orchestrator-start: build-submitqueue-orchestrator-linux ## Start Orchestrator service locally (Orchestrator + 2 MySQL databases)
 	@echo "Starting Orchestrator with docker-compose..."
@@ -470,11 +490,12 @@ local-submitqueue-orchestrator-stop: ## Stop Orchestrator service
 local-submitqueue-ps: ## Show running containers and their ports
 	@echo "Running containers and ports:"
 	@echo ""
-	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) ps
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) ps
 	@echo ""
 	@echo "📡 Service Endpoints:"
 	@echo "  Gateway gRPC:      localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'not running')"
 	@echo "  Orchestrator gRPC: localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-orchestrator-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'not running')"
+	@echo "  Web UX:            http://localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-web-service-1 3000 2>/dev/null | cut -d: -f2 || echo 'not running')"
 	@echo ""
 	@echo "🗄️  Database Endpoints:"
 	@echo "  MySQL App:    localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'not running')"
@@ -492,11 +513,11 @@ local-submitqueue-ps: ## Show running containers and their ports
 
 local-submitqueue-restart: build-all-linux ## Restart all services (rebuild and restart)
 	@echo "Restarting all services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) restart
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) restart
 	@echo "Services restarted!"
 	@make local-submitqueue-ps
 
-local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN)
+local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN)
 	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
 	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
 		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
@@ -515,13 +536,16 @@ local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|
 	else \
 		export SQ_CONTAINER_USER=$$(id -u):$$(id -g); \
 	fi; \
-	$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
+	$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
 	@echo "Applying database schemas..."
 	@$(MAKE) -s local-init-submitqueue-schemas
 	@echo ""
 	@echo "✅ Stack is running against provider '$(PROVIDER)'."
 	@echo ""
 	@echo "Gateway gRPC port: $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "Web UX:            http://localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-web-service-1 3000 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "Web username:      test"
+	@echo "Web token:         $(SUBMITQUEUE_WEB_TOKEN)"
 	@if [ "$(PROVIDER)" = "git" ]; then \
 		echo "Land target:       $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \
 	fi
@@ -531,7 +555,7 @@ local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|
 
 local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sandbox; the databases do not survive)
 	@echo "Stopping SubmitQueue services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@# Both MySQL services mount anonymous volumes, so `down` detaches them and
 	@# the next `up` creates fresh ones. Saying "data preserved" here would be
 	@# read as "your requests are still there", which they are not.
@@ -543,7 +567,7 @@ local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sand
 
 local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway
 	@echo "Stopping all services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(RUNWAY_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
 	@echo "Services stopped. Anonymous database volumes are not reused on the next start."
@@ -589,9 +613,10 @@ GO_GENERATE_PACKAGES := \
 	./platform/extension/hook/... \
 	./platform/extension/messagequeue/... \
 	./runway/extension/merger/... \
+	./stovepipe/controller/... \
 	./stovepipe/core/requestlog/... \
 	./stovepipe/extension/buildrunner/... \
-	./stovepipe/extension/projectresult/... \
+	./stovepipe/extension/projectstatus/... \
 	./stovepipe/extension/queueconfig/... \
 	./stovepipe/extension/sourcecontrol/... \
 	./stovepipe/extension/storage/... \
@@ -672,6 +697,28 @@ tidy-bazel: ## Run bazel mod tidy
 tidy-go: ## Run go mod tidy
 	@echo "Running go mod tidy..."
 	@$(BAZEL) run @rules_go//go -- mod tidy -e
+
+web-build: ## Build the web packages and deployable Next.js image with Bazel
+	@$(BAZEL) build //web/submitqueue:pkg //web/service/submitqueue:image
+
+web-check: ## Run web generation, packaging, lint, type, unit, and image checks with Bazel
+	@$(BAZEL) test //web:check --test_output=errors
+	@$(BAZEL) build //web/service/submitqueue:image
+
+web-e2e-test: ## Run the Bazel-managed real-stack Playwright and axe web test
+	@$(BAZEL) test //web/test/e2e:web_test --test_output=errors
+
+web-image-load: ## Build and load the deployable web image into Docker with Bazel (also tagged with SQ_DOCKER_IMAGE_PREFIX)
+	@$(BAZEL) run //web/service/submitqueue:image_load
+	@if [ -n "$$SQ_DOCKER_IMAGE_PREFIX" ] && [ "$$SQ_DOCKER_IMAGE_PREFIX" != "submitqueue" ]; then \
+		docker tag submitqueue-web-service:latest "$$SQ_DOCKER_IMAGE_PREFIX-web-service:latest"; \
+	fi
+
+web-install: ## Install the pinned web workspace dependencies
+	@corepack pnpm@10.17.1 --dir web install --frozen-lockfile
+
+web-proto: ## Regenerate the committed TypeScript protobuf API with Bazel
+	@$(BAZEL) run //web/api:generate
 
 help: ## Show this help message
 	@echo "Available targets:"

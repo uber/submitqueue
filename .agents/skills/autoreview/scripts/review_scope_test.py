@@ -25,6 +25,12 @@ class ReviewScopeTest(unittest.TestCase):
             "tool.py": "python",
             "test_tool.py": "tests",
             "run.sh": "shell",
+            "web/platform/host.ts": "web",
+            "web/submitqueue/view/page.tsx": "web",
+            "web/submitqueue/view/page.test.tsx": "tests",
+            "web/platform/theme.css": "web",
+            "web/package.json": "config",
+            "web/api/src/gen/gateway_pb.ts": "generated",
             "config.yaml": "config",
             "service/Dockerfile.debug": "build",
             "generated/mock/example.go": "generated",
@@ -82,6 +88,43 @@ class ReviewScopeTest(unittest.TestCase):
         self.assertEqual(
             [("SMELL", r"name\t.go:1: narration-comment: // Get value")],
             hits,
+        )
+
+    def test_analyze_diff_flags_internal_references(self) -> None:
+        cases = {
+            "+See code.uber.internal/devexp for the wiring.\n": True,
+            "+Mirror how go-code generates protos.\n": True,
+            "+Copyright (c) 2025 Uber Technologies, Inc.\n": False,
+            "+Mirror how a Go monorepo generates protos.\n": False,
+        }
+
+        for added, flagged in cases.items():
+            with self.subTest(added=added):
+                hits = review_scope.analyze_diff(
+                    "diff --git a/doc/x.md b/doc/x.md\n"
+                    "+++ b/doc/x.md\n"
+                    "@@ -0,0 +1 @@\n" + added
+                )
+                self.assertEqual(
+                    flagged,
+                    any("internal-reference" in message for _, message in hits),
+                )
+
+    def test_added_workflow_emits_a_smell(self) -> None:
+        self.assertEqual(
+            [
+                (
+                    "SMELL",
+                    ".github/workflows/live.yml:1: new-workflow: "
+                    "confirm this cannot be a job in .github/workflows/ci.yml",
+                )
+            ],
+            review_scope.new_workflow_hints(
+                [
+                    review_scope.Change("A", ".github/workflows/live.yml"),
+                    review_scope.Change("M", ".github/workflows/ci.yml"),
+                ]
+            ),
         )
 
     def test_untracked_symlink_contents_are_not_scanned(self) -> None:

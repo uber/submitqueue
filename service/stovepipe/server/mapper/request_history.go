@@ -29,6 +29,14 @@ func ProtoToGetRequestHistoryByURIRequest(req *pb.GetRequestHistoryByURIRequest)
 	return entity.GetRequestHistoryByURIRequest{URI: req.GetUri(), Queue: req.GetQueue()}
 }
 
+// RequestHistoryByIDToProto maps retained events and the current summary to their wire representation.
+func RequestHistoryByIDToProto(history entity.RequestHistory) *pb.GetRequestHistoryByIDResponse {
+	return &pb.GetRequestHistoryByIDResponse{
+		Events:         HistoryEventsToProto(history.Events),
+		RequestSummary: RequestSummaryToProto(history.RequestSummary),
+	}
+}
+
 // HistoryEventsToProto maps retained request-log events to wire history events.
 func HistoryEventsToProto(logs []entity.RequestLog) []*pb.HistoryEvent {
 	events := make([]*pb.HistoryEvent, len(logs))
@@ -53,8 +61,9 @@ func RequestHistoriesToProto(histories []entity.RequestHistory) []*pb.RequestHis
 	result := make([]*pb.RequestHistory, len(histories))
 	for i, history := range histories {
 		result[i] = &pb.RequestHistory{
-			RequestId: history.RequestID,
-			Events:    HistoryEventsToProto(history.Events),
+			RequestId:      history.RequestID,
+			Events:         HistoryEventsToProto(history.Events),
+			RequestSummary: RequestSummaryToProto(history.RequestSummary),
 		}
 	}
 	return result

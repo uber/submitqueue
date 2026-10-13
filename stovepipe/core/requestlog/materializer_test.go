@@ -32,7 +32,7 @@ import (
 
 const (
 	testQueue      = "monorepo/main"
-	testRequestID  = "request/monorepo/main/1"
+	testRequestID  = "1"
 	testRequestURI = "git://repo/head"
 	testBaseURI    = "git://repo/base"
 	testNowMs      = int64(1735689600000)
@@ -45,9 +45,12 @@ func newTestMaterializer(t *testing.T) (*materializer, *storagemock.MockStorage,
 	store := storagemock.NewMockRequestLogStore(ctrl)
 	summaries := storagemock.NewMockRequestSummaryStore(ctrl)
 	requests := storagemock.NewMockRequestStore(ctrl)
+	acceptances := storagemock.NewMockRequestAcceptanceStore(ctrl)
 	stores.EXPECT().GetRequestLogStore().Return(store).AnyTimes()
 	stores.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
 	stores.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+	stores.EXPECT().GetRequestAcceptanceStore().Return(acceptances).AnyTimes()
+	acceptances.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return &materializer{
 		scope: tally.NoopScope,
 		now:   func() time.Time { return time.UnixMilli(testNowMs) },
@@ -105,7 +108,18 @@ func TestMaterializerPersistRequestStateLog(t *testing.T) {
 				request.BaseURI = testBaseURI
 			}
 			if !tt.wantErr {
-				expectRequestSummaryUpdate(summaries)
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(seededRequestSummary(), nil)
+				summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+					func(_ context.Context, summary entity.RequestSummary, _, _ int32) error {
+						assert.Equal(t, tt.outcomeReason, summary.OutcomeReason)
+						if tt.state == entity.RequestStateAccepted {
+							assert.Equal(t, testNowMs, summary.AcceptedAtMs)
+						} else {
+							assert.Zero(t, summary.AcceptedAtMs)
+						}
+						return nil
+					},
+				)
 				store.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, entry entity.RequestLog) error {
 					assert.NotEmpty(t, entry.ID)
 					assert.Equal(t, testNowMs, entry.TimestampMs)
@@ -157,6 +171,7 @@ func TestMaterializerExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
 	current.State = entity.RequestStateAccepted
 	current.RequestVersion = 1
 	current.StateTimestampMs = testNowMs - 1000
+	current.AcceptedAtMs = testNowMs - 1000
 	current.Version = 2
 	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil)
 
@@ -348,8 +363,13 @@ func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
 	stores := storagemock.NewMockStorage(ctrl)
 	store := storagemock.NewMockRequestLogStore(ctrl)
 	summaries := storagemock.NewMockRequestSummaryStore(ctrl)
+	acceptances := storagemock.NewMockRequestAcceptanceStore(ctrl)
 	stores.EXPECT().GetRequestLogStore().Return(store)
 	stores.EXPECT().GetRequestSummaryStore().Return(summaries)
+	stores.EXPECT().GetRequestAcceptanceStore().Return(acceptances)
+	acceptances.EXPECT().Create(gomock.Any(), entity.RequestAcceptance{
+		Queue: testQueue, RequestID: testRequestID, AcceptedAtMs: testNowMs,
+	}).Return(nil)
 	store.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	expectRequestSummaryUpdate(summaries)
 	ctx := metrics.WithContextTags(context.Background(), metrics.NewTag("queue", testQueue))

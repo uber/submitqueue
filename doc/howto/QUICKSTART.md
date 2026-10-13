@@ -6,7 +6,7 @@ The stack always runs the same way. What changes is where the changes come from 
 
 | `PROVIDER` | A change is | Read from | Building it | Landing it | Needs |
 |---|---|---|---|---|---|
-| **`fake`** (default) | a URI, and nothing else | the URI itself | instant fake pass | reports success without touching a repository | nothing |
+| **`fake`** (default) | a URI, and nothing else | deterministic synthetic files | instant fake pass | reports success without touching a repository | nothing |
 | **`git`** | a branch in a bare repository on disk | the repository | instant fake pass | a real fetch, cherry-pick and push | nothing |
 | **`github`** | a real pull request | GitHub's API | a real GitHub Actions run per batch | a real push to a real repository | a repository, a token, and CI minutes |
 
@@ -14,7 +14,7 @@ They are a ladder, not alternatives: the same commands work on each rung, so you
 
 The queue's own logic is real on every rung; what changes is how much of the world around it is. The one thing to keep in mind before reading a `landed` as more than it is: on `fake` and `git` **the build is faked**, so it means the pipeline ran, not that anything was tested.
 
-"Read from" is what the queue knows about a change — which files it touches, how large it is — and it is what conflict analysis and scoring are computed from. Only `fake` invents it: a change there is a URI pointing at nothing, so `make demo-requests` states the paths on the URI itself (`sq-files=`) and the fake reads them back, which means a change submitted by hand on that rung conflicts with nothing. On `git` the orchestrator keeps its own copy of the repository and reads the commits, so a change pushed by anyone is described correctly.
+"Read from" is what the queue knows about a change — which files it touches, how large it is — and it is what conflict analysis and scoring are computed from. Only `fake` invents it: the provider generates pseudo-random files from each clean change URI, using a small directory pool so some changes overlap. The same URI always resolves to the same files, including across processes and retries; no file hints or shared fixtures are needed. `FOLDERS` and `FILES` control the git/github generators, not this synthetic metadata. On `git` the orchestrator keeps its own copy of the repository and reads the commits, so a change pushed by anyone is described correctly.
 
 ## Start the stack
 
@@ -22,7 +22,7 @@ The queue's own logic is real on every rung; what changes is how much of the wor
 make local-submitqueue-start
 ```
 
-This builds the Linux binaries, brings up Gateway, Orchestrator, Runway and two MySQL databases, and applies their schemas. The first run spends most of its time in the Bazel build; later ones start in seconds.
+This uses Bazel to build the Linux binaries and load the web OCI image, brings up Gateway, Orchestrator, Runway, the web host, and two MySQL databases, and applies their schemas. The first run spends most of its time in the Bazel build; later ones start in seconds.
 
 Compose publishes each service on a **random** host port so several stacks can run side by side, which means there is no fixed address to hard-code. The start-up output ends with the ports, and `make local-submitqueue-ps` prints them again at any time:
 
@@ -30,9 +30,14 @@ Compose publishes each service on a **random** host port so several stacks can r
 ✅ Stack is running against provider 'fake'.
 
 Gateway gRPC port: 58537
+Web UX:            http://localhost:58538
+Web username:      test
+Web token:         test
 ```
 
 You do not have to note it down. Every command below finds the running stack's port for itself, which matters because Compose picks a fresh one on every start — a number copied from an earlier run is the most common reason a demo command cannot connect. Set `GATEWAY_ADDR=host:port` only to reach a gateway this Makefile did not start.
+
+The Web UX is a read-only reference host for the same gateway. Run `make demo-requests`, then open the printed URL with username `test` and password `test` and select a row to see its current status and retained lifecycle history. The list uses a rolling 24-hour receipt window; Refresh includes newly created traffic without adding time bounds to the URL. The host and its default credentials are deliberately local-demo wiring, not a production authentication design. Override the password with `SUBMITQUEUE_WEB_TOKEN=<password> make local-submitqueue-start` when desired.
 
 ## Put traffic through it
 
@@ -43,11 +48,11 @@ make demo-requests
 `demo-requests` creates changes, enqueues each the moment it exists, and watches them all until they settle:
 
 ```
-Creating 3 change(s) across 8 folder(s) via fake changes (no repository) — independent, 5 at a time, each enqueued as soon as it is created
+Creating 3 synthetic change(s) via fake changes (no repository) — independent, 5 at a time, each enqueued as soon as it is created
 
-  REQUEST       CHANGES             ELAPSED  STAGE
-  ────────────  ──────────────────  ───────  ─────────────────────────────────────────────
-  demo-queue/1  demo/0814-135021/1      13s  accepted → started → validating → validated →
+  REQUEST  CHANGES             ELAPSED  STAGE
+  ───────  ──────────────────  ───────  ─────────────────────────────────────────────
+  1        demo/0814-135021/1      13s  accepted → started → validating → validated →
                                              batching → batched → speculating → speculated →
                                              landing → landed
 ```
@@ -58,21 +63,24 @@ Each row shows the states its request passed through, not just the one it is in,
 
 ```bash
 make demo-requests COUNT=8              # more traffic
-make demo-requests FOLDERS=1            # every change in one folder: all of them conflict
-make demo-requests FOLDERS=50           # a folder each: none of them conflict
-make demo-requests FILES=8              # wider changes, more files each
+make demo-requests FOLDERS=1            # git/github: every change in one folder
+make demo-requests FOLDERS=50           # git/github: spread changes across more folders
+make demo-requests FILES=8              # git/github: wider changes, more files each
 make demo-requests CONCURRENCY=1        # create them one at a time
 make demo-requests STACKED=true         # one stack, enqueued as a single request
+make demo-requests BURST=true           # create every change first, then enqueue them together
 make demo-requests LAND=false           # create only, print the command to enqueue them
 ```
 
 Independent changes are created **five at a time** by default (`CONCURRENCY`), because creating them serially is most of what a large run spends its time on and it delays the overlap the demo exists to show. A stack ignores the setting: each of its changes is based on the branch before it, so the next cannot be cut until the previous head exists.
 
-A change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit change — closer to a real one, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run.
+By default each change is enqueued the moment it exists, so a large run trickles into the queue at the pace changes are created. `BURST=true` holds every request back until all the changes exist, then enqueues them together — the way to see the queue absorb a spike. The enqueues still go out `CONCURRENCY` at a time, so raise it with `COUNT` for a true spike: `make demo-requests COUNT=100 BURST=true CONCURRENCY=100`. On github that also opens 100 pull requests in parallel, which can trip GitHub's secondary rate limits. Burst applies to independent changes only; `STACKED=true` already lands as one request, and `LAND=false` enqueues nothing.
 
-Every change writes all of its files into one folder under `demo/`, and `FOLDERS` decides how many folders there are to land in — by default a number between five and ten, picked per run. That is what makes a run interesting rather than uniform, because `demo-queue` uses the `pathoverlap` analyzer keyed on the directory: two changes landing in the same folder are batched in order and the second speculates on the first, while changes in different folders go out beside each other. A run prints the number it picked, and repeating a run tag reproduces the same collisions.
+On git/github, a change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit change — closer to a real one, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run.
 
-Set it deliberately when you want a run to show one thing. `FOLDERS=1` puts every change in the same place, so the queue serializes the lot and each change speculates on the one before it. A number well above `COUNT` keeps them all apart, so they go out together.
+On git/github, every change writes all of its files into one folder under `demo/`, and `FOLDERS` decides how many folders there are to land in — by default a number between five and ten, picked per run. That is what makes a run interesting rather than uniform, because `demo-queue` uses the `pathoverlap` analyzer keyed on the directory: two changes landing in the same folder are batched in order and the second speculates on the first, while changes in different folders go out beside each other. A run prints the number it picked, and repeating a run tag reproduces the same collisions.
+
+In those modes, set it deliberately when you want a run to show one thing. `FOLDERS=1` puts every change in the same place, so the queue serializes the lot and each change speculates on the one before it. A number well above `COUNT` keeps them all apart, so they go out together.
 
 How much speculation that turns into is capped by the queue's **build budget** — how many builds it may have occupying CI at once, counted across every in-flight batch rather than per batch. It defaults to 4 and is set per queue in the provider's `profiles.yaml`. The demo also sets **evidence scorer factors** there so speculation ranking revises the base price when a path passes or fails or a batch is merging or cancelling; omitting `factors` leaves every factor at `1`, which is a no-op and ranks on the nested base alone.
 
@@ -112,7 +120,7 @@ Landing one change by hand instead:
 ```bash
 make land QUEUE=demo-queue \
   URI='git://demo.example.com/demo/refs%2Fheads%2Fmy-change/1111111111111111111111111111111111111111'
-make land-status QUEUE=demo-queue SQID=demo-queue/1
+make land-status QUEUE=demo-queue SQID=1
 ```
 
 A change URI is `git://{remote}/{repo}/{ref}/{commit_sha}`. Two parts are checked before anything else happens: the **commit SHA must be 40 lowercase hex characters**, and the **ref must be fully qualified and percent-encoded** — `refs%2Fheads%2Fmy-change`, not `my-change`. Encoding is what keeps a branch name containing slashes inside a single path segment.
@@ -175,9 +183,13 @@ SQ_TOKEN=$(cat ~/.sq-token) bazel run //service/submitqueue/gateway/client:gatew
 
 ### Service logs
 
+Follow logs from every service, or just Runway:
+
 ```bash
-make local-submitqueue-logs                  # every service
-docker compose -p submitqueue logs -f runway-service   # one of them
+make local-submitqueue-logs
+REPO_ROOT="$PWD" ./tool/bazel run @rules_docker_compose//docker_compose -- \
+  -f "$PWD/service/submitqueue/docker-compose.yml" \
+  -p submitqueue logs -f runway-service
 ```
 
 The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn it back up:
@@ -227,9 +239,9 @@ git -C /tmp/sq-sandbox/sandbox.git log --oneline main
 ```
 
 ```
-b517508 squash: demo-queue/5 (sandbox@refs/heads/demo/0814-134848/2)
-25c86c5 squash: demo-queue/4 (sandbox@refs/heads/demo/0814-134848/1)
-9f72dcf squash: demo-queue/3 (sandbox@refs/heads/demo/0814-134848/3)
+b517508 squash: 5 (sandbox@refs/heads/demo/0814-134848/2)
+25c86c5 squash: 4 (sandbox@refs/heads/demo/0814-134848/1)
+9f72dcf squash: 3 (sandbox@refs/heads/demo/0814-134848/3)
 b5d86d6 seed the sandbox
 ```
 
@@ -299,11 +311,11 @@ make demo-requests
 It opens real pull requests, enqueues each as it is created, and watches them land — having picked up from the running stack that this one is GitHub. A three-change run against a scratch repo:
 
 ```
-  REQUEST       CHANGES                                           ELAPSED  STAGE
-  ────────────  ────────────────────────────────────────────────  ───────  ──────────────────────────────
-  demo-queue/1  https://github.com/behinddwalls/sq-demo/pull/522      21s  accepted → … → landed
-  demo-queue/2  https://github.com/behinddwalls/sq-demo/pull/523      22s  accepted → … → landed
-  demo-queue/3  https://github.com/behinddwalls/sq-demo/pull/524      25s  accepted → … → landed
+  REQUEST  CHANGES                                           ELAPSED  STAGE
+  ───────  ────────────────────────────────────────────────  ───────  ──────────────────────────────
+  1        https://github.com/behinddwalls/sq-demo/pull/522      21s  accepted → … → landed
+  2        https://github.com/behinddwalls/sq-demo/pull/523      22s  accepted → … → landed
+  3        https://github.com/behinddwalls/sq-demo/pull/524      25s  accepted → … → landed
 ```
 
 Their commits land on `main`, but the pull requests themselves stay open: nothing here calls GitHub's API to close them, and `SQUASH_REBASE` rewrites the commits, so a pull request's original head never becomes reachable from `main` for GitHub to notice on its own. Closing them requires a separately driven automation, which nothing in this stack provides.
@@ -375,7 +387,7 @@ That request walks the same path as far as `speculating`, records `building`, an
 
 A hand-written URI like the one above belongs to the `fake` rung alone. On `git` it names a commit the merger cannot fetch, and on `github` the change provider tries to resolve it as a pull request — both fail, but for reasons that have nothing to do with the marker.
 
-Submit a good change into the **same folder** as a failing one and you can watch what makes a queue worth having: the two are batched in order, and the second speculates on the first landing. When the first fails, that guess is contradicted, the second re-plans, and it lands anyway.
+Submit a good change whose synthetic directory overlaps a failing one and you can watch what makes a queue worth having: the two are batched in order, and the second speculates on the first landing. When the first fails, that guess is contradicted, the second re-plans, and it lands anyway.
 
 ## Clean up
 

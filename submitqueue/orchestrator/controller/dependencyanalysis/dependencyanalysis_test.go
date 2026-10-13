@@ -43,8 +43,8 @@ import (
 
 const (
 	testQueue     = "test-queue"
-	testRequestID = "test-queue/123"
-	testBatchID   = "test-queue/batch/3"
+	testRequestID = "123"
+	testBatchID   = "3"
 )
 
 // analyzerCfg is the per-queue identity handed to the conflict analyzer in
@@ -183,7 +183,7 @@ func TestNewController(t *testing.T) {
 func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	controller := newTestController(t, ctrl, orchstoragemock.NewMockStorage(ctrl), nil, nil)
-	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1", "test-queue"), "test-queue", nil)
+	msg := entityqueue.NewMessage("1", batchIDPayload(t, "1", "test-queue"), "test-queue", nil)
 	msg.Tenant = "other-queue"
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
@@ -198,8 +198,8 @@ func TestController_Process_AnalyzesAndTransitionsToCreated(t *testing.T) {
 
 	batch := testBatch()
 	inFlight := []entity.Batch{
-		{ID: "test-queue/batch/1", Queue: testQueue, State: entity.BatchStateCreated, Version: 1},
-		{ID: "test-queue/batch/2", Queue: testQueue, State: entity.BatchStateSpeculating, Version: 2},
+		{ID: "1", Queue: testQueue, State: entity.BatchStateCreated, Version: 1},
+		{ID: "2", Queue: testQueue, State: entity.BatchStateSpeculating, Version: 2},
 	}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -232,12 +232,12 @@ func TestController_Process_AnalyzesAndTransitionsToCreated(t *testing.T) {
 	}, int32(1), int32(2)).Return(nil)
 	dependentStore.EXPECT().Get(gomock.Any(), inFlight[1].ID).Return(entity.BatchDependent{
 		BatchID:    inFlight[1].ID,
-		Dependents: []string{"test-queue/batch/99"},
+		Dependents: []string{"99"},
 		Version:    2,
 	}, nil)
 	dependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
 		BatchID:    inFlight[1].ID,
-		Dependents: []string{"test-queue/batch/99", batch.ID},
+		Dependents: []string{"99", batch.ID},
 		Version:    2,
 	}, int32(2), int32(3)).Return(nil)
 
@@ -258,7 +258,7 @@ func TestController_Process_DedupesAnalyzerConflicts(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batch := testBatch()
-	inFlight := entity.Batch{ID: "test-queue/batch/2", Queue: testQueue, State: entity.BatchStateSpeculating, Version: 2}
+	inFlight := entity.Batch{ID: "2", Queue: testQueue, State: entity.BatchStateSpeculating, Version: 2}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
@@ -308,7 +308,7 @@ func TestController_Process_RedeliveryAfterTransitionOnlyRepublishes(t *testing.
 
 	batch := testBatch()
 	batch.State = entity.BatchStateCreated
-	batch.Dependencies = []string{"test-queue/batch/1"}
+	batch.Dependencies = []string{"1"}
 	batch.Version = 2
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -335,7 +335,7 @@ func TestController_Process_RedeliveryMidIndexDoesNotDoubleAppend(t *testing.T) 
 	ctrl := gomock.NewController(t)
 
 	batch := testBatch()
-	inFlight := entity.Batch{ID: "test-queue/batch/1", Queue: testQueue, State: entity.BatchStateCreated, Version: 1}
+	inFlight := entity.Batch{ID: "1", Queue: testQueue, State: entity.BatchStateCreated, Version: 1}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
@@ -531,10 +531,10 @@ func TestController_Process_IndexUpdateFailureDoesNotMutateFetchedDependents(t *
 	ctrl := gomock.NewController(t)
 
 	batch := testBatch()
-	inFlight := entity.Batch{ID: "test-queue/batch/1", Queue: testQueue, State: entity.BatchStateCreated, Version: 1}
+	inFlight := entity.Batch{ID: "1", Queue: testQueue, State: entity.BatchStateCreated, Version: 1}
 
 	dependents := make([]string, 1, 2)
-	dependents[0] = "test-queue/batch/98"
+	dependents[0] = "98"
 	existing := entity.BatchDependent{BatchID: inFlight.ID, Dependents: dependents, Version: 4}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -546,7 +546,7 @@ func TestController_Process_IndexUpdateFailureDoesNotMutateFetchedDependents(t *
 	dependentStore.EXPECT().Get(gomock.Any(), inFlight.ID).Return(existing, nil)
 	dependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
 		BatchID:    inFlight.ID,
-		Dependents: []string{"test-queue/batch/98", batch.ID},
+		Dependents: []string{"98", batch.ID},
 		Version:    existing.Version,
 	}, existing.Version, existing.Version+1).Return(errors.New("update failed"))
 
@@ -565,7 +565,7 @@ func TestController_Process_IndexUpdateFailureDoesNotMutateFetchedDependents(t *
 
 func TestController_Process_PromotionErrors(t *testing.T) {
 	batch := testBatch()
-	dependencyID := "test-queue/batch/1"
+	dependencyID := "1"
 	inFlight := entity.Batch{ID: dependencyID, Queue: testQueue, State: entity.BatchStateCreated, Version: 1}
 	storeErr := errors.New("storage failed")
 
@@ -686,7 +686,7 @@ func TestController_Process_AbandonsBatchWhoseRequestIsAlreadyEnrolled(t *testin
 
 	batch := testBatch()
 	winner := entity.Batch{
-		ID: "test-queue/batch/2", Queue: testQueue, Contains: []string{testRequestID},
+		ID: "2", Queue: testQueue, Contains: []string{testRequestID},
 		State: entity.BatchStateSpeculating, Version: 3,
 	}
 

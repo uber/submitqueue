@@ -23,7 +23,7 @@ type IngestRequest struct {
 
 // IngestResult is the outcome of a successful ingest operation.
 type IngestResult struct {
-	// ID is the globally unique request identifier assigned to the ingested commit.
-	// Format: "request/<queue>/<counter_value>".
+	// ID is the canonical decimal request identifier assigned within the selected queue.
+	// The value is a canonical positive decimal string scoped by the request queue.
 	ID string
 }

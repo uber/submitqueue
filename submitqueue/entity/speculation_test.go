@@ -22,19 +22,19 @@ import (
 
 func TestSpeculationPath_ID_Deterministic(t *testing.T) {
 	path := SpeculationPath{
-		Head: "queueA/batch/3",
+		Head: "3",
 		Dependencies: []PathDependency{
-			{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
-			{Batch: "queueA/batch/2", Assumption: DependencyAssumptionFails},
+			{Batch: "1", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "2", Assumption: DependencyAssumptionFails},
 		},
 	}
 
 	// Same content produces the same ID across separate value instances.
 	same := SpeculationPath{
-		Head: "queueA/batch/3",
+		Head: "3",
 		Dependencies: []PathDependency{
-			{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
-			{Batch: "queueA/batch/2", Assumption: DependencyAssumptionFails},
+			{Batch: "1", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "2", Assumption: DependencyAssumptionFails},
 		},
 	}
 
@@ -44,10 +44,10 @@ func TestSpeculationPath_ID_Deterministic(t *testing.T) {
 
 func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 	base := SpeculationPath{
-		Head: "queueA/batch/3",
+		Head: "3",
 		Dependencies: []PathDependency{
-			{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
-			{Batch: "queueA/batch/2", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "1", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "2", Assumption: DependencyAssumptionSucceeds},
 		},
 	}
 
@@ -58,7 +58,7 @@ func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 		{
 			name: "different head",
 			path: SpeculationPath{
-				Head:         "queueA/batch/4",
+				Head:         "4",
 				Dependencies: base.Dependencies,
 			},
 		},
@@ -67,8 +67,8 @@ func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 			path: SpeculationPath{
 				Head: base.Head,
 				Dependencies: []PathDependency{
-					{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
-					{Batch: "queueA/batch/2", Assumption: DependencyAssumptionFails},
+					{Batch: "1", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "2", Assumption: DependencyAssumptionFails},
 				},
 			},
 		},
@@ -77,8 +77,8 @@ func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 			path: SpeculationPath{
 				Head: base.Head,
 				Dependencies: []PathDependency{
-					{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
-					{Batch: "queueA/batch/9", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "1", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "9", Assumption: DependencyAssumptionSucceeds},
 				},
 			},
 		},
@@ -87,8 +87,8 @@ func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 			path: SpeculationPath{
 				Head: base.Head,
 				Dependencies: []PathDependency{
-					{Batch: "queueA/batch/2", Assumption: DependencyAssumptionSucceeds},
-					{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "2", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "1", Assumption: DependencyAssumptionSucceeds},
 				},
 			},
 		},
@@ -131,8 +131,8 @@ func TestSpeculationPathStatus_IsTerminal(t *testing.T) {
 
 func TestSpeculationPathEntry_IDDerivesFromPath(t *testing.T) {
 	path := SpeculationPath{
-		Head:         "queueA/batch/2",
-		Dependencies: []PathDependency{{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds}},
+		Head:         "2",
+		Dependencies: []PathDependency{{Batch: "1", Assumption: DependencyAssumptionSucceeds}},
 	}
 
 	// A well-formed entry keys itself by its path's content hash.
@@ -142,7 +142,7 @@ func TestSpeculationPathEntry_IDDerivesFromPath(t *testing.T) {
 	// A different path (same head, different assumption) is a different entry.
 	other := SpeculationPath{
 		Head:         path.Head,
-		Dependencies: []PathDependency{{Batch: "queueA/batch/1", Assumption: DependencyAssumptionFails}},
+		Dependencies: []PathDependency{{Batch: "1", Assumption: DependencyAssumptionFails}},
 	}
 	assert.NotEqual(t, entry.ID, other.ID())
 }

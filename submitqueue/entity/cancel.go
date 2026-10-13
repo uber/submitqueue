@@ -17,7 +17,7 @@ package entity
 // CancelRequest represents a cancellation request sent over the queue from the gateway to the orchestrator.
 // It identifies the request to cancel by its ID and carries an optional human-readable reason for observability.
 type CancelRequest struct {
-	// ID is the globally unique identifier of the request to cancel. Format: "<queue>/<counter_value>".
+	// ID is the canonical decimal request identifier, resolved within Queue.
 	ID string `json:"id"`
 	// Queue is the name of the queue processing the request to cancel. Empty on payloads written before the field existed.
 	Queue string `json:"queue"`

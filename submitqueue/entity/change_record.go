@@ -24,7 +24,7 @@ type ChangeRecord struct {
 	URI string `json:"uri"`
 
 	// RequestID is the owning land request that claimed this URI.
-	// Format matches entity.Request.ID: "<queue>/<counter_value>".
+	// Format matches entity.Request.ID: a canonical positive decimal string.
 	//
 	// RequestID participates in the change-store primary key so that concurrent claims
 	// by different requests on the same URI coexist as distinct rows. Same-request

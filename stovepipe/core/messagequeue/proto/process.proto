@@ -30,7 +30,7 @@ option java_package = "com.uber.submitqueue.stovepipe.messagequeue";
 message ProcessRequest {
     option (uber.base.messagequeue.topic_keys) = "process";
 
-    // id is the minted request id to process. Format: "request/<queue>/<counter>".
+    // id is the minted request id to process. Canonical positive decimal string; queue is carried separately.
     string id = 1;
     // queue_name is the name of the queue processing the request, carried so
     // the consumer can route by queue without loading state first. Empty on

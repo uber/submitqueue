@@ -159,8 +159,8 @@ func (x *PingResponse) GetHostname() string {
 // (a named repo+ref) has a new commit to validate.
 type IngestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Logical queue name to validate (e.g. "monorepo/main"). It namespaces the minted
-	// request ID and is the stable handle for the repo+ref being validated.
+	// Logical queue name to validate (e.g. "monorepo/main"). Together with the minted
+	// request ID it identifies the request and is the stable handle for the repo+ref.
 	Queue         string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -206,8 +206,7 @@ func (x *IngestRequest) GetQueue() string {
 // IngestResponse is the response for the Ingest method.
 type IngestResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The minted request ID, namespaced by queue. Format: "request/<queue>/<counter>"
-	// (e.g. "request/monorepo/main/42").
+	// Canonical decimal request ID, unique within the selected queue.
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -255,7 +254,7 @@ type GetRequestHistoryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Logical queue containing the request.
 	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
-	// Globally unique request identifier returned from Ingest.
+	// Canonical decimal request identifier returned from Ingest.
 	RequestId     string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -474,15 +473,17 @@ func (*HistoryEvent_RequestState) isHistoryEvent_Occurrence() {}
 
 func (*HistoryEvent_Event) isHistoryEvent_Occurrence() {}
 
-// RequestHistory identifies one request and contains its ordered events.
+// RequestHistory identifies one request and contains its ordered events and current summary.
 type RequestHistory struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique request identifier.
+	// Queue-scoped decimal request identifier.
 	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Events ordered by occurrence time and stable event identity.
-	Events        []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Events []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
+	// Current materialized lifecycle summary. Always present in successful responses.
+	RequestSummary *RequestSummary `protobuf:"bytes,3,opt,name=request_summary,json=requestSummary,proto3" json:"request_summary,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RequestHistory) Reset() {
@@ -529,13 +530,22 @@ func (x *RequestHistory) GetEvents() []*HistoryEvent {
 	return nil
 }
 
-// GetRequestHistoryByIDResponse contains all retained events for one request.
+func (x *RequestHistory) GetRequestSummary() *RequestSummary {
+	if x != nil {
+		return x.RequestSummary
+	}
+	return nil
+}
+
+// GetRequestHistoryByIDResponse contains retained events and the current summary for one request.
 type GetRequestHistoryByIDResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Events ordered by occurrence time and stable event identity.
-	Events        []*HistoryEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Events []*HistoryEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	// Current materialized lifecycle summary. Always present in successful responses.
+	RequestSummary *RequestSummary `protobuf:"bytes,2,opt,name=request_summary,json=requestSummary,proto3" json:"request_summary,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetRequestHistoryByIDResponse) Reset() {
@@ -571,6 +581,13 @@ func (*GetRequestHistoryByIDResponse) Descriptor() ([]byte, []int) {
 func (x *GetRequestHistoryByIDResponse) GetEvents() []*HistoryEvent {
 	if x != nil {
 		return x.Events
+	}
+	return nil
+}
+
+func (x *GetRequestHistoryByIDResponse) GetRequestSummary() *RequestSummary {
+	if x != nil {
+		return x.RequestSummary
 	}
 	return nil
 }
@@ -784,7 +801,7 @@ func (*ProjectValidation_BreakageDegree) isProjectValidation_Result() {}
 // GetProjectStatusByURIResponse contains the selected validation's current projection.
 type GetProjectStatusByURIResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier of the validation request.
+	// Queue-scoped decimal identifier of the validation request.
 	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Logical queue containing the validation request.
 	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
@@ -932,6 +949,297 @@ type GetProjectStatusByURIResponse_RepositoryBreakageDegree struct {
 func (*GetProjectStatusByURIResponse_RepositoryBreakageDegree) isGetProjectStatusByURIResponse_RepositoryResult() {
 }
 
+// RequestSummary contains one request's current materialized lifecycle state.
+type RequestSummary struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Opaque identifier returned from Ingest.
+	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Queue containing the request.
+	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Exact VCS-agnostic URI of the ingested commit.
+	ChangeUri string `protobuf:"bytes,3,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	// Selected baseline URI. Empty before selection or for a full build.
+	BaseUri string `protobuf:"bytes,4,opt,name=base_uri,json=baseUri,proto3" json:"base_uri,omitempty"`
+	// Stable public lifecycle state; clients tolerate future values.
+	RequestState string `protobuf:"bytes,5,opt,name=request_state,json=requestState,proto3" json:"request_state,omitempty"`
+	// Unix millisecond timestamp of the represented state entry.
+	StateUpdatedAtMs int64 `protobuf:"varint,6,opt,name=state_updated_at_ms,json=stateUpdatedAtMs,proto3" json:"state_updated_at_ms,omitempty"`
+	// Original retained accepted-log timestamp in Unix milliseconds; positive when known, zero if unknown.
+	AcceptedAtMs int64 `protobuf:"varint,7,opt,name=accepted_at_ms,json=acceptedAtMs,proto3" json:"accepted_at_ms,omitempty"`
+	// Stable reason for the represented state. Empty when unavailable or inapplicable.
+	OutcomeReason string `protobuf:"bytes,8,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestSummary) Reset() {
+	*x = RequestSummary{}
+	mi := &file_stovepipe_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestSummary) ProtoMessage() {}
+
+func (x *RequestSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestSummary.ProtoReflect.Descriptor instead.
+func (*RequestSummary) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *RequestSummary) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetBaseUri() string {
+	if x != nil {
+		return x.BaseUri
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetRequestState() string {
+	if x != nil {
+		return x.RequestState
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetStateUpdatedAtMs() int64 {
+	if x != nil {
+		return x.StateUpdatedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetAcceptedAtMs() int64 {
+	if x != nil {
+		return x.AcceptedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetOutcomeReason() string {
+	if x != nil {
+		return x.OutcomeReason
+	}
+	return ""
+}
+
+// ListRequest selects a page of retained request summaries for one queue.
+type ListRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required configured queue.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Types that are valid to be assigned to AcceptedLowerBound:
+	//
+	//	*ListRequest_AcceptedAtOrAfterMs
+	AcceptedLowerBound isListRequest_AcceptedLowerBound `protobuf_oneof:"accepted_lower_bound"`
+	// Types that are valid to be assigned to AcceptedUpperBound:
+	//
+	//	*ListRequest_AcceptedBeforeMs
+	AcceptedUpperBound isListRequest_AcceptedUpperBound `protobuf_oneof:"accepted_upper_bound"`
+	// Zero selects 50; nonzero values must be between 1 and 200.
+	PageSize int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation token bound to the queue and resolved time bounds.
+	PageToken     string `protobuf:"bytes,5,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequest) Reset() {
+	*x = ListRequest{}
+	mi := &file_stovepipe_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequest) ProtoMessage() {}
+
+func (x *ListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
+func (*ListRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ListRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequest) GetAcceptedLowerBound() isListRequest_AcceptedLowerBound {
+	if x != nil {
+		return x.AcceptedLowerBound
+	}
+	return nil
+}
+
+func (x *ListRequest) GetAcceptedAtOrAfterMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptedLowerBound.(*ListRequest_AcceptedAtOrAfterMs); ok {
+			return x.AcceptedAtOrAfterMs
+		}
+	}
+	return 0
+}
+
+func (x *ListRequest) GetAcceptedUpperBound() isListRequest_AcceptedUpperBound {
+	if x != nil {
+		return x.AcceptedUpperBound
+	}
+	return nil
+}
+
+func (x *ListRequest) GetAcceptedBeforeMs() int64 {
+	if x != nil {
+		if x, ok := x.AcceptedUpperBound.(*ListRequest_AcceptedBeforeMs); ok {
+			return x.AcceptedBeforeMs
+		}
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+type isListRequest_AcceptedLowerBound interface {
+	isListRequest_AcceptedLowerBound()
+}
+
+type ListRequest_AcceptedAtOrAfterMs struct {
+	// Inclusive Unix millisecond bound; omitted defaults to zero.
+	AcceptedAtOrAfterMs int64 `protobuf:"varint,2,opt,name=accepted_at_or_after_ms,json=acceptedAtOrAfterMs,proto3,oneof"`
+}
+
+func (*ListRequest_AcceptedAtOrAfterMs) isListRequest_AcceptedLowerBound() {}
+
+type isListRequest_AcceptedUpperBound interface {
+	isListRequest_AcceptedUpperBound()
+}
+
+type ListRequest_AcceptedBeforeMs struct {
+	// Exclusive Unix millisecond bound; omitted defaults to server now.
+	AcceptedBeforeMs int64 `protobuf:"varint,3,opt,name=accepted_before_ms,json=acceptedBeforeMs,proto3,oneof"`
+}
+
+func (*ListRequest_AcceptedBeforeMs) isListRequest_AcceptedUpperBound() {}
+
+// ListResponse contains a page in acceptance-time order, not a snapshot across pages.
+type ListResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Current summaries ordered by acceptance time descending, then bytewise request ID descending.
+	// Requests with accepted_at_ms = 0 (unknown) are excluded.
+	Requests []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	// Opaque continuation token; empty when no further row was observed.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListResponse) Reset() {
+	*x = ListResponse{}
+	mi := &file_stovepipe_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListResponse) ProtoMessage() {}
+
+func (x *ListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
+func (*ListResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListResponse) GetRequests() []*RequestSummary {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *ListResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -962,13 +1270,15 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x05event\x18\x04 \x01(\tH\x00R\x05event\x12%\n" +
 	"\x0eoutcome_reason\x18\x05 \x01(\tR\routcomeReasonB\f\n" +
 	"\n" +
-	"occurrence\"q\n" +
+	"occurrence\"\xc6\x01\n" +
 	"\x0eRequestHistory\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12@\n" +
-	"\x06events\x18\x02 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\"a\n" +
+	"\x06events\x18\x02 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\x12S\n" +
+	"\x0frequest_summary\x18\x03 \x01(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\x0erequestSummary\"\xb6\x01\n" +
 	"\x1dGetRequestHistoryByIDResponse\x12@\n" +
-	"\x06events\x18\x01 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\"j\n" +
+	"\x06events\x18\x01 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\x12S\n" +
+	"\x0frequest_summary\x18\x02 \x01(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\x0erequestSummary\"j\n" +
 	"\x1eGetRequestHistoryByURIResponse\x12H\n" +
 	"\thistories\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestHistoryR\thistories\"\xab\x01\n" +
 	"\x1cGetProjectStatusByURIRequest\x12\x14\n" +
@@ -997,13 +1307,37 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x18project_results_complete\x18\a \x01(\bR\x16projectResultsComplete\x12I\n" +
 	"\bprojects\x18\b \x03(\v2-.uber.submitqueue.stovepipe.ProjectValidationR\bprojects\x12&\n" +
 	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageTokenB\x13\n" +
-	"\x11repository_result2\x81\x05\n" +
+	"\x11repository_result\"\xa0\x02\n" +
+	"\x0eRequestSummary\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x03 \x01(\tR\tchangeUri\x12\x19\n" +
+	"\bbase_uri\x18\x04 \x01(\tR\abaseUri\x12#\n" +
+	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12-\n" +
+	"\x13state_updated_at_ms\x18\x06 \x01(\x03R\x10stateUpdatedAtMs\x12$\n" +
+	"\x0eaccepted_at_ms\x18\a \x01(\x03R\facceptedAtMs\x12%\n" +
+	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReason\"\xf7\x01\n" +
+	"\vListRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x126\n" +
+	"\x17accepted_at_or_after_ms\x18\x02 \x01(\x03H\x00R\x13acceptedAtOrAfterMs\x12.\n" +
+	"\x12accepted_before_ms\x18\x03 \x01(\x03H\x01R\x10acceptedBeforeMs\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x05 \x01(\tR\tpageTokenB\x16\n" +
+	"\x14accepted_lower_boundB\x16\n" +
+	"\x14accepted_upper_bound\"~\n" +
+	"\fListResponse\x12F\n" +
+	"\brequests\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestSummaryR\brequests\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xde\x05\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
 	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
 	"\x15GetRequestHistoryByID\x128.uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest\x1a9.uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse\"\x00\x12\x91\x01\n" +
 	"\x16GetRequestHistoryByURI\x129.uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest\x1a:.uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse\"\x00\x12\x8e\x01\n" +
-	"\x15GetProjectStatusByURI\x128.uber.submitqueue.stovepipe.GetProjectStatusByURIRequest\x1a9.uber.submitqueue.stovepipe.GetProjectStatusByURIResponse\"\x00Be\n" +
+	"\x15GetProjectStatusByURI\x128.uber.submitqueue.stovepipe.GetProjectStatusByURIRequest\x1a9.uber.submitqueue.stovepipe.GetProjectStatusByURIResponse\"\x00\x12[\n" +
+	"\x04List\x12'.uber.submitqueue.stovepipe.ListRequest\x1a(.uber.submitqueue.stovepipe.ListResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -1018,7 +1352,7 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 	return file_stovepipe_proto_rawDescData
 }
 
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_stovepipe_proto_goTypes = []any{
 	(*PingRequest)(nil),                    // 0: uber.submitqueue.stovepipe.PingRequest
 	(*PingResponse)(nil),                   // 1: uber.submitqueue.stovepipe.PingResponse
@@ -1033,27 +1367,35 @@ var file_stovepipe_proto_goTypes = []any{
 	(*GetProjectStatusByURIRequest)(nil),   // 10: uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
 	(*ProjectValidation)(nil),              // 11: uber.submitqueue.stovepipe.ProjectValidation
 	(*GetProjectStatusByURIResponse)(nil),  // 12: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	(*RequestSummary)(nil),                 // 13: uber.submitqueue.stovepipe.RequestSummary
+	(*ListRequest)(nil),                    // 14: uber.submitqueue.stovepipe.ListRequest
+	(*ListResponse)(nil),                   // 15: uber.submitqueue.stovepipe.ListResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
 	6,  // 0: uber.submitqueue.stovepipe.RequestHistory.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
-	6,  // 1: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
-	7,  // 2: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
-	11, // 3: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
-	0,  // 4: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	2,  // 5: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	4,  // 6: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	5,  // 7: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	10, // 8: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	1,  // 9: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	3,  // 10: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	8,  // 11: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	9,  // 12: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	12, // 13: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
-	9,  // [9:14] is the sub-list for method output_type
-	4,  // [4:9] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	13, // 1: uber.submitqueue.stovepipe.RequestHistory.request_summary:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	6,  // 2: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
+	13, // 3: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.request_summary:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	7,  // 4: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
+	11, // 5: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
+	13, // 6: uber.submitqueue.stovepipe.ListResponse.requests:type_name -> uber.submitqueue.stovepipe.RequestSummary
+	0,  // 7: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	2,  // 8: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	4,  // 9: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	5,  // 10: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	10, // 11: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	14, // 12: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
+	1,  // 13: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	3,  // 14: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	8,  // 15: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	9,  // 16: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	12, // 17: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	15, // 18: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
@@ -1071,13 +1413,17 @@ func file_stovepipe_proto_init() {
 	file_stovepipe_proto_msgTypes[12].OneofWrappers = []any{
 		(*GetProjectStatusByURIResponse_RepositoryBreakageDegree)(nil),
 	}
+	file_stovepipe_proto_msgTypes[14].OneofWrappers = []any{
+		(*ListRequest_AcceptedAtOrAfterMs)(nil),
+		(*ListRequest_AcceptedBeforeMs)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

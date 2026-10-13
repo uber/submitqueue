@@ -3,3 +3,5 @@ formatter:
   indent: 2
   retain_line_breaks_single: true
   include_document_start: false
+exclude:
+  - tool/docsite/build

@@ -69,7 +69,7 @@ func newDelivery(ctrl *gomock.Controller, msg entityqueue.Message) *consumermock
 }
 
 const (
-	testRequestID = "test-queue/1"
+	testRequestID = "1"
 	testQueue     = "test-queue"
 )
 

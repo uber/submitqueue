@@ -111,6 +111,43 @@ queues:
 	assert.False(t, cfg.usesGit(), "a noop-only deployment must not require a git runtime")
 }
 
+func TestLoadMergeConfig_GitHub(t *testing.T) {
+	path := writeConfig(t, `
+defaults:
+  merger: {type: noop}
+queues:
+  - name: oss
+    merger: {type: github, owner: uber, repo: submitqueue}
+  - name: internal
+    merger:
+      type: github
+      apiBaseUrl: https://github.example.com/api/v3
+      host: github.example.com
+      owner: org
+      repo: monorepo
+      target: trunk
+      defaultStrategy: SQUASH_REBASE
+      tokenEnv: GHE_TOKEN
+      pollInterval: 5s
+`)
+
+	cfg, err := loadMergeConfig(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.usesGit(), "a github-only deployment must not require a git runtime")
+
+	oss := cfg.Queues[0].Merger
+	assert.Equal(t, defaultGitHubAPIBaseURL, oss.APIBaseURL)
+	assert.Equal(t, defaultGitHubHost, oss.Host)
+	assert.Equal(t, "main", oss.Target)
+	assert.Equal(t, mergestrategypb.Strategy_REBASE, oss.strategy())
+
+	internal := cfg.Queues[1].Merger
+	assert.Equal(t, "https://github.example.com/api/v3", internal.APIBaseURL)
+	assert.Equal(t, "github.example.com", internal.Host)
+	assert.Equal(t, "trunk", internal.Target)
+	assert.Equal(t, mergestrategypb.Strategy_SQUASH_REBASE, internal.strategy())
+}
+
 func TestLoadMergeConfig_EmptyFileIsNoop(t *testing.T) {
 	cfg, err := loadMergeConfig(writeConfig(t, ""))
 	require.NoError(t, err)
@@ -434,6 +471,34 @@ defaults:
     remoteUrl: https://example.com/o/r.git
     checkoutPath: /var/checkouts/r
     defaultStrategy: FAST_FORWARD
+`,
+		},
+		{
+			name: "github without a repository",
+			contents: `
+defaults:
+  merger: {type: github, owner: uber}
+`,
+		},
+		{
+			name: "github with a checkout",
+			contents: `
+defaults:
+  merger: {type: github, owner: uber, repo: submitqueue, checkoutPath: /var/checkouts/r}
+`,
+		},
+		{
+			name: "github defaulting to promote",
+			contents: `
+defaults:
+  merger: {type: github, owner: uber, repo: submitqueue, defaultStrategy: PROMOTE}
+`,
+		},
+		{
+			name: "github with an unparseable poll interval",
+			contents: `
+defaults:
+  merger: {type: github, owner: uber, repo: submitqueue, pollInterval: soon}
 `,
 		},
 		{

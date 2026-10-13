@@ -38,12 +38,14 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	giterrs "github.com/uber/submitqueue/platform/errs/git"
+	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/runway/controller"
 	"github.com/uber/submitqueue/runway/controller/dlq"
 	"github.com/uber/submitqueue/runway/controller/merge"
@@ -51,9 +53,11 @@ import (
 	"github.com/uber/submitqueue/runway/extension/merger"
 	"github.com/uber/submitqueue/runway/extension/merger/fake"
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
+	githubmerger "github.com/uber/submitqueue/runway/extension/merger/github"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"go.uber.org/zap"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -321,9 +325,13 @@ func logQueueInitialized(logger *zap.Logger) {
 }
 
 func newPrimaryErrorProcessor() errs.ErrorProcessor {
+	// httperrs precedes mysqlerrs, which would otherwise claim HTTP transport
+	// failures as MySQL ones (see platform/errs/http).
 	return errs.NewClassifierProcessor(
 		genericerrs.Classifier,
 		giterrs.Classifier,
+		githubmerger.Classifier,
+		httperrs.Classifier,
 		mysqlerrs.Classifier,
 	)
 }
@@ -514,6 +522,9 @@ type mergerBuilder struct {
 }
 
 func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, error) {
+	if cfg.Type == mergerTypeGitHub {
+		return b.buildGitHub(cfg, where)
+	}
 	if cfg.Type != mergerTypeGit {
 		return &noopMergerFactory{seq: b.seq}, nil
 	}
@@ -567,6 +578,69 @@ type gitMergerFactory struct {
 }
 
 func (f *gitMergerFactory) For(_ merger.Config) (merger.Merger, error) {
+	return f.merger, nil
+}
+
+// buildGitHub constructs a github merger. Auth is the wiring's concern, not the
+// merger's: it receives an HTTP client whose transport already roots requests
+// at the API and attaches the credential, so a deployment needing a different
+// scheme swaps the transport here.
+func (b *mergerBuilder) buildGitHub(cfg mergerConfig, where string) (merger.Factory, error) {
+	httpClient, err := phttp.NewClient(cfg.APIBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid apiBaseUrl %q: %w", where, cfg.APIBaseURL, err)
+	}
+	timeout, _ := parseOptionalDuration(cfg.HTTPTimeout)
+	if timeout == 0 {
+		timeout = defaultGitHubHTTPTimeout
+	}
+	httpClient.Timeout = timeout
+	if cfg.TokenEnv != "" {
+		token, ok := cfg.token()
+		if !ok || token == "" {
+			return nil, fmt.Errorf("%s: github merger needs %s to be set", where, cfg.TokenEnv)
+		}
+		httpClient.Transport = &oauth2.Transport{
+			Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+			Base:   httpClient.Transport,
+		}
+	}
+
+	pollInterval, _ := parseOptionalDuration(cfg.PollInterval)
+	maxPollDuration, _ := parseOptionalDuration(cfg.MaxPollDuration)
+	m, err := githubmerger.New(githubmerger.Params{
+		HTTPClient:      httpClient,
+		Host:            cfg.Host,
+		Owner:           cfg.Owner,
+		Repo:            cfg.Repo,
+		Target:          cfg.Target,
+		DefaultStrategy: cfg.strategy(),
+		BypassRules:     cfg.BypassRules,
+		PollInterval:    pollInterval,
+		MaxPollDuration: maxPollDuration,
+		Logger:          b.logger.Sugar(),
+		MetricsScope:    b.scope,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build github merger: %w", where, err)
+	}
+
+	b.logger.Info("github merger configured",
+		zap.String("api_base_url", cfg.APIBaseURL),
+		zap.String("repo", cfg.Owner+"/"+cfg.Repo),
+		zap.String("target", cfg.Target),
+		zap.String("default_strategy", cfg.strategy().String()),
+	)
+	return &githubMergerFactory{merger: m}, nil
+}
+
+// githubMergerFactory returns one github merger for every queue routed to it.
+// The merger holds no per-queue state, so the queue's Config is not needed.
+type githubMergerFactory struct {
+	merger merger.Merger
+}
+
+func (f *githubMergerFactory) For(_ merger.Config) (merger.Merger, error) {
 	return f.merger, nil
 }
 

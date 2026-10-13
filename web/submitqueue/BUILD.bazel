@@ -1,0 +1,118 @@
+load("@aspect_rules_js//npm:defs.bzl", "npm_package")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//web/submitqueue:vitest/package_json.bzl", vitest = "bin")
+
+package(default_visibility = ["//web:__subpackages__"])
+
+npm_link_all_packages(name = "node_modules")
+
+_SRCS = glob(
+    [
+        "**/*.ts",
+        "**/*.tsx",
+    ],
+    exclude = [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "dist/**",
+        "node_modules/**",
+        "test-setup.ts",
+        "vitest.config.ts",
+    ],
+)
+
+_TESTS = glob([
+    "**/*.test.ts",
+    "**/*.test.tsx",
+])
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+)
+
+ts_config(
+    name = "tsconfig_build",
+    src = "tsconfig.build.json",
+    deps = [":tsconfig"],
+)
+
+ts_project(
+    name = "lib",
+    srcs = _SRCS,
+    declaration = True,
+    declaration_map = True,
+    no_emit = False,
+    out_dir = "dist",
+    root_dir = ".",
+    transpiler = "tsc",
+    tsconfig = ":tsconfig_build",
+    deps = [
+        ":node_modules/@opentelemetry/api",
+        ":node_modules/@types/node",
+        ":node_modules/@types/react",
+        ":node_modules/pino",
+        ":node_modules/react",
+    ],
+)
+
+ts_project(
+    name = "typecheck",
+    srcs = _SRCS + _TESTS + [
+        "test-setup.ts",
+        "vitest.config.ts",
+    ],
+    declaration = True,
+    no_emit = True,
+    tsconfig = ":tsconfig",
+    deps = [
+        ":node_modules/@connectrpc/connect",
+        ":node_modules/@opentelemetry/api",
+        ":node_modules/@testing-library/jest-dom",
+        ":node_modules/@testing-library/react",
+        ":node_modules/@types/node",
+        ":node_modules/@types/react",
+        ":node_modules/@types/react-dom",
+        ":node_modules/jsdom",
+        ":node_modules/pino",
+        ":node_modules/react",
+        ":node_modules/react-dom",
+        ":node_modules/vitest",
+    ],
+)
+
+npm_package(
+    name = "pkg",
+    package = "@submitqueue/web-submitqueue",
+    packable = True,
+    srcs = [
+        ":lib",
+        ":lib_types",
+        "view/styles.css",
+        "README.md",
+        "package.json",
+    ],
+)
+
+vitest.vitest_test(
+    name = "test",
+    args = [
+        "run",
+        "--config",
+        "vitest.config.ts",
+    ],
+    chdir = package_name(),
+    data = _SRCS + _TESTS + [
+        ":node_modules",
+        ":node_modules/vitest",
+        "//web:node_modules/@opentelemetry/api",
+        "//web:node_modules/pino",
+        "//web:node_modules/react",
+        "//web:node_modules/react-dom",
+        # jest-dom resolves its vitest peer from the workspace root.
+        "//web:node_modules/vitest",
+        "test-setup.ts",
+        "vitest.config.ts",
+    ],
+)

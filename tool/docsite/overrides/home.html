@@ -1,0 +1,15 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+  <section class="sq-hero">
+    <div class="md-grid md-typeset">
+      <div class="sq-hero__inner">
+        <h1>SubmitQueue</h1>
+        <p class="sq-hero__tagline">A high-performance speculative submission queue that keeps your trunk consistently green at scale.</p>
+        <a href="{{ 'howto/QUICKSTART/' | url }}" class="md-button md-button--primary">Get started</a>
+        <a href="{{ config.repo_url }}" class="md-button sq-hero__secondary">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+{% endblock %}

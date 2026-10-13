@@ -27,7 +27,7 @@ option java_package = "com.uber.submitqueue.submitqueue.messagequeue";
 message Cancel {
     option (uber.base.messagequeue.topic_keys) = "cancel";
 
-    // id is the request id to cancel. Format: "<queue>/<counter>".
+    // id is the request id to cancel. Canonical positive decimal string; queue is carried separately.
     string id = 1;
     // queue is the name of the queue processing this work, carried so the
     // consumer can route by queue without loading state first. Empty on

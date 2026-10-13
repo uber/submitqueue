@@ -38,6 +38,7 @@ import (
 	yarpcerrs "github.com/uber/submitqueue/platform/errs/yarpc"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
+	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	hookext "github.com/uber/submitqueue/platform/extension/hook"
 	hooknoop "github.com/uber/submitqueue/platform/extension/hook/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -55,7 +56,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
-	projectresultnoop "github.com/uber/submitqueue/stovepipe/extension/projectresult/noop"
+	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
@@ -65,54 +66,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
-
-// inMemoryCounter is a minimal, process-local counter.Counter used to wire the example
-// server. It is not durable; a real deployment supplies a persistent implementation
-// (e.g. platform/extension/counter/mysql).
-type inMemoryCounter struct {
-	mu     sync.Mutex
-	values map[string]int64
-	queue  string
-}
-
-func newInMemoryCounter(queue string) *inMemoryCounter {
-	return &inMemoryCounter{values: make(map[string]int64), queue: queue}
-}
-
-// Next returns the next value in the sequence for the given domain, starting at 1.
-func (c *inMemoryCounter) Next(_ context.Context, domain string) (int64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	key := c.queue + "\x00" + domain
-	c.values[key]++
-	return c.values[key], nil
-}
-
-// inMemoryCounterFactory is the example counter.Factory: one process-local sequence
-// set per queue, minted on first use. A real deployment supplies a persistent factory.
-type inMemoryCounterFactory struct {
-	mu       sync.Mutex
-	counters map[string]*inMemoryCounter
-}
-
-func newInMemoryCounterFactory() *inMemoryCounterFactory {
-	return &inMemoryCounterFactory{counters: make(map[string]*inMemoryCounter)}
-}
-
-// For returns the process-local Counter bound to the queue named in config.
-func (f *inMemoryCounterFactory) For(config counter.Config) (counter.Counter, error) {
-	if config.QueueName == "" {
-		return nil, fmt.Errorf("queue name must not be empty")
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if existing, ok := f.counters[config.QueueName]; ok {
-		return existing, nil
-	}
-	created := newInMemoryCounter(config.QueueName)
-	f.counters[config.QueueName] = created
-	return created, nil
-}
 
 // fakeSourceControlFactory is the example SourceControl factory. It seeds each queue with a
 // deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting
@@ -324,7 +277,7 @@ func run() error {
 	ingestController := controller.NewIngestController(
 		logger.Sugar(),
 		scope,
-		newInMemoryCounterFactory(),
+		counterFactory{db: storageDB, scope: scope.SubScope("counter")},
 		sourceControl,
 		storageFty,
 		materializer,
@@ -333,7 +286,8 @@ func run() error {
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	projectStatusController := controller.NewGetProjectStatusByURIController(logger.Sugar(), scope, storageFty)
-	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController)
+	listController := controller.NewListController(logger.Sugar(), scope, storageFty, tenants)
+	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController, listController)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
 	// Register reflection service for debugging with grpcurl
@@ -441,7 +395,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, materializer, projectresultnoop.New(), sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(logger, scope, store, materializer, projectstatusnoop.New(), sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}
@@ -595,4 +549,18 @@ type storageFactory struct {
 // For returns the queue-scoped store aggregate bound to the queue named in config.
 func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
 	return f.backend.For(config.QueueName)
+}
+
+// counterFactory binds a queue to Stovepipe's MySQL backend.
+type counterFactory struct {
+	db    *sql.DB
+	scope tally.Scope
+}
+
+// For returns the durable Counter bound to the queue named in config.
+func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
+	if config.QueueName == "" {
+		return nil, fmt.Errorf("queue name must not be empty")
+	}
+	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
 }

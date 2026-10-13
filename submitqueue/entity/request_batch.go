@@ -16,9 +16,9 @@ package entity
 
 // RequestBatch is an immutable association between a request and one batch attempt containing it.
 type RequestBatch struct {
-	// RequestID is the globally unique request identifier.
+	// RequestID is the queue-scoped identifier of the request.
 	RequestID string
-	// BatchID is the globally unique identifier of the batch containing the request.
+	// BatchID is the queue-scoped identifier of the batch containing the request.
 	BatchID string
 	// Version is the version of the association. Immutable associations start at version 1.
 	Version int32

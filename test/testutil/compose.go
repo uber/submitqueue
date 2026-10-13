@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bazelbuild/rules_go/go/runfiles"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -43,7 +44,7 @@ type ComposeStack struct {
 	t            *testing.T
 	log          *TestLogger
 	ctx          context.Context
-	composeCmd   []string  // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	composeCmd   []string  // pinned Compose executable from Bazel runfiles
 	composeEnv   []string  // environment shared by compose commands
 	logCmd       *exec.Cmd // background "docker compose logs -f" process
 }
@@ -65,19 +66,6 @@ func (s *ComposeStack) command(args ...string) []string {
 	full = append(full, s.fileArgs()...)
 	full = append(full, "-p", s.projectName)
 	return append(full, args...)
-}
-
-// getDockerComposeCommand returns the docker compose command to use.
-// Prefers the Compose V2 plugin ("docker compose") and falls back to a
-// standalone docker-compose binary only when the plugin is unavailable: a
-// standalone binary is often the legacy Python V1, which lacks flags the
-// stack relies on (e.g. `up --wait`).
-func getDockerComposeCommand() []string {
-	if exec.Command("docker", "compose", "version").Run() == nil {
-		return []string{"docker", "compose"}
-	}
-
-	return []string{"docker-compose"}
 }
 
 // ComposeOption customizes how a ComposeStack is created.
@@ -134,6 +122,8 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 
 	// Setup Docker environment
 	setupDockerEnv(t)
+	composeExecutable, err := runfiles.Rlocation("rules_docker_compose/docker_compose/current_docker_compose_toolchain/docker-compose")
+	require.NoError(t, err)
 
 	// The image prefix is derived from the content of the declared inputs, so
 	// every compose file participates in the hash alongside the staged build
@@ -163,7 +153,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 		t:            t,
 		log:          log,
 		ctx:          ctx,
-		composeCmd:   getDockerComposeCommand(),
+		composeCmd:   []string{composeExecutable},
 		composeEnv:   composeEnvironment(inputHash.Sum(nil), buildContextDir),
 	}
 
@@ -444,11 +434,8 @@ func setupDockerEnv(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 	}
 
-	// Bazel gives tests a scratch HOME, which hides user-level Docker CLI
-	// plugin installs (e.g. compose v2 in ~/.docker/cli-plugins). Point
-	// DOCKER_CONFIG at the invoking user's docker config dir when not set
-	// explicitly — mirroring how the docker CLI resolves it outside the
-	// sandbox. Machine-level plugin installs are unaffected either way.
+	// Bazel's scratch HOME hides Docker contexts and credentials. Preserve
+	// the invoking user's Docker config unless one was supplied explicitly.
 	if os.Getenv("DOCKER_CONFIG") == "" {
 		if u, err := user.Current(); err == nil && u.HomeDir != "" {
 			dockerConfig := filepath.Join(u.HomeDir, ".docker")

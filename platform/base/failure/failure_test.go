@@ -38,8 +38,8 @@ func TestRoundTrip(t *testing.T) {
 		},
 		{
 			name: "several subjects keep their order",
-			in:   New("two at fault", Subject{Type: "batch", ID: "q/batch/2"}, Subject{Type: "batch", ID: "q/batch/1"}),
-			want: Failure{Subjects: []Subject{{Type: "batch", ID: "q/batch/2"}, {Type: "batch", ID: "q/batch/1"}}},
+			in:   New("two at fault", Subject{Type: "batch", ID: "2"}, Subject{Type: "batch", ID: "1"}),
+			want: Failure{Subjects: []Subject{{Type: "batch", ID: "2"}, {Type: "batch", ID: "1"}}},
 		},
 		{
 			name: "nested detail survives",
@@ -65,14 +65,14 @@ func TestRoundTrip(t *testing.T) {
 // legible column, and so decoding never has to tell an encoded failure apart
 // from a message that happens to look like one.
 func TestEncodeOmitsMessage(t *testing.T) {
-	encoded, err := Encode(New("boom", Subject{Type: "batch", ID: "q/batch/1"}))
+	encoded, err := Encode(New("boom", Subject{Type: "batch", ID: "1"}))
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "boom")
 
 	got, err := Decode(encoded)
 	require.NoError(t, err)
 	assert.Empty(t, got.Message)
-	assert.Equal(t, []Subject{{Type: "batch", ID: "q/batch/1"}}, got.Subjects)
+	assert.Equal(t, []Subject{{Type: "batch", ID: "1"}}, got.Subjects)
 }
 
 // Nothing structured means nothing to store, which is what lets a caller treat
@@ -108,12 +108,12 @@ func TestDetailNumbersDecodeAsFloat64(t *testing.T) {
 
 func TestIDsOfType(t *testing.T) {
 	f := New("mixed",
-		Subject{Type: "batch", ID: "q/batch/1"},
+		Subject{Type: "batch", ID: "1"},
 		Subject{Type: "queue", ID: "q"},
-		Subject{Type: "batch", ID: "q/batch/2"},
+		Subject{Type: "batch", ID: "2"},
 	)
 
-	assert.Equal(t, []string{"q/batch/1", "q/batch/2"}, f.IDsOfType("batch"))
+	assert.Equal(t, []string{"1", "2"}, f.IDsOfType("batch"))
 	assert.Equal(t, []string{"q"}, f.IDsOfType("queue"))
 	assert.Empty(t, f.IDsOfType("request"))
 	assert.Empty(t, Failure{}.IDsOfType("batch"))

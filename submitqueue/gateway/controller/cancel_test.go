@@ -83,7 +83,7 @@ func testCancelRequest(queue string, sqid string, reason string) entity.CancelRe
 func TestNewCancelController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "test-queue/42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	require.NotNil(t, controller)
 }
 
@@ -91,10 +91,10 @@ func TestCancel_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	scope := tally.NewTestScope("gateway", nil)
 
-	controller := newTestCancelController(ctrl, scope, newCancelStorageFixture(ctrl, "test-queue/42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := newTestCancelController(ctrl, scope, newCancelStorageFixture(ctrl, "42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	err := controller.Cancel(ctx, testCancelRequest("test-queue", "test-queue/42", "user changed their mind"))
+	err := controller.Cancel(ctx, testCancelRequest("test-queue", "42", "user changed their mind"))
 
 	require.NoError(t, err)
 
@@ -122,10 +122,20 @@ func TestCancel_HappyPath(t *testing.T) {
 func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "test-queue/42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	err := controller.Cancel(ctx, testCancelRequest("test-queue", "", "anything"))
+
+	require.Error(t, err)
+	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestCancel_ReturnsErrorOnCompositeSqid(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "42"), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	err := controller.Cancel(context.Background(), testCancelRequest("test-queue", "test-queue/42", "anything"))
 
 	require.Error(t, err)
 	assert.True(t, IsInvalidRequest(err))
@@ -146,20 +156,20 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 		},
 	)
 
-	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "my-queue/7"), registry)
+	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "7"), registry)
 	ctx := context.Background()
 
-	err := controller.Cancel(ctx, testCancelRequest("my-queue", "my-queue/7", "obsolete change"))
+	err := controller.Cancel(ctx, testCancelRequest("my-queue", "7", "obsolete change"))
 	require.NoError(t, err)
 
 	assert.Equal(t, "cancel", publishedTopic)
-	assert.Equal(t, "my-queue/7", publishedMessage.ID)
+	assert.Equal(t, "7", publishedMessage.ID)
 	assert.Equal(t, "my-queue", publishedMessage.Tenant)
-	assert.Equal(t, "my-queue/7", publishedMessage.PartitionKey)
+	assert.Equal(t, "7", publishedMessage.PartitionKey)
 
 	deserialized, err := sqmq.UnmarshalCancelRequest(publishedMessage.Payload)
 	require.NoError(t, err)
-	assert.Equal(t, "my-queue/7", deserialized.ID)
+	assert.Equal(t, "7", deserialized.ID)
 	assert.Equal(t, "obsolete change", deserialized.Reason)
 }
 
@@ -168,7 +178,7 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 // before the cancel topic publish so observers see intent the moment Cancel returns.
 func TestCancel_InsertsCancellingLog(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	fixture := newCancelStorageFixture(ctrl, "my-queue/42")
+	fixture := newCancelStorageFixture(ctrl, "42")
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	insertedBeforePublish := false
@@ -183,14 +193,14 @@ func TestCancel_InsertsCancellingLog(t *testing.T) {
 
 	controller := newTestCancelController(ctrl, tally.NoopScope, fixture, registry)
 
-	err := controller.Cancel(context.Background(), testCancelRequest("my-queue", "my-queue/42", "obsolete change"))
+	err := controller.Cancel(context.Background(), testCancelRequest("my-queue", "42", "obsolete change"))
 	require.NoError(t, err)
 
 	fixture.mu.Lock()
 	require.Len(t, fixture.logs, 1)
 	insertedLog := fixture.logs[0]
 	fixture.mu.Unlock()
-	assert.Equal(t, "my-queue/42", insertedLog.RequestID)
+	assert.Equal(t, "42", insertedLog.RequestID)
 	assert.Equal(t, entity.RequestStatusCancelling, insertedLog.Status)
 	assert.Equal(t, "obsolete change", insertedLog.Metadata["reason"])
 	assert.True(t, insertedBeforePublish, "log entry must be inserted before publish to the cancel topic")
@@ -200,14 +210,14 @@ func TestCancel_InsertsCancellingLog(t *testing.T) {
 // short-circuits the RPC with an error and the cancel topic is never published to.
 func TestCancel_LogInsertFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	fixture := newCancelStorageFixture(ctrl, "q/1")
+	fixture := newCancelStorageFixture(ctrl, "1")
 	fixture.setLogInsertError(fmt.Errorf("db unavailable"))
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	_ = publisher
 
 	controller := newTestCancelController(ctrl, tally.NoopScope, fixture, registry)
-	err := controller.Cancel(context.Background(), testCancelRequest("q", "q/1", ""))
+	err := controller.Cancel(context.Background(), testCancelRequest("q", "1", ""))
 	require.Error(t, err)
 }
 
@@ -217,10 +227,10 @@ func TestCancel_ReturnsErrorOnPublishFailure(t *testing.T) {
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "test-queue/1"), registry)
+	controller := newTestCancelController(ctrl, tally.NoopScope, newCancelStorageFixture(ctrl, "1"), registry)
 	ctx := context.Background()
 
-	err := controller.Cancel(ctx, testCancelRequest("test-queue", "test-queue/1", ""))
+	err := controller.Cancel(ctx, testCancelRequest("test-queue", "1", ""))
 
 	require.Error(t, err)
 }
@@ -233,7 +243,7 @@ func TestCancel_UnknownSqidIsUserError(t *testing.T) {
 	_ = publisher
 
 	controller := newTestCancelController(ctrl, tally.NoopScope, fixture, registry)
-	err := controller.Cancel(context.Background(), testCancelRequest("ghost", "ghost/1", ""))
+	err := controller.Cancel(context.Background(), testCancelRequest("ghost", "1", ""))
 	require.Error(t, err)
 	assert.True(t, IsRequestNotFound(err))
 	assert.True(t, errs.IsUserError(err))
@@ -241,7 +251,7 @@ func TestCancel_UnknownSqidIsUserError(t *testing.T) {
 
 	var typed *RequestNotFoundError
 	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "ghost/1", typed.Sqid)
+	assert.Equal(t, "1", typed.Sqid)
 }
 
 // TestCancel_RequestSummaryLookupFailure asserts that an infrastructure failure on
@@ -251,13 +261,13 @@ func TestCancel_RequestSummaryLookupFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
-	summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.RequestSummary{}, fmt.Errorf("summary backend down"))
+	summaryStore.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, fmt.Errorf("summary backend down"))
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	_ = publisher
 
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, factoryForStorage(ctrl, storageWithSummaryStore(ctrl, summaryStore)), newControllerStorageFixture(ctrl).newMaterializer(ctrl), registry)
-	err := controller.Cancel(context.Background(), testCancelRequest("q", "q/1", ""))
+	err := controller.Cancel(context.Background(), testCancelRequest("q", "1", ""))
 	require.Error(t, err)
 	assert.False(t, errs.IsUserError(err))
 	assert.False(t, IsRequestNotFound(err))

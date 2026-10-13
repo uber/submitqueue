@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Go 1.25+** — needed for `gopls`, `go mod`, and installing protoc plugins. Download from [go.dev/dl](https://go.dev/dl/). Note: Bazel manages its own Go toolchain for builds, but a local Go installation is required for editor tooling and dependency management.
-- **Docker** and **Docker Compose** — for integration and e2e tests, and for running services locally.
+- **Docker** — for integration and e2e tests, and for running services locally. Bazel supplies Docker Compose.
 - **direnv** (recommended) — automatically loads `.envrc` so you can use `bazel` directly instead of `./tool/bazel`.
 
 The project includes `./tool/bazel` (Bazelisk wrapper) and `.bazelversion`, so you don't need to install Bazel separately. Bazel manages its own Go toolchain for building and testing.
@@ -108,6 +108,10 @@ CI runs `make lint`, `make check-tidy`, and `make check-gazelle`. `make lint` in
 | `make gazelle` | Update `BUILD.bazel` files |
 | `make mocks` | Regenerate mockgen files |
 | `make check-mocks` | Fail if generated mocks are stale |
+| `make web-build` | Build the web packages and deployable OCI image with Bazel |
+| `make web-check` | Run web generation drift, package, lint, type, unit, and production image checks with Bazel |
+| `make web-e2e-test` | Run the Bazel-managed real-stack Playwright and axe test |
+| `make web-proto` | Regenerate the committed TypeScript protobuf API with Bazel |
 | `make proto` | Regenerate protobuf files |
 | `make clean` | Remove the Bazel cache and `bin/` |
 | `make clean-proto` | Remove generated protobuf Go files |
@@ -117,6 +121,8 @@ CI runs `make lint`, `make check-tidy`, and `make check-gazelle`. `make lint` in
 | `make local-submitqueue-stop` | Stop the SubmitQueue stack |
 | `make local-stop` | Stop SubmitQueue, Stovepipe, and Runway |
 | `make help` | List every target |
+
+The web build does not require a host Node.js or pnpm installation: Bazel supplies Node, npm packages, Buf, TypeScript, Next.js, Playwright, Chromium, and the container image toolchain. `make web-install` is an optional convenience for editors and direct pnpm development only.
 
 ## Running Specific Tests
 

@@ -183,7 +183,7 @@ func (s *RunwayE2ESuite) publishRaw(topic, id, partitionKey string, payload []by
 func (s *RunwayE2ESuite) mergeRequest(queue string, steps ...*runwaymq.MergeStep) *runwaymq.MergeRequest {
 	s.seq++
 	return &runwaymq.MergeRequest{
-		Id:        fmt.Sprintf("%s/%d", queue, s.seq),
+		Id:        fmt.Sprintf("%d", s.seq),
 		QueueName: queue,
 		Steps:     steps,
 	}

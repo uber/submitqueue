@@ -17,6 +17,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"testing"
@@ -32,7 +34,9 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/runway/controller/dlq"
+	githubmerger "github.com/uber/submitqueue/runway/extension/merger/github"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -87,6 +91,21 @@ func TestPrimaryConsumer_GitFailureDisposition(t *testing.T) {
 			name:        "deterministic git failure is rejected to dead letter",
 			controller:  gitexec.NewCommandError("rev-parse", "exit status 128: fatal: ambiguous argument 'origin/main': unknown revision", exitErr),
 			wantOutcome: "reject",
+		},
+		{
+			name:        "GitHub gateway failure is nacked for retry",
+			controller:  fmt.Errorf("merge pull request #1: %w", phttp.NewStatusError(http.StatusBadGateway, nil)),
+			wantOutcome: "nack",
+		},
+		{
+			name:        "GitHub permission failure is rejected to dead letter",
+			controller:  fmt.Errorf("get pull request #1: %w", phttp.NewStatusError(http.StatusForbidden, nil)),
+			wantOutcome: "reject",
+		},
+		{
+			name:        "GitHub merge still pending is nacked for retry",
+			controller:  fmt.Errorf("%w: merge uuid-1 of uber/submitqueue#1", githubmerger.ErrMergePending),
+			wantOutcome: "nack",
 		},
 		{
 			name:        "unknown error is rejected to dead letter",

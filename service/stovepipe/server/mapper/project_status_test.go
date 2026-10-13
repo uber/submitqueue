@@ -32,13 +32,13 @@ func TestProjectStatusRequestAndResponseMapping(t *testing.T) {
 
 	degree := entity.DegreeGreen
 	response := GetProjectStatusByURIResultToProto(entity.GetProjectStatusByURIResult{
-		RequestSummary:              entity.RequestSummary{RequestID: "request/1", Queue: "queue", URI: "uri", BaseURI: "base", State: entity.RequestStateSucceeded},
+		RequestSummary:              entity.RequestSummary{RequestID: "1", Queue: "queue", URI: "uri", BaseURI: "base", State: entity.RequestStateSucceeded},
 		RepositoryValidationFact:    entity.ValidationFact{Degree: degree},
 		HasRepositoryValidationFact: true,
 		ProjectValidationFacts:      []entity.ValidationFact{{Project: "project-a", Degree: entity.DegreeBroken}},
 		NextPageToken:               "next-token",
 	})
-	assert.Equal(t, "request/1", response.GetRequestId())
+	assert.Equal(t, "1", response.GetRequestId())
 	assert.Equal(t, "succeeded", response.GetRequestState())
 	assert.Equal(t, degree, response.GetRepositoryBreakageDegree())
 	assert.IsType(t, &pb.GetProjectStatusByURIResponse_RepositoryBreakageDegree{}, response.GetRepositoryResult())

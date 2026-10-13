@@ -37,7 +37,7 @@ const fakeRepo = "demo"
 // This is what the default provider submits. It is the fastest way to watch the
 // queue work, and the reason the quickstart needs neither a repository nor a
 // credential — at the cost of the URIs pointing at nothing, which is only
-// sound because the fake change provider echoes back whatever it is handed and
+// sound because the fake change provider invents metadata and
 // the noop merger never tries to fetch it.
 type fakeSource struct{}
 
@@ -52,13 +52,10 @@ func (fakeSource) open(_ context.Context, spec changeSpec) (openedChange, error)
 	headSHA := syntheticSHA("head", spec.branch)
 	return openedChange{
 		headSHA: headSHA,
-		// No files are written anywhere, but the change still says which paths
-		// it would have touched, so the conflict analyzer has something to key
-		// on. It is the only claim in this mode that is not backed by anything.
-		uri: withFiles(gitchange.ChangeID{
+		uri: gitchange.ChangeID{
 			Scheme: "git", Remote: fakeRemote, Repo: fakeRepo,
 			Ref: "refs/heads/" + spec.branch, CommitSHA: headSHA,
-		}.String(), spec.files),
+		}.String(),
 		// There is no pull request to number and nothing to link to, so the
 		// branch name is what identifies the change. An empty URL renders as
 		// plain text rather than as a link that goes nowhere.

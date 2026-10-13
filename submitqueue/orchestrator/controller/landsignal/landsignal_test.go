@@ -59,7 +59,7 @@ func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 }
 
 const (
-	testBatchID = "test-queue/batch/1"
+	testBatchID = "1"
 	testQueue   = "test-queue"
 )
 
@@ -144,8 +144,8 @@ func TestProcess_LandedAdvancesBatch(t *testing.T) {
 	batch := entity.Batch{
 		ID:           testBatchID,
 		Queue:        testQueue,
-		Contains:     []string{"test-queue/1"},
-		Dependencies: []string{"test-queue/batch/0"},
+		Contains:     []string{"1"},
+		Dependencies: []string{"0"},
 		State:        entity.BatchStateLanding,
 		Version:      1,
 	}
@@ -162,7 +162,7 @@ func TestProcess_LandedAdvancesBatch(t *testing.T) {
 	res := runwaymq.MergeResult{
 		Id:      testBatchID,
 		Outcome: runwaypb.Outcome_SUCCEEDED,
-		Steps:   []*runwaymq.StepResult{{StepId: "test-queue/1", Outputs: []*runwaymq.StepOutput{{Id: "deadbeef"}}}},
+		Steps:   []*runwaymq.StepResult{{StepId: "1", Outputs: []*runwaymq.StepOutput{{Id: "deadbeef"}}}},
 	}
 	msg := entityqueue.NewMessage(testBatchID, resultPayload(t, res), testQueue, nil)
 	require.NoError(t, c.Process(context.Background(), newDelivery(ctrl, msg)))
@@ -187,8 +187,8 @@ func TestProcess_FanoutDoesNotCollideWithTheBatchAnnouncement(t *testing.T) {
 	batch := entity.Batch{
 		ID:           testBatchID,
 		Queue:        testQueue,
-		Contains:     []string{"test-queue/1"},
-		Dependencies: []string{"test-queue/batch/0"},
+		Contains:     []string{"1"},
+		Dependencies: []string{"0"},
 		State:        entity.BatchStateLanding,
 		Version:      1,
 	}
@@ -232,8 +232,8 @@ func TestProcess_NotLandedMarksBatchFailed(t *testing.T) {
 	batch := entity.Batch{
 		ID:           testBatchID,
 		Queue:        testQueue,
-		Contains:     []string{"test-queue/1"},
-		Dependencies: []string{"test-queue/batch/0"},
+		Contains:     []string{"1"},
+		Dependencies: []string{"0"},
 		State:        entity.BatchStateLanding,
 		Version:      3,
 	}

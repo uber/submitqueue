@@ -1,0 +1,17 @@
+services:
+  mysql-app:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue-web-e2e}-mysql:8.0
+    platform: linux/amd64
+
+  mysql-queue:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue-web-e2e}-mysql:8.0
+    platform: linux/amd64
+
+  gateway-service:
+    platform: linux/amd64
+
+  orchestrator-service:
+    platform: linux/amd64
+
+  runway-service:
+    platform: linux/amd64

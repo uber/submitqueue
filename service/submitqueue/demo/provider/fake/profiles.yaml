@@ -11,7 +11,7 @@
 # difference from ../git and ../github a diff rather than an explanation.
 
 defaults:
-  # No provider to ask, so the fake echoes back each URI it is given.
+  # The fake generates stable pseudo-random files for each URI.
   changeProvider: {type: fake}
   # Every build succeeds immediately, so a land completes in seconds.
   buildRunner: {type: fake}
@@ -43,10 +43,7 @@ queues:
   # github modes use, so what a run shows does not depend on which one it ran
   # against.
   #
-  # This keys on the files a change reports, and no provider can be asked about
-  # a change that exists nowhere. `make demo-requests` therefore states the
-  # paths on the change URI (`sq-files=`) and the fake change provider reports
-  # them back. A change submitted by hand carries no such marker, touches
-  # nothing as far as the analyzer can tell, and so never conflicts.
+  # Fake files use a small fixed directory pool to produce overlap. The
+  # generator's FOLDERS and FILES knobs only affect the git/github modes.
   - name: demo-queue
     analyzer: {type: pathoverlap, by: directory}

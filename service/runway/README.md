@@ -15,7 +15,7 @@ These topic keys and their wire contracts are owned by the queue's producer side
 
 ### Merger backend
 
-The merge work is done by the [`merger`](../../runway/extension/merger) extension, resolved **per queue** — so one Runway can serve several repositories by giving each queue its own merge target. By default every queue gets the **noop** merger (always succeeds — for local dev and compose). Point `MERGE_CONFIG_PATH` at a merge configuration file to wire real **git** merge targets, or set `MERGE_CHECKOUT_PATH` to configure a single one from the environment (see Configuration). Setting `MERGER=git` makes Git configuration mandatory: startup fails unless one of those sources defines at least one Git target.
+The merge work is done by the [`merger`](../../runway/extension/merger) extension, resolved **per queue** — so one Runway can serve several repositories by giving each queue its own merge target. By default every queue gets the **noop** merger (always succeeds — for local dev and compose). Point `MERGE_CONFIG_PATH` at a merge configuration file to wire real **git** merge targets or **github** (REST API, stack-aware) ones, or set `MERGE_CHECKOUT_PATH` to configure a single one from the environment (see Configuration). Setting `MERGER=git` makes Git configuration mandatory: startup fails unless one of those sources defines at least one Git target.
 
 Two queues naming the same checkout resolve to the *same* merger instance, which is what serializes them against each other: a git merger locks the working tree it owns, and two instances over one tree would reset it out from under each other mid-merge. Naming one checkout for two *different* targets is rejected at startup.
 
@@ -25,7 +25,7 @@ Two queues naming the same checkout resolve to the *same* merger instance, which
 
 ```yaml
 defaults:
-  merger: {type: noop}            # noop | git
+  merger: {type: noop}            # noop | git | github
 queues:
   - name: demo-queue
     merger:
@@ -35,7 +35,19 @@ queues:
       checkoutPath: /var/runway/checkouts/sq-sandbox
       defaultStrategy: SQUASH_REBASE
       tokenEnv: GITHUB_TOKEN
+  - name: oss-queue
+    merger:
+      type: github
+      owner: my-org
+      repo: my-repo
+      target: main
+      defaultStrategy: SQUASH_REBASE
+      tokenEnv: GITHUB_TOKEN
+      # apiBaseUrl: https://api.github.com   (default)
+      # host: github.com                      (default; the host change URIs name)
 ```
+
+A `github` target needs no checkout: it lands each step as one GitHub stack through the REST API (see the [github merger](../../runway/extension/merger/github)). `tokenEnv` becomes a bearer token on its HTTP client; `httpTimeout`, `pollInterval`, `maxPollDuration` and `bypassRules` tune it.
 
 The file holds **no secret**: `tokenEnv` names the environment variable carrying the credential, so the file stays committable and rotating the token needs no edit. Omitting `remoteUrl` means the checkout is provisioned by something else and is used as it stands.
 

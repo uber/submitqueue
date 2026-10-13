@@ -84,7 +84,7 @@ func (s *CounterContractSuite) TestCounter_Next() {
 	assert.Equal(t, seq2+1, seq3, "sequence should continue incrementing")
 }
 
-// TestCounter_MultipleDomains tests independent counters
+// TestCounter_MultipleDomains tests independent counters.
 func (s *CounterContractSuite) TestCounter_MultipleDomains() {
 	t := s.T()
 	ctx := s.ctx
@@ -92,7 +92,7 @@ func (s *CounterContractSuite) TestCounter_MultipleDomains() {
 	domain1 := "test-counter-1"
 	domain2 := "test-counter-2"
 
-	// Get sequences from both domains
+	// Get sequences from both domains.
 	seq1a, err := s.counter.Next(ctx, domain1)
 	require.NoError(t, err)
 
@@ -105,9 +105,9 @@ func (s *CounterContractSuite) TestCounter_MultipleDomains() {
 	seq2b, err := s.counter.Next(ctx, domain2)
 	require.NoError(t, err)
 
-	// Each domain should increment independently
-	assert.Equal(t, seq1a+1, seq1b, "domain1 should increment")
-	assert.Equal(t, seq2a+1, seq2b, "domain2 should increment")
+	// Each domain should increment independently.
+	assert.Equal(t, seq1a+1, seq1b, "domain 1 should increment")
+	assert.Equal(t, seq2a+1, seq2b, "domain 2 should increment")
 }
 
 // TestCounter_Concurrency tests concurrent access to the same counter

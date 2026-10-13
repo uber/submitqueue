@@ -187,3 +187,19 @@ The gateway and orchestrator communicate through the messaging queue. It is plug
 The request log has exactly one owner: the **gateway**. The orchestrator only emits log events onto the queue, via `submitqueue/orchestrator/core/request.PublishLog`; it never persists them. The gateway is the sole consumer of those events and the only writer of the request log.
 
 This keeps all request-log writes in one service: the orchestrator stays a pipeline that emits events, and the gateway owns the request log end to end.
+
+## Resource IDs
+
+A request or batch ID is the canonical decimal string of a positive value from the durable counter extension (`platform/extension/counter`), scoped to `(queue, domain)`, where the domain is `request` or `batch`. The gateway mints the request ID in `Land`, and `batch` mints the batch ID when it creates a batch. Stovepipe mints its request IDs the same way against its own storage. Stores accept the caller's ID and never generate one.
+
+An ID is unique only within its queue and kind, so `42` can name a request in two queues, or both a request and a batch in one. APIs, messages, and storage keys therefore carry the queue separately, and the queue leads every primary key; the field or message type supplies the kind. An ID never embeds its scope, so forms such as `demo-queue/42` and `demo-queue/batch/7` are rejected. `platform/base/id` owns the format: it accepts only the canonical decimal form of a positive int64, with no sign or leading zeros, and compares IDs numerically, never lexicographically.
+
+The first value is `1`. Values are never reused, and a failed write may leave a gap. IDs are strings in storage and on the wire; only the counter stores integers. Change URIs ([change-uri.md](../change-uri.md)), build IDs, message IDs, and hook IDs are not counter-generated and keep their own contracts.
+
+Rejected alternatives:
+
+- **Scope prefixes such as `queue/42`.** They duplicate the queue every API already carries, lengthen keys, need parsing, and put separators into URL path segments.
+- **ARN-style names.** They solve global lookup, which no API provides or needs.
+- **UUIDs or one global counter.** They buy global uniqueness at the cost of readable IDs or cross-queue coordination.
+- **Integer wire fields.** They would tie the API to the counter's representation without adding meaning.
+- **SQL auto-increment, `MAX(id) + 1`, or process-local counters.** These put allocation inside one store, race under concurrency, or reuse IDs after a restart.

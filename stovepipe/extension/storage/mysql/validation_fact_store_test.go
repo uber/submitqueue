@@ -50,7 +50,7 @@ func TestValidationFactStore_Create(t *testing.T) {
 		URI:       testFactURI,
 		Project:   "",
 		Degree:    entity.DegreeGreen,
-		RequestID: "request/monorepo/main/1",
+		RequestID: "1",
 		CreatedAt: 1735689600000,
 	}
 
@@ -115,7 +115,7 @@ func TestValidationFactStore_Get(t *testing.T) {
 		URI:       testFactURI,
 		Project:   "",
 		Degree:    entity.DegreeBroken,
-		RequestID: "request/monorepo/main/2",
+		RequestID: "2",
 		CreatedAt: 1735689600000,
 	}
 

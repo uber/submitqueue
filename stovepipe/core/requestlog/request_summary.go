@@ -23,27 +23,27 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-func materializeRequestSummary(ctx context.Context, stores storage.Storage, log entity.RequestLog) error {
+func materializeRequestSummary(ctx context.Context, stores storage.Storage, log entity.RequestLog) (entity.RequestSummary, error) {
 	summaryStore := stores.GetRequestSummaryStore()
 	// Create and update races reload the winner; request versions make each retry converge.
 	for {
 		currentSummary, err := summaryStore.Get(ctx, log.RequestID)
 		if storage.IsNotFound(err) {
-			createErr := createInitialRequestSummary(ctx, stores.GetRequestStore(), summaryStore, log)
+			initial, createErr := createInitialRequestSummary(ctx, stores.GetRequestStore(), summaryStore, log)
 			if errors.Is(createErr, storage.ErrAlreadyExists) {
 				continue
 			}
-			return createErr
+			return initial, createErr
 		}
 		if err != nil {
-			return fmt.Errorf("failed to get request summary request_id=%q: %w", log.RequestID, err)
+			return entity.RequestSummary{}, fmt.Errorf("failed to get request summary request_id=%q: %w", log.RequestID, err)
 		}
 
-		updateErr := updateExistingRequestSummary(ctx, summaryStore, currentSummary, log)
+		updated, updateErr := updateExistingRequestSummary(ctx, summaryStore, currentSummary, log)
 		if errors.Is(updateErr, storage.ErrVersionMismatch) {
 			continue
 		}
-		return updateErr
+		return updated, updateErr
 	}
 }
 
@@ -52,27 +52,27 @@ func createInitialRequestSummary(
 	requestStore storage.RequestStore,
 	summaryStore storage.RequestSummaryStore,
 	log entity.RequestLog,
-) error {
+) (entity.RequestSummary, error) {
 	request, err := requestStore.Get(ctx, log.RequestID)
 	if err != nil {
-		return fmt.Errorf("failed to get request for summary request_id=%q: %w", log.RequestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to get request for summary request_id=%q: %w", log.RequestID, err)
 	}
 	if request.ID != log.RequestID || request.Queue != log.Queue {
-		return fmt.Errorf(
+		return entity.RequestSummary{}, fmt.Errorf(
 			"request identity conflicts with state log log_request_id=%q request_id=%q log_queue=%q request_queue=%q",
 			log.RequestID, request.ID, log.Queue, request.Queue,
 		)
 	}
 	if request.URI == "" {
-		return fmt.Errorf("request URI is empty for summary request_id=%q", log.RequestID)
+		return entity.RequestSummary{}, fmt.Errorf("request URI is empty for summary request_id=%q", log.RequestID)
 	}
 
 	initial := requestSummaryFromRequestAndLog(request, log)
 	initial.Version = 1
 	if err := summaryStore.Create(ctx, initial); err != nil {
-		return fmt.Errorf("failed to create request summary request_id=%q: %w", log.RequestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to create request summary request_id=%q: %w", log.RequestID, err)
 	}
-	return nil
+	return initial, nil
 }
 
 func updateExistingRequestSummary(
@@ -80,41 +80,73 @@ func updateExistingRequestSummary(
 	summaryStore storage.RequestSummaryStore,
 	current entity.RequestSummary,
 	log entity.RequestLog,
-) error {
-	if current.RequestID != log.RequestID || current.Queue != log.Queue {
-		return fmt.Errorf(
-			"request summary identity conflicts with state log log_request_id=%q summary_request_id=%q log_queue=%q summary_queue=%q",
-			log.RequestID, current.RequestID, log.Queue, current.Queue,
-		)
+) (entity.RequestSummary, error) {
+	updated, err := projectRequestSummary(current, log)
+	if err != nil {
+		return entity.RequestSummary{}, err
 	}
-	if current.RequestVersion > log.RequestVersion {
-		return nil
-	}
-	if current.RequestVersion == log.RequestVersion {
-		if requestSummaryMatchesLog(current, log) {
-			return nil
-		}
-		return fmt.Errorf("request summary conflicts with state log request_id=%q version=%d", log.RequestID, log.RequestVersion)
-	}
-
-	updated := current
-	updated.State = log.State
-	updated.RequestVersion = log.RequestVersion
-	updated.StateTimestampMs = log.TimestampMs
-	if baseURI, ok := log.Metadata[MetadataKeyBaseURI]; ok {
-		updated.BaseURI = baseURI
+	if updated == current {
+		return current, nil
 	}
 	oldVersion := current.Version
 	newVersion := oldVersion + 1
-	updated.Version = oldVersion
 	if err := summaryStore.Update(ctx, updated, oldVersion, newVersion); err != nil {
-		return fmt.Errorf("failed to update request summary request_id=%q: %w", log.RequestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to update request summary request_id=%q: %w", log.RequestID, err)
 	}
-	return nil
+	updated.Version = newVersion
+	return updated, nil
 }
 
-func requestSummaryMatchesLog(summary entity.RequestSummary, log entity.RequestLog) bool {
-	if summary.State != log.State || summary.StateTimestampMs != log.TimestampMs {
+func projectRequestSummary(current entity.RequestSummary, log entity.RequestLog) (entity.RequestSummary, error) {
+	updated, err := projectRequestSummaryFacts(current, log)
+	if err != nil {
+		return entity.RequestSummary{}, err
+	}
+	return projectRequestSummaryState(updated, log)
+}
+
+// Facts may be filled from any retained version; known values must agree.
+func projectRequestSummaryFacts(summary entity.RequestSummary, log entity.RequestLog) (entity.RequestSummary, error) {
+	if summary.RequestID != log.RequestID || summary.Queue != log.Queue {
+		return entity.RequestSummary{}, fmt.Errorf(
+			"request summary identity conflicts with state log log_request_id=%q summary_request_id=%q log_queue=%q summary_queue=%q",
+			log.RequestID, summary.RequestID, log.Queue, summary.Queue,
+		)
+	}
+	if log.State != entity.RequestStateAccepted {
+		return summary, nil
+	}
+	if summary.AcceptedAtMs != 0 && summary.AcceptedAtMs != log.TimestampMs {
+		return entity.RequestSummary{}, fmt.Errorf("request summary acceptance time conflicts with retained log request_id=%q", log.RequestID)
+	}
+	summary.AcceptedAtMs = log.TimestampMs
+	return summary, nil
+}
+
+func projectRequestSummaryState(summary entity.RequestSummary, log entity.RequestLog) (entity.RequestSummary, error) {
+	if log.RequestVersion < summary.RequestVersion {
+		return summary, nil
+	}
+	if log.RequestVersion == summary.RequestVersion {
+		if !requestSummaryStateMatchesLog(summary, log) {
+			return entity.RequestSummary{}, fmt.Errorf("request summary conflicts with state log request_id=%q version=%d", log.RequestID, log.RequestVersion)
+		}
+		summary.OutcomeReason = log.OutcomeReason
+		return summary, nil
+	}
+	summary.State = log.State
+	summary.RequestVersion = log.RequestVersion
+	summary.StateTimestampMs = log.TimestampMs
+	summary.OutcomeReason = log.OutcomeReason
+	if baseURI, ok := log.Metadata[MetadataKeyBaseURI]; ok {
+		summary.BaseURI = baseURI
+	}
+	return summary, nil
+}
+
+func requestSummaryStateMatchesLog(summary entity.RequestSummary, log entity.RequestLog) bool {
+	if summary.State != log.State || summary.StateTimestampMs != log.TimestampMs ||
+		(summary.OutcomeReason != entity.RequestOutcomeReasonUnknown && summary.OutcomeReason != log.OutcomeReason) {
 		return false
 	}
 	baseURI, updatesBaseURI := log.Metadata[MetadataKeyBaseURI]
@@ -129,6 +161,10 @@ func requestSummaryFromRequestAndLog(request entity.Request, log entity.RequestL
 		State:            log.State,
 		RequestVersion:   log.RequestVersion,
 		StateTimestampMs: log.TimestampMs,
+		OutcomeReason:    log.OutcomeReason,
+	}
+	if log.State == entity.RequestStateAccepted {
+		summary.AcceptedAtMs = log.TimestampMs
 	}
 	if baseURI, ok := log.Metadata[MetadataKeyBaseURI]; ok {
 		summary.BaseURI = baseURI

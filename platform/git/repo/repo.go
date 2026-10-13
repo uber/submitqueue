@@ -247,7 +247,7 @@ func (r *Repo) outputOf(ctx context.Context, args ...string) (string, error) {
 		if message == "" {
 			message = err.Error()
 		}
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), message)
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), gitexec.CommandFailure(ctx, args, message, err))
 	}
 	return string(out), nil
 }
@@ -269,7 +269,7 @@ func SetConfig(ctx context.Context, path, key, value string) error {
 		if message == "" {
 			message = err.Error()
 		}
-		return fmt.Errorf("git config %s: %s", key, message)
+		return fmt.Errorf("git config %s: %w", key, gitexec.CommandFailure(ctx, []string{"config"}, message, err))
 	}
 	return nil
 }

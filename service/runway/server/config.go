@@ -19,6 +19,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	yamlv3 "gopkg.in/yaml.v3"
 
@@ -27,8 +28,16 @@ import (
 
 // Merger types selectable from configuration.
 const (
-	mergerTypeNoop = "noop"
-	mergerTypeGit  = "git"
+	mergerTypeNoop   = "noop"
+	mergerTypeGit    = "git"
+	mergerTypeGitHub = "github"
+)
+
+// Defaults for a github merger.
+const (
+	defaultGitHubAPIBaseURL  = "https://api.github.com"
+	defaultGitHubHost        = "github.com"
+	defaultGitHubHTTPTimeout = 30 * time.Second
 )
 
 // mergeConfig is the runway merge configuration file: which merger each queue
@@ -61,10 +70,11 @@ type queueMergeConfig struct {
 	Merger mergerConfig `yaml:"merger"`
 }
 
-// mergerConfig selects a merger implementation and configures it. Fields other
-// than Type apply only to the git merger.
+// mergerConfig selects a merger implementation and configures it. Target,
+// DefaultStrategy and TokenEnv apply to the git and github mergers; every other
+// field applies only to the merger its comment names, git when it names none.
 type mergerConfig struct {
-	// Type selects the implementation: "noop" or "git".
+	// Type selects the implementation: "noop", "git" or "github".
 	Type string `yaml:"type"`
 	// RemoteURL is the repository the merger clones and pushes to. When empty
 	// the checkout is taken as provisioned by something else and used as it
@@ -104,6 +114,28 @@ type mergerConfig struct {
 	// TokenUser is the username paired with the token in basic auth. Providers
 	// each have their own convention; defaults to "x-access-token".
 	TokenUser string `yaml:"tokenUser"`
+
+	// APIBaseURL is the github merger's REST API root. Defaults to
+	// "https://api.github.com".
+	APIBaseURL string `yaml:"apiBaseUrl"`
+	// Host is the GitHub instance the github merger's change URIs name.
+	// Defaults to "github.com".
+	Host string `yaml:"host"`
+	// Owner and Repo name the repository the github merger lands into.
+	Owner string `yaml:"owner"`
+	Repo  string `yaml:"repo"`
+	// BypassRules asks GitHub to merge past branch rules (github merger); the
+	// token's actor must be allowed to bypass them.
+	BypassRules bool `yaml:"bypassRules"`
+	// HTTPTimeout bounds each GitHub API call of the github merger (Go
+	// duration). Defaults to 30s.
+	HTTPTimeout string `yaml:"httpTimeout"`
+	// PollInterval is the github merger's wait between merge status reads (Go
+	// duration). Empty uses the merger's own default.
+	PollInterval string `yaml:"pollInterval"`
+	// MaxPollDuration bounds how long one delivery waits for GitHub to settle
+	// a merge (github merger, Go duration). Empty uses the merger's default.
+	MaxPollDuration string `yaml:"maxPollDuration"`
 }
 
 // loadMergeConfig reads and validates the merge configuration at path.
@@ -198,10 +230,15 @@ func (m *mergerConfig) normalizeAndValidate(where string) error {
 	case mergerTypeNoop:
 		return nil
 	case mergerTypeGit:
+		return m.normalizeAndValidateGit(where)
+	case mergerTypeGitHub:
+		return m.normalizeAndValidateGitHub(where)
 	default:
-		return fmt.Errorf("%s: unknown merger type %q (want %q or %q)", where, m.Type, mergerTypeNoop, mergerTypeGit)
+		return fmt.Errorf("%s: unknown merger type %q (want %q, %q or %q)", where, m.Type, mergerTypeNoop, mergerTypeGit, mergerTypeGitHub)
 	}
+}
 
+func (m *mergerConfig) normalizeAndValidateGit(where string) error {
 	if m.CheckoutPath == "" {
 		return fmt.Errorf("%s: git merger requires checkoutPath", where)
 	}
@@ -231,6 +268,45 @@ func (m *mergerConfig) normalizeAndValidate(where string) error {
 		return fmt.Errorf("%s: %w", where, err)
 	}
 	return nil
+}
+
+func (m *mergerConfig) normalizeAndValidateGitHub(where string) error {
+	if m.Owner == "" || m.Repo == "" {
+		return fmt.Errorf("%s: github merger requires owner and repo", where)
+	}
+	if m.CheckoutPath != "" || m.RemoteURL != "" {
+		return fmt.Errorf("%s: github merger works through the API and takes no checkoutPath or remoteUrl", where)
+	}
+	if m.APIBaseURL == "" {
+		m.APIBaseURL = defaultGitHubAPIBaseURL
+	}
+	if m.Host == "" {
+		m.Host = defaultGitHubHost
+	}
+	if m.Target == "" {
+		m.Target = "main"
+	}
+	strategy, err := parseStrategy(m.DefaultStrategy)
+	if err != nil {
+		return fmt.Errorf("%s: %w", where, err)
+	}
+	if strategy == mergestrategypb.Strategy_PROMOTE {
+		return fmt.Errorf("%s: github merger cannot default to PROMOTE", where)
+	}
+	for name, v := range map[string]string{"httpTimeout": m.HTTPTimeout, "pollInterval": m.PollInterval, "maxPollDuration": m.MaxPollDuration} {
+		if _, err := parseOptionalDuration(v); err != nil {
+			return fmt.Errorf("%s: invalid %s: %w", where, name, err)
+		}
+	}
+	return nil
+}
+
+// parseOptionalDuration parses a Go duration, reading an empty value as zero.
+func parseOptionalDuration(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(v)
 }
 
 // firstDifference reports the first field in which two git mergers disagree,

@@ -16,7 +16,7 @@ package entity
 
 // RequestSummary is the materialized current view of a validation request.
 type RequestSummary struct {
-	// RequestID is the globally unique request identifier.
+	// RequestID is the canonical decimal request identifier, unique within Queue.
 	RequestID string
 	// Queue is the queue containing the request.
 	Queue string
@@ -30,6 +30,10 @@ type RequestSummary struct {
 	RequestVersion int32
 	// StateTimestampMs is when the represented state was first retained, in Unix milliseconds.
 	StateTimestampMs int64
+	// AcceptedAtMs is the original acceptance timestamp in Unix milliseconds; zero means unknown and a positive value is immutable.
+	AcceptedAtMs int64
+	// OutcomeReason is the reason for the represented state; empty means unavailable or inapplicable.
+	OutcomeReason RequestOutcomeReason
 	// Version is the optimistic-lock version of this materialized view.
 	Version int32
 }

@@ -17,6 +17,7 @@ KINDS = (
     "go",
     "tests",
     "python",
+    "web",
     "proto",
     "sql",
     "build",
@@ -26,7 +27,7 @@ KINDS = (
     "docs",
     "other",
 )
-GENERATED_SUFFIXES = ("_mock.go", ".pb.go", ".pb.yarpc.go")
+GENERATED_SUFFIXES = ("_mock.go", ".pb.go", ".pb.yarpc.go", "_pb.ts", "_pb.js", "_connect.ts")
 BUILD_FILES = {
     "BUILD",
     "BUILD.bazel",
@@ -37,6 +38,13 @@ BUILD_FILES = {
     "go.sum",
 }
 CONFIG_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
+WEB_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".css")
+WEB_TEST_PATTERN = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
+# Uber-internal names that must not appear in this public repository.
+INTERNAL_REFERENCE_PATTERN = re.compile(
+    r"uberinternal|code\.uber\.internal|\b(go|web|java)-code\b|\buber-code\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -140,7 +148,11 @@ def kind_of(
         return "sql"
     if path.endswith(".proto"):
         return "proto"
-    if path.endswith(("_test.go", "_test.py")) or name.startswith("test_") and path.endswith(".py"):
+    if (
+        path.endswith(("_test.go", "_test.py"))
+        or name.startswith("test_") and path.endswith(".py")
+        or WEB_TEST_PATTERN.search(path)
+    ):
         return "tests"
     if is_generated(path):
         return "generated"
@@ -148,6 +160,8 @@ def kind_of(
         return "go"
     if path.endswith(".py"):
         return "python"
+    if path.endswith(WEB_SUFFIXES):
+        return "web"
     if path.endswith((".sh", ".bash", ".zsh")):
         return "shell"
     if path.endswith(".md") or path.startswith("doc/"):
@@ -293,6 +307,8 @@ def analyze_added_line(path: str, number: int, text: str) -> list[tuple[str, str
         results.append(("SMELL", "secondary-index"))
     if is_go and "extension" in PurePosixPath(path).parts and "NewFactory" in text:
         results.append(("SMELL", "extension-factory"))
+    if not generated and INTERNAL_REFERENCE_PATTERN.search(text):
+        results.append(("SMELL", "internal-reference"))
     if is_go and narration_comment(text):
         results.append(("SMELL", "narration-comment"))
     if (
@@ -383,6 +399,19 @@ def mock_source_hints(
                 )
                 break
     return hints
+
+
+def new_workflow_hints(changes: list[Change]) -> list[tuple[str, str]]:
+    return [
+        (
+            "SMELL",
+            f"{escape_path(change.path)}:1: new-workflow: "
+            "confirm this cannot be a job in .github/workflows/ci.yml",
+        )
+        for change in sorted(changes, key=lambda change: change.path)
+        if change.status in {"A", "?"}
+        and change.path.startswith(".github/workflows/")
+    ]
 
 
 def shell_script_hints(
@@ -496,6 +525,7 @@ def main() -> None:
     target_tree = commit if mode == "commit" else "HEAD" if mode == "range" else None
     hits.extend(mock_source_hints(repo, changes, target_tree))
     hits.extend(shell_script_hints(repo, changes, target_tree))
+    hits.extend(new_workflow_hints(changes))
     classified = classify_changes(changes, repo, target_tree)
 
     print(f"target: {mode}")

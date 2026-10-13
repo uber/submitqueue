@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "materializer.go",
+        "request_acceptance.go",
         "request_summary.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/requestlog",
@@ -21,6 +22,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "materializer_test.go",
+        "request_acceptance_test.go",
         "request_summary_test.go",
     ],
     embed = [":go_default_library"],

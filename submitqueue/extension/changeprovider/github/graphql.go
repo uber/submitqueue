@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	phttp "github.com/uber/submitqueue/platform/http"
 )
 
 // pullRequestQuery is the GraphQL query to fetch pull request information including files, author, and head SHA.
@@ -140,7 +142,7 @@ func parseGraphQLResponse(
 ) (*pullRequestData, error) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("GitHub API request failed: %w", phttp.NewStatusError(resp.StatusCode, body))
 	}
 
 	var gqlResp graphqlResponse

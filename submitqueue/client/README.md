@@ -12,6 +12,10 @@ It exists so the tools are thin. A binary under `service/` is flag parsing over 
 
 `TokenEnv` names the variable holding a bearer token rather than carrying the token, so a credential never reaches a command line. An unset variable is not an error — it is how a client against a gateway that wants no credential runs, which today is every gateway in this repository. The token is for one reached through something that does check it: a proxy, a sidecar, an ingress terminating auth ahead of the service.
 
+## Discovering queues
+
+`Client.ListQueues` returns every queue configured on the gateway, including queues that have never received a request, ordered by name ascending. The gateway CLI exposes this as `list-queues`, with one queue name per output line and no output when no queues are configured. This differs from `list`, which reads the request history of one named queue.
+
 ## The view
 
 A `Row` is one land request and everything shown about it. A `Tracker` owns a set of rows, polls their histories, and redraws as they move; `Draw` renders once, for a listing that is not following anything.

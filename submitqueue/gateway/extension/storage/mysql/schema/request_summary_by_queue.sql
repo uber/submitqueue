@@ -1,3 +1,5 @@
+-- Legacy projection: no longer read or written by the gateway.
+-- Retain this definition until old binaries and their rollback window are retired.
 CREATE TABLE IF NOT EXISTS request_summary_by_queue (
     queue VARCHAR(255) NOT NULL,
     received_at_ms BIGINT NOT NULL,

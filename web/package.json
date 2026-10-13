@@ -1,0 +1,36 @@
+{
+  "name": "submitqueue-web-workspace",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=22.20.0 <23",
+    "pnpm": ">=10.17.1 <11"
+  },
+  "scripts": {
+    "build": "pnpm --recursive --if-present run build",
+    "check": "pnpm build && pnpm lint && pnpm typecheck && pnpm test",
+    "lint": "pnpm --recursive --if-present run lint",
+    "test": "pnpm --recursive --if-present run test",
+    "typecheck": "tsc --project tsconfig.e2e.json && pnpm --recursive --if-present run typecheck"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@bufbuild/buf": "1.73.0",
+    "@bufbuild/protobuf": "2.15.0",
+    "@bufbuild/protoc-gen-es": "2.15.0",
+    "@connectrpc/connect": "2.1.1",
+    "@connectrpc/connect-node": "2.1.1",
+    "@opentelemetry/api": "1.9.0",
+    "@playwright/test": "1.55.1",
+    "@submitqueue/api": "workspace:*",
+    "@types/node": "22.18.6",
+    "next": "16.3.6",
+    "pino": "10.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "5.9.3",
+    "vitest": "4.0.7"
+  }
+}

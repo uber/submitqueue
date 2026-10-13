@@ -22,7 +22,7 @@ package entity
 // giving the scorer the whole batch's change facts in one value without coupling
 // it to storage.
 type BatchChanges struct {
-	// BatchID is the batch being scored. Format: "<queue>/batch/<counter_value>".
+	// BatchID is the canonical decimal identifier of the batch being scored.
 	BatchID string
 	// Queue is the queue the batch belongs to.
 	Queue string

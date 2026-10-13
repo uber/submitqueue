@@ -138,6 +138,30 @@ func (s *GatewayIntegrationSuite) TestPingAPI() {
 	assert.NotZero(t, resp.Timestamp)
 }
 
+func (s *GatewayIntegrationSuite) TestListQueuesAPI() {
+	t := s.T()
+	resp, err := s.client.ListQueues(s.ctx, &pb.ListQueuesRequest{})
+	require.NoError(t, err)
+	names := make([]string, 0, len(resp.GetQueues()))
+	for _, queue := range resp.GetQueues() {
+		names = append(names, queue.GetName())
+	}
+	assert.Equal(t, []string{
+		"demo-queue",
+		"e2e-cancel-queue",
+		"e2e-chain-queue",
+		"e2e-conflict-error-queue",
+		"e2e-git-queue",
+		"e2e-github-queue",
+		"e2e-redelivery-queue",
+		"e2e-respeculate-queue",
+		"e2e-strand-queue",
+		"e2e-test-queue",
+		"file-overlap-queue",
+		"test-queue",
+	}, names)
+}
+
 // TestLandAPI tests the Gateway Land API with queue publishing
 func (s *GatewayIntegrationSuite) TestLandAPI() {
 	t := s.T()
@@ -160,9 +184,16 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE tenant = ? AND id = ?", req.Queue, resp.Sqid).Scan(&msgCount)
 	require.NoError(t, err, "failed to query queue messages")
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
+
+	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: resp.Sqid, Queue: req.Queue})
+	require.NoError(t, err)
+	listed, err := s.client.List(s.ctx, &pb.ListRequest{
+		Queue: req.Queue, ReceivedAtOrAfterMs: summary.Request.ReceivedAtMs, ReceivedBeforeMs: summary.Request.ReceivedAtMs + 1,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, listed.Requests, summary.Request)
 }
 
-// TestListAPI verifies the queue projection is exposed in deterministic receipt order.
 func (s *GatewayIntegrationSuite) TestListAPI() {
 	t := s.T()
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
@@ -171,8 +202,9 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	queueStore, err := store.For("test-queue")
 	require.NoError(t, err)
 	for _, summary := range []entity.RequestSummary{
-		{RequestID: "test-queue/list-1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
-		{RequestID: "test-queue/list-2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "901", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "902", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusAccepted, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "903", Queue: "test-queue", ChangeURIs: []string{"uri/3"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
 	} {
 		publicStatus := summary.Status
 		summary.Status = entity.RequestStatusAccepting
@@ -181,29 +213,64 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 			RequestID:   summary.RequestID,
 			Queue:       summary.Queue,
 			TimestampMs: summary.StatusTimestampMs,
+			Type:        entity.RequestLogTypeStatus,
 			Status:      publicStatus,
 			Metadata:    map[string]string{},
 		}))
 	}
+	unindexed := entity.RequestSummary{RequestID: "905", Queue: "test-queue", ReceivedAtMs: 150, Status: entity.RequestStatusAccepted, Version: 1}
+	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, unindexed))
+	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, entity.RequestSummary{
+		RequestID: "904", Queue: "test-queue", ReceivedAtMs: 180, Status: entity.RequestStatusAccepting, Version: 1,
+	}))
 
 	resp, err := s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
-	assert.Equal(t, "test-queue/list-2", resp.Requests[0].Sqid)
+	assert.Equal(t, "903", resp.Requests[0].Sqid)
+	assert.Equal(t, string(entity.RequestStatusLanded), resp.Requests[0].Status)
+	require.NotEmpty(t, resp.NextPageToken)
+
+	// Lifecycle updates between pages must be visible without changing receipt order.
+	current, err := queueStore.GetRequestSummaryStore().Get(s.ctx, "902")
+	require.NoError(t, err)
+	updated := current
+	updated.Status = entity.RequestStatusError
+	updated.StatusTimestampMs = 300
+	updated.LastError = "build failed"
+	updated.Metadata = map[string]string{"build": "url"}
+	require.NoError(t, queueStore.GetRequestSummaryStore().Update(s.ctx, updated, current.Version, current.Version+1))
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "902", resp.Requests[0].Sqid)
+	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "902", Queue: "test-queue"})
+	require.NoError(t, err)
+	assert.Equal(t, summary.Request, resp.Requests[0])
+	assert.Equal(t, string(entity.RequestStatusError), resp.Requests[0].Status)
+	assert.Equal(t, "build failed", resp.Requests[0].LastError)
+	assert.Equal(t, map[string]string{"build": "url"}, resp.Requests[0].Metadata)
 	require.NotEmpty(t, resp.NextPageToken)
 
 	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
-	assert.Equal(t, "test-queue/list-1", resp.Requests[0].Sqid)
+	assert.Equal(t, "901", resp.Requests[0].Sqid)
+	assert.Equal(t, string(entity.RequestStatusAccepted), resp.Requests[0].Status)
 	assert.Empty(t, resp.NextPageToken)
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "901", resp.Requests[0].Sqid)
 }
 
 // TestReadAPIErrorCodes verifies controller error classes reach stable gRPC codes.
 func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	t := s.T()
 
-	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1", Queue: "missing"})
+	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "1", Queue: "missing"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
@@ -225,7 +292,7 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 			ChangeURI:    overflowChangeURI,
 			Queue:        "overflow",
 			ReceivedAtMs: int64(i),
-			RequestID:    fmt.Sprintf("overflow/%d", i),
+			RequestID:    fmt.Sprintf("%d", i),
 		}))
 	}
 
@@ -244,9 +311,18 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 		ChangeURI:    inconsistentChangeURI,
 		Queue:        "missing-summary",
 		ReceivedAtMs: 1,
-		RequestID:    "missing-summary/1",
+		RequestID:    "1",
 	}))
 	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI, Queue: "missing-summary"})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	receiptStore, err := store.For("test-queue")
+	require.NoError(t, err)
+	require.NoError(t, receiptStore.GetRequestReceiptStore().Create(s.ctx, entity.RequestReceipt{
+		Queue: "test-queue", RequestID: "999", ReceivedAtMs: 500,
+	}))
+	_, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 500, ReceivedBeforeMs: 501})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
@@ -259,7 +335,7 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 // entry to storage, observable through the request-summary RPC.
 func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	t := s.T()
-	const sqid = "test-queue/log-consumer-test"
+	const sqid = "900"
 	const logQueue = "test-queue"
 
 	// Build a publisher against the shared queue database. NewQueue only wires up
@@ -298,6 +374,9 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	defer ticker.Stop()
 	for {
 		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid, Queue: logQueue})
+		if statusErr != nil {
+			require.Equal(t, codes.NotFound, status.Code(statusErr), "unexpected request-summary lookup error: %v", statusErr)
+		}
 		if statusErr == nil && resp.Request != nil && resp.Request.Status == string(entity.RequestStatusStarted) {
 			break
 		}

@@ -75,7 +75,7 @@ func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, erro
 
 // testRequestID is the one member of the batch under test, so the request-log
 // fan-out has somebody to report to.
-const testRequestID = "test-queue/1"
+const testRequestID = "1"
 
 func newTestHarness(t *testing.T, ctrl *gomock.Controller, batchState entity.BatchState) *testHarness {
 	h := &testHarness{}

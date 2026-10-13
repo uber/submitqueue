@@ -46,7 +46,7 @@ const (
 type Record struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the request id whose build reached a terminal status. Format:
-	// "request/<queue>/<counter>" (entity.Request.ID).
+	// a canonical positive decimal string (entity.Request.ID).
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue_name is the name of the queue processing the request, carried so
 	// the consumer can route by queue without loading state first. Empty on

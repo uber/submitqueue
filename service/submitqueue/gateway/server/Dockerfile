@@ -6,11 +6,13 @@ WORKDIR /app
 
 # Copy pre-built Linux binary
 # Built via: make build-submitqueue-gateway-linux
-COPY --chmod=0555 .docker-bin/gateway ./gateway
+COPY .docker-bin/gateway ./gateway
+RUN chmod 0555 ./gateway
 
 # Sample queue configuration; the gateway reads it on startup via
 # QUEUE_CONFIG_PATH (set in docker-compose.yml).
-COPY --chmod=0444 service/submitqueue/gateway/server/queues.yaml ./queues.yaml
+COPY service/submitqueue/gateway/server/queues.yaml ./queues.yaml
+RUN chmod 0444 ./queues.yaml
 
 EXPOSE 8080
 

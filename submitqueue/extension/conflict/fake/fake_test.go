@@ -37,35 +37,35 @@ func TestAnalyze_DelegatesWhenNoFailOn(t *testing.T) {
 	// Delegate to "all": one conflict per in-flight batch. nil failOn -> passthrough.
 	a := New(testCfg, all.New(testCfg), nil)
 	got, err := a.Analyze(context.Background(),
-		entity.Batch{ID: "q/batch/1"},
-		[]entity.Batch{{ID: "q/batch/2"}, {ID: "q/batch/3"}})
+		entity.Batch{ID: "1"},
+		[]entity.Batch{{ID: "2"}, {ID: "3"}})
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
 
 func TestAnalyze_DelegatesWhenFailOnFalse(t *testing.T) {
 	a := New(testCfg, none.New(testCfg), func(entity.Batch, []entity.Batch) bool { return false })
-	got, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/1"}, nil)
+	got, err := a.Analyze(context.Background(), entity.Batch{ID: "1"}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
 
 func TestAnalyze_FailAlways(t *testing.T) {
 	a := New(testCfg, none.New(testCfg), FailAlways)
-	_, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/1"}, nil)
+	_, err := a.Analyze(context.Background(), entity.Batch{ID: "1"}, nil)
 	require.Error(t, err)
 }
 
 func TestAnalyze_FailOnPredicate(t *testing.T) {
 	// Inject an error only for a specific batch ID.
 	a := New(testCfg, none.New(testCfg), func(b entity.Batch, _ []entity.Batch) bool {
-		return b.ID == "q/batch/bad"
+		return b.ID == "1"
 	})
 
-	_, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/bad"}, nil)
+	_, err := a.Analyze(context.Background(), entity.Batch{ID: "1"}, nil)
 	require.Error(t, err)
 
-	got, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/ok"}, nil)
+	got, err := a.Analyze(context.Background(), entity.Batch{ID: "2"}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }

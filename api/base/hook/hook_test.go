@@ -51,7 +51,7 @@ func TestHookEventRoundTrip(t *testing.T) {
 			Source:      "runway",
 			Type:        "merge.completed",
 			TimestampMs: 1722800012345,
-			Payload:     mustStruct(t, map[string]any{"request_id": "queue-a/42"}),
+			Payload:     mustStruct(t, map[string]any{"request_id": "42"}),
 		},
 		"envelope only": {
 			Id:          "stovepipe/commit.green/git-abc/1",
@@ -136,7 +136,7 @@ func TestEventIDIsDerived(t *testing.T) {
 			"unversioned":     NewUnversionedEventID("submitqueue", "batch.failed", "batch-778", "msg-1", 0),
 			"second ordinal":  NewUnversionedEventID("submitqueue", "batch.failed", "batch-778", "msg-1", 1),
 			"other cause":     NewUnversionedEventID("submitqueue", "batch.failed", "batch-778", "msg-2", 0),
-			"slashed subject": NewEventID("stovepipe", "commit.green", "request/monorepo/main/42", 4),
+			"slashed subject": NewEventID("stovepipe", "commit.green", "opaque/subject/42", 4),
 		}
 
 		seen := map[string]string{}

@@ -1,0 +1,80 @@
+:root {
+  --md-primary-fg-color: #146c4b;
+  --md-primary-fg-color--light: #1f9d6b;
+  --md-primary-fg-color--dark: #0e4f37;
+  --md-accent-fg-color: #1f9d6b;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f3d2c;
+  --md-primary-fg-color--dark: #0a2a1f;
+  --md-accent-fg-color: #3ccf91;
+  --md-typeset-a-color: #5fd6a3;
+}
+
+/* The home page renders its hero from home.html; the Markdown copy is for GitHub readers. */
+.sq-github-only {
+  display: none;
+}
+
+.sq-hero {
+  background: linear-gradient(135deg, #0e4f37 0%, #146c4b 45%, #1f9d6b 100%);
+  color: #fff;
+}
+
+[data-md-color-scheme="slate"] .sq-hero {
+  background: linear-gradient(135deg, #07261b 0%, #0f3d2c 50%, #146c4b 100%);
+}
+
+.sq-hero__inner {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 4.5rem 0.8rem 4rem;
+  text-align: center;
+}
+
+.sq-hero .md-typeset h1 {
+  color: inherit;
+  font-size: 3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.75rem;
+}
+
+.sq-hero__tagline {
+  font-size: 1.15rem;
+  line-height: 1.6;
+  margin: 0 auto 2rem;
+  opacity: 0.9;
+}
+
+.sq-hero .md-typeset .md-button {
+  margin: 0.3rem;
+}
+
+.sq-hero .md-typeset .md-button--primary {
+  background-color: #fff;
+  border-color: #fff;
+  color: #0e4f37;
+}
+
+.sq-hero .md-typeset .sq-hero__secondary {
+  border-color: rgba(255, 255, 255, 0.7);
+  color: #fff;
+}
+
+.sq-hero .md-typeset .md-button:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-color: #fff;
+  color: #fff;
+}
+
+@media screen and (min-width: 45em) {
+  .md-typeset .grid.cards.sq-features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.md-typeset .grid.cards .lg {
+  color: var(--md-accent-fg-color);
+}

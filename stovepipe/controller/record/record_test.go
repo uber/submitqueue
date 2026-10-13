@@ -35,9 +35,9 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectresult"
-	projectresultmock "github.com/uber/submitqueue/stovepipe/extension/projectresult/mock"
-	projectresultnoop "github.com/uber/submitqueue/stovepipe/extension/projectresult/noop"
+	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
+	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
+	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -48,7 +48,7 @@ import (
 
 const (
 	testQueue   = "monorepo/main"
-	testID      = "request/monorepo/main/7"
+	testID      = "7"
 	testURI     = "git://remote/monorepo/main/head-sha"
 	testBaseURI = "git://remote/monorepo/main/base-sha"
 )
@@ -198,7 +198,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		scope,
 		staticStorageFactory{store: m.store},
 		m.materializer,
-		projectresultnoop.New(),
+		projectstatusnoop.New(),
 		staticSourceControlFactory{sourceControl: m.sourceControl},
 		registry,
 		topicKey,
@@ -234,13 +234,17 @@ func recordPayload(t *testing.T, id string) []byte {
 
 // requestWithState returns a terminal-stage Request in the given state.
 func requestWithState(state entity.RequestState) entity.Request {
-	return entity.Request{
+	request := entity.Request{
 		ID:      testID,
 		Queue:   testQueue,
 		URI:     testURI,
 		State:   state,
 		Version: 2,
 	}
+	if state.HasBuildOutcome() {
+		request.TerminalBuildID = "bk-1"
+	}
+	return request
 }
 
 // failedRequest returns a failed request validated incrementally against
@@ -284,7 +288,7 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 		},
 		{
 			name:    "stored bookmark is older",
-			stored:  queueRow("git://remote/monorepo/main/old", "request/monorepo/main/3", 4),
+			stored:  queueRow("git://remote/monorepo/main/old", "3", 4),
 			wantURI: testURI,
 		},
 	}
@@ -330,17 +334,35 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 	}
 }
 
-func TestProcess_RecordsNamedProjectResults(t *testing.T) {
+func TestProcess_RejectsLegacyBookmark(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
+		Return(queueRow("git://remote/monorepo/main/old", "request/"+testQueue+"/42", 4), nil)
+
+	err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+	require.Error(t, err)
+	assert.Empty(t, m.hooks.events)
+}
+
+func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
 	eventMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	c.materializer = eventMaterializer
-	projectResultFactory := projectresultmock.NewMockFactory(ctrl)
-	projectResultResolver := projectresultmock.NewMockResolver(ctrl)
-	c.projectResultFactory = projectResultFactory
-	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
-		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return([]projectresult.Result{
+	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = projectStatusResolverFactory
+	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		Return(projectStatusResolver, nil)
+	projectStatusResolver.EXPECT().Resolve(
+		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
+	).Return([]projectstatus.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
 		{Project: "project-b", Degree: entity.DegreeBroken},
 	}, nil)
@@ -377,15 +399,31 @@ func TestProcess_RecordsNamedProjectResults(t *testing.T) {
 	assert.Equal(t, "2", logs[1].Metadata[requestlog.MetadataKeyProjectFactCount])
 }
 
-func TestProcess_RejectsInvalidProjectResultsBeforeWritingFacts(t *testing.T) {
+func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
-	projectResultFactory := projectresultmock.NewMockFactory(ctrl)
-	projectResultResolver := projectresultmock.NewMockResolver(ctrl)
-	c.projectResultFactory = projectResultFactory
-	projectResultFactory.EXPECT().For(projectresult.Config{QueueName: testQueue}).
-		Return(projectResultResolver, nil)
-	projectResultResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return([]projectresult.Result{
+	request := requestWithState(entity.RequestStateFailed)
+	request.TerminalBuildID = ""
+	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = projectStatusResolverFactory
+	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		Return(projectStatusResolver, nil)
+	projectStatusResolver.EXPECT().Resolve(gomock.Any(), request, "").Return(nil, nil)
+
+	err := c.recordProjectFacts(queueContext(), m.store, request)
+	require.NoError(t, err)
+}
+
+func TestProcess_RejectsInvalidProjectStatusResultsBeforeWritingFacts(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = projectStatusResolverFactory
+	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		Return(projectStatusResolver, nil)
+	projectStatusResolver.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return([]projectstatus.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
 		{Project: "project-b", Degree: math.NaN()},
 	}, nil)
@@ -706,7 +744,7 @@ func TestProcess_ExistingFactFromDifferentRequestFails(t *testing.T) {
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
 	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
-		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: "request/monorepo/main/1"}, nil)
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: "1"}, nil)
 	// The bookmark must not move on an identity this request does not own.
 
 	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -729,7 +767,7 @@ func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
 			// A newer green commit owns the bookmark and the ref, so promoting
 			// this one would move the ref backwards.
 			name:   "stored bookmark is newer",
-			stored: queueRow("git://remote/monorepo/main/newer", "request/monorepo/main/9", 5),
+			stored: queueRow("git://remote/monorepo/main/newer", "9", 5),
 		},
 	}
 

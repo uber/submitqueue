@@ -17,7 +17,8 @@ WORKDIR /app
 
 # Copy pre-built Linux binary
 # Built via: make build-submitqueue-orchestrator-linux
-COPY --chmod=0555 .docker-bin/orchestrator ./orchestrator
+COPY .docker-bin/orchestrator ./orchestrator
+RUN chmod 0555 ./orchestrator
 
 EXPOSE 8080
 

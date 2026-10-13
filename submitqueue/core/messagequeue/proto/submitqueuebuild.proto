@@ -27,7 +27,7 @@ option java_package = "com.uber.submitqueue.submitqueue.messagequeue";
 message Build {
     option (uber.base.messagequeue.topic_keys) = "build";
 
-    // id is the batch id whose speculated head should be built. Format: "<queue>/batch/<counter>".
+    // id is the batch id whose speculated head should be built. Canonical positive decimal string; queue and kind are carried separately.
     string id = 1;
     // queue is the name of the queue processing this work, carried so the
     // consumer can route by queue without loading state first. Empty on

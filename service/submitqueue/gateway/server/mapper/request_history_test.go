@@ -24,8 +24,8 @@ import (
 
 func TestProtoToGetRequestHistoryRequests(t *testing.T) {
 	assert.Equal(t,
-		entity.GetRequestHistoryByIDRequest{ID: "q/1", Queue: "q"},
-		ProtoToGetRequestHistoryByIDRequest(&pb.GetRequestHistoryByIDRequest{Sqid: "q/1", Queue: "q"}),
+		entity.GetRequestHistoryByIDRequest{ID: "1", Queue: "q"},
+		ProtoToGetRequestHistoryByIDRequest(&pb.GetRequestHistoryByIDRequest{Sqid: "1", Queue: "q"}),
 	)
 	assert.Equal(t,
 		entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "q"},
@@ -51,10 +51,10 @@ func TestHistoryEventsToProto(t *testing.T) {
 
 func TestRequestHistoriesToProto(t *testing.T) {
 	histories := RequestHistoriesToProto([]entity.RequestHistory{{
-		RequestID: "q/1",
+		RequestID: "1",
 		Events:    []entity.RequestLog{{TimestampMs: 10, Status: entity.RequestStatusAccepted}},
 	}})
 
-	assert.Equal(t, "q/1", histories[0].Sqid)
+	assert.Equal(t, "1", histories[0].Sqid)
 	assert.Equal(t, string(entity.RequestStatusAccepted), histories[0].Events[0].Status)
 }

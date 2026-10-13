@@ -136,6 +136,46 @@ func TestParseChangeID(t *testing.T) {
 			raw:     "git://git.example.com//refs%2Fheads%2Fmain/" + sha,
 			wantErr: true,
 		},
+		{
+			name:    "uppercase scheme",
+			raw:     "GIT://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + sha,
+			wantErr: true,
+		},
+		{
+			name:    "userinfo",
+			raw:     "git://user@git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + sha,
+			wantErr: true,
+		},
+		{
+			name:    "query",
+			raw:     "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + sha + "?x=1",
+			wantErr: true,
+		},
+		{
+			name:    "fragment",
+			raw:     "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + sha + "#frag",
+			wantErr: true,
+		},
+		{
+			name:    "lowercase percent-encoding",
+			raw:     "git://git.example.com/uber/monorepo/refs%2fheads%2fmain/" + sha,
+			wantErr: true,
+		},
+		{
+			name:    "unnecessarily encoded ref character",
+			raw:     "git://git.example.com/uber/monorepo/%72efs%2Fheads%2Fmain/" + sha,
+			wantErr: true,
+		},
+		{
+			name:    "empty interior repo segment",
+			raw:     "git://git.example.com/uber//monorepo/refs%2Fheads%2Fmain/" + sha,
+			wantErr: true,
+		},
+		{
+			name:    "leading empty repo segment",
+			raw:     "git://git.example.com//uber/monorepo/refs%2Fheads%2Fmain/" + sha,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

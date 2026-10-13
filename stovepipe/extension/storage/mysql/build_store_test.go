@@ -43,7 +43,7 @@ func setupBuildStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BuildS
 func TestBuildStore_Create(t *testing.T) {
 	build := entity.Build{
 		ID:        "bk-1001",
-		RequestID: "request/monorepo/main/1",
+		RequestID: "1",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -107,7 +107,7 @@ func TestBuildStore_Create(t *testing.T) {
 func TestBuildStore_Get(t *testing.T) {
 	want := entity.Build{
 		ID:        "bk-1001",
-		RequestID: "request/monorepo/main/1",
+		RequestID: "1",
 		Status:    entity.BuildStatusRunning,
 		Version:   2,
 	}

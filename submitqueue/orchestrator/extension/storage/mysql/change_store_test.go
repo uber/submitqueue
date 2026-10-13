@@ -42,7 +42,7 @@ func setupChangeStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.Chang
 func TestChangeStore_Create(t *testing.T) {
 	record := entity.ChangeRecord{
 		URI:       "github://github.example.com/uber/submitqueue/pull/123/deadbeef",
-		RequestID: "monorepo/1",
+		RequestID: "1",
 		Queue:     "monorepo",
 		CreatedAt: 1000,
 		UpdatedAt: 1000,
@@ -102,7 +102,7 @@ func TestChangeStore_Create(t *testing.T) {
 func TestChangeStore_GetByURI(t *testing.T) {
 	record := entity.ChangeRecord{
 		URI:       "github://github.example.com/uber/submitqueue/pull/123/deadbeef",
-		RequestID: "monorepo/1",
+		RequestID: "1",
 		Queue:     "monorepo",
 		CreatedAt: 1000,
 		UpdatedAt: 1000,

@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/errs"
+	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
@@ -212,4 +214,40 @@ func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, 2, callCount)
+}
+
+func TestProvider_Get_HTTPStatusError(t *testing.T) {
+	processor := errs.NewClassifierProcessor(httperrs.Classifier)
+	for _, tt := range []struct {
+		name      string
+		status    int
+		retryable bool
+	}{
+		{name: "service unavailable", status: http.StatusServiceUnavailable, retryable: true},
+		{name: "rate limited", status: http.StatusTooManyRequests, retryable: true},
+		{name: "bad request", status: http.StatusBadRequest},
+		{name: "unauthorized", status: http.StatusUnauthorized},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const body = `{"message":"upstream failure"}`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+
+			p := newTestProvider(t, server.URL)
+			_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
+				URIs: []string{"github://github.example.com/uber/submitqueue/pull/123/" + shaA},
+			}})
+			var statusErr *phttp.StatusError
+			require.ErrorAs(t, err, &statusErr)
+			assert.Equal(t, tt.status, statusErr.StatusCode)
+			assert.Equal(t, body, statusErr.Body)
+
+			classified := processor.Process(err)
+			assert.Equal(t, tt.retryable, errs.IsRetryable(classified))
+			assert.True(t, errs.IsDependencyError(classified))
+		})
+	}
 }

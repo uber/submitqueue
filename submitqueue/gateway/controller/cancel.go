@@ -78,8 +78,8 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if req.ID == "" {
-		return fmt.Errorf("requires the request to have a sqid specified: %w", ErrInvalidRequest)
+	if err := validateResourceID("sqid", req.ID); err != nil {
+		return fmt.Errorf("Cancel invalid sqid: %w", err)
 	}
 	if err := validateQueueIdentifier(req.Queue); err != nil {
 		return fmt.Errorf("Cancel invalid queue: %w", err)

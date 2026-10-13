@@ -269,8 +269,8 @@ func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
 	ctx := s.ctx
 
 	batchDependent := entity.BatchDependent{
-		BatchID:    "test/batch-dependent-update",
-		Dependents: []string{"test/dependent/1"},
+		BatchID:    "1",
+		Dependents: []string{"2"},
 		Version:    1,
 	}
 	require.NoError(t, s.forQueue("test-queue").GetBatchDependentStore().Create(ctx, batchDependent))
@@ -295,7 +295,7 @@ func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
 	assert.Equal(t, int32(3), retrieved.Version)
 
 	staleUpdate := retrieved
-	staleUpdate.Dependents = []string{"test/dependent/stale"}
+	staleUpdate.Dependents = []string{"3"}
 	err = s.forQueue("test-queue").GetBatchDependentStore().Update(ctx, staleUpdate, 2, 4)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
 
@@ -311,10 +311,10 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	ctx := s.ctx
 	store := s.forQueue("batch-update").GetBatchStore()
 	batch := entity.Batch{
-		ID:           "batch-update/batch/1",
+		ID:           "1",
 		Queue:        "batch-update",
 		Contains:     []string{"batch-update/1"},
-		Dependencies: []string{"batch-update/batch/0"},
+		Dependencies: []string{"0"},
 		State:        entity.BatchStateCreated,
 		Version:      1,
 	}
@@ -370,10 +370,10 @@ func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
 	storeA := s.forQueue("qbs-queue-a").GetQueueBatchStateStore()
 	storeB := s.forQueue("qbs-queue-b").GetQueueBatchStateStore()
 
-	created1 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "qbs-queue-a/batch/1"}
-	created2 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "qbs-queue-a/batch/2"}
-	speculating := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateSpeculating, BatchID: "qbs-queue-a/batch/3"}
-	otherQueue := entity.QueueBatchState{Queue: "qbs-queue-b", State: entity.BatchStateCreated, BatchID: "qbs-queue-b/batch/1"}
+	created1 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "1"}
+	created2 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "2"}
+	speculating := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateSpeculating, BatchID: "3"}
+	otherQueue := entity.QueueBatchState{Queue: "qbs-queue-b", State: entity.BatchStateCreated, BatchID: "1"}
 
 	require.NoError(t, storeA.Put(ctx, created1))
 	require.NoError(t, storeA.Put(ctx, created2))
@@ -428,13 +428,13 @@ func (s *StorageContractSuite) TestStorage_QueueIsolation() {
 	storeA := s.forQueue("iso-queue-a")
 	storeB := s.forQueue("iso-queue-b")
 
-	request := entity.Request{ID: "iso-a/1", Queue: "iso-queue-a", State: entity.RequestStateStarted, LandStrategy: mergestrategy.MergeStrategyMerge, Version: 1}
+	request := entity.Request{ID: "1", Queue: "iso-queue-a", State: entity.RequestStateStarted, LandStrategy: mergestrategy.MergeStrategyMerge, Version: 1}
 	require.NoError(t, storeA.GetRequestStore().Create(ctx, request))
 	_, err := storeB.GetRequestStore().Get(ctx, request.ID)
 	require.ErrorIs(t, err, storage.ErrNotFound, "a request must be invisible through another queue's binding")
 	require.Error(t, storeB.GetRequestStore().Create(ctx, request), "a mismatched-queue write must be rejected")
 
-	batch := entity.Batch{ID: "iso-a/batch/1", Queue: "iso-queue-a", State: entity.BatchStateCreated, Version: 1}
+	batch := entity.Batch{ID: "1", Queue: "iso-queue-a", State: entity.BatchStateCreated, Version: 1}
 	require.NoError(t, storeA.GetBatchStore().Create(ctx, batch))
 	_, err = storeB.GetBatchStore().Get(ctx, batch.ID)
 	require.ErrorIs(t, err, storage.ErrNotFound)
@@ -519,7 +519,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_NoMatch() {
 	const queue = "cq-nomatch"
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, "github://github.example.com/uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
@@ -534,13 +534,13 @@ func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_Match() {
 	const queue = "cq-match"
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Equal(t, queue+"/1", got[0].RequestID)
+	assert.Equal(t, "1", got[0].RequestID)
 	assert.Equal(t, changeURI, got[0].URI)
 	assert.Equal(t, queue, got[0].Queue)
 	assert.Equal(t, int32(1), got[0].Version)
@@ -553,13 +553,13 @@ func (s *StorageContractSuite) TestStorage_ChangeGetByURI_DoesNotExcludeSelf() {
 	const queue = "cq-self"
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "store returns the row even when caller might consider it self")
-	assert.Equal(t, queue+"/1", got[0].RequestID)
+	assert.Equal(t, "1", got[0].RequestID)
 }
 
 // TestStorage_ChangeGetByURI_QueueScoped verifies GetByURI never returns rows from another queue.
@@ -568,7 +568,7 @@ func (s *StorageContractSuite) TestStorage_ChangeGetByURI_QueueScoped() {
 	ctx := s.ctx
 
 	require.NoError(t, s.forQueue("cq-scoped-A").GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: "cq-scoped-A/1", Queue: "cq-scoped-A", CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: "cq-scoped-A", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.forQueue("cq-scoped-B").GetChangeStore().GetByURI(ctx, changeURI)
@@ -581,7 +581,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_Idempotent() {
 	t := s.T()
 	ctx := s.ctx
 	const queue = "cq-idem"
-	rec := entity.ChangeRecord{URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1}
+	rec := entity.ChangeRecord{URI: changeURI, RequestID: "1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1}
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, rec))
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
@@ -598,10 +598,10 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_DifferentRequestSameURI(
 	const queue = "cq-multi"
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/2", Queue: queue, CreatedAt: 2, UpdatedAt: 2, Version: 1,
+		URI: changeURI, RequestID: "2", Queue: queue, CreatedAt: 2, UpdatedAt: 2, Version: 1,
 	}))
 
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
@@ -610,7 +610,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_DifferentRequestSameURI(
 
 	ids := []string{got[0].RequestID, got[1].RequestID}
 	sort.Strings(ids)
-	assert.Equal(t, []string{queue + "/1", queue + "/2"}, ids)
+	assert.Equal(t, []string{"1", "2"}, ids)
 }
 
 // sampleDetails is a representative ChangeDetails reused across change-store contract tests.
@@ -632,7 +632,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_PreservesDetails() {
 	details := sampleDetails()
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, Details: details, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: queue, Details: details, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
@@ -648,7 +648,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyDetails() {
 	const queue = "cq-emptydetails"
 
 	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: "1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
@@ -686,7 +686,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	ctx := s.ctx
 	const queue = "summary-q"
 	summary := entity.RequestSummary{
-		RequestID: "summary/1", Queue: queue, ChangeURIs: nil, ReceivedAtMs: 100,
+		RequestID: "1", Queue: queue, ChangeURIs: nil, ReceivedAtMs: 100,
 		Status: entity.RequestStatusAccepted, RequestVersion: 1, StatusTimestampMs: 100, Version: 1,
 		LastError: "", Metadata: nil,
 	}
@@ -768,112 +768,15 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	assert.Equal(t, int32(4), normalizedEmpty.Version)
 }
 
-func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
-	t := s.T()
-	ctx := s.ctx
-	store := s.forGatewayQueue("queue-summary").GetRequestQueueSummaryStore()
-	rows := []entity.RequestQueueSummary{
-		{RequestID: "queue-summary/1", Queue: "queue-summary", ChangeURIs: nil, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, Version: 1, Metadata: nil},
-		{RequestID: "queue-summary/2", Queue: "queue-summary", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, Version: 1, Metadata: map[string]string{}},
-		{RequestID: "queue-summary/3", Queue: "queue-summary", ChangeURIs: []string{"uri/3"}, ReceivedAtMs: 200, Status: entity.RequestStatusError, Version: 1, Metadata: map[string]string{}},
-	}
-	for _, row := range rows {
-		require.NoError(t, store.Create(ctx, row))
-	}
-	require.ErrorIs(t, store.Create(ctx, rows[0]), storage.ErrAlreadyExists)
-
-	got, err := store.Get(ctx, rows[0].ReceivedAtMs, rows[0].RequestID)
-	require.NoError(t, err)
-	assert.NotNil(t, got.ChangeURIs)
-	assert.NotNil(t, got.Metadata)
-	_, err = store.Get(ctx, 999, "queue-summary/missing")
-	require.ErrorIs(t, err, storage.ErrNotFound)
-
-	got.Status = entity.RequestStatusLanded
-	got.ChangeURIs = []string{"uri/replacement/1", "uri/replacement/2"}
-	got.LastError = "done"
-	got.Metadata = map[string]string{"result": "landed"}
-	require.NoError(t, store.Update(ctx, got, 1, 2))
-	updated, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
-	require.NoError(t, err)
-	assert.Equal(t, int32(2), updated.Version)
-	assert.Equal(t, []string{"uri/replacement/1", "uri/replacement/2"}, updated.ChangeURIs)
-	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
-	assert.Equal(t, "done", updated.LastError)
-	assert.Equal(t, map[string]string{"result": "landed"}, updated.Metadata)
-
-	stale := updated
-	stale.ChangeURIs = []string{}
-	stale.Status = entity.RequestStatusError
-	stale.LastError = "stale"
-	stale.Metadata = map[string]string{}
-	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
-	unchanged, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
-	require.NoError(t, err)
-	assert.Equal(t, updated, unchanged)
-
-	updated.ChangeURIs = nil
-	updated.Metadata = nil
-	require.NoError(t, store.Update(ctx, updated, 2, 3))
-	normalized, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
-	require.NoError(t, err)
-	assert.Equal(t, int32(3), normalized.Version)
-	assert.NotNil(t, normalized.ChangeURIs)
-	assert.Empty(t, normalized.ChangeURIs)
-	assert.NotNil(t, normalized.Metadata)
-	assert.Empty(t, normalized.Metadata)
-
-	normalized.ChangeURIs = []string{}
-	normalized.Metadata = map[string]string{}
-	require.NoError(t, store.Update(ctx, normalized, 3, 4))
-	emptyCollections, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
-	require.NoError(t, err)
-	assert.Equal(t, int32(4), emptyCollections.Version)
-	assert.NotNil(t, emptyCollections.ChangeURIs)
-	assert.Empty(t, emptyCollections.ChangeURIs)
-	assert.NotNil(t, emptyCollections.Metadata)
-	assert.Empty(t, emptyCollections.Metadata)
-
-	firstPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
-	})
-	require.NoError(t, err)
-	require.Len(t, firstPage, 2)
-	assert.Equal(t, []string{"queue-summary/3", "queue-summary/2"}, []string{firstPage[0].RequestID, firstPage[1].RequestID})
-
-	secondPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
-		HasCursor: true, Cursor: storage.RequestQueueSummaryCursor{ReceivedAtMs: 200, RequestID: "queue-summary/2"},
-	})
-	require.NoError(t, err)
-	require.Len(t, secondPage, 1)
-	assert.Equal(t, "queue-summary/1", secondPage[0].RequestID)
-	assert.NotNil(t, secondPage[0].ChangeURIs)
-	assert.NotNil(t, secondPage[0].Metadata)
-
-	bounded, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 10,
-	})
-	require.NoError(t, err)
-	require.Len(t, bounded, 1)
-	assert.Equal(t, "queue-summary/1", bounded[0].RequestID)
-
-	empty, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		ReceivedAtOrAfterMs: 300, ReceivedBeforeMs: 400, Limit: 10,
-	})
-	require.NoError(t, err)
-	assert.Empty(t, empty)
-}
-
 func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	t := s.T()
 	ctx := s.ctx
 	const queue = "uri-q"
 	store := s.forGatewayQueue(queue).GetRequestURIStore()
 	rows := []entity.RequestURI{
-		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 100, RequestID: "uri/1"},
-		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "uri/2"},
-		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "uri/3"},
+		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 100, RequestID: "1"},
+		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "2"},
+		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "3"},
 	}
 	for _, row := range rows {
 		require.NoError(t, store.Create(ctx, row))
@@ -883,7 +786,7 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	got, err := store.ListByURI(ctx, "uri/shared", 2)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	assert.Equal(t, []string{"uri/3", "uri/2"}, []string{got[0].RequestID, got[1].RequestID})
+	assert.Equal(t, []string{"3", "2"}, []string{got[0].RequestID, got[1].RequestID})
 
 	empty, err := store.ListByURI(ctx, "uri/missing", 2)
 	require.NoError(t, err)
@@ -892,12 +795,12 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	// The same change URI in another queue is a distinct mapping set.
 	otherStore := s.forGatewayQueue("uri-q-other").GetRequestURIStore()
 	require.NoError(t, otherStore.Create(ctx, entity.RequestURI{
-		ChangeURI: "uri/shared", Queue: "uri-q-other", ReceivedAtMs: 100, RequestID: "other/1",
+		ChangeURI: "uri/shared", Queue: "uri-q-other", ReceivedAtMs: 100, RequestID: "1",
 	}), "the same change URI in another queue is a distinct row")
 	otherGot, err := otherStore.ListByURI(ctx, "uri/shared", 10)
 	require.NoError(t, err)
 	require.Len(t, otherGot, 1, "one queue's mappings must not surface through another's binding")
-	assert.Equal(t, "other/1", otherGot[0].RequestID)
+	assert.Equal(t, "1", otherGot[0].RequestID)
 }
 
 // TestStorage_RequestLogAppendAndList tests the append-only audit trail and its
@@ -909,18 +812,18 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 	const queue = "log-q"
 	store := s.forGatewayQueue(queue).GetRequestLogStore()
 
-	_, err := store.List(ctx, "log/missing")
+	_, err := store.List(ctx, "999")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	entries := []entity.RequestLog{
-		{RequestID: "log/1", Queue: queue, TimestampMs: 100, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
-		{RequestID: "log/1", Queue: queue, TimestampMs: 200, Status: entity.RequestStatusStarted, LastError: "detail", Metadata: map[string]string{"k": "v"}},
+		{RequestID: "1", Queue: queue, TimestampMs: 100, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
+		{RequestID: "1", Queue: queue, TimestampMs: 200, Status: entity.RequestStatusStarted, LastError: "detail", Metadata: map[string]string{"k": "v"}},
 	}
 	for _, entry := range entries {
 		require.NoError(t, store.Insert(ctx, entry))
 	}
 
-	got, err := store.List(ctx, "log/1")
+	got, err := store.List(ctx, "1")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, entity.RequestStatusAccepted, got[0].Status, "entries come back in timestamp order")
@@ -928,15 +831,15 @@ func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
 
 	// A log carrying another queue's name is rejected by the binding.
 	assert.Error(t, store.Insert(ctx, entity.RequestLog{
-		RequestID: "log/1", Queue: "log-q-other", TimestampMs: 300, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
+		RequestID: "1", Queue: "log-q-other", TimestampMs: 300, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
 	}))
 
 	// The same request ID in another queue is an independent history.
 	otherStore := s.forGatewayQueue("log-q-other").GetRequestLogStore()
 	require.NoError(t, otherStore.Insert(ctx, entity.RequestLog{
-		RequestID: "log/1", Queue: "log-q-other", TimestampMs: 150, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
+		RequestID: "1", Queue: "log-q-other", TimestampMs: 150, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
 	}))
-	otherGot, err := otherStore.List(ctx, "log/1")
+	otherGot, err := otherStore.List(ctx, "1")
 	require.NoError(t, err)
 	require.Len(t, otherGot, 1, "one queue's log must not surface through another's binding")
 	assert.Equal(t, entity.RequestStatusLanded, otherGot[0].Status)

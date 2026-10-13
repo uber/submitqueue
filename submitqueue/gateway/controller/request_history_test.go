@@ -34,14 +34,14 @@ func TestGetRequestHistoryByID(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
-	logStore.EXPECT().List(gomock.Any(), "queue/1").Return([]entity.RequestLog{
-		{RequestID: "queue/1", TimestampMs: 10, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
-		{RequestID: "queue/1", TimestampMs: 20, Status: entity.RequestStatusStarted, LastError: "retry", Metadata: map[string]string{"attempt": "1"}},
-		{RequestID: "queue/1", TimestampMs: 20, Status: entity.RequestStatusStarted, LastError: "retry", Metadata: map[string]string{"attempt": "1"}},
+	logStore.EXPECT().List(gomock.Any(), "1").Return([]entity.RequestLog{
+		{RequestID: "1", TimestampMs: 10, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
+		{RequestID: "1", TimestampMs: 20, Status: entity.RequestStatusStarted, LastError: "retry", Metadata: map[string]string{"attempt": "1"}},
+		{RequestID: "1", TimestampMs: 20, Status: entity.RequestStatusStarted, LastError: "retry", Metadata: map[string]string{"attempt": "1"}},
 	}, nil)
 
 	controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, nil, logStore, uriStore))
-	events, err := controller.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1", Queue: "queue"})
+	events, err := controller.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "1", Queue: "queue"})
 
 	require.NoError(t, err)
 	require.Len(t, events, 3)
@@ -56,24 +56,24 @@ func TestGetRequestHistoryByChangeURI(t *testing.T) {
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{
-		{ChangeURI: "uri", RequestID: "queue/10"},
-		{ChangeURI: "uri", RequestID: "b/2"},
-		{ChangeURI: "uri", RequestID: "missing/3"},
-		{ChangeURI: "uri", RequestID: "queue/1"},
-		{ChangeURI: "uri", RequestID: "a/2"},
+		{ChangeURI: "uri", RequestID: "10"},
+		{ChangeURI: "uri", RequestID: "2"},
+		{ChangeURI: "uri", RequestID: "3"},
+		{ChangeURI: "uri", RequestID: "1"},
+		{ChangeURI: "uri", RequestID: "4"},
 	}, nil)
-	logStore.EXPECT().List(gomock.Any(), "queue/10").Return([]entity.RequestLog{{RequestID: "queue/10", TimestampMs: 10, Status: entity.RequestStatusLanded}}, nil)
-	logStore.EXPECT().List(gomock.Any(), "b/2").Return([]entity.RequestLog{{RequestID: "b/2", TimestampMs: 2, Status: entity.RequestStatusStarted}}, nil)
-	logStore.EXPECT().List(gomock.Any(), "missing/3").Return(nil, basestorage.ErrNotFound)
-	logStore.EXPECT().List(gomock.Any(), "queue/1").Return([]entity.RequestLog{{RequestID: "queue/1", TimestampMs: 1, Status: entity.RequestStatusAccepted}}, nil)
-	logStore.EXPECT().List(gomock.Any(), "a/2").Return([]entity.RequestLog{{RequestID: "a/2", TimestampMs: 2, Status: entity.RequestStatusError}}, nil)
+	logStore.EXPECT().List(gomock.Any(), "10").Return([]entity.RequestLog{{RequestID: "10", TimestampMs: 10, Status: entity.RequestStatusLanded}}, nil)
+	logStore.EXPECT().List(gomock.Any(), "2").Return([]entity.RequestLog{{RequestID: "2", TimestampMs: 2, Status: entity.RequestStatusStarted}}, nil)
+	logStore.EXPECT().List(gomock.Any(), "3").Return(nil, basestorage.ErrNotFound)
+	logStore.EXPECT().List(gomock.Any(), "1").Return([]entity.RequestLog{{RequestID: "1", TimestampMs: 1, Status: entity.RequestStatusAccepted}}, nil)
+	logStore.EXPECT().List(gomock.Any(), "4").Return([]entity.RequestLog{{RequestID: "4", TimestampMs: 4, Status: entity.RequestStatusError}}, nil)
 
 	controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, nil, logStore, uriStore))
 	histories, err := controller.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 
 	require.NoError(t, err)
 	require.Len(t, histories, 4)
-	assert.Equal(t, []string{"queue/1", "a/2", "b/2", "queue/10"}, []string{
+	assert.Equal(t, []string{"1", "2", "4", "10"}, []string{
 		histories[0].RequestID,
 		histories[1].RequestID,
 		histories[2].RequestID,
@@ -103,6 +103,15 @@ func TestHistoryErrors(t *testing.T) {
 			wantUser:    true,
 		},
 		{
+			name: "composite sqid",
+			call: func(c RequestHistoryController) error {
+				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1", Queue: "queue"})
+				return err
+			},
+			wantInvalid: true,
+			wantUser:    true,
+		},
+		{
 			name: "empty change URI",
 			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{})
@@ -114,10 +123,10 @@ func TestHistoryErrors(t *testing.T) {
 		{
 			name: "sqid not found",
 			setup: func(logStore *storagemock.MockRequestLogStore, _ *storagemock.MockRequestURIStore) {
-				logStore.EXPECT().List(gomock.Any(), "missing/1").Return(nil, basestorage.ErrNotFound)
+				logStore.EXPECT().List(gomock.Any(), "1").Return(nil, basestorage.ErrNotFound)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "missing/1", Queue: "missing"})
+				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "1", Queue: "missing"})
 				return err
 			},
 			wantNotFound: true,
@@ -126,10 +135,10 @@ func TestHistoryErrors(t *testing.T) {
 		{
 			name: "sqid storage failure",
 			setup: func(logStore *storagemock.MockRequestLogStore, _ *storagemock.MockRequestURIStore) {
-				logStore.EXPECT().List(gomock.Any(), "queue/1").Return(nil, backendErr)
+				logStore.EXPECT().List(gomock.Any(), "1").Return(nil, backendErr)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1", Queue: "queue"})
+				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "1", Queue: "queue"})
 				return err
 			},
 		},
@@ -160,8 +169,8 @@ func TestHistoryErrors(t *testing.T) {
 		{
 			name: "all mapped logs absent",
 			setup: func(logStore *storagemock.MockRequestLogStore, uriStore *storagemock.MockRequestURIStore) {
-				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "queue/1"}}, nil)
-				logStore.EXPECT().List(gomock.Any(), "queue/1").Return(nil, basestorage.ErrNotFound)
+				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "1"}}, nil)
+				logStore.EXPECT().List(gomock.Any(), "1").Return(nil, basestorage.ErrNotFound)
 			},
 			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
@@ -172,9 +181,8 @@ func TestHistoryErrors(t *testing.T) {
 		},
 		{
 			name: "mapped sqid malformed",
-			setup: func(logStore *storagemock.MockRequestLogStore, uriStore *storagemock.MockRequestURIStore) {
+			setup: func(_ *storagemock.MockRequestLogStore, uriStore *storagemock.MockRequestURIStore) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "malformed"}}, nil)
-				logStore.EXPECT().List(gomock.Any(), "malformed").Return([]entity.RequestLog{{RequestID: "malformed"}}, nil)
 			},
 			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})

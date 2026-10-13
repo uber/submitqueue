@@ -41,12 +41,12 @@ func TestQueueBatchStateStore_List(t *testing.T) {
 	record1 := entity.QueueBatchState{
 		Queue:   "monorepo",
 		State:   entity.BatchStateSpeculating,
-		BatchID: "monorepo/batch/1",
+		BatchID: "1",
 	}
 	record2 := entity.QueueBatchState{
 		Queue:   record1.Queue,
 		State:   record1.State,
-		BatchID: "monorepo/batch/2",
+		BatchID: "2",
 	}
 	storeErr := errors.New("storage failed")
 	tests := map[string]struct {
@@ -115,7 +115,7 @@ func TestQueueBatchStateStore_Put(t *testing.T) {
 	record := entity.QueueBatchState{
 		Queue:   "monorepo",
 		State:   entity.BatchStateCreated,
-		BatchID: "monorepo/batch/1",
+		BatchID: "1",
 	}
 	tests := map[string]struct {
 		setup  func(sqlmock.Sqlmock)
@@ -167,7 +167,7 @@ func TestQueueBatchStateStore_Delete(t *testing.T) {
 	record := entity.QueueBatchState{
 		Queue:   "monorepo",
 		State:   entity.BatchStateSucceeded,
-		BatchID: "monorepo/batch/1",
+		BatchID: "1",
 	}
 	tests := map[string]struct {
 		setup  func(sqlmock.Sqlmock)
