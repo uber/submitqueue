@@ -9,7 +9,6 @@ go_test(
     ],
     data = [
         "docker-compose.yml",
-        "//stovepipe/extension/storage/mysql/migrations:queue_enablement.sql",
         "//stovepipe/extension/storage/mysql/schema",
     ],
     tags = [

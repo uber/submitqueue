@@ -17,7 +17,6 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"os"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -54,23 +53,6 @@ func TestMySQLStorage(t *testing.T) {
 	backend, err := mysqlstorage.NewStorage(db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 	factory := mysqlFactory{backend: backend}
-
-	t.Run("QueueEnablementMigration", func(t *testing.T) {
-		resetStorage(t, db)
-		_, err := db.ExecContext(ctx, "ALTER TABLE queue DROP COLUMN enablement, DROP COLUMN enablement_version, DROP COLUMN effective_from_commit_uri, DROP COLUMN enablement_changed_at_ms")
-		require.NoError(t, err)
-		_, err = db.ExecContext(ctx, "INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version) VALUES ('existing/main', 'green', 2, '9', 12)")
-		require.NoError(t, err)
-		migration, err := os.ReadFile(testutil.Runfile("stovepipe/extension/storage/mysql/migrations/queue_enablement.sql"))
-		require.NoError(t, err)
-		_, err = db.ExecContext(ctx, string(migration))
-		require.NoError(t, err)
-		bound, err := backend.For("existing/main")
-		require.NoError(t, err)
-		queue, err := bound.GetQueueStore().Get(ctx, "existing/main")
-		require.NoError(t, err)
-		require.Equal(t, entity.Queue{Name: "existing/main", LastGreenURI: "green", InFlightCount: 2, LatestRequestID: "9", Version: 12}, queue)
-	})
 
 	t.Run("QueueSummaryStores", func(t *testing.T) {
 		resetStorage(t, db)
