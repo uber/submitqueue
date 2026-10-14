@@ -26,7 +26,7 @@ Pause can use the same internal-state, summary and history pattern described bel
 
 ## What the endpoint returns
 
-`GetQueueStatus` takes a queue name and an optional `change_uri`. Omitting the commit selects the latest queue summary; supplying it selects the state covering that commit. The response contains one state:
+`GetQueueStatus` takes a queue name and an optional `change_uri`. Omitting the commit selects the latest queue summary; supplying it selects the enablement covering that commit. The response contains an `enablement` object of type `QueueEnablementStatus`:
 
 | Field | Meaning |
 |---|---|
@@ -34,6 +34,8 @@ Pause can use the same internal-state, summary and history pattern described bel
 | `effective_from_commit_uri` | First covered commit, inclusive. |
 | `version` | Sequence number that increases for each enablement change. |
 | `changed_at_ms` | Recorded change timestamp in Unix milliseconds, distinct from commit time. |
+
+The boundary, version and timestamp describe enablement only. Future operational fields, such as pause status, belong beside this object and can change independently.
 
 See the [proto](../../../api/stovepipe/proto/stovepipe.proto) for the wire contract.
 

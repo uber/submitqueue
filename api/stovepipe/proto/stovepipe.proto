@@ -262,8 +262,8 @@ enum QueueEnablement {
     QUEUE_ENABLEMENT_DISABLED = 2;
 }
 
-// QueueState describes applied enablement.
-message QueueState {
+// QueueEnablementStatus describes applied enablement.
+message QueueEnablementStatus {
     // Positive enablement sequence, increasing with each state change.
     int64 version = 1;
     // Applied enablement. Successful lookups never return UNKNOWN.
@@ -277,8 +277,8 @@ message QueueState {
 message GetQueueStatusResponse {
     // Queue selected by the request.
     string queue = 1;
-    // Current enablement when change_uri is empty; otherwise enablement covering that commit.
-    QueueState state = 2;
+    // Current enablement, or enablement covering change_uri. Always present on success.
+    QueueEnablementStatus enablement = 2;
 }
 
 // Stovepipe provides the Stovepipe API.
