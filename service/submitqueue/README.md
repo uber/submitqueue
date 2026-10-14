@@ -21,7 +21,7 @@ Each service requires the application and queue MySQL databases. Service-specifi
 | `MYSQL_DSN` | both | yes | Application database DSN | — |
 | `QUEUE_MYSQL_DSN` | both | yes | Queue database DSN | — |
 | `QUEUE_CONFIG_PATH` | Gateway | yes | YAML registry of accepted queue names | — |
-| `QUEUE_PAUSE_CONFIG_PATH` | Gateway | no | YAML file of per-queue pause switches, re-read on every land | pausing disabled when unset |
+| `QUEUE_PAUSE_CONFIG_PATH` | both | no | YAML file of per-queue pause switches, re-read on every land and every gated delivery | pausing disabled when unset |
 | `PROFILES_CONFIG_PATH` | Orchestrator | no | YAML extension profiles and per-queue routing | built-in example profiles |
 | `HOSTNAME` | both | no | Base subscriber name; Gateway appends its PID | time-based service name |
 | `QUEUE_LOG_LEVEL` | both | no | Message-queue logger level | `info` |

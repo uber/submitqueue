@@ -42,11 +42,9 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
+	"github.com/uber/submitqueue/service/submitqueue/queuepausestore"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
-	"github.com/uber/submitqueue/submitqueue/extension/queuepause"
-	queuepausefile "github.com/uber/submitqueue/submitqueue/extension/queuepause/file"
-	queuepausenoop "github.com/uber/submitqueue/submitqueue/extension/queuepause/noop"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
 	logctrl "github.com/uber/submitqueue/submitqueue/gateway/controller/log"
 	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
@@ -171,22 +169,6 @@ func gatewayStatusError(err error) error {
 	}
 }
 
-// newQueuePauseStore enables the file-backed pause store only when
-// QUEUE_PAUSE_CONFIG_PATH is set; otherwise no queue is ever paused.
-func newQueuePauseStore(logger *zap.Logger) (queuepause.Store, error) {
-	path := os.Getenv("QUEUE_PAUSE_CONFIG_PATH")
-	if path == "" {
-		logger.Info("queue pause disabled")
-		return queuepausenoop.New(), nil
-	}
-	store, err := queuepausefile.NewStore(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load queue pause config: %w", err)
-	}
-	logger.Info("queue pause configured", zap.String("path", path))
-	return store, nil
-}
-
 func main() {
 	code := 0
 	if err := run(); err != nil {
@@ -287,7 +269,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to load queue configs: %w", err)
 	}
-	queuePauses, err := newQueuePauseStore(logger)
+	queuePauses, err := queuepausestore.FromEnv(logger)
 	if err != nil {
 		return err
 	}
