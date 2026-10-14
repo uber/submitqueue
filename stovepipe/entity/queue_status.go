@@ -14,18 +14,16 @@
 
 package entity
 
-// GetQueueStatusRequest selects a queue and optionally an exact commit in its history.
 type GetQueueStatusRequest struct {
 	// Queue is the stable repo-and-ref namespace.
 	Queue string
-	// ChangeURI is an optional exact commit URI, including commits without validation requests.
+	// ChangeURI is an immutable commit URI; empty selects current enablement.
 	ChangeURI string
 }
 
-// GetQueueStatusResult contains the enablement selected by the request.
 type GetQueueStatusResult struct {
 	// Queue is the selected repo-and-ref namespace.
 	Queue string
-	// State is the latest materialized enablement or the occurrence covering the requested commit.
+	// State is current enablement or enablement covering the requested commit.
 	State QueueState
 }

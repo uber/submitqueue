@@ -118,7 +118,6 @@ func (s *StovepipeServer) List(ctx context.Context, req *pb.ListRequest) (*pb.Li
 	return mapper.ListResultToProto(result), nil
 }
 
-// GetQueueStatus returns applied enablement separately from execution control.
 func (s *StovepipeServer) GetQueueStatus(ctx context.Context, req *pb.GetQueueStatusRequest) (*pb.GetQueueStatusResponse, error) {
 	result, err := s.queueStatusController.GetQueueStatus(ctx, mapper.ProtoToGetQueueStatusRequest(req))
 	if err != nil {

@@ -75,7 +75,6 @@ func (s *StovepipeE2ESuite) TestQueueStatusWithoutValidation() {
 		require.Equal(t, uri, result.State.EffectiveFromCommitUri)
 		require.Equal(t, applied.ChangedAtMs, result.State.ChangedAtMs)
 	}
-	// Read-side lookup reports missing history without modifying it; initialization repairs it.
 	_, err = s.db.ExecContext(s.ctx, "DELETE FROM queue_log WHERE queue = ? AND log_id = ?", queue, entity.QueueLogID(4))
 	require.NoError(t, err)
 	result, err := s.client.GetQueueStatus(s.ctx, &pb.GetQueueStatusRequest{Queue: queue})
