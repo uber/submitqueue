@@ -21,8 +21,8 @@ type QueueEnablement string
 
 const (
 	// QueueEnablementUnknown is unset and never an explicit disablement.
-	QueueEnablementUnknown QueueEnablement = ""
-	QueueEnablementEnabled QueueEnablement = "enabled"
+	QueueEnablementUnknown  QueueEnablement = ""
+	QueueEnablementEnabled  QueueEnablement = "enabled"
 	QueueEnablementDisabled QueueEnablement = "disabled"
 )
 
