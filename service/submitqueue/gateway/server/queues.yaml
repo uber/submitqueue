@@ -39,3 +39,6 @@ queues:
   # Exercises path-overlap conflict analysis in the built-in orchestrator
   # profile.
   - name: file-overlap-queue
+  # Owns the pause and unpause e2e tests, which switch its pause state. It is
+  # a baseline-profile queue, so pausing it never touches another test's queue.
+  - name: e2e-pause-queue

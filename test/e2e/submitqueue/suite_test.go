@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,7 @@ type E2EIntegrationSuite struct {
 	queueDB            *sql.DB                 // Queue database
 	appStorage         *storagemysql.Storage   // White-box view of the operating store (app DB), resolved per queue
 	gate               *consumergatefile.Store // Consumer-gate control plane (shared dir bind-mounted into services)
+	pausePath          string                  // Queue pause file on the host (its directory is bind-mounted into the gateway and orchestrator)
 }
 
 func TestE2EIntegration(t *testing.T) {
@@ -94,6 +96,15 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	gateDir := t.TempDir()
 	t.Setenv("SQ_CONSUMER_GATE_DIR", gateDir)
 	s.gate = consumergatefile.New(gateDir)
+
+	// Queue-pause state is an explicit E2E-only opt-in too. The gateway and
+	// orchestrator read this file on every land and every delivery, and the
+	// store requires it to exist at startup, so it starts with nothing paused.
+	pauseDir := t.TempDir()
+	s.pausePath = filepath.Join(pauseDir, queuePauseFileName)
+	s.writeQueuePauseFile("queues: []\n")
+	t.Setenv("SQ_QUEUE_PAUSE_DIR", pauseDir)
+	t.Setenv("SQ_QUEUE_PAUSE_CONFIG_PATH", "/var/submitqueue/queuepause/"+queuePauseFileName)
 
 	// Use docker-compose from service/submitqueue (full stack), resolved from
 	// the test runfiles. All three service images are built from a staged
