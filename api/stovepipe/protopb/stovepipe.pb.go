@@ -40,7 +40,7 @@ const (
 type QueueEnablement int32
 
 const (
-	// Unspecified is never an explicit disablement.
+	// Unknown is never an explicit disablement.
 	QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN  QueueEnablement = 0
 	QueueEnablement_QUEUE_ENABLEMENT_ENABLED  QueueEnablement = 1
 	QueueEnablement_QUEUE_ENABLEMENT_DISABLED QueueEnablement = 2

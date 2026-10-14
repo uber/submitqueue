@@ -256,7 +256,7 @@ message GetQueueStatusRequest {
 
 // QueueEnablement is independent of validation results and execution controls.
 enum QueueEnablement {
-    // Unspecified is never an explicit disablement.
+    // Unknown is never an explicit disablement.
     QUEUE_ENABLEMENT_UNKNOWN = 0;
     QUEUE_ENABLEMENT_ENABLED = 1;
     QUEUE_ENABLEMENT_DISABLED = 2;
