@@ -92,7 +92,7 @@ brew install grpcurl
 
 `make help` lists every target. The table below is the day-to-day set.
 
-CI runs `make lint`, `make check-tidy`, and `make check-gazelle`. `make lint` includes the format check, license headers, the tracked-binary check, the message-ID check, and the queue-shard check. `make fmt`, `make tidy`, and `make gazelle` apply the corresponding fixes. `make mocks` regenerates the checked-in mockgen files; `make check-mocks` fails when that output differs from the tree. `make clean` removes the Bazel cache and `bin/`. Generated protobuf Go files stay in the source tree until `make clean-proto`; `make proto` writes them again.
+CI runs `make lint`, `make check-tidy`, `make check-gazelle`, and `make check-mocks`. `make lint` includes the format check, license headers, the tracked-binary check, the message-ID check, and the queue-shard check. `make fmt`, `make tidy`, and `make gazelle` apply the corresponding fixes. `make mocks` regenerates the checked-in mockgen files with the `mockgen` pinned in `go.mod`, which Bazel builds into `bin/mockgen/` and puts first on `PATH`, so no local install is needed and a different `mockgen` on your `PATH` is ignored; run `go generate` directly only with that binary on `PATH`. `make check-mocks` fails when that output differs from the tree. `make clean` removes the Bazel cache and `bin/`. Generated protobuf Go files stay in the source tree until `make clean-proto`; `make proto` writes them again.
 
 | Target | Description |
 |--------|-------------|

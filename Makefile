@@ -638,9 +638,12 @@ GO_GENERATE_PACKAGES := \
 	./submitqueue/gateway/extension/storage/... \
 	./submitqueue/orchestrator/extension/storage/...
 
-mocks: ## Generate mock files using mockgen
+mocks: ## Generate mock files using the pinned mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate $(GO_GENERATE_PACKAGES)
+	@$(BAZEL) build @org_uber_go_mock//mockgen
+	@mkdir -p bin/mockgen
+	@cp -f "$$($(BAZEL) cquery --output=files @org_uber_go_mock//mockgen 2>/dev/null)" bin/mockgen/mockgen
+	@PATH="$(CURDIR)/bin/mockgen:$$PATH" $(BAZEL) run @rules_go//go -- generate $(GO_GENERATE_PACKAGES)
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions
