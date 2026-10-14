@@ -247,12 +247,10 @@ message ListResponse {
     string next_page_token = 2;
 }
 
-// GetQueueStatusRequest selects applied enablement for a queue and optional commit.
 message GetQueueStatusRequest {
     // Required stable repo-and-ref queue name.
     string queue = 1;
     // Optional immutable commit URI. Empty selects the latest materialized state.
-    // Intermediate commits need no validation request of their own.
     string change_uri = 2;
 }
 
@@ -264,9 +262,9 @@ enum QueueEnablement {
     QUEUE_ENABLEMENT_DISABLED = 2;
 }
 
-// QueueState is one durably applied enablement occurrence.
+// QueueState describes applied enablement.
 message QueueState {
-    // Internally assigned positive queue-state version; orders applied changes.
+    // Positive enablement sequence, increasing with each state change.
     int64 version = 1;
     // Applied enablement. Successful lookups never return UNKNOWN.
     QueueEnablement state = 2;
@@ -276,13 +274,10 @@ message QueueState {
     int64 changed_at_ms = 4;
 }
 
-// GetQueueStatusResponse contains the enablement selected by the request.
 message GetQueueStatusResponse {
     // Queue selected by the request.
     string queue = 1;
-    // Latest materialized state when change_uri is empty; otherwise the state covering that commit.
-    // Resolution uses one pinned summary, which may lag internal state until persistence is repaired.
-    // Unresolved commits fail the call and never imply DISABLED.
+    // Current enablement when change_uri is empty; otherwise enablement covering that commit.
     QueueState state = 2;
 }
 
@@ -303,6 +298,6 @@ service Stovepipe {
     rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
     // List returns a queue-scoped page of current request summaries.
     rpc List(ListRequest) returns (ListResponse) {}
-    // GetQueueStatus returns current and optional commit-specific enablement.
+    // GetQueueStatus returns current enablement or enablement for a supplied commit.
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
 }

@@ -65,7 +65,7 @@ type StovepipeClient interface {
 	GetProjectStatusByURI(ctx context.Context, in *GetProjectStatusByURIRequest, opts ...grpc.CallOption) (*GetProjectStatusByURIResponse, error)
 	// List returns a queue-scoped page of current request summaries.
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
-	// GetQueueStatus returns current and optional commit-specific enablement.
+	// GetQueueStatus returns current enablement or enablement for a supplied commit.
 	GetQueueStatus(ctx context.Context, in *GetQueueStatusRequest, opts ...grpc.CallOption) (*GetQueueStatusResponse, error)
 }
 
@@ -178,7 +178,7 @@ type StovepipeServer interface {
 	GetProjectStatusByURI(context.Context, *GetProjectStatusByURIRequest) (*GetProjectStatusByURIResponse, error)
 	// List returns a queue-scoped page of current request summaries.
 	List(context.Context, *ListRequest) (*ListResponse, error)
-	// GetQueueStatus returns current and optional commit-specific enablement.
+	// GetQueueStatus returns current enablement or enablement for a supplied commit.
 	GetQueueStatus(context.Context, *GetQueueStatusRequest) (*GetQueueStatusResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }

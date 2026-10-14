@@ -1524,13 +1524,11 @@ func (x *ListResponse) GetNextPageToken() string {
 	return ""
 }
 
-// GetQueueStatusRequest selects applied enablement for a queue and optional commit.
 type GetQueueStatusRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Required stable repo-and-ref queue name.
 	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
 	// Optional immutable commit URI. Empty selects the latest materialized state.
-	// Intermediate commits need no validation request of their own.
 	ChangeUri     string `protobuf:"bytes,2,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1580,10 +1578,10 @@ func (x *GetQueueStatusRequest) GetChangeUri() string {
 	return ""
 }
 
-// QueueState is one durably applied enablement occurrence.
+// QueueState describes applied enablement.
 type QueueState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Internally assigned positive queue-state version; orders applied changes.
+	// Positive enablement sequence, increasing with each state change.
 	Version int64 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	// Applied enablement. Successful lookups never return UNKNOWN.
 	State QueueEnablement `protobuf:"varint,2,opt,name=state,proto3,enum=uber.submitqueue.stovepipe.QueueEnablement" json:"state,omitempty"`
@@ -1653,14 +1651,11 @@ func (x *QueueState) GetChangedAtMs() int64 {
 	return 0
 }
 
-// GetQueueStatusResponse contains the enablement selected by the request.
 type GetQueueStatusResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Queue selected by the request.
 	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
-	// Latest materialized state when change_uri is empty; otherwise the state covering that commit.
-	// Resolution uses one pinned summary, which may lag internal state until persistence is repaired.
-	// Unresolved commits fail the call and never imply DISABLED.
+	// Current enablement when change_uri is empty; otherwise enablement covering that commit.
 	State         *QueueState `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
