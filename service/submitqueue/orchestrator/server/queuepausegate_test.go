@@ -26,7 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatemock "github.com/uber/submitqueue/platform/extension/consumergate/mock"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	queuepausemock "github.com/uber/submitqueue/submitqueue/extension/queuepause/mock"
+	queuepausefake "github.com/uber/submitqueue/submitqueue/extension/queuepause/fake"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
@@ -54,8 +54,7 @@ func TestQueuePauseGate_Enter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			pauses := queuepausemock.NewMockStore(ctrl)
-			pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(tt.state, tt.storeErr)
+			pauses := queuepausefake.New().Set("my-queue", tt.state).FailWith(tt.storeErr)
 			next := consumergatemock.NewMockGate(ctrl)
 			if tt.wantNext {
 				nextEntry := consumergatemock.NewMockEntry(ctrl)
@@ -75,8 +74,7 @@ func TestQueuePauseGate_Enter(t *testing.T) {
 func TestQueuePauseGate_EnterPropagatesWrappedGateError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := consumergate.Key{Partition: entityqueue.PartitionIdentity{Tenant: "my-queue"}}
-	pauses := queuepausemock.NewMockStore(ctrl)
-	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePause{}, nil)
+	pauses := queuepausefake.New()
 	next := consumergatemock.NewMockGate(ctrl)
 	next.EXPECT().Enter(gomock.Any(), key).Return(nil, errors.New("gate files unreadable"))
 	gate := newQueuePauseGate(zap.NewNop().Sugar(), pauses, next)
@@ -89,8 +87,7 @@ func TestQueuePauseGate_EnterPropagatesWrappedGateError(t *testing.T) {
 func TestQueuePauseGate_EnterReturnsCancelledContextError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := consumergate.Key{Partition: entityqueue.PartitionIdentity{Tenant: "my-queue"}}
-	pauses := queuepausemock.NewMockStore(ctrl)
-	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePause{}, fmt.Errorf("read pause state: %w", context.Canceled))
+	pauses := queuepausefake.New().FailWith(fmt.Errorf("read pause state: %w", context.Canceled))
 	gate := newQueuePauseGate(zap.NewNop().Sugar(), pauses, consumergatemock.NewMockGate(ctrl))
 
 	_, err := gate.Enter(context.Background(), key)
