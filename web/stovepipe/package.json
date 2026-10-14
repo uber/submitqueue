@@ -40,7 +40,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "typescript": "^5.8.3",
-    "vitest": "4.0.7"
+    "vitest": "4.1.11"
   },
   "dependencies": {
     "@submitqueue/web-platform": "0.0.0"
