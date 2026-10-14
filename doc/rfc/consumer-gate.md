@@ -9,7 +9,7 @@ The pipeline is a set of queue controllers spread across three services, and det
 - **E2e scenario control.** A test that must interleave two in-flight messages ("the batch controller must not consume its message before the cancel controller has finished") needs to halt exactly one controller while its siblings keep running. Stopping the whole service is too coarse: it kills every controller in the process, re-assigns ephemeral ports, and turns a scenario step into a container lifecycle event.
 - **Single-host development.** A developer reproducing an ordering-sensitive scenario locally needs the same stop/observe/start control without restarting the whole stack.
 
-Nothing in the system expresses this today. The queue can be manipulated from outside (e.g. starving a consumer by occupying its partition leases), but data-plane tricks of that kind are structurally limited: they only work if arranged before the controller ever touches the partition, they couple the caller to one backend's internals, and they are invisible to the service. This RFC makes stop/observe/start a small, coherent mechanism for tests and local development instead. Fleet-wide production pause is explicitly out of scope for the file implementation.
+Nothing in the system expresses this today. The queue can be manipulated from outside (e.g. starving a consumer by occupying its partition leases), but data-plane tricks of that kind are structurally limited: they only work if arranged before the controller ever touches the partition, they couple the caller to one backend's internals, and they are invisible to the service. This RFC makes stop/observe/start a small, coherent mechanism for tests and local development instead. The file implementation is not a fleet-wide production control plane. Pausing a queue in production is a separate mechanism that wraps the gate with pause state read from its own source; see [Pausing and Unpausing a Queue](submitqueue/queue-pause-and-unpause.md).
 
 ## Decisions
 
@@ -27,7 +27,7 @@ The re-check loop has a bounded cost: while a gate is closed, each blocked parti
 
 ### Gate identity: consumer group, optionally narrowed to a partition
 
-Every controller subscribes with a unique consumer group (`orchestrator-batch`, `runway-merge`, …), so the consumer group *is* the controller's stable runtime name — the natural key for "stop this controller". A gate may optionally carry a partition key; absent one, it gates every partition. Partition-scoped gates keep unrelated traffic flowing through the same controller (e.g. parking one test queue's partition while other queues proceed), which matters if e2e scenarios ever run concurrently.
+A controller's consumer group is its stable runtime name — the natural key for "stop this controller". Groups are not unique per controller everywhere: Runway's controllers each use their own (for example `runway-mergeconflictcheck`), but the orchestrator's pipeline stages share one group, `orchestrator`, so a gate on that group covers every stage. The key carries no topic, so a gate cannot single out one orchestrator stage. A gate may optionally carry a partition key; absent one, it gates every partition. Partition-scoped gates keep unrelated traffic flowing through the same controller (e.g. parking one test queue's partition while other queues proceed), which matters if e2e scenarios ever run concurrently.
 
 ### Gate state is a separate extension
 
