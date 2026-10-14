@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package queuepausestore
+package core
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestFromEnv(t *testing.T) {
+func TestQueuePauseStoreFromEnv(t *testing.T) {
 	pausedFile := filepath.Join(t.TempDir(), "pause.yaml")
 	require.NoError(t, os.WriteFile(pausedFile, []byte("queues:\n  - name: q\n    freeze_processing: true\n"), 0o600))
 
@@ -44,7 +44,7 @@ func TestFromEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(pathEnv, tt.path)
 
-			store, err := FromEnv(zap.NewNop())
+			store, err := QueuePauseStoreFromEnv(zap.NewNop())
 
 			if tt.wantErr {
 				require.Error(t, err)

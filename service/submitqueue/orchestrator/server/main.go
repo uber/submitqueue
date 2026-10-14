@@ -48,7 +48,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/pipeline"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
-	"github.com/uber/submitqueue/service/submitqueue/queuepausestore"
+	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
@@ -224,7 +224,7 @@ func run() error {
 		Hooks:          hookResolver{},
 	}
 
-	queuePauses, err := queuepausestore.FromEnv(logger)
+	queuePauses, err := core.QueuePauseStoreFromEnv(logger)
 	if err != nil {
 		return err
 	}

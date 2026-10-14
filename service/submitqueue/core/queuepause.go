@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package queuepausestore selects the queuepause.Store a SubmitQueue service
-// runs with, so the gateway and orchestrator resolve it the same way.
-package queuepausestore
+// Package core holds wiring that both SubmitQueue services resolve the same
+// way, so the gateway and orchestrator share one implementation.
+package core
 
 import (
 	"fmt"
@@ -28,10 +28,10 @@ import (
 
 const pathEnv = "QUEUE_PAUSE_CONFIG_PATH"
 
-// FromEnv returns the file-backed store when QUEUE_PAUSE_CONFIG_PATH is set,
+// QueuePauseStoreFromEnv returns the file-backed store when QUEUE_PAUSE_CONFIG_PATH is set,
 // and otherwise a store under which no queue is ever paused. A path that
 // cannot be loaded is an error, so a misconfigured service fails at startup.
-func FromEnv(logger *zap.Logger) (queuepause.Store, error) {
+func QueuePauseStoreFromEnv(logger *zap.Logger) (queuepause.Store, error) {
 	path := os.Getenv(pathEnv)
 	if path == "" {
 		logger.Info("queue pause disabled")

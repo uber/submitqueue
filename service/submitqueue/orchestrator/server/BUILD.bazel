@@ -38,7 +38,7 @@ go_library(
         "//platform/http:go_default_library",
         "//platform/pipeline:go_default_library",
         "//service/messagequeue:go_default_library",
-        "//service/submitqueue/queuepausestore:go_default_library",
+        "//service/submitqueue/core:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",

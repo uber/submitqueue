@@ -41,8 +41,8 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
+	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
-	"github.com/uber/submitqueue/service/submitqueue/queuepausestore"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
@@ -269,7 +269,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to load queue configs: %w", err)
 	}
-	queuePauses, err := queuepausestore.FromEnv(logger)
+	queuePauses, err := core.QueuePauseStoreFromEnv(logger)
 	if err != nil {
 		return err
 	}
