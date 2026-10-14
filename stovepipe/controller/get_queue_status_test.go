@@ -112,8 +112,8 @@ func TestGetQueueStatusResolvesIntermediateCommitsAndBoundaries(t *testing.T) {
 			result, err := f.c.GetQueueStatus(context.Background(), entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: tt.commit})
 			require.NoError(t, err)
 			require.Equal(t, "repo/main", result.Queue)
-			require.Equal(t, f.logs[entity.QueueLogID(tt.revision)].Snapshot(), result.State)
-			require.Equal(t, tt.state, result.State.State)
+			require.Equal(t, f.logs[entity.QueueLogID(tt.revision)].Snapshot(), result.Enablement)
+			require.Equal(t, tt.state, result.Enablement.State)
 		})
 	}
 }
@@ -129,8 +129,8 @@ func TestGetQueueStatusNeverEnabledAndSameBoundary(t *testing.T) {
 			f.expectLinearSourceControl()
 			result, err := f.c.GetQueueStatus(context.Background(), entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: "C"})
 			require.NoError(t, err)
-			require.Equal(t, f.current, result.State)
-			require.Equal(t, entity.QueueEnablementDisabled, result.State.State)
+			require.Equal(t, f.current, result.Enablement)
+			require.Equal(t, entity.QueueEnablementDisabled, result.Enablement.State)
 		})
 	}
 }
@@ -140,7 +140,7 @@ func TestGetQueueStatusCurrentOnlyNeedsNoSourceControl(t *testing.T) {
 	f.addState(entity.QueueEnablementEnabled, "A")
 	result, err := f.c.GetQueueStatus(context.Background(), entity.GetQueueStatusRequest{Queue: "repo/main"})
 	require.NoError(t, err)
-	require.Equal(t, f.logs[entity.QueueLogID(2)].Snapshot(), result.State)
+	require.Equal(t, f.logs[entity.QueueLogID(2)].Snapshot(), result.Enablement)
 }
 
 func TestGetQueueStatusPinsStateAcrossConcurrentUpdate(t *testing.T) {
@@ -153,7 +153,7 @@ func TestGetQueueStatusPinsStateAcrossConcurrentUpdate(t *testing.T) {
 	})
 	result, err := f.c.GetQueueStatus(context.Background(), entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: "F"})
 	require.NoError(t, err)
-	require.Equal(t, f.logs[entity.QueueLogID(2)].Snapshot(), result.State)
+	require.Equal(t, f.logs[entity.QueueLogID(2)].Snapshot(), result.Enablement)
 	require.Equal(t, int64(3), f.current.Version)
 }
 

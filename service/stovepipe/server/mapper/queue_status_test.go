@@ -22,7 +22,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-func TestQueueStatusSelectedState(t *testing.T) {
+func TestQueueStatusSelectedEnablement(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		policy    entity.QueueEnablement
@@ -34,12 +34,12 @@ func TestQueueStatusSelectedState(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			policy := entity.QueueState{Version: 3, State: tt.policy, EffectiveFromCommitURI: "A", ChangedAtMs: 1000}
-			result := GetQueueStatusResultToProto(entity.GetQueueStatusResult{Queue: "repo/main", State: policy})
+			result := GetQueueStatusResultToProto(entity.GetQueueStatusResult{Queue: "repo/main", Enablement: policy})
 			require.Equal(t, "repo/main", result.Queue)
-			require.Equal(t, tt.wantState, result.State.State)
-			require.Equal(t, int64(3), result.State.Version)
-			require.Equal(t, "A", result.State.EffectiveFromCommitUri)
-			require.Equal(t, int64(1000), result.State.ChangedAtMs)
+			require.Equal(t, tt.wantState, result.Enablement.State)
+			require.Equal(t, int64(3), result.Enablement.Version)
+			require.Equal(t, "A", result.Enablement.EffectiveFromCommitUri)
+			require.Equal(t, int64(1000), result.Enablement.ChangedAtMs)
 		})
 	}
 	require.Equal(t, entity.GetQueueStatusRequest{}, ProtoToGetQueueStatusRequest(nil))

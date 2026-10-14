@@ -51,7 +51,7 @@ func TestGetQueueStatus(t *testing.T) {
 		}
 		fake := fakeQueueStatusController{get: func(ctx context.Context, req entity.GetQueueStatusRequest) (entity.GetQueueStatusResult, error) {
 			require.Equal(t, entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: "C"}, req)
-			return entity.GetQueueStatusResult{Queue: "repo/main", State: entity.QueueState{Version: 1, State: entity.QueueEnablementDisabled}}, wantErr
+			return entity.GetQueueStatusResult{Queue: "repo/main", Enablement: entity.QueueState{Version: 1, State: entity.QueueEnablementDisabled}}, wantErr
 		}}
 		server := NewStovepipeServer(nil, nil, nil, nil, nil, fake)
 		response, err := server.GetQueueStatus(context.Background(), &pb.GetQueueStatusRequest{Queue: "repo/main", ChangeUri: "C"})
@@ -61,8 +61,8 @@ func TestGetQueueStatus(t *testing.T) {
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, "repo/main", response.Queue)
-			require.Equal(t, int64(1), response.State.Version)
-			require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, response.State.State)
+			require.Equal(t, int64(1), response.Enablement.Version)
+			require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, response.Enablement.State)
 		}
 	}
 }

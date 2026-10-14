@@ -72,9 +72,9 @@ func (c *getQueueStatusController) GetQueueStatus(ctx context.Context, req entit
 		}
 		return result, err
 	}
-	result.Queue, result.State = req.Queue, current
+	result.Queue, result.Enablement = req.Queue, current
 	if req.ChangeURI != "" {
-		result.State, err = c.resolveCommitState(ctx, req, store, current)
+		result.Enablement, err = c.resolveCommitEnablement(ctx, req, store, current)
 		if err != nil {
 			return entity.GetQueueStatusResult{}, err
 		}
@@ -85,7 +85,7 @@ func (c *getQueueStatusController) GetQueueStatus(ctx context.Context, req entit
 	return result, nil
 }
 
-func (c *getQueueStatusController) resolveCommitState(ctx context.Context, req entity.GetQueueStatusRequest, store storage.QueueLogStore, current entity.QueueState) (entity.QueueState, error) {
+func (c *getQueueStatusController) resolveCommitEnablement(ctx context.Context, req entity.GetQueueStatusRequest, store storage.QueueLogStore, current entity.QueueState) (entity.QueueState, error) {
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: req.Queue})
 	if err != nil {
 		return entity.QueueState{}, classifyCommitStateError(err)

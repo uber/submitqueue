@@ -24,6 +24,6 @@ type GetQueueStatusRequest struct {
 type GetQueueStatusResult struct {
 	// Queue is the selected repo-and-ref namespace.
 	Queue string
-	// State is current enablement or enablement covering the requested commit.
-	State QueueState
+	// Enablement is current enablement or enablement covering the requested commit.
+	Enablement QueueState
 }

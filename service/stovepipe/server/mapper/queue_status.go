@@ -25,11 +25,11 @@ func ProtoToGetQueueStatusRequest(req *pb.GetQueueStatusRequest) entity.GetQueue
 
 func GetQueueStatusResultToProto(result entity.GetQueueStatusResult) *pb.GetQueueStatusResponse {
 	return &pb.GetQueueStatusResponse{
-		Queue: result.Queue, State: queueStateToProto(result.State),
+		Queue: result.Queue, Enablement: queueEnablementStatusToProto(result.Enablement),
 	}
 }
 
-func queueStateToProto(applied entity.QueueState) *pb.QueueState {
+func queueEnablementStatusToProto(applied entity.QueueState) *pb.QueueEnablementStatus {
 	state := pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN
 	switch applied.State {
 	case entity.QueueEnablementEnabled:
@@ -37,5 +37,5 @@ func queueStateToProto(applied entity.QueueState) *pb.QueueState {
 	case entity.QueueEnablementDisabled:
 		state = pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED
 	}
-	return &pb.QueueState{Version: applied.Version, State: state, EffectiveFromCommitUri: applied.EffectiveFromCommitURI, ChangedAtMs: applied.ChangedAtMs}
+	return &pb.QueueEnablementStatus{Version: applied.Version, State: state, EffectiveFromCommitUri: applied.EffectiveFromCommitURI, ChangedAtMs: applied.ChangedAtMs}
 }
