@@ -3,6 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "server": ["dist/server.d.ts"],
+      "extension/gateway/mock": ["dist/extension/gateway/mock/index.d.ts"],
+      "extension/cursor/hmac": ["dist/extension/cursor/hmac/index.d.ts"]
+    }
+  },
   "sideEffects": [
     "./view/styles.css"
   ],

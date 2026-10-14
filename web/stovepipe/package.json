@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "server": ["dist/server.d.ts"]
+    }
+  },
   "sideEffects": [
     "./view/styles.css"
   ],

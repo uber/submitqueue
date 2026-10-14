@@ -1,5 +1,5 @@
-load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@rules_python//python:defs.bzl", "py_test")
 
@@ -15,6 +15,11 @@ npm_link_package(
     src = "//web/platform:pkg",
 )
 
+npm_link_package(
+    name = "node_modules/@submitqueue/web-stovepipe",
+    src = "//web/stovepipe:pkg",
+)
+
 ts_config(
     name = "tsconfig",
     src = "tsconfig.json",
@@ -27,8 +32,33 @@ ts_project(
     no_emit = True,
     tsconfig = ":tsconfig",
     deps = [
-        ":node_modules/@submitqueue/web-submitqueue",
         ":node_modules/@submitqueue/web-platform",
+        ":node_modules/@submitqueue/web-stovepipe",
+        ":node_modules/@submitqueue/web-submitqueue",
+        "//web:node_modules/@bufbuild/protobuf",
+        "//web:node_modules/@connectrpc/connect",
+        "//web:node_modules/@types/node",
+        "//web:node_modules/react",
+        "//web:node_modules/react-dom",
+    ],
+)
+
+ts_config(
+    name = "tsconfig_node",
+    src = "tsconfig.node.json",
+    deps = [":tsconfig"],
+)
+
+ts_project(
+    name = "consumer_node_typecheck",
+    srcs = ["consumer.ts"],
+    declaration = False,
+    no_emit = True,
+    tsconfig = ":tsconfig_node",
+    deps = [
+        ":node_modules/@submitqueue/web-platform",
+        ":node_modules/@submitqueue/web-stovepipe",
+        ":node_modules/@submitqueue/web-submitqueue",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@types/node",
@@ -40,24 +70,24 @@ ts_project(
 py_test(
     name = "pack_contents_test",
     srcs = ["pack_contents_test.py"],
-    main = "pack_contents_test.py",
-    legacy_create_init = 0,
     args = ["$(rootpath //web/submitqueue:pkg.pack)"],
     data = ["//web/submitqueue:pkg.pack"],
+    legacy_create_init = 0,
+    main = "pack_contents_test.py",
 )
 
 js_test(
     name = "consumer_runtime_test",
-    entry_point = "consumer-runtime.mjs",
     data = [
-        ":node_modules/@submitqueue/web-submitqueue",
         ":node_modules/@submitqueue/web-platform",
-        "//web/submitqueue:node_modules",
+        ":node_modules/@submitqueue/web-submitqueue",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/react",
         "//web:node_modules/react-dom",
+        "//web/submitqueue:node_modules",
     ],
+    entry_point = "consumer-runtime.mjs",
 )
 
 py_test(

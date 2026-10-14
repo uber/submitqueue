@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "path-segment": ["dist/path-segment.d.ts"],
+      "logging": ["dist/logging.d.ts"]
+    }
+  },
   "sideEffects": [
     "./styles.css"
   ],
