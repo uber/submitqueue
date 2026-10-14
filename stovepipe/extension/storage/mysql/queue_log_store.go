@@ -32,7 +32,6 @@ type queueLogStore struct {
 	queue string
 }
 
-// NewQueueLogStore binds immutable MySQL occurrences to one queue.
 func NewQueueLogStore(db *sql.DB, scope tally.Scope, queue string) storage.QueueLogStore {
 	return &queueLogStore{db: db, scope: scope, queue: queue}
 }

@@ -87,10 +87,8 @@ type Storage interface {
 	// GetQueueStore returns the QueueStore instance.
 	GetQueueStore() QueueStore
 
-	// GetQueueSummaryStore returns the derived queue status summary.
 	GetQueueSummaryStore() QueueSummaryStore
 
-	// GetQueueLogStore returns immutable enablement history.
 	GetQueueLogStore() QueueLogStore
 
 	// GetBuildStore returns the BuildStore instance.

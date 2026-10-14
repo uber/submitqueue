@@ -32,7 +32,6 @@ type queueSummaryStore struct {
 	queue string
 }
 
-// NewQueueSummaryStore binds a MySQL queue summary store to one queue.
 func NewQueueSummaryStore(db *sql.DB, scope tally.Scope, queue string) storage.QueueSummaryStore {
 	return &queueSummaryStore{db: db, scope: scope, queue: queue}
 }

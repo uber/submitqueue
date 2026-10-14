@@ -61,7 +61,6 @@ type Queue struct {
 	Version int32 `json:"version"`
 }
 
-// EnablementState returns the applied occurrence independently of operational row version.
 func (q Queue) EnablementState() QueueState {
 	return QueueState{Queue: q.Name, State: q.Enablement, Version: q.EnablementVersion,
 		EffectiveFromCommitURI: q.EffectiveFromCommitURI, ChangedAtMs: q.EnablementChangedAtMs}

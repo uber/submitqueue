@@ -37,13 +37,11 @@ func QueueLogID(version int64) string {
 	return fmt.Sprintf("state/%d", version)
 }
 
-// Snapshot returns the applied state represented by the occurrence.
 func (l QueueLog) Snapshot() QueueState {
 	return QueueState{Queue: l.Queue, State: l.State, Version: l.QueueStateVersion,
 		EffectiveFromCommitURI: l.EffectiveFromCommitURI, ChangedAtMs: l.TimestampMs}
 }
 
-// Validate verifies a retained occurrence's identity and snapshot invariants.
 func (l QueueLog) Validate() error {
 	if l.ID != QueueLogID(l.QueueStateVersion) {
 		return fmt.Errorf("queue state log identity differs from its state version")

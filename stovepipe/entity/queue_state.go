@@ -22,13 +22,11 @@ type QueueEnablement string
 const (
 	// QueueEnablementUnknown is unset and never an explicit disablement.
 	QueueEnablementUnknown QueueEnablement = ""
-	// QueueEnablementEnabled identifies enabled queue coverage.
 	QueueEnablementEnabled QueueEnablement = "enabled"
-	// QueueEnablementDisabled identifies disabled queue coverage.
 	QueueEnablementDisabled QueueEnablement = "disabled"
 )
 
-// QueueState is one applied enablement occurrence, independent of storage row versions.
+// QueueState describes applied enablement, independent of storage row versions.
 type QueueState struct {
 	// Queue is the stable repo-and-ref namespace, at most 255 bytes.
 	Queue string
@@ -38,11 +36,10 @@ type QueueState struct {
 	EffectiveFromCommitURI string
 	// ChangedAtMs is the application timestamp in Unix milliseconds.
 	ChangedAtMs int64
-	// Version is the positive queue-scoped state version.
+	// Version is the positive queue-scoped enablement sequence.
 	Version int64
 }
 
-// Validate verifies the invariants of a persisted state snapshot.
 func (s QueueState) Validate() error {
 	if s.Queue == "" || len(s.Queue) > 255 || s.Version <= 0 || s.ChangedAtMs <= 0 {
 		return fmt.Errorf("invalid queue state identity, version or timestamp")

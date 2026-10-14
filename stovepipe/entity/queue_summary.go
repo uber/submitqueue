@@ -32,13 +32,11 @@ type QueueSummary struct {
 	Version int64
 }
 
-// Snapshot returns the enablement occurrence represented by this summary.
 func (s QueueSummary) Snapshot() QueueState {
 	return QueueState{Queue: s.Queue, State: s.State, Version: s.QueueStateVersion,
 		EffectiveFromCommitURI: s.EffectiveFromCommitURI, ChangedAtMs: s.StateTimestampMs}
 }
 
-// Validate verifies projection identity, version and represented state.
 func (s QueueSummary) Validate() error {
 	if s.Version <= 0 {
 		return fmt.Errorf("invalid queue summary version")

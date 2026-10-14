@@ -121,10 +121,8 @@ func (f *mysqlStorage) GetValidationFactStore() storage.ValidationFactStore {
 	return f.validationFactStore
 }
 
-// GetQueueSummaryStore returns the bound queue-summary store.
 func (f *mysqlStorage) GetQueueSummaryStore() storage.QueueSummaryStore { return f.queueSummaryStore }
 
-// GetQueueLogStore returns the bound immutable-history store.
 func (f *mysqlStorage) GetQueueLogStore() storage.QueueLogStore {
 	return f.queueLogStore
 }
