@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,6 +84,18 @@ func TestQueuePauseGate_EnterPropagatesWrappedGateError(t *testing.T) {
 	_, err := gate.Enter(context.Background(), key)
 
 	require.Error(t, err)
+}
+
+func TestQueuePauseGate_EnterReturnsCancelledContextError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	key := consumergate.Key{Partition: entityqueue.PartitionIdentity{Tenant: "my-queue"}}
+	pauses := queuepausemock.NewMockStore(ctrl)
+	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePauseState{}, fmt.Errorf("read pause state: %w", context.Canceled))
+	gate := newQueuePauseGate(zap.NewNop().Sugar(), pauses, consumergatemock.NewMockGate(ctrl))
+
+	_, err := gate.Enter(context.Background(), key)
+
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestFrozenEntry_ParkAndUnparkKeepNothing(t *testing.T) {

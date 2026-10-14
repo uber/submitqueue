@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	"github.com/uber/submitqueue/submitqueue/extension/queuepause"
@@ -41,9 +42,14 @@ func newQueuePauseGate(logger *zap.SugaredLogger, pauses queuepause.Store, next 
 
 // Enter reads the pause state of the delivery's queue, which is its tenant. A
 // failed read freezes the queue: the consumer treats a gate error as open, so
-// returning it would unfreeze a queue whenever the pause backend is down.
+// returning it would unfreeze a queue whenever the pause backend is down. A
+// cancelled context is the exception: the consumer is shutting down and
+// handles that error itself.
 func (g queuePauseGate) Enter(ctx context.Context, key consumergate.Key) (consumergate.Entry, error) {
 	state, err := g.pauses.Get(ctx, key.Partition.Tenant)
+	if errors.Is(err, context.Canceled) {
+		return nil, err
+	}
 	if err != nil {
 		g.logger.Errorw("failed to read queue pause state, freezing queue", "queue", key.Partition.Tenant, "error", err)
 		return frozenEntry{}, nil
