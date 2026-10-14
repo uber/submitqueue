@@ -16,6 +16,7 @@ web_library(
     deps = [
         ":node_modules/@connectrpc/connect",
         ":node_modules/@connectrpc/connect-node",
+        ":node_modules/@opentelemetry/api",
         ":node_modules/@submitqueue/web-platform",
         ":node_modules/@types/node",
         ":node_modules/@types/react",

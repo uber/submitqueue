@@ -1,6 +1,4 @@
-import { SpanStatusCode, type Meter, type Tracer } from "@opentelemetry/api";
 import { createLogCallback, type LogCallback } from "@submitqueue/web-platform/logging";
-import { beginOperation, defaultMeter, defaultTracer } from "./core/observability.js";
 import { WebPaths } from "./core/paths.js";
 import { parseRoute, type SubmitQueueWebRoute, type WebSearchParams } from "./core/route.js";
 import { loadChangePage } from "./controller/change.js";
@@ -59,8 +57,6 @@ export interface SubmitQueueWebOptions {
   classifyError?: GatewayErrorClassifier;
   /** Caches the queue catalog (`ListQueues`) across loads; absent means every load reads it. */
   queuesCache?: QueueCatalogCache;
-  meter?: Meter;
-  tracer?: Tracer;
   now?: () => number;
   newRequestId?: () => string;
 }
@@ -109,13 +105,9 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
   const paths = options.paths ?? new WebPaths();
   const mount = paths.basePath.split("/").filter(Boolean);
   const now = () => options.now?.() ?? Date.now();
-  const meter = options.meter ?? defaultMeter();
-  const tracer = options.tracer ?? defaultTracer();
   const newRequestId = options.newRequestId ?? (() => globalThis.crypto.randomUUID());
   const baseGatewayOptions: GatewayLoadOptions = {
     ...(options.classifyError ? { classifyError: options.classifyError } : {}),
-    meter,
-    tracer,
   };
   const readQueues: QueueCatalogLoader = (gateway, context) =>
     loadQueueDirectory(gateway, {
@@ -171,23 +163,12 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
         ...(request.principal === undefined ? {} : { principal: request.principal }),
         ...(request.signal ? { signal: request.signal } : {}),
       };
-      const operation = beginOperation(meter, "web.page_load", { page: route.kind });
-      return tracer.startActiveSpan("web.page_load", { attributes: { "web.page": route.kind } }, async (span): Promise<SubmitQueueWebResult> => {
-        try {
-          const result = await load(route, context);
-          operation.end(result.kind);
-          span.setAttribute("web.outcome", result.kind);
-          return result;
-        } catch (cause) {
-          operation.end("exception");
-          span.recordException(cause instanceof Error ? cause : String(cause));
-          span.setStatus({ code: SpanStatusCode.ERROR });
-          onLog("error", "Web page load failed", { error: cause });
-          throw cause;
-        } finally {
-          span.end();
-        }
-      });
+      try {
+        return await load(route, context);
+      } catch (cause) {
+        onLog("error", "Web page load failed", { error: cause });
+        throw cause;
+      }
     },
   };
 }

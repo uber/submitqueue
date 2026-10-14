@@ -87,6 +87,8 @@ vitest.vitest_test(
     data = [
         ":node_modules",
         ":node_modules/vitest",
+        ":node_modules/@submitqueue/web-submitqueue",
+        "//web/submitqueue:lib",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@connectrpc/connect-node",
         "//web:node_modules/@opentelemetry/api",

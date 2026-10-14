@@ -50,6 +50,10 @@
       "types": "./dist/logging.d.ts",
       "import": "./dist/logging.js"
     },
+    "./instrumentation": {
+      "types": "./dist/instrumentation.d.ts",
+      "import": "./dist/instrumentation.js"
+    },
     "./health": {
       "types": "./dist/health.d.ts",
       "import": "./dist/health.js"

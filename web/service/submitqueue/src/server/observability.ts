@@ -1,6 +1,6 @@
 import "server-only";
 
-import { metrics, type Meter } from "@opentelemetry/api";
+import { metrics, trace, type Meter } from "@opentelemetry/api";
 import { PrometheusExporter } from "@opentelemetry/exporter-prometheus";
 import { MeterProvider } from "@opentelemetry/sdk-metrics";
 import { pino, type Logger } from "pino";
@@ -18,6 +18,8 @@ export function resolveReferenceLogger(): Logger {
 export function resolveReferenceLogCallback() {
   return createPinoLogCallback(resolveReferenceLogger());
 }
+
+export const referenceTracer = trace.getTracer("submitqueue-web");
 
 let meter: Meter | undefined;
 

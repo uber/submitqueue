@@ -1,5 +1,4 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { Meter } from "@opentelemetry/api";
 import { describe, expect, it, vi } from "vitest";
 import { createSubmitQueueWeb, type SubmitQueueWebOptions, type SubmitQueueWebRequest } from "./module.js";
 import { createFakeGatewayReader, gatewayHistoryFixture, gatewayRequestFixture } from "./extension/gateway/mock/index.js";
@@ -20,11 +19,6 @@ function newWeb(options: Partial<SubmitQueueWebOptions> = {}) {
   const web = createSubmitQueueWeb({ gateway: createFakeGatewayReader(), cursors, paths, ...options });
   return (path: string, search: Record<string, string | string[]> = {}, extra: Pick<SubmitQueueWebRequest, "principal" | "requestId" | "onLog"> = {}) =>
     web.handle({ path, search, ...extra });
-}
-
-function recordingMeter() {
-  const record = vi.fn();
-  return { meter: { createHistogram: () => ({ record }) } as unknown as Meter, record };
 }
 
 function nextPageToken(result: Awaited<ReturnType<ReturnType<typeof newWeb>>>): string {
@@ -216,12 +210,6 @@ describe("createSubmitQueueWeb", () => {
     expect(onLog).toHaveBeenCalledWith("warn", expect.any(String), expect.objectContaining({ requestId: "request-7", operation: "queues", error: cause, code: "unavailable" }));
   });
 
-  it("records each page load's outcome", async () => {
-    const { meter, record } = recordingMeter();
-    await newWeb({ meter })("/sq/demo-queue", { page: "tampered" });
-    expect(record).toHaveBeenCalledWith(expect.any(Number), { page: "queue", outcome: "redirect" });
-  });
-
   it("keeps overlapping loads bound to their own host logging callbacks", async () => {
     let release!: () => void;
     const ready = new Promise<void>(resolve => { release = resolve; });
@@ -255,14 +243,12 @@ describe("createSubmitQueueWeb", () => {
     expect(onLog).toHaveBeenCalledWith("info", "Web page request was not authorized", { requestId: "denied", path: "/sq" });
   });
 
-  it("logs, records, and rethrows an unexpected failure", async () => {
+  it("logs and rethrows an unexpected failure", async () => {
     const failure = new Error("bug");
     const onLog = vi.fn();
-    const { meter, record } = recordingMeter();
-    const get = newWeb({ gateway: () => { throw failure; }, meter });
+    const get = newWeb({ gateway: () => { throw failure; } });
     await expect(get("/sq", {}, { onLog })).rejects.toBe(failure);
     expect(onLog).toHaveBeenCalledWith("error", "Web page load failed", expect.objectContaining({ error: failure }));
-    expect(record).toHaveBeenCalledWith(expect.any(Number), { page: "queues", outcome: "exception" });
   });
 
   it("caches successful catalogs per key until they expire", async () => {

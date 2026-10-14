@@ -36,12 +36,10 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opentelemetry/api": ">=1.9 <2",
     "react": ">=18 <20"
   },
   "devDependencies": {
     "@connectrpc/connect": "^2.1.1",
-    "@opentelemetry/api": "^1.9.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/node": "22.18.6",

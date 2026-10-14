@@ -4,7 +4,8 @@ import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/curso
 import { createSubmitQueueWeb, type SubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { loadCursorSecret } from "./config";
 import { resolveReferenceGateway } from "./gateway";
-import { resolveReferenceMeter } from "./observability";
+import { instrumentSubmitQueueWeb } from "./instrumentation";
+import { referenceTracer, resolveReferenceMeter } from "./observability";
 
 let web: SubmitQueueWeb | undefined;
 
@@ -14,10 +15,9 @@ let web: SubmitQueueWeb | undefined;
  * metrics. Frameworks adapt this composition; they do not build their own.
  */
 export function resolveReferenceWeb(): SubmitQueueWeb {
-  web ??= createSubmitQueueWeb({
+  web ??= instrumentSubmitQueueWeb(createSubmitQueueWeb({
     gateway: resolveReferenceGateway,
     cursors: newHmacCursorCodec(loadCursorSecret()),
-    meter: resolveReferenceMeter(),
-  });
+  }), resolveReferenceMeter(), referenceTracer);
   return web;
 }

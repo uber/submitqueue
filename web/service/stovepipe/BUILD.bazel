@@ -87,6 +87,8 @@ vitest.vitest_test(
         ":node_modules",
         ":node_modules/@submitqueue/web-service-shared",
         ":node_modules/vitest",
+        ":node_modules/@submitqueue/web-stovepipe",
+        "//web/stovepipe:lib",
         "//web:node_modules/@connectrpc/connect",
         "//web:node_modules/@connectrpc/connect-node",
         "//web:node_modules/@opentelemetry/api",
