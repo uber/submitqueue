@@ -19,12 +19,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// ProtoToGetQueueStatusRequest preserves the optional commit selector.
 func ProtoToGetQueueStatusRequest(req *pb.GetQueueStatusRequest) entity.GetQueueStatusRequest {
 	return entity.GetQueueStatusRequest{Queue: req.GetQueue(), ChangeURI: req.GetChangeUri()}
 }
 
-// GetQueueStatusResultToProto preserves the selected enablement occurrence.
 func GetQueueStatusResultToProto(result entity.GetQueueStatusResult) *pb.GetQueueStatusResponse {
 	return &pb.GetQueueStatusResponse{
 		Queue: result.Queue, State: queueStateToProto(result.State),

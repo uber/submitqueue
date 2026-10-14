@@ -35,7 +35,6 @@ var (
 	ErrCommitStateUnresolved = errors.New("commit state unresolved")
 )
 
-// GetQueueStatusController resolves applied state independently of validation requests.
 type GetQueueStatusController interface {
 	GetQueueStatus(context.Context, entity.GetQueueStatusRequest) (entity.GetQueueStatusResult, error)
 }
@@ -46,7 +45,6 @@ type getQueueStatusController struct {
 	sourceControl sourcecontrol.Factory
 }
 
-// NewGetQueueStatusController creates a lookup over applied state and committed history.
 func NewGetQueueStatusController(scope tally.Scope, stores storage.Factory, sourceControl sourcecontrol.Factory) GetQueueStatusController {
 	return &getQueueStatusController{scope: scope.SubScope("queue_status_controller"), stores: stores, sourceControl: sourceControl}
 }

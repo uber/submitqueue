@@ -106,7 +106,7 @@ func TestGetQueueStatusResolvesIntermediateCommitsAndBoundaries(t *testing.T) {
 			f.addState(entity.QueueEnablementEnabled, "A")
 			f.addState(entity.QueueEnablementDisabled, "D")
 			f.addState(entity.QueueEnablementEnabled, "G")
-			// A later retained occurrence must not affect a lookup pinned to version 4.
+			// Ignore history newer than the summary.
 			f.logs[entity.QueueLogID(5)] = entity.QueueLog{ID: entity.QueueLogID(5), Queue: "repo/main", QueueStateVersion: 5, TimestampMs: 5000, State: entity.QueueEnablementDisabled, EffectiveFromCommitURI: "G"}
 			f.expectLinearSourceControl()
 			result, err := f.c.GetQueueStatus(context.Background(), entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: tt.commit})
