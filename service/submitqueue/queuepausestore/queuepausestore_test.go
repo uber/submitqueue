@@ -34,10 +34,10 @@ func TestFromEnv(t *testing.T) {
 		name      string
 		path      string
 		wantErr   bool
-		wantState entity.QueuePauseState
+		wantState entity.QueuePause
 	}{
-		{name: "unset pauses nothing", path: "", wantState: entity.QueuePauseState{}},
-		{name: "file store reads the configured file", path: pausedFile, wantState: entity.QueuePauseState{FreezeProcessing: true}},
+		{name: "unset pauses nothing", path: "", wantState: entity.QueuePause{}},
+		{name: "file store reads the configured file", path: pausedFile, wantState: entity.QueuePause{FreezeProcessing: true}},
 		{name: "unreadable path fails", path: filepath.Join(t.TempDir(), "absent.yaml"), wantErr: true},
 	}
 	for _, tt := range tests {

@@ -38,18 +38,18 @@ func TestQueuePauseGate_Enter(t *testing.T) {
 	}
 	tests := []struct {
 		name        string
-		state       entity.QueuePauseState
+		state       entity.QueuePause
 		storeErr    error
 		nextBlocked bool
 		wantBlocked bool
 		wantNext    bool
 	}{
-		{name: "freeze closes the gate", state: entity.QueuePauseState{FreezeProcessing: true}, wantBlocked: true},
-		{name: "freeze with reject closes the gate", state: entity.QueuePauseState{FreezeProcessing: true, RejectLands: true}, wantBlocked: true},
+		{name: "freeze closes the gate", state: entity.QueuePause{FreezeProcessing: true}, wantBlocked: true},
+		{name: "freeze with reject closes the gate", state: entity.QueuePause{FreezeProcessing: true, RejectLands: true}, wantBlocked: true},
 		{name: "failed read closes the gate", storeErr: errors.New("pause backend down"), wantBlocked: true},
-		{name: "not paused defers to the wrapped gate", state: entity.QueuePauseState{}, wantNext: true},
-		{name: "reject only does not freeze", state: entity.QueuePauseState{RejectLands: true}, wantNext: true},
-		{name: "wrapped gate can still close it", state: entity.QueuePauseState{}, nextBlocked: true, wantNext: true, wantBlocked: true},
+		{name: "not paused defers to the wrapped gate", state: entity.QueuePause{}, wantNext: true},
+		{name: "reject only does not freeze", state: entity.QueuePause{RejectLands: true}, wantNext: true},
+		{name: "wrapped gate can still close it", state: entity.QueuePause{}, nextBlocked: true, wantNext: true, wantBlocked: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestQueuePauseGate_EnterPropagatesWrappedGateError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := consumergate.Key{Partition: entityqueue.PartitionIdentity{Tenant: "my-queue"}}
 	pauses := queuepausemock.NewMockStore(ctrl)
-	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePauseState{}, nil)
+	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePause{}, nil)
 	next := consumergatemock.NewMockGate(ctrl)
 	next.EXPECT().Enter(gomock.Any(), key).Return(nil, errors.New("gate files unreadable"))
 	gate := newQueuePauseGate(zap.NewNop().Sugar(), pauses, next)
@@ -90,7 +90,7 @@ func TestQueuePauseGate_EnterReturnsCancelledContextError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	key := consumergate.Key{Partition: entityqueue.PartitionIdentity{Tenant: "my-queue"}}
 	pauses := queuepausemock.NewMockStore(ctrl)
-	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePauseState{}, fmt.Errorf("read pause state: %w", context.Canceled))
+	pauses.EXPECT().Get(gomock.Any(), "my-queue").Return(entity.QueuePause{}, fmt.Errorf("read pause state: %w", context.Canceled))
 	gate := newQueuePauseGate(zap.NewNop().Sugar(), pauses, consumergatemock.NewMockGate(ctrl))
 
 	_, err := gate.Enter(context.Background(), key)
