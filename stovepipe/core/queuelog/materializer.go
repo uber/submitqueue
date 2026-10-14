@@ -55,7 +55,7 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return err
 	}
 	if err := log.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrInconsistentHistory, err)
+		return fmt.Errorf("queue %q: invalid log %q at state version %d: %w: %v", log.Queue, log.ID, log.QueueStateVersion, ErrInconsistentHistory, err)
 	}
 	logs := stores.GetQueueLogStore()
 	if err := logs.Create(ctx, log); err != nil {
@@ -67,7 +67,7 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 			return fmt.Errorf("reconcile queue log: %w", err)
 		}
 		if retained != log {
-			return ErrInconsistentHistory
+			return fmt.Errorf("queue %q: log %q at state version %d conflicts with retained log %q for queue %q at state version %d: %w", log.Queue, log.ID, log.QueueStateVersion, retained.ID, retained.Queue, retained.QueueStateVersion, ErrInconsistentHistory)
 		}
 		log = retained
 	}
@@ -94,22 +94,22 @@ func materializeQueueSummary(ctx context.Context, store storage.QueueSummaryStor
 			return err
 		}
 		if current.Queue != log.Queue {
-			return ErrInconsistentHistory
+			return fmt.Errorf("queue %q log %q: summary belongs to queue %q at projection version %d: %w", log.Queue, log.ID, current.Queue, current.Version, ErrInconsistentHistory)
 		}
 		if err := current.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", ErrInconsistentHistory, err)
+			return fmt.Errorf("queue %q: invalid summary at projection version %d, state version %d: %w: %v", log.Queue, current.Version, current.QueueStateVersion, ErrInconsistentHistory, err)
 		}
 		if log.QueueStateVersion < current.QueueStateVersion {
 			return nil
 		}
 		if log.QueueStateVersion == current.QueueStateVersion {
 			if current.Snapshot() != log.Snapshot() {
-				return ErrInconsistentHistory
+				return fmt.Errorf("queue %q: log %q conflicts with summary state version %d (projection version %d): %w", log.Queue, log.ID, current.QueueStateVersion, current.Version, ErrInconsistentHistory)
 			}
 			return nil
 		}
 		if current.Version == math.MaxInt64 {
-			return ErrInconsistentHistory
+			return fmt.Errorf("queue %q log %q: summary projection version %d exhausted: %w", log.Queue, log.ID, current.Version, ErrInconsistentHistory)
 		}
 		updated := current
 		updated.State, updated.QueueStateVersion = log.State, log.QueueStateVersion

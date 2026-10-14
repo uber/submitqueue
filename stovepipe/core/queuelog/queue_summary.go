@@ -32,35 +32,36 @@ func LoadSummary(ctx context.Context, stores storage.Storage, queue string) (ent
 		return entity.QueueState{}, err
 	}
 	if summary.Queue != queue {
-		return entity.QueueState{}, ErrInconsistentHistory
+		return entity.QueueState{}, fmt.Errorf("queue %q: summary belongs to queue %q at projection version %d: %w", queue, summary.Queue, summary.Version, ErrInconsistentHistory)
 	}
 	if err := summary.Validate(); err != nil {
-		return entity.QueueState{}, fmt.Errorf("%w: %v", ErrInconsistentHistory, err)
+		return entity.QueueState{}, fmt.Errorf("queue %q: invalid summary at projection version %d, state version %d: %w: %v", queue, summary.Version, summary.QueueStateVersion, ErrInconsistentHistory, err)
 	}
 	retained, err := LoadVersion(ctx, stores.GetQueueLogStore(), queue, summary.QueueStateVersion)
 	if err != nil {
 		return entity.QueueState{}, err
 	}
 	if retained != summary.Snapshot() {
-		return entity.QueueState{}, ErrInconsistentHistory
+		return entity.QueueState{}, fmt.Errorf("queue %q: summary state version %d at projection version %d conflicts with retained history: %w", queue, summary.QueueStateVersion, summary.Version, ErrInconsistentHistory)
 	}
 	return summary.Snapshot(), nil
 }
 
 // LoadVersion returns ErrInconsistentHistory for missing or invalid history.
 func LoadVersion(ctx context.Context, logs storage.QueueLogStore, queue string, version int64) (entity.QueueState, error) {
-	log, err := logs.Get(ctx, entity.QueueLogID(version))
+	logID := entity.QueueLogID(version)
+	log, err := logs.Get(ctx, logID)
 	if err != nil {
 		if storage.IsNotFound(err) {
-			return entity.QueueState{}, fmt.Errorf("missing state version %d: %w", version, ErrInconsistentHistory)
+			return entity.QueueState{}, fmt.Errorf("queue %q: missing log %q for state version %d: %w", queue, logID, version, ErrInconsistentHistory)
 		}
 		return entity.QueueState{}, err
 	}
 	if log.Queue != queue || log.QueueStateVersion != version {
-		return entity.QueueState{}, ErrInconsistentHistory
+		return entity.QueueState{}, fmt.Errorf("queue %q: log %q for state version %d belongs to queue %q at state version %d: %w", queue, logID, version, log.Queue, log.QueueStateVersion, ErrInconsistentHistory)
 	}
 	if err := log.Validate(); err != nil {
-		return entity.QueueState{}, fmt.Errorf("%w: %v", ErrInconsistentHistory, err)
+		return entity.QueueState{}, fmt.Errorf("queue %q: invalid log %q at state version %d: %w: %v", queue, logID, version, ErrInconsistentHistory, err)
 	}
 	return log.Snapshot(), nil
 }

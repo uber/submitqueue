@@ -85,7 +85,20 @@ def main():
                 },
                 env=env,
             )
-            run([*compose, "up", "-d", "--no-build", "--pull", "never", "--wait"], env)
+            run(
+                [
+                    *compose,
+                    "up",
+                    "-d",
+                    "--no-build",
+                    "--pull",
+                    "never",
+                    "--wait",
+                    "mysql-app",
+                    "mysql-queue",
+                ],
+                env,
+            )
             apply_schemas(
                 [
                     (
@@ -117,6 +130,7 @@ def main():
                 env,
                 input=_pagination_fixture_sql(),
             )
+            run([*compose, "up", "-d", "--no-build", "--pull", "never", "--wait"], env)
             for key, service, port in [
                 ("STOVEPIPE_E2E_WEB_URL", "web-service", "3000"),
                 ("STOVEPIPE_E2E_URL", "stovepipe-service", "8080"),

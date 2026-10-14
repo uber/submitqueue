@@ -75,7 +75,7 @@ func (c *transitionController) Initialize(ctx context.Context, name string) (ent
 		}
 		if !missing {
 			if queue.Name != name || queue.Version <= 0 {
-				return entity.QueueState{}, queuelog.ErrInconsistentHistory
+				return entity.QueueState{}, fmt.Errorf("initialize queue %q: invalid stored queue %q at row version %d: %w", name, queue.Name, queue.Version, queuelog.ErrInconsistentHistory)
 			}
 			if queue.EnablementVersion != 0 || queue.Enablement != entity.QueueEnablementUnknown || queue.EffectiveFromCommitURI != "" || queue.EnablementChangedAtMs != 0 {
 				return c.repairQueueReadModels(ctx, stores, queue)
@@ -87,7 +87,7 @@ func (c *transitionController) Initialize(ctx context.Context, name string) (ent
 		updated.Enablement, updated.EnablementVersion = entity.QueueEnablementDisabled, 1
 		updated.EnablementChangedAtMs = c.now().UnixMilli()
 		if err := updated.EnablementState().Validate(); err != nil {
-			return entity.QueueState{}, ErrInvalidChange
+			return entity.QueueState{}, fmt.Errorf("initialize queue %q: invalid enablement: %w: %v", name, ErrInvalidChange, err)
 		}
 		if missing {
 			if err := store.Create(ctx, updated); errors.Is(err, storage.ErrAlreadyExists) {
@@ -97,7 +97,7 @@ func (c *transitionController) Initialize(ctx context.Context, name string) (ent
 			}
 		} else {
 			if queue.Version == math.MaxInt32 {
-				return entity.QueueState{}, ErrInvalidChange
+				return entity.QueueState{}, fmt.Errorf("initialize queue %q: row version %d exhausted: %w", name, queue.Version, ErrInvalidChange)
 			}
 			newVersion := queue.Version + 1
 			if err := store.Update(ctx, updated, queue.Version, newVersion); errors.Is(err, storage.ErrVersionMismatch) {
@@ -113,7 +113,7 @@ func (c *transitionController) Initialize(ctx context.Context, name string) (ent
 
 func (c *transitionController) Prepare(ctx context.Context, queue string, enablement entity.QueueEnablement) (PreparedChange, error) {
 	if enablement != entity.QueueEnablementEnabled && enablement != entity.QueueEnablementDisabled {
-		return PreparedChange{}, ErrInvalidChange
+		return PreparedChange{}, fmt.Errorf("prepare queue %q: unsupported enablement %q: %w", queue, enablement, ErrInvalidChange)
 	}
 	stores, err := c.resolveStores(ctx, queue)
 	if err != nil {
@@ -129,7 +129,7 @@ func (c *transitionController) Prepare(ctx context.Context, queue string, enable
 		return change, nil
 	}
 	if current.Version == math.MaxInt64 {
-		return PreparedChange{}, ErrInvalidChange
+		return PreparedChange{}, fmt.Errorf("prepare queue %q: enablement version %d exhausted: %w", queue, current.Version, ErrInvalidChange)
 	}
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: queue})
 	if err != nil {
@@ -140,7 +140,7 @@ func (c *transitionController) Prepare(ctx context.Context, queue string, enable
 		return PreparedChange{}, err
 	}
 	if boundary == "" || len(boundary) > 255 {
-		return PreparedChange{}, ErrInvalidChange
+		return PreparedChange{}, fmt.Errorf("prepare queue %q: invalid boundary URI %q (length %d): %w", queue, boundary, len(boundary), ErrInvalidChange)
 	}
 	if current.EffectiveFromCommitURI != "" {
 		forward, err := sc.IsAncestor(ctx, current.EffectiveFromCommitURI, boundary)
@@ -148,20 +148,20 @@ func (c *transitionController) Prepare(ctx context.Context, queue string, enable
 			return PreparedChange{}, err
 		}
 		if !forward {
-			return PreparedChange{}, ErrInvalidChange
+			return PreparedChange{}, fmt.Errorf("prepare queue %q: boundary %q does not include previous boundary %q: %w", queue, boundary, current.EffectiveFromCommitURI, ErrInvalidChange)
 		}
 	}
 	change.next.State, change.next.EffectiveFromCommitURI = enablement, boundary
 	change.next.ChangedAtMs = c.now().UnixMilli()
 	if change.next.ChangedAtMs <= 0 {
-		return PreparedChange{}, ErrInvalidChange
+		return PreparedChange{}, fmt.Errorf("prepare queue %q: invalid enablement timestamp %d: %w", queue, change.next.ChangedAtMs, ErrInvalidChange)
 	}
 	return change, nil
 }
 
 func (c *transitionController) Apply(ctx context.Context, change PreparedChange) (entity.QueueState, error) {
 	if err := change.previous.Validate(); err != nil {
-		return entity.QueueState{}, fmt.Errorf("%w: %v", ErrInvalidChange, err)
+		return entity.QueueState{}, fmt.Errorf("apply queue %q: invalid prepared state version %d: %w: %v", change.previous.Queue, change.previous.Version, ErrInvalidChange, err)
 	}
 	stores, err := c.resolveStores(ctx, change.previous.Queue)
 	if err != nil {
@@ -187,7 +187,7 @@ func (c *transitionController) Apply(ctx context.Context, change PreparedChange)
 			return retained, nil
 		}
 		if change.previous.Version == math.MaxInt64 || internal.Version == math.MaxInt32 {
-			return entity.QueueState{}, ErrInvalidChange
+			return entity.QueueState{}, fmt.Errorf("apply queue %q: cannot advance enablement version %d or row version %d: %w", current.Queue, change.previous.Version, internal.Version, ErrInvalidChange)
 		}
 		stateVersion := change.previous.Version + 1
 		if current.Version != change.previous.Version {
@@ -231,7 +231,7 @@ func (c *transitionController) resolveStores(ctx context.Context, queue string) 
 		return nil, err
 	}
 	if queue == "" || len(queue) > 255 {
-		return nil, ErrInvalidChange
+		return nil, fmt.Errorf("invalid queue name %q (length %d): %w", queue, len(queue), ErrInvalidChange)
 	}
 	stores, err := c.stores.For(storage.Config{QueueName: queue})
 	if err != nil {
@@ -249,7 +249,7 @@ func (c *transitionController) loadInternalQueue(ctx context.Context, stores sto
 		return entity.Queue{}, err
 	}
 	if queue.Name != name || queue.Version <= 0 {
-		return entity.Queue{}, queuelog.ErrInconsistentHistory
+		return entity.Queue{}, fmt.Errorf("load queue %q: invalid stored queue %q at row version %d: %w", name, queue.Name, queue.Version, queuelog.ErrInconsistentHistory)
 	}
 	if queue.EnablementVersion == 0 && queue.Enablement == entity.QueueEnablementUnknown && queue.EffectiveFromCommitURI == "" && queue.EnablementChangedAtMs == 0 {
 		return entity.Queue{}, storage.ErrNotFound
@@ -263,7 +263,7 @@ func (c *transitionController) loadInternalQueue(ctx context.Context, stores sto
 func (c *transitionController) repairQueueReadModels(ctx context.Context, stores storage.Storage, queue entity.Queue) (entity.QueueState, error) {
 	state := queue.EnablementState()
 	if err := state.Validate(); err != nil {
-		return entity.QueueState{}, fmt.Errorf("%w: %v", queuelog.ErrInconsistentHistory, err)
+		return entity.QueueState{}, fmt.Errorf("queue %q: invalid internal enablement at state version %d, row version %d: %w: %v", queue.Name, state.Version, queue.Version, queuelog.ErrInconsistentHistory, err)
 	}
 	return state, c.materializer.PersistLog(ctx, stores, queuelog.NewQueueStateLog(queue))
 }
@@ -282,7 +282,7 @@ func (c *transitionController) validatePreparedBoundary(ctx context.Context, cha
 		return err
 	}
 	if !belongs {
-		return ErrInvalidChange
+		return fmt.Errorf("queue %q: prepared boundary %q is not an ancestor of current tip %q: %w", change.previous.Queue, change.next.EffectiveFromCommitURI, tip, ErrInvalidChange)
 	}
 	if change.previous.EffectiveFromCommitURI != "" {
 		forward, err := sc.IsAncestor(ctx, change.previous.EffectiveFromCommitURI, change.next.EffectiveFromCommitURI)
@@ -290,7 +290,7 @@ func (c *transitionController) validatePreparedBoundary(ctx context.Context, cha
 			return err
 		}
 		if !forward {
-			return ErrInvalidChange
+			return fmt.Errorf("queue %q: prepared boundary %q does not include previous boundary %q: %w", change.previous.Queue, change.next.EffectiveFromCommitURI, change.previous.EffectiveFromCommitURI, ErrInvalidChange)
 		}
 	}
 	return nil
