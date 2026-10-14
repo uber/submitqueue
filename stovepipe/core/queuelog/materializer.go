@@ -27,10 +27,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-// ErrInconsistentHistory identifies missing or conflicting committed occurrences or projections.
+// ErrInconsistentHistory identifies missing or conflicting queue history or summaries.
 var ErrInconsistentHistory = errors.New("inconsistent queue history")
 
-// Materializer retains committed queue occurrences and advances their derived summary.
+// Materializer retains committed state changes and updates their summary.
 type Materializer interface {
 	// PersistLog idempotently retains an occurrence, then projects its state.
 	PersistLog(context.Context, storage.Storage, entity.QueueLog) error
@@ -38,12 +38,10 @@ type Materializer interface {
 
 type materializer struct{ scope tally.Scope }
 
-// NewMaterializer creates a queue history materializer with bounded outcome metrics.
 func NewMaterializer(scope tally.Scope) Materializer {
 	return &materializer{scope: scope.SubScope("queue_log_materializer")}
 }
 
-// NewQueueStateLog represents the committed enablement occurrence in an internal queue snapshot.
 func NewQueueStateLog(queue entity.Queue) entity.QueueLog {
 	return entity.QueueLog{ID: entity.QueueLogID(queue.EnablementVersion), Queue: queue.Name,
 		State: queue.Enablement, QueueStateVersion: queue.EnablementVersion,

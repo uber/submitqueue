@@ -275,7 +275,6 @@ func TestStatePartialLogWriteBlocksNextTransition(t *testing.T) {
 	require.Equal(t, int64(2), f.state.Version)
 	f.logCreateErr = nil
 	f.clock = 9000
-	// A no-op also repairs the occurrence before returning.
 	noop, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
 	require.NoError(t, err)
 	_, err = f.manager.Apply(context.Background(), noop)

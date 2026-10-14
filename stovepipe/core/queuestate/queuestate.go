@@ -54,7 +54,6 @@ type transitionController struct {
 	now           func() time.Time
 }
 
-// NewTransitionController constructs the internal writer over an injected read-model materializer.
 func NewTransitionController(stores storage.Factory, sc sourcecontrol.Factory, materializer queuelog.Materializer) TransitionController {
 	return &transitionController{stores: stores, sourceControl: sc, materializer: materializer, now: time.Now}
 }
@@ -200,7 +199,7 @@ func (c *transitionController) Apply(ctx context.Context, change PreparedChange)
 		if err := c.validatePreparedBoundary(ctx, change); err != nil {
 			return entity.QueueState{}, err
 		}
-		// Recopy the latest operational fields; only enablement is pinned by the prepared decision.
+		// An enablement change must preserve concurrent pipeline updates.
 		updated := internal
 		updated.Enablement, updated.EnablementVersion = change.next.State, stateVersion
 		updated.EffectiveFromCommitURI, updated.EnablementChangedAtMs = change.next.EffectiveFromCommitURI, change.next.ChangedAtMs

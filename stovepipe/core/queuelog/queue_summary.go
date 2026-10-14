@@ -22,7 +22,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-// LoadSummary pins a valid read model and verifies its occurrence without writing or consulting internal state.
+// LoadSummary requires the summary to match its retained history entry.
 func LoadSummary(ctx context.Context, stores storage.Storage, queue string) (entity.QueueState, error) {
 	if err := ctx.Err(); err != nil {
 		return entity.QueueState{}, err
@@ -47,7 +47,7 @@ func LoadSummary(ctx context.Context, stores storage.Storage, queue string) (ent
 	return summary.Snapshot(), nil
 }
 
-// LoadVersion reads a retained occurrence by its queue-scoped enablement sequence.
+// LoadVersion returns ErrInconsistentHistory for missing or invalid history.
 func LoadVersion(ctx context.Context, logs storage.QueueLogStore, queue string, version int64) (entity.QueueState, error) {
 	log, err := logs.Get(ctx, entity.QueueLogID(version))
 	if err != nil {

@@ -61,7 +61,6 @@ func testQueueStateTransitions(t *testing.T, ctx context.Context, db *sql.DB, ba
 	disabled, err := manager.Apply(ctx, disable)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), disabled.Version)
-	// A new manager can replay the captured decision without selecting a new boundary.
 	restarted := queuestate.NewTransitionController(mysqlFactory{backend: backend}, source, queuelog.NewMaterializer(tally.NoopScope))
 	replay, err := restarted.Apply(ctx, enable)
 	require.NoError(t, err)
