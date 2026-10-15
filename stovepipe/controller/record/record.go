@@ -154,10 +154,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
 			return err
 		}
-		if err := c.recordProjectFacts(ctx, store, request); err != nil {
+		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
-		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
+		if err := c.recordProjectFacts(ctx, store, request); err != nil {
 			return err
 		}
 		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryRecorded(request))

@@ -62,14 +62,19 @@ For a delivery carrying a `Record` payload:
      ref, and no retry can promote it.
    - other error -> return raw.
 
-10. Publish a validation.repository.recorded HookEvent naming the request whose fact
+10. Resolve and record optional project results.
+    - failure -> return raw; the repository fact, bookmark, and promotion are not undone.
+
+11. Publish a validation.repository.recorded HookEvent naming the request whose fact
     was persisted.
     - publish failure -> return raw; non-retryable, so it dead-letters.
 
-11. ack.
+12. ack.
 ```
 
 Every decision after step 6 uses the persisted fact, not the outcome read from this delivery's Request. The first immutable fact controls the bookmark, the ref, and the hook event.
+
+Project-status processing does not delay baseline advancement or promotion. It still completes before the recorded notification. Bookmark advancement and ref promotion remain separate operations; this ordering does not make them atomic.
 
 ## Validation facts
 
