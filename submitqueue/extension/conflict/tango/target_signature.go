@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package entity
+package tango
 
 // TargetSignature is the set of build targets a batch changes, as 64-bit IDs.
 // The whole record is immutable: (Queue, BatchID) is its identity and there is

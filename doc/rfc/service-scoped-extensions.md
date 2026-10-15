@@ -4,7 +4,7 @@ Deciding which service of a multi-service domain an extension belongs to, and mo
 
 ## Status
 
-Implemented for SubmitQueue storage and for the core packages that served one service. `submitqueue/gateway/extension/storage` and `submitqueue/orchestrator/extension/storage` each declare a `Factory`, a `Storage` aggregate, and a MySQL schema. The fifteen store contracts, their mocks, and the error vocabulary remain at `submitqueue/extension/storage`. There is no `submitqueue/extension/storage/mysql` package. `submitqueue/extension/storage/BUILD.bazel` filegroups the two service schemas for deployments that colocate them.
+Implemented for SubmitQueue storage and for the core packages that served one service. `submitqueue/gateway/extension/storage` and `submitqueue/orchestrator/extension/storage` each declare a `Factory`, a `Storage` aggregate, and a MySQL schema. The thirteen store contracts, their mocks, and the error vocabulary remain at `submitqueue/extension/storage`. There is no `submitqueue/extension/storage/mysql` package. `submitqueue/extension/storage/BUILD.bazel` filegroups the two service schemas for deployments that colocate them.
 
 `submitqueue/core/batch` and `submitqueue/core/request` are not on disk. Batch helpers live in `submitqueue/orchestrator/core/batch`. Request-log publish and terminate live in `submitqueue/orchestrator/core/request`. The gateway materializer lives in `submitqueue/gateway/core/request`. `submitqueue/core` holds `changeset`, `messagequeue`, and `topickey`. `changeset` still declares `Stores` and `Resolve`, because `buildrunner`, `conflict`, and `speculation` are still domain-level packages that depend on it. Stovepipe keeps `stovepipe/extension/storage/mysql` because that domain is the service; that package is not a leftover SubmitQueue backend.
 
@@ -26,7 +26,7 @@ Separating the services onto their own databases already worked — the orchestr
 2. An extension shared between a domain's services stays wholly at `{domain}/extension/{ext}/` — including one used by a single service today but expected in both. `submitqueue/extension/queueconfig/` is gateway-only now and stays where it is on that basis. A single-service domain is unaffected: its domain root is its service root, so nothing moves.
 3. Storage is the extension this split applied to. `changeprovider`, `validator`, `conflict`, `buildrunner` and `speculation` are orchestrator-only and would qualify under Decision 1, but none has a schema and none was the reason for this change; they stay at `{domain}/extension/` until a later RFC takes them. The trigger for moving storage was a schema that a separate-database deployment must not over-provision.
 4. SubmitQueue's storage aggregate splits in two: `submitqueue/gateway/extension/storage/` declares a `Factory` and a four-accessor `Storage`, `submitqueue/orchestrator/extension/storage/` a `Factory` and a nine-accessor `Storage`. Neither can resolve the other's stores.
-5. `submitqueue/extension/storage/` keeps the fifteen store contracts, their mocks, the error vocabulary, `Config`, and the package README, which documents the contracts. Its import path does not change, so callers that name only a contract or an error are untouched.
+5. `submitqueue/extension/storage/` keeps the thirteen store contracts, their mocks, the error vocabulary, `Config`, and the package README, which documents the contracts. Its import path does not change, so callers that name only a contract or an error are untouched.
 6. The contract package is not promoted to `platform/`. It is not cross-domain — `stovepipe/extension/storage/storage.go` already declares its own verbatim copy of the same symbols, so a per-domain error vocabulary is the existing pattern rather than something this RFC introduces.
 7. Each half owns its own MySQL schema directory, so the tables a service creates are the tables it reads. A union target over both stays available for deployments that colocate the services — the end-to-end tests and the local compose stack take it and name no service directory. Split schemas are the opt-in, not the default.
 
@@ -60,11 +60,11 @@ Every store, verified against actual usage rather than intent.
 ```
 submitqueue/
 ├── extension/storage/                  # contracts, shared
-│   ├── {15 stores}_store.go            # BatchStore, RequestLogStore, …
+│   ├── {13 stores}_store.go            # BatchStore, RequestLogStore, …
 │   ├── storage.go                      # ErrNotFound, ErrAlreadyExists, ErrVersionMismatch,
 │   │                                   # IsNotFound, WrapNotFound, Config
 │   ├── README.md
-│   └── mock/                           # the 15 store mocks
+│   └── mock/                           # the 13 store mocks
 ├── gateway/extension/storage/
 │   ├── storage.go                      # Factory + Storage, 4 accessors
 │   ├── mock/                           # the aggregate's mock

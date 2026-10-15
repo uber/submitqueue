@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "mock_store.go",
+        "store.go",
+        "target_label.go",
+        "target_signature.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango",
+    visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_mock//gomock:go_default_library"],
+)

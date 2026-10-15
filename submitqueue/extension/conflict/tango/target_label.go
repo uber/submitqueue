@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package entity
+package tango
 
 // TargetLabel is one build target label and the 64-bit ID it hashes to. The
 // whole record is immutable: (Queue, ID) is its identity and there is no update
