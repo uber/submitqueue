@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
+        "dictionary_store.go",
         "mysql.go",
         "signature_codec.go",
         "signature_store.go",
@@ -25,6 +26,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "dictionary_store_test.go",
         "signature_codec_test.go",
         "signature_store_test.go",
     ],

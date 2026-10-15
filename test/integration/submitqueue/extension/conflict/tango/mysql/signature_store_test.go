@@ -31,20 +31,20 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
-// SignatureStoreIntegrationSuite runs the MySQL signature store against a real
+// StoreIntegrationSuite runs the MySQL stores against a real
 // database.
-type SignatureStoreIntegrationSuite struct {
+type StoreIntegrationSuite struct {
 	suite.Suite
 	stack *testutil.ComposeStack
 	db    *sql.DB
 	log   *testutil.TestLogger
 }
 
-func TestSignatureStoreIntegration(t *testing.T) {
-	suite.Run(t, new(SignatureStoreIntegrationSuite))
+func TestStoreIntegration(t *testing.T) {
+	suite.Run(t, new(StoreIntegrationSuite))
 }
 
-func (s *SignatureStoreIntegrationSuite) SetupSuite() {
+func (s *StoreIntegrationSuite) SetupSuite() {
 	t := s.T()
 	ctx := context.Background()
 	s.log = testutil.NewTestLogger(t)
@@ -60,11 +60,15 @@ func (s *SignatureStoreIntegrationSuite) SetupSuite() {
 	t.Cleanup(func() { s.db.Close() })
 }
 
-func (s *SignatureStoreIntegrationSuite) forQueue(queue string) tango.SignatureStore {
+func (s *StoreIntegrationSuite) forQueue(queue string) tango.SignatureStore {
 	return tangomysql.NewSignatureStore(s.db, tally.NoopScope, queue)
 }
 
-func (s *SignatureStoreIntegrationSuite) TestSignatureStore() {
+func (s *StoreIntegrationSuite) forQueueDictionary(queue string) tango.DictionaryStore {
+	return tangomysql.NewDictionaryStore(s.db, tally.NoopScope, queue)
+}
+
+func (s *StoreIntegrationSuite) TestSignatureStore() {
 	t := s.T()
 	ctx := context.Background()
 	storeA := s.forQueue("sig-queue-a")

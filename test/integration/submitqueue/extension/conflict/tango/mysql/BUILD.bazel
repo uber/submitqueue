@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
-    srcs = ["signature_store_test.go"],
+    srcs = [
+        "dictionary_store_test.go",
+        "signature_store_test.go",
+    ],
     data = [
         "docker-compose.yml",
         "//submitqueue/extension/conflict/tango/mysql/schema",
