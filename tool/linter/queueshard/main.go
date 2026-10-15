@@ -36,6 +36,7 @@ import (
 var schemaShardColumns = map[string]map[string]bool{
 	"submitqueue/orchestrator/extension/storage/mysql/schema": {"queue": true, "name": true},
 	"submitqueue/gateway/extension/storage/mysql/schema":      {"queue": true, "name": true},
+	"submitqueue/extension/conflict/tango/mysql/schema":       {"queue": true, "name": true},
 	"stovepipe/extension/storage/mysql/schema":                {"queue": true, "name": true},
 	"platform/extension/counter/mysql/schema":                 {"queue": true, "name": true},
 	"platform/extension/messagequeue/mysql/schema":            {"tenant": true},
@@ -45,6 +46,7 @@ var schemaShardColumns = map[string]map[string]bool{
 var schemaRoots = []string{
 	"submitqueue/orchestrator/extension/storage/mysql/schema",
 	"submitqueue/gateway/extension/storage/mysql/schema",
+	"submitqueue/extension/conflict/tango/mysql/schema",
 	"stovepipe/extension/storage/mysql/schema",
 	"platform/extension/counter/mysql/schema",
 	"platform/extension/messagequeue/mysql/schema",

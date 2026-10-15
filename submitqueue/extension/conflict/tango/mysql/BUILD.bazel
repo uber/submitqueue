@@ -1,0 +1,41 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "mysql.go",
+        "signature_codec.go",
+        "signature_store.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/mysql",
+    visibility = [
+        "//service/submitqueue/orchestrator:__subpackages__",
+        "//submitqueue/extension/conflict/tango:__subpackages__",
+        "//test/integration/submitqueue/extension/conflict/tango:__subpackages__",
+    ],
+    deps = [
+        "//platform/metrics:go_default_library",
+        "//submitqueue/extension/conflict/tango:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "signature_codec_test.go",
+        "signature_store_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//submitqueue/extension/conflict/tango:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "@com_github_data_dog_go_sqlmock//:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)

@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    srcs = ["signature_store_test.go"],
+    data = [
+        "docker-compose.yml",
+        "//submitqueue/extension/conflict/tango/mysql/schema",
+    ],
+    tags = [
+        "integration",
+        "requires-network",
+    ],
+    deps = [
+        "//submitqueue/extension/conflict/tango:go_default_library",
+        "//submitqueue/extension/conflict/tango/mysql:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)
