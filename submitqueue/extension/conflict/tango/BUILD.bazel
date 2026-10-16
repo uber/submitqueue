@@ -4,7 +4,10 @@ go_library(
     name = "go_default_library",
     srcs = [
         "cache.go",
+        "intersect.go",
+        "mock_request.go",
         "mock_store.go",
+        "request.go",
         "signature.go",
         "store.go",
         "target_label.go",
@@ -12,17 +15,25 @@ go_library(
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_mock//gomock:go_default_library"],
+    deps = [
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+    ],
 )
 
 go_test(
     name = "go_default_test",
     srcs = [
         "cache_test.go",
+        "intersect_test.go",
+        "request_test.go",
         "signature_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],
