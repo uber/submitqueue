@@ -1,12 +1,12 @@
-# Stovepipe GetProjectStatusByURI API
+# Stovepipe Project Status APIs
 
 ## Summary
 
-`GetProjectStatusByURI` exposes the current validation status for one exact commit URI in a queue. The response identifies the validation request, its baseline and lifecycle state, its whole-repository result when one has been recorded, and any project results the implementation exposes.
+`GetProjectStatusByID` and `GetProjectStatusByURI` expose the current validation status for one request ID or exact commit URI in a queue. The response identifies the validation request, its baseline and lifecycle state, its whole-repository result when one has been recorded, and any project results the implementation exposes.
 
 A project is a consumer-defined deployable or consumable unit in the repository. The API does not define how projects are discovered, how validation work is selected, or how a project result is derived. Those are integration responsibilities outside this contract.
 
-The API is the durable source of truth for validation status. Lifecycle notifications are advisory: consumers can reconcile missed or duplicate notifications by querying this endpoint.
+The API is the durable source of truth for validation status. Lifecycle notifications are advisory: consumers can reconcile missed or duplicate notifications by querying either endpoint.
 
 ## Contract
 
@@ -15,7 +15,8 @@ The request and response fields have the following API-level meaning. The publis
 | Request field | Required | Meaning |
 | --- | --- | --- |
 | `queue` | Yes | Identifies the queue in which to find the validation request. |
-| `change_uri` | Yes | Identifies the exact commit URI under validation. |
+| `request_id` | ID lookup | Canonical positive decimal request ID returned by `Ingest`. |
+| `change_uri` | URI lookup | Identifies the exact commit URI under validation. |
 | `projects` | Yes | Consumer-defined project IDs whose results are requested. At least one ID is required. |
 | `page_size` | No | Limits one page of results for the requested projects. |
 | `page_token` | No | Continues a previous page of results for the requested projects. |
@@ -37,24 +38,25 @@ Repository and project breakage degrees are independent projections. A degree is
 
 | Response data | Durable source |
 | --- | --- |
-| Request identity, baseline, and lifecycle | Validation request |
+| Request identity, baseline, and lifecycle | Durable request summary |
 | Repository breakage degree | Repository validation fact |
 | Project results | Implementation-defined project-result records |
 | Project completion and pagination | Project-result completion record and cursor |
 
 ## Request Selection
 
-The lookup is queue-scoped. Stovepipe resolves `change_uri` through its request-URI mapping, loads the resulting request, and verifies that its queue and URI match the selector before reading validation facts.
+Both lookups are queue-scoped and use the same durable request summary and validation facts. `GetProjectStatusByID` loads the summary directly by `request_id`. `GetProjectStatusByURI` resolves `change_uri` through its request-URI mapping, then loads the summary. The selected summary must match the queue and request ID, and for URI lookups its URI must match the selector, before validation facts are read.
 
 | Observed state | Result |
 | --- | --- |
-| No request-URI mapping | Not found |
-| Mapping exists but the Request is not visible | Unavailable and retryable |
-| Mapping and Request disagree | Internal consistency error |
+| ID lookup has no request summary | Not found |
+| URI lookup has no request-URI mapping | Not found |
+| URI mapping exists but the request summary is not visible | Unavailable and retryable |
+| Selector and request summary disagree | Internal consistency error |
 
-The initial request-URI mapping admits one request per `(queue, change_uri)`, so the endpoint returns one authoritative request. Revalidation support must introduce an explicit authoritative-request rule; it must not silently change this lookup's meaning.
+The request-URI mapping admits one request per `(queue, change_uri)`, so the endpoint returns one authoritative request. Revalidation support must introduce an explicit authoritative-request rule; it must not silently change this lookup's meaning.
 
-Queue, URI, request ID, and project ID comparisons are byte-exact and are limited to 255 bytes. An empty queue, URI, project list, or project ID is invalid. A request cannot contain duplicate project IDs. `page_size=0` selects the default of 50; the maximum is 200. Page tokens are opaque and bound to the selected request and requested project list.
+Queue, URI, request ID, and project ID comparisons are byte-exact and are limited to 255 bytes. An empty queue, lookup selector, project list, or project ID is invalid. A request cannot contain duplicate project IDs. `page_size=0` selects the default of 50; the maximum is 200. Request IDs use the same canonical positive decimal format as `Ingest` and request-history lookups. Page tokens are opaque and bound to the selected request and requested project list; either endpoint can continue a page for the same queue, request, and projects.
 
 ## Project Results and Pagination
 
@@ -64,20 +66,18 @@ The response includes only results for the supplied project IDs, in the supplied
 
 Each project result is an immutable validation fact keyed by queue, commit URI, and project ID. A result must identify the selected request. `project_results_complete` is false until the implementation has durably finished producing results for the supplied project IDs; a completed empty set is valid.
 
-Callers use `project_results_complete`, rather than the presence or absence of an individual project result, to determine whether the implementation has finished producing results for the requested projects. `next_page_token` is empty only on the final page. A terminal lifecycle notification is emitted only after the repository result and any applicable project completion record are durable. If notification delivery fails, consumers can recover the same result through this endpoint.
+Callers use `project_results_complete`, rather than the presence or absence of an individual project result, to determine whether the implementation has finished producing results for the requested projects. `next_page_token` is empty only on the final page. A terminal lifecycle notification is emitted only after the repository result and any applicable project completion record are durable. If notification delivery fails, consumers can recover the same result through either endpoint.
 
-## Rollout
+## Implementation
 
-The initial implementation returns request lifecycle and whole-repository result only. It returns an empty `projects` list and `project_results_complete=false` because it does not yet produce project results. Its `updated_at_ms` value is returned only after a durable lifecycle record reflects the request state in the response.
-
-A later implementation can add durable project results, completion recording, and pagination using its documented result-set semantics. The public response shape remains unchanged.
+Both endpoints return durable lifecycle summaries, the whole-repository fact when present, and any recorded facts for requested projects in paginated request order. `project_results_complete` remains false until a durable completion projection is available. Missing facts are omitted; an explicitly recorded zero degree remains present. `updated_at_ms` is the maximum timestamp of the summary and the facts represented on the page.
 
 ## Errors and Authorization
 
 - Invalid selectors, an empty project list, an invalid project ID, duplicate project IDs, or malformed page tokens are user errors.
-- An unknown queue-scoped commit URI is not found.
-- A request-URI mapping whose Request is not visible is retryable.
-- A mapping and Request that disagree, a result belonging to another request, or a completion record with a missing project result is an internal consistency error.
+- An unknown queue-scoped request ID or commit URI is not found.
+- A request-URI mapping whose summary is not visible is retryable.
+- A selector and summary that disagree, a result belonging to another request, or a completion record with a missing project result is an internal consistency error.
 - Authorization follows the queue policy applied to other Stovepipe reads. A commit URI or request ID does not bypass queue access control.
 
 ## Testing

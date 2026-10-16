@@ -3,11 +3,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
-        "get_project_status_by_uri.go",
         "ingest.go",
         "list.go",
         "list_pagination.go",
         "ping.go",
+        "project_status.go",
         "read_errors.go",
         "request_history.go",
     ],
@@ -34,12 +34,12 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
-        "get_project_status_by_uri_test.go",
         "ingest_test.go",
         "list_consistency_test.go",
         "list_pagination_test.go",
         "list_test.go",
         "ping_test.go",
+        "project_status_test.go",
         "request_history_test.go",
     ],
     embed = [":go_default_library"],

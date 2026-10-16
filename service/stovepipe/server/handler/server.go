@@ -29,7 +29,7 @@ type StovepipeServer struct {
 	pingController           *controller.PingController
 	ingestController         *controller.IngestController
 	requestHistoryController controller.RequestHistoryController
-	projectStatusController  *controller.GetProjectStatusByURIController
+	projectStatusController  controller.ProjectStatusController
 	listController           controller.ListController
 }
 
@@ -38,7 +38,7 @@ func NewStovepipeServer(
 	pingController *controller.PingController,
 	ingestController *controller.IngestController,
 	requestHistoryController controller.RequestHistoryController,
-	projectStatusController *controller.GetProjectStatusByURIController,
+	projectStatusController controller.ProjectStatusController,
 	listController controller.ListController,
 ) *StovepipeServer {
 	return &StovepipeServer{
@@ -83,9 +83,18 @@ func (s *StovepipeServer) GetRequestHistoryByURI(ctx context.Context, req *pb.Ge
 	return &pb.GetRequestHistoryByURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
 }
 
-// GetProjectStatusByURI returns the current repository validation status for a commit.
+// GetProjectStatusByID returns the current validation status for a request ID.
+func (s *StovepipeServer) GetProjectStatusByID(ctx context.Context, req *pb.GetProjectStatusByIDRequest) (*pb.GetProjectStatusByIDResponse, error) {
+	result, err := s.projectStatusController.GetProjectStatus(ctx, mapper.ProtoToGetProjectStatusByIDRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.GetProjectStatusByIDResultToProto(result), nil
+}
+
+// GetProjectStatusByURI returns the current validation status for a commit.
 func (s *StovepipeServer) GetProjectStatusByURI(ctx context.Context, req *pb.GetProjectStatusByURIRequest) (*pb.GetProjectStatusByURIResponse, error) {
-	result, err := s.projectStatusController.GetProjectStatusByURI(ctx, mapper.ProtoToGetProjectStatusByURIRequest(req))
+	result, err := s.projectStatusController.GetProjectStatus(ctx, mapper.ProtoToGetProjectStatusByURIRequest(req))
 	if err != nil {
 		return nil, err
 	}

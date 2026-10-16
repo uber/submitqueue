@@ -20,10 +20,11 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Gateway History APIs](submitqueue/history-api.md) - Request lifecycle history exposed through separate request ID and change ID endpoints
 - [Build Runner](submitqueue/build-runner.md) - Vendor-agnostic BuildRunner interface, provider-neutral BuildStatus lifecycle, and how the orchestrator wires it into the build stage
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
-- [Pausing and Unpausing a Queue](submitqueue/queue-pause-and-unpause.md) - Runtime pause and unpause of a queue as two switches (reject new lands, freeze processing), including unpause and cancel behavior; compares keeping the state on queue config against a separate pause-state extension, with open questions on freeze failure posture and cancel during freeze
+- [Pausing and Unpausing a Queue](submitqueue/queue-pause-and-unpause.md) - Runtime pause and unpause of a queue as two switches (reject new lands, freeze processing), including unpause and cancel behavior; the separate pause-state extension, fail-closed enforcement, requirements for implementations, and the rejected queue-config alternative, with open questions on cancel during freeze
 - [Gateway Status and List APIs](submitqueue/status-list-api.md) - Gateway-owned request context, materialized current status, sqid or change-URI status lookup, and queue admission listing
 - [Speculation](submitqueue/speculation.md) - Why SubmitQueue speculates, the path/tree model, and the two pluggable seams: speculation-tree enumeration and path selection
 - [Outcome Scorer](submitqueue/outcome-scorer.md) - How likely a batch is to reach Succeeded: `Score(ctx, batch, paths)` as a logit-linear model — a base content price plus YAML weights on path and batch evidence (`pathPassed`, `pathFailed`, `landing`, `cancelling`)
+- [Tango Conflict Analyzer](submitqueue/tango-conflict-analyzer.md) - A `conflict.Analyzer` backed by Tango: each batch's changed targets stored as a signature of 64-bit IDs in a durable store with an in-memory cache, and batches conflict when their signatures share an ID
 - [Best-First Speculation Path Generation](submitqueue/speculation-generator-best-first.md) - The default Generator: per-head lazy streams of flip subsets merged best-first across heads, log-probability ranking, and the strict snapshot contract
 - [Modular Queue Wiring](submitqueue/modular-queue-wiring.md) - `pipeline.Construct` for the SubmitQueue orchestrator (`Deps` + `Stages` in `submitqueue/orchestrator/pipeline.go`, host in `service/submitqueue/orchestrator/server`). Stovepipe, and the gateway and Runway servers, remain hand-wired
 
@@ -37,7 +38,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Request Log](stovepipe/request-log.md) - Append-only request lifecycle log, durable source context, idempotent storage, and reliable write and repair paths
 - [Request History API](stovepipe/request-history-api.md) - Queue-scoped request-ID and URI lookup, public projection, materialization decision, ordering, and retention
 - [List API](stovepipe/list-api.md) - Queue-scoped request listing by acceptance time, immutable acceptance time in summaries, cursor pagination, and a portable time-to-request mapping
-- [GetProjectStatusByURI API](stovepipe/get-project-status-by-uri-api.md) - Queue-scoped current validation lookup for a commit, with repository and future project-level results
+- [Project Status APIs](stovepipe/project-status-api.md) - Queue-scoped current validation lookup by request ID or commit URI, with repository and future project-level results
 
 ## Runway
 

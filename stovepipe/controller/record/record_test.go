@@ -334,6 +334,32 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 	}
 }
 
+func TestProcess_PromotesGreenBeforeProjectResolution(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := requestWithState(entity.RequestStateSucceeded)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+	promote := m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+
+	resolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+	resolver := projectstatusmock.NewMockResolver(ctrl)
+	c.projectStatusResolverFactory = resolverFactory
+	resolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
+		After(promote).
+		Return(resolver, nil)
+	sentinel := errors.New("resolution unavailable")
+	resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(nil, sentinel)
+
+	err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+	require.ErrorIs(t, err, sentinel)
+	assert.Empty(t, m.hooks.events)
+}
+
 func TestProcess_RejectsLegacyBookmark(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)

@@ -16,6 +16,7 @@ go_library(
         "path_build.go",
         "queue_batch_state.go",
         "queue_config.go",
+        "queue_pause.go",
         "request.go",
         "request_batch.go",
         "request_history.go",

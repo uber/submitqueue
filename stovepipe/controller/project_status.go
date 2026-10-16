@@ -14,6 +14,8 @@
 
 package controller
 
+//go:generate mockgen -source=project_status.go -destination=mock/project_status_mock.go -package=mock
+
 import (
 	"context"
 	"encoding/base64"
@@ -46,11 +48,16 @@ type projectStatusPageToken struct {
 type ProjectStatusNotFoundError struct {
 	// Queue is the queue in the selector.
 	Queue string
+	// RequestID is the request identifier in an ID selector, empty for a URI selector.
+	RequestID string
 	// ChangeURI is the commit URI in the selector.
 	ChangeURI string
 }
 
 func (e *ProjectStatusNotFoundError) Error() string {
+	if e.RequestID != "" {
+		return fmt.Sprintf("project status not found for queue %q and request ID %q", e.Queue, e.RequestID)
+	}
 	return fmt.Sprintf("project status not found for queue %q and change URI %q", e.Queue, e.ChangeURI)
 }
 
@@ -73,53 +80,65 @@ func IsProjectStatusConsistency(err error) bool {
 	return errors.As(err, &target)
 }
 
-// GetProjectStatusByURIController reads the durable validation projections.
-type GetProjectStatusByURIController struct {
+// ProjectStatusController exposes durable validation projections selected by ID or URI.
+type ProjectStatusController interface {
+	GetProjectStatus(context.Context, entity.GetProjectStatusRequest) (entity.GetProjectStatusResult, error)
+}
+
+var _ ProjectStatusController = (*projectStatusController)(nil)
+
+type projectStatusController struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	stores       storage.Factory
 }
 
-// NewGetProjectStatusByURIController creates a controller for validation-status lookups.
-func NewGetProjectStatusByURIController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory) *GetProjectStatusByURIController {
-	return &GetProjectStatusByURIController{
+// NewProjectStatusController creates a controller for validation-status lookups.
+func NewProjectStatusController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory) ProjectStatusController {
+	return &projectStatusController{
 		logger:       logger,
-		metricsScope: scope.SubScope("get_project_status_by_uri_controller"),
+		metricsScope: scope.SubScope("project_status_controller"),
 		stores:       stores,
 	}
 }
 
-// GetProjectStatusByURI returns the selected request summary and its repository validation fact, if recorded.
-func (c *GetProjectStatusByURIController) GetProjectStatusByURI(ctx context.Context, req entity.GetProjectStatusByURIRequest) (result entity.GetProjectStatusByURIResult, retErr error) {
-	op := metrics.Begin(c.metricsScope, "get_project_status_by_uri", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
+// GetProjectStatus returns the selected request summary and its repository validation fact, if recorded.
+func (c *projectStatusController) GetProjectStatus(ctx context.Context, req entity.GetProjectStatusRequest) (result entity.GetProjectStatusResult, retErr error) {
+	op := metrics.Begin(c.metricsScope, "get_project_status", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
 
 	if err := validateProjectStatusRequest(req); err != nil {
-		return entity.GetProjectStatusByURIResult{}, err
+		return entity.GetProjectStatusResult{}, err
 	}
 	store, err := c.stores.For(storage.Config{QueueName: req.Queue})
 	if err != nil {
-		return entity.GetProjectStatusByURIResult{}, fmt.Errorf("GetProjectStatusByURI failed to resolve storage for queue %q: %w", req.Queue, err)
+		return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to resolve storage for queue %q: %w", req.Queue, err)
 	}
 
-	requestID, err := store.GetRequestURIStore().GetIDByURI(ctx, req.ChangeURI)
-	if err != nil {
-		if storage.IsNotFound(err) {
-			return entity.GetProjectStatusByURIResult{}, errs.NewUserError(&ProjectStatusNotFoundError{Queue: req.Queue, ChangeURI: req.ChangeURI})
+	requestID := req.RequestID
+	if req.ChangeURI != "" {
+		requestID, err = store.GetRequestURIStore().GetIDByURI(ctx, req.ChangeURI)
+		if err != nil {
+			if storage.IsNotFound(err) {
+				return entity.GetProjectStatusResult{}, errs.NewUserError(&ProjectStatusNotFoundError{Queue: req.Queue, ChangeURI: req.ChangeURI})
+			}
+			return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to resolve request for URI %q: %w", req.ChangeURI, err)
 		}
-		return entity.GetProjectStatusByURIResult{}, fmt.Errorf("GetProjectStatusByURI failed to resolve request for URI %q: %w", req.ChangeURI, err)
 	}
 
 	requestSummary, err := store.GetRequestSummaryStore().Get(ctx, requestID)
 	if err != nil {
 		if storage.IsNotFound(err) {
+			if req.RequestID != "" {
+				return entity.GetProjectStatusResult{}, errs.NewUserError(&ProjectStatusNotFoundError{Queue: req.Queue, RequestID: req.RequestID})
+			}
 			// The URI mapping is created before the summary, so this gap is retryable.
-			return entity.GetProjectStatusByURIResult{}, errs.NewRetryableError(fmt.Errorf("GetProjectStatusByURI request summary %q is not visible yet", requestID))
+			return entity.GetProjectStatusResult{}, errs.NewRetryableError(fmt.Errorf("GetProjectStatus request summary %q is not visible yet", requestID))
 		}
-		return entity.GetProjectStatusByURIResult{}, fmt.Errorf("GetProjectStatusByURI failed to load request summary %q: %w", requestID, err)
+		return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to load request summary %q: %w", requestID, err)
 	}
-	if requestSummary.RequestID != requestID || requestSummary.Queue != req.Queue || requestSummary.URI != req.ChangeURI {
-		return entity.GetProjectStatusByURIResult{}, &ProjectStatusConsistencyError{message: "request URI mapping disagrees with stored request summary"}
+	if requestSummary.RequestID != requestID || requestSummary.Queue != req.Queue || requestSummary.URI == "" || (req.ChangeURI != "" && requestSummary.URI != req.ChangeURI) {
+		return entity.GetProjectStatusResult{}, &ProjectStatusConsistencyError{message: "project status selector disagrees with stored request summary"}
 	}
 	result.RequestSummary = requestSummary
 	result.UpdatedAtMs = requestSummary.StateTimestampMs
@@ -127,11 +146,11 @@ func (c *GetProjectStatusByURIController) GetProjectStatusByURI(ctx context.Cont
 	fact, err := factStore.Get(ctx, requestSummary.URI, "")
 	if err != nil {
 		if !storage.IsNotFound(err) {
-			return entity.GetProjectStatusByURIResult{}, fmt.Errorf("GetProjectStatusByURI failed to load repository fact for request %q: %w", requestSummary.RequestID, err)
+			return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to load repository fact for request %q: %w", requestSummary.RequestID, err)
 		}
 	} else {
 		if err := validateRepositoryFact(fact, requestSummary); err != nil {
-			return entity.GetProjectStatusByURIResult{}, err
+			return entity.GetProjectStatusResult{}, err
 		}
 		result.RepositoryValidationFact = fact
 		result.HasRepositoryValidationFact = true
@@ -141,7 +160,7 @@ func (c *GetProjectStatusByURIController) GetProjectStatusByURI(ctx context.Cont
 	}
 	page, err := selectProjectStatusPage(req, requestSummary.RequestID)
 	if err != nil {
-		return entity.GetProjectStatusByURIResult{}, err
+		return entity.GetProjectStatusResult{}, err
 	}
 	for _, project := range page.projects {
 		projectFact, err := factStore.Get(ctx, requestSummary.URI, project)
@@ -149,10 +168,10 @@ func (c *GetProjectStatusByURIController) GetProjectStatusByURI(ctx context.Cont
 			if storage.IsNotFound(err) {
 				continue
 			}
-			return entity.GetProjectStatusByURIResult{}, fmt.Errorf("GetProjectStatusByURI failed to load project fact for request %q and project %q: %w", requestSummary.RequestID, project, err)
+			return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to load project fact for request %q and project %q: %w", requestSummary.RequestID, project, err)
 		}
 		if err := validateProjectFact(projectFact, requestSummary, project); err != nil {
-			return entity.GetProjectStatusByURIResult{}, err
+			return entity.GetProjectStatusResult{}, err
 		}
 		result.ProjectValidationFacts = append(result.ProjectValidationFacts, projectFact)
 		if projectFact.CreatedAt > result.UpdatedAtMs {
@@ -165,28 +184,37 @@ func (c *GetProjectStatusByURIController) GetProjectStatusByURI(ctx context.Cont
 	return result, nil
 }
 
-func validateProjectStatusRequest(req entity.GetProjectStatusByURIRequest) error {
+func validateProjectStatusRequest(req entity.GetProjectStatusRequest) error {
 	if err := validateHistoryIdentifier("queue", req.Queue); err != nil {
-		return fmt.Errorf("GetProjectStatusByURI invalid queue=%q: %w", req.Queue, err)
+		return fmt.Errorf("GetProjectStatus invalid queue=%q: %w", req.Queue, err)
 	}
-	if err := validateHistoryIdentifier("change URI", req.ChangeURI); err != nil {
-		return fmt.Errorf("GetProjectStatusByURI invalid change_uri=%q: %w", req.ChangeURI, err)
+	if (req.RequestID == "") == (req.ChangeURI == "") {
+		return fmt.Errorf("GetProjectStatus requires exactly one of request_id or change_uri: %w", ErrInvalidRequest)
+	}
+	if req.RequestID != "" {
+		if err := validateRequestID(req.RequestID); err != nil {
+			return fmt.Errorf("GetProjectStatus invalid request_id=%q: %w", req.RequestID, err)
+		}
+	} else {
+		if err := validateHistoryIdentifier("change URI", req.ChangeURI); err != nil {
+			return fmt.Errorf("GetProjectStatus invalid change_uri=%q: %w", req.ChangeURI, err)
+		}
 	}
 	if len(req.Projects) == 0 {
-		return fmt.Errorf("GetProjectStatusByURI projects must be non-empty: %w", ErrInvalidRequest)
+		return fmt.Errorf("GetProjectStatus projects must be non-empty: %w", ErrInvalidRequest)
 	}
 	seen := make(map[string]struct{}, len(req.Projects))
 	for _, project := range req.Projects {
 		if err := validateHistoryIdentifier("project", project); err != nil {
-			return fmt.Errorf("GetProjectStatusByURI invalid project=%q: %w", project, err)
+			return fmt.Errorf("GetProjectStatus invalid project=%q: %w", project, err)
 		}
 		if _, ok := seen[project]; ok {
-			return fmt.Errorf("GetProjectStatusByURI project %q is duplicated: %w", project, ErrInvalidRequest)
+			return fmt.Errorf("GetProjectStatus project %q is duplicated: %w", project, ErrInvalidRequest)
 		}
 		seen[project] = struct{}{}
 	}
 	if req.PageSize < 0 || req.PageSize > maxProjectStatusPageSize {
-		return fmt.Errorf("GetProjectStatusByURI page_size must be between 0 and %d: %w", maxProjectStatusPageSize, ErrInvalidRequest)
+		return fmt.Errorf("GetProjectStatus page_size must be between 0 and %d: %w", maxProjectStatusPageSize, ErrInvalidRequest)
 	}
 	return nil
 }
@@ -196,7 +224,7 @@ type projectStatusPage struct {
 	nextToken string
 }
 
-func selectProjectStatusPage(req entity.GetProjectStatusByURIRequest, requestID string) (projectStatusPage, error) {
+func selectProjectStatusPage(req entity.GetProjectStatusRequest, requestID string) (projectStatusPage, error) {
 	start := 0
 	if req.PageToken != "" {
 		token, err := decodeProjectStatusPageToken(req.PageToken)
@@ -204,7 +232,7 @@ func selectProjectStatusPage(req entity.GetProjectStatusByURIRequest, requestID 
 			return projectStatusPage{}, err
 		}
 		if token.RequestID != requestID || !reflect.DeepEqual(token.Projects, req.Projects) || token.NextIndex <= 0 || token.NextIndex >= len(req.Projects) {
-			return projectStatusPage{}, fmt.Errorf("GetProjectStatusByURI page_token does not match the selected request and projects: %w", ErrInvalidRequest)
+			return projectStatusPage{}, fmt.Errorf("GetProjectStatus page_token does not match the selected request and projects: %w", ErrInvalidRequest)
 		}
 		start = token.NextIndex
 	}
@@ -217,7 +245,7 @@ func selectProjectStatusPage(req entity.GetProjectStatusByURIRequest, requestID 
 	if end < len(req.Projects) {
 		token, err := encodeProjectStatusPageToken(projectStatusPageToken{RequestID: requestID, Projects: req.Projects, NextIndex: end})
 		if err != nil {
-			return projectStatusPage{}, fmt.Errorf("GetProjectStatusByURI failed to create page token: %w", err)
+			return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to create page token: %w", err)
 		}
 		page.nextToken = token
 	}
@@ -235,11 +263,11 @@ func encodeProjectStatusPageToken(token projectStatusPageToken) (string, error) 
 func decodeProjectStatusPageToken(encoded string) (projectStatusPageToken, error) {
 	contents, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return projectStatusPageToken{}, fmt.Errorf("GetProjectStatusByURI invalid page_token: %w", ErrInvalidRequest)
+		return projectStatusPageToken{}, fmt.Errorf("GetProjectStatus invalid page_token: %w", ErrInvalidRequest)
 	}
 	var token projectStatusPageToken
 	if err := json.Unmarshal(contents, &token); err != nil {
-		return projectStatusPageToken{}, fmt.Errorf("GetProjectStatusByURI invalid page_token: %w", ErrInvalidRequest)
+		return projectStatusPageToken{}, fmt.Errorf("GetProjectStatus invalid page_token: %w", ErrInvalidRequest)
 	}
 	return token, nil
 }

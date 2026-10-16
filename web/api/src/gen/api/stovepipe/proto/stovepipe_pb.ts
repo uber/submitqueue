@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file api/stovepipe/proto/stovepipe.proto.
  */
 export const file_api_stovepipe_proto_stovepipe: GenFile = /*@__PURE__*/
-  fileDesc("CiNhcGkvc3RvdmVwaXBlL3Byb3RvL3N0b3ZlcGlwZS5wcm90bxIadWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUiHgoLUGluZ1JlcXVlc3QSDwoHbWVzc2FnZRgBIAEoCSJaCgxQaW5nUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSEQoJdGltZXN0YW1wGAMgASgDEhAKCGhvc3RuYW1lGAQgASgJIh4KDUluZ2VzdFJlcXVlc3QSDQoFcXVldWUYASABKAkiHAoOSW5nZXN0UmVzcG9uc2USCgoCaWQYASABKAkiQQocR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVxdWVzdBINCgVxdWV1ZRgBIAEoCRISCgpyZXF1ZXN0X2lkGAIgASgJIjsKHUdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEgsKA3VyaRgCIAEoCSKGAQoMSGlzdG9yeUV2ZW50EhAKCGV2ZW50X2lkGAEgASgJEhQKDHRpbWVzdGFtcF9tcxgCIAEoAxIXCg1yZXF1ZXN0X3N0YXRlGAMgASgJSAASDwoFZXZlbnQYBCABKAlIABIWCg5vdXRjb21lX3JlYXNvbhgFIAEoCUIMCgpvY2N1cnJlbmNlIqMBCg5SZXF1ZXN0SGlzdG9yeRISCgpyZXF1ZXN0X2lkGAEgASgJEjgKBmV2ZW50cxgCIAMoCzIoLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlFdmVudBJDCg9yZXF1ZXN0X3N1bW1hcnkYAyABKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0U3VtbWFyeSKeAQodR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVzcG9uc2USOAoGZXZlbnRzGAEgAygLMigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSGlzdG9yeUV2ZW50EkMKD3JlcXVlc3Rfc3VtbWFyeRgCIAEoCzIqLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlJlcXVlc3RTdW1tYXJ5Il8KHkdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXNwb25zZRI9CgloaXN0b3JpZXMYASADKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0SGlzdG9yeSJ6ChxHZXRQcm9qZWN0U3RhdHVzQnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEhIKCmNoYW5nZV91cmkYAiABKAkSEAoIcHJvamVjdHMYAyADKAkSEQoJcGFnZV9zaXplGAQgASgFEhIKCnBhZ2VfdG9rZW4YBSABKAkiSQoRUHJvamVjdFZhbGlkYXRpb24SDwoHcHJvamVjdBgBIAEoCRIZCg9icmVha2FnZV9kZWdyZWUYAiABKAFIAEIICgZyZXN1bHQizQIKHUdldFByb2plY3RTdGF0dXNCeVVSSVJlc3BvbnNlEhIKCnJlcXVlc3RfaWQYASABKAkSDQoFcXVldWUYAiABKAkSEgoKY2hhbmdlX3VyaRgDIAEoCRIQCghiYXNlX3VyaRgEIAEoCRIVCg1yZXF1ZXN0X3N0YXRlGAUgASgJEhUKDXVwZGF0ZWRfYXRfbXMYCiABKAMSJAoacmVwb3NpdG9yeV9icmVha2FnZV9kZWdyZWUYBiABKAFIABIgChhwcm9qZWN0X3Jlc3VsdHNfY29tcGxldGUYByABKAgSPwoIcHJvamVjdHMYCCADKAsyLS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5Qcm9qZWN0VmFsaWRhdGlvbhIXCg9uZXh0X3BhZ2VfdG9rZW4YCSABKAlCEwoRcmVwb3NpdG9yeV9yZXN1bHQivQEKDlJlcXVlc3RTdW1tYXJ5EhIKCnJlcXVlc3RfaWQYASABKAkSDQoFcXVldWUYAiABKAkSEgoKY2hhbmdlX3VyaRgDIAEoCRIQCghiYXNlX3VyaRgEIAEoCRIVCg1yZXF1ZXN0X3N0YXRlGAUgASgJEhsKE3N0YXRlX3VwZGF0ZWRfYXRfbXMYBiABKAMSFgoOYWNjZXB0ZWRfYXRfbXMYByABKAMSFgoOb3V0Y29tZV9yZWFzb24YCCABKAkitAEKC0xpc3RSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEiEKF2FjY2VwdGVkX2F0X29yX2FmdGVyX21zGAIgASgDSAASHAoSYWNjZXB0ZWRfYmVmb3JlX21zGAMgASgDSAESEQoJcGFnZV9zaXplGAQgASgFEhIKCnBhZ2VfdG9rZW4YBSABKAlCFgoUYWNjZXB0ZWRfbG93ZXJfYm91bmRCFgoUYWNjZXB0ZWRfdXBwZXJfYm91bmQiZQoMTGlzdFJlc3BvbnNlEjwKCHJlcXVlc3RzGAEgAygLMioudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUmVxdWVzdFN1bW1hcnkSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJMt4FCglTdG92ZXBpcGUSWwoEUGluZxInLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlBpbmdSZXF1ZXN0GigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUGluZ1Jlc3BvbnNlIgASYQoGSW5nZXN0EikudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSW5nZXN0UmVxdWVzdBoqLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkluZ2VzdFJlc3BvbnNlIgASjgEKFUdldFJlcXVlc3RIaXN0b3J5QnlJRBI4LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFJlcXVlc3RIaXN0b3J5QnlJRFJlcXVlc3QaOS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRSZXF1ZXN0SGlzdG9yeUJ5SURSZXNwb25zZSIAEpEBChZHZXRSZXF1ZXN0SGlzdG9yeUJ5VVJJEjkudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UmVxdWVzdEhpc3RvcnlCeVVSSVJlcXVlc3QaOi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRSZXF1ZXN0SGlzdG9yeUJ5VVJJUmVzcG9uc2UiABKOAQoVR2V0UHJvamVjdFN0YXR1c0J5VVJJEjgudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVxdWVzdBo5LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeVVSSVJlc3BvbnNlIgASWwoETGlzdBInLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkxpc3RSZXF1ZXN0GigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuTGlzdFJlc3BvbnNlIgBCZQoeY29tLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlQg5TdG92ZXBpcGVQcm90b1ABWjFnaXRodWIuY29tL3ViZXIvc3VibWl0cXVldWUvYXBpL3N0b3ZlcGlwZS9wcm90b3BiYgZwcm90bzM");
+  fileDesc("CiNhcGkvc3RvdmVwaXBlL3Byb3RvL3N0b3ZlcGlwZS5wcm90bxIadWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUiHgoLUGluZ1JlcXVlc3QSDwoHbWVzc2FnZRgBIAEoCSJaCgxQaW5nUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSEQoJdGltZXN0YW1wGAMgASgDEhAKCGhvc3RuYW1lGAQgASgJIh4KDUluZ2VzdFJlcXVlc3QSDQoFcXVldWUYASABKAkiHAoOSW5nZXN0UmVzcG9uc2USCgoCaWQYASABKAkiQQocR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVxdWVzdBINCgVxdWV1ZRgBIAEoCRISCgpyZXF1ZXN0X2lkGAIgASgJIjsKHUdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEgsKA3VyaRgCIAEoCSKGAQoMSGlzdG9yeUV2ZW50EhAKCGV2ZW50X2lkGAEgASgJEhQKDHRpbWVzdGFtcF9tcxgCIAEoAxIXCg1yZXF1ZXN0X3N0YXRlGAMgASgJSAASDwoFZXZlbnQYBCABKAlIABIWCg5vdXRjb21lX3JlYXNvbhgFIAEoCUIMCgpvY2N1cnJlbmNlIqMBCg5SZXF1ZXN0SGlzdG9yeRISCgpyZXF1ZXN0X2lkGAEgASgJEjgKBmV2ZW50cxgCIAMoCzIoLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlFdmVudBJDCg9yZXF1ZXN0X3N1bW1hcnkYAyABKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0U3VtbWFyeSKeAQodR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVzcG9uc2USOAoGZXZlbnRzGAEgAygLMigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSGlzdG9yeUV2ZW50EkMKD3JlcXVlc3Rfc3VtbWFyeRgCIAEoCzIqLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlJlcXVlc3RTdW1tYXJ5Il8KHkdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXNwb25zZRI9CgloaXN0b3JpZXMYASADKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0SGlzdG9yeSJ5ChtHZXRQcm9qZWN0U3RhdHVzQnlJRFJlcXVlc3QSDQoFcXVldWUYASABKAkSEgoKcmVxdWVzdF9pZBgCIAEoCRIQCghwcm9qZWN0cxgDIAMoCRIRCglwYWdlX3NpemUYBCABKAUSEgoKcGFnZV90b2tlbhgFIAEoCSJ6ChxHZXRQcm9qZWN0U3RhdHVzQnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEhIKCmNoYW5nZV91cmkYAiABKAkSEAoIcHJvamVjdHMYAyADKAkSEQoJcGFnZV9zaXplGAQgASgFEhIKCnBhZ2VfdG9rZW4YBSABKAkiSQoRUHJvamVjdFZhbGlkYXRpb24SDwoHcHJvamVjdBgBIAEoCRIZCg9icmVha2FnZV9kZWdyZWUYAiABKAFIAEIICgZyZXN1bHQizAIKHEdldFByb2plY3RTdGF0dXNCeUlEUmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRISCgpjaGFuZ2VfdXJpGAMgASgJEhAKCGJhc2VfdXJpGAQgASgJEhUKDXJlcXVlc3Rfc3RhdGUYBSABKAkSFQoNdXBkYXRlZF9hdF9tcxgKIAEoAxIkChpyZXBvc2l0b3J5X2JyZWFrYWdlX2RlZ3JlZRgGIAEoAUgAEiAKGHByb2plY3RfcmVzdWx0c19jb21wbGV0ZRgHIAEoCBI/Cghwcm9qZWN0cxgIIAMoCzItLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlByb2plY3RWYWxpZGF0aW9uEhcKD25leHRfcGFnZV90b2tlbhgJIAEoCUITChFyZXBvc2l0b3J5X3Jlc3VsdCLNAgodR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRISCgpjaGFuZ2VfdXJpGAMgASgJEhAKCGJhc2VfdXJpGAQgASgJEhUKDXJlcXVlc3Rfc3RhdGUYBSABKAkSFQoNdXBkYXRlZF9hdF9tcxgKIAEoAxIkChpyZXBvc2l0b3J5X2JyZWFrYWdlX2RlZ3JlZRgGIAEoAUgAEiAKGHByb2plY3RfcmVzdWx0c19jb21wbGV0ZRgHIAEoCBI/Cghwcm9qZWN0cxgIIAMoCzItLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlByb2plY3RWYWxpZGF0aW9uEhcKD25leHRfcGFnZV90b2tlbhgJIAEoCUITChFyZXBvc2l0b3J5X3Jlc3VsdCK9AQoOUmVxdWVzdFN1bW1hcnkSEgoKcmVxdWVzdF9pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRISCgpjaGFuZ2VfdXJpGAMgASgJEhAKCGJhc2VfdXJpGAQgASgJEhUKDXJlcXVlc3Rfc3RhdGUYBSABKAkSGwoTc3RhdGVfdXBkYXRlZF9hdF9tcxgGIAEoAxIWCg5hY2NlcHRlZF9hdF9tcxgHIAEoAxIWCg5vdXRjb21lX3JlYXNvbhgIIAEoCSK0AQoLTGlzdFJlcXVlc3QSDQoFcXVldWUYASABKAkSIQoXYWNjZXB0ZWRfYXRfb3JfYWZ0ZXJfbXMYAiABKANIABIcChJhY2NlcHRlZF9iZWZvcmVfbXMYAyABKANIARIRCglwYWdlX3NpemUYBCABKAUSEgoKcGFnZV90b2tlbhgFIAEoCUIWChRhY2NlcHRlZF9sb3dlcl9ib3VuZEIWChRhY2NlcHRlZF91cHBlcl9ib3VuZCJlCgxMaXN0UmVzcG9uc2USPAoIcmVxdWVzdHMYASADKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0U3VtbWFyeRIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAky7AYKCVN0b3ZlcGlwZRJbCgRQaW5nEicudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUGluZ1JlcXVlc3QaKC51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5QaW5nUmVzcG9uc2UiABJhCgZJbmdlc3QSKS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5Jbmdlc3RSZXF1ZXN0GioudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSW5nZXN0UmVzcG9uc2UiABKOAQoVR2V0UmVxdWVzdEhpc3RvcnlCeUlEEjgudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVxdWVzdBo5LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFJlcXVlc3RIaXN0b3J5QnlJRFJlc3BvbnNlIgASkQEKFkdldFJlcXVlc3RIaXN0b3J5QnlVUkkSOS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRSZXF1ZXN0SGlzdG9yeUJ5VVJJUmVxdWVzdBo6LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXNwb25zZSIAEosBChRHZXRQcm9qZWN0U3RhdHVzQnlJRBI3LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeUlEUmVxdWVzdBo4LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeUlEUmVzcG9uc2UiABKOAQoVR2V0UHJvamVjdFN0YXR1c0J5VVJJEjgudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVxdWVzdBo5LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeVVSSVJlc3BvbnNlIgASWwoETGlzdBInLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkxpc3RSZXF1ZXN0GigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuTGlzdFJlc3BvbnNlIgBCZQoeY29tLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlQg5TdG92ZXBpcGVQcm90b1ABWjFnaXRodWIuY29tL3ViZXIvc3VibWl0cXVldWUvYXBpL3N0b3ZlcGlwZS9wcm90b3BiYgZwcm90bzM");
 
 /**
  * PingRequest is the request for the Ping method
@@ -332,6 +332,55 @@ export const GetRequestHistoryByURIResponseSchema: GenMessage<GetRequestHistoryB
   messageDesc(file_api_stovepipe_proto_stovepipe, 9);
 
 /**
+ * GetProjectStatusByIDRequest selects the validation status for the ID returned from Ingest.
+ *
+ * @generated from message uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
+ */
+export type GetProjectStatusByIDRequest = Message<"uber.submitqueue.stovepipe.GetProjectStatusByIDRequest"> & {
+  /**
+   * Logical queue containing the validation request.
+   *
+   * @generated from field: string queue = 1;
+   */
+  queue: string;
+
+  /**
+   * Canonical decimal request identifier returned from Ingest.
+   *
+   * @generated from field: string request_id = 2;
+   */
+  requestId: string;
+
+  /**
+   * Required consumer-defined project IDs whose recorded results are requested.
+   *
+   * @generated from field: repeated string projects = 3;
+   */
+  projects: string[];
+
+  /**
+   * Maximum requested projects to return in one page. Zero selects the server default.
+   *
+   * @generated from field: int32 page_size = 4;
+   */
+  pageSize: number;
+
+  /**
+   * Opaque continuation token for requested-project result pagination.
+   *
+   * @generated from field: string page_token = 5;
+   */
+  pageToken: string;
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.GetProjectStatusByIDRequest.
+ * Use `create(GetProjectStatusByIDRequestSchema)` to create a new message.
+ */
+export const GetProjectStatusByIDRequestSchema: GenMessage<GetProjectStatusByIDRequest> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 10);
+
+/**
  * GetProjectStatusByURIRequest selects the validation status for an exact commit URI.
  *
  * @generated from message uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
@@ -378,7 +427,7 @@ export type GetProjectStatusByURIRequest = Message<"uber.submitqueue.stovepipe.G
  * Use `create(GetProjectStatusByURIRequestSchema)` to create a new message.
  */
 export const GetProjectStatusByURIRequestSchema: GenMessage<GetProjectStatusByURIRequest> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 10);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 11);
 
 /**
  * ProjectValidation contains one reported project and its recorded result, if any.
@@ -412,7 +461,97 @@ export type ProjectValidation = Message<"uber.submitqueue.stovepipe.ProjectValid
  * Use `create(ProjectValidationSchema)` to create a new message.
  */
 export const ProjectValidationSchema: GenMessage<ProjectValidation> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 11);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 12);
+
+/**
+ * GetProjectStatusByIDResponse contains the selected validation's current projection.
+ *
+ * @generated from message uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
+ */
+export type GetProjectStatusByIDResponse = Message<"uber.submitqueue.stovepipe.GetProjectStatusByIDResponse"> & {
+  /**
+   * Queue-scoped decimal identifier of the validation request.
+   *
+   * @generated from field: string request_id = 1;
+   */
+  requestId: string;
+
+  /**
+   * Logical queue containing the validation request.
+   *
+   * @generated from field: string queue = 2;
+   */
+  queue: string;
+
+  /**
+   * VCS-agnostic URI of the commit under validation.
+   *
+   * @generated from field: string change_uri = 3;
+   */
+  changeUri: string;
+
+  /**
+   * Baseline URI for incremental validation. Empty for a full build.
+   *
+   * @generated from field: string base_uri = 4;
+   */
+  baseUri: string;
+
+  /**
+   * Stable public lifecycle state of the validation request.
+   *
+   * @generated from field: string request_state = 5;
+   */
+  requestState: string;
+
+  /**
+   * Unix millisecond timestamp of the newest durable lifecycle or result record.
+   *
+   * @generated from field: int64 updated_at_ms = 10;
+   */
+  updatedAtMs: bigint;
+
+  /**
+   * Whole-repository breakage degree. Absent until the result is durable.
+   *
+   * @generated from oneof uber.submitqueue.stovepipe.GetProjectStatusByIDResponse.repository_result
+   */
+  repositoryResult: {
+    /**
+     * @generated from field: double repository_breakage_degree = 6;
+     */
+    value: number;
+    case: "repositoryBreakageDegree";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * True after the implementation has durably finished producing relevant project results.
+   *
+   * @generated from field: bool project_results_complete = 7;
+   */
+  projectResultsComplete: boolean;
+
+  /**
+   * Recorded results for requested projects.
+   *
+   * @generated from field: repeated uber.submitqueue.stovepipe.ProjectValidation projects = 8;
+   */
+  projects: ProjectValidation[];
+
+  /**
+   * Opaque continuation token for another requested-project result page. Empty on the final page.
+   *
+   * @generated from field: string next_page_token = 9;
+   */
+  nextPageToken: string;
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.GetProjectStatusByIDResponse.
+ * Use `create(GetProjectStatusByIDResponseSchema)` to create a new message.
+ */
+export const GetProjectStatusByIDResponseSchema: GenMessage<GetProjectStatusByIDResponse> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 13);
 
 /**
  * GetProjectStatusByURIResponse contains the selected validation's current projection.
@@ -502,7 +641,7 @@ export type GetProjectStatusByURIResponse = Message<"uber.submitqueue.stovepipe.
  * Use `create(GetProjectStatusByURIResponseSchema)` to create a new message.
  */
 export const GetProjectStatusByURIResponseSchema: GenMessage<GetProjectStatusByURIResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 12);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 14);
 
 /**
  * RequestSummary contains one request's current materialized lifecycle state.
@@ -572,7 +711,7 @@ export type RequestSummary = Message<"uber.submitqueue.stovepipe.RequestSummary"
  * Use `create(RequestSummarySchema)` to create a new message.
  */
 export const RequestSummarySchema: GenMessage<RequestSummary> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 13);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 15);
 
 /**
  * ListRequest selects a page of retained request summaries for one queue.
@@ -633,7 +772,7 @@ export type ListRequest = Message<"uber.submitqueue.stovepipe.ListRequest"> & {
  * Use `create(ListRequestSchema)` to create a new message.
  */
 export const ListRequestSchema: GenMessage<ListRequest> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 14);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 16);
 
 /**
  * ListResponse contains a page in acceptance-time order, not a snapshot across pages.
@@ -662,7 +801,7 @@ export type ListResponse = Message<"uber.submitqueue.stovepipe.ListResponse"> & 
  * Use `create(ListResponseSchema)` to create a new message.
  */
 export const ListResponseSchema: GenMessage<ListResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 15);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 17);
 
 /**
  * Stovepipe provides the Stovepipe API.
@@ -710,6 +849,16 @@ export const Stovepipe: GenService<{
     methodKind: "unary";
     input: typeof GetRequestHistoryByURIRequestSchema;
     output: typeof GetRequestHistoryByURIResponseSchema;
+  },
+  /**
+   * GetProjectStatusByID returns the current validation status for one request ID.
+   *
+   * @generated from rpc uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID
+   */
+  getProjectStatusByID: {
+    methodKind: "unary";
+    input: typeof GetProjectStatusByIDRequestSchema;
+    output: typeof GetProjectStatusByIDResponseSchema;
   },
   /**
    * GetProjectStatusByURI returns the current validation status for an exact commit URI.

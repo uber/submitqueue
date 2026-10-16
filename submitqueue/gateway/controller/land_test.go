@@ -36,6 +36,9 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/queuepause"
+	queuepausefake "github.com/uber/submitqueue/submitqueue/extension/queuepause/fake"
+	queuepausenoop "github.com/uber/submitqueue/submitqueue/extension/queuepause/noop"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
@@ -87,7 +90,7 @@ func (f staticCounterFactory) For(config counter.Config) (counter.Counter, error
 // noopStorage returns stateful request storage whose writes succeed.
 func newNoopLandController(t *testing.T, ctrl *gomock.Controller, cnt counter.Counter) LandController {
 	fixture := newControllerStorageFixture(ctrl)
-	return NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	return NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), noopQueueConfigStore(ctrl), queuepausenoop.New(), newTestRegistryWithNoopPublisher(t, ctrl))
 }
 
 // noopQueueConfigStore returns a mock queueconfig.Store that always reports
@@ -178,6 +181,7 @@ func TestLand_ResolvesCounterForRequestQueue(t *testing.T) {
 		fixture.newFactory(ctrl),
 		fixture.newMaterializer(ctrl),
 		noopQueueConfigStore(ctrl),
+		queuepausenoop.New(),
 		newTestRegistryWithNoopPublisher(t, ctrl),
 	)
 	ctx := context.Background()
@@ -307,7 +311,7 @@ func TestLand_ReturnsUnrecognizedQueueWhenStoreReportsNotFound(t *testing.T) {
 	qcs.EXPECT().Get(gomock.Any(), "missing-queue").Return(entity.QueueConfig{}, queueconfig.ErrNotFound)
 
 	fixture := newControllerStorageFixture(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), qcs, queuepausenoop.New(), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	_, err := controller.Land(ctx, testLandRequest("missing-queue"))
@@ -330,7 +334,7 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 	qcs.EXPECT().Get(gomock.Any(), "test-queue").Return(entity.QueueConfig{}, fmt.Errorf("config backend down"))
 
 	fixture := newControllerStorageFixture(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), qcs, queuepausenoop.New(), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	_, err := controller.Land(ctx, testLandRequest("test-queue"))
@@ -338,6 +342,81 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, IsUnrecognizedQueue(err))
 	assert.False(t, IsInvalidRequest(err))
+}
+
+func newLandControllerWithPauseStore(t *testing.T, ctrl *gomock.Controller, cnt counter.Counter, qcs *qcmock.MockStore, pauses queuepause.Store) LandController {
+	fixture := newControllerStorageFixture(ctrl)
+	return NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), fixture.newMaterializer(ctrl), qcs, pauses, newTestRegistryWithNoopPublisher(t, ctrl))
+}
+
+func TestLand_QueuePause(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      entity.QueuePause
+		wantLanded bool
+		wantReason string
+	}{
+		{name: "not paused", state: entity.QueuePause{}, wantLanded: true},
+		{name: "freeze only still accepts lands", state: entity.QueuePause{FreezeProcessing: true}, wantLanded: true},
+		{name: "reject only", state: entity.QueuePause{RejectLands: true}, wantLanded: false},
+		{name: "reject and freeze", state: entity.QueuePause{RejectLands: true, FreezeProcessing: true}, wantLanded: false},
+		{name: "reject carries the reason", state: entity.QueuePause{RejectLands: true, Reason: "repo freeze until 17:00"}, wantLanded: false, wantReason: "repo freeze until 17:00"},
+		{name: "reason alone does not reject", state: entity.QueuePause{Reason: "stale note"}, wantLanded: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			cnt := countermock.NewMockCounter(ctrl)
+			if tt.wantLanded {
+				cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
+			}
+			pauses := queuepausefake.New().Set("test-queue", tt.state)
+			controller := newLandControllerWithPauseStore(t, ctrl, cnt, noopQueueConfigStore(ctrl), pauses)
+
+			result, err := controller.Land(context.Background(), testLandRequest("test-queue"))
+
+			if tt.wantLanded {
+				require.NoError(t, err)
+				assert.Equal(t, "1", result.ID)
+				return
+			}
+			require.Error(t, err)
+			assert.True(t, IsQueuePaused(err))
+			assert.True(t, errs.IsUserError(err))
+			assert.False(t, errs.IsRetryable(err))
+			var typed *QueuePausedError
+			require.ErrorAs(t, err, &typed)
+			assert.Equal(t, "test-queue", typed.Queue)
+			assert.Equal(t, tt.wantReason, typed.Reason)
+		})
+	}
+}
+
+func TestLand_FailsClosedWhenPauseStoreErrors(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cnt := countermock.NewMockCounter(ctrl)
+	pauses := queuepausefake.New().FailWith(fmt.Errorf("pause backend down"))
+	controller := newLandControllerWithPauseStore(t, ctrl, cnt, noopQueueConfigStore(ctrl), pauses)
+
+	_, err := controller.Land(context.Background(), testLandRequest("test-queue"))
+
+	require.Error(t, err)
+	assert.False(t, IsQueuePaused(err))
+	assert.False(t, errs.IsUserError(err))
+}
+
+func TestLand_ReportsUnrecognizedQueueBeforeReadingPauseState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cnt := countermock.NewMockCounter(ctrl)
+	qcs := qcmock.NewMockStore(ctrl)
+	qcs.EXPECT().Get(gomock.Any(), "missing-queue").Return(entity.QueueConfig{}, queueconfig.ErrNotFound)
+	pauses := queuepausefake.New().FailWith(fmt.Errorf("pause backend down"))
+	controller := newLandControllerWithPauseStore(t, ctrl, cnt, qcs, pauses)
+
+	_, err := controller.Land(context.Background(), testLandRequest("missing-queue"))
+
+	require.Error(t, err)
+	assert.True(t, IsUnrecognizedQueue(err))
 }
 
 func TestLand_PublishesToQueue(t *testing.T) {
@@ -414,7 +493,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		),
 	)
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, factoryForStorage(ctrl, store), materializer, noopQueueConfigStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, factoryForStorage(ctrl, store), materializer, noopQueueConfigStore(ctrl), queuepausenoop.New(), registry)
 	ctx := context.Background()
 
 	req := entity.LandRequest{
@@ -486,7 +565,7 @@ func TestLand_ReturnsErrorWhenPublishFails(t *testing.T) {
 	registry, publisher := newTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, factoryForStorage(ctrl, storageWithSummaryStore(ctrl, summaryStore)), newControllerStorageFixture(ctrl).newMaterializer(ctrl), noopQueueConfigStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, factoryForStorage(ctrl, storageWithSummaryStore(ctrl, summaryStore)), newControllerStorageFixture(ctrl).newMaterializer(ctrl), noopQueueConfigStore(ctrl), queuepausenoop.New(), registry)
 	ctx := context.Background()
 
 	_, err := controller.Land(ctx, testLandRequest("test-queue"))
@@ -508,6 +587,7 @@ func TestLand_ReturnsSqidWhenAcceptedLogFailsAfterPublish(t *testing.T) {
 		fixture.newFactory(ctrl),
 		fixture.newMaterializer(ctrl),
 		noopQueueConfigStore(ctrl),
+		queuepausenoop.New(),
 		newTestRegistryWithNoopPublisher(t, ctrl),
 	)
 	result, err := controller.Land(context.Background(), testLandRequest("test-queue"))

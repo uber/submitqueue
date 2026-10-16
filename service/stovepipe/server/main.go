@@ -285,7 +285,7 @@ func run() error {
 		tenants,
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
-	projectStatusController := controller.NewGetProjectStatusByURIController(logger.Sugar(), scope, storageFty)
+	projectStatusController := controller.NewProjectStatusController(logger.Sugar(), scope, storageFty)
 	listController := controller.NewListController(logger.Sugar(), scope, storageFty, tenants)
 	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController, listController)
 	pb.RegisterStovepipeServer(grpcServer, srv)
