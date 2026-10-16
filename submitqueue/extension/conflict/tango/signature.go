@@ -24,12 +24,16 @@ import (
 )
 
 // targetIDBytes is how much of a label's SHA-256 digest forms its target ID.
+// 8 bytes fit a uint64; a collision only adds a false conflict.
 const targetIDBytes = 8
 
 // LabelDistance is one affected target: its label exactly as Tango reported it
 // and its distance from the nearest directly changed source.
 type LabelDistance struct {
-	Label    string
+	// Label is the target label, unmodified from Tango's response.
+	Label string
+
+	// Distance is 0 for a target a change touches directly and grows by one for each dependency edge away from one.
 	Distance int32
 }
 
