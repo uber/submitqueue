@@ -220,8 +220,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 
 	case batch.State == entity.BatchStateCreated:
-		// A prior attempt transitioned but lost its announcement, so
-		// re-announcing is the whole job.
+		// A prior attempt transitioned but lost its announcement. It may also
+		// have crashed before filing the Created record, without which the next
+		// batch's analysis cannot see this one as a dependency.
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+			return err
+		}
 		metrics.NamedCounter(c.metricsScope, opName, "reannounced", 1)
 
 	default:
