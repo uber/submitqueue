@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "batch.go",
         "buildsignal.go",
+        "dependencyanalysis.go",
         "dlq.go",
         "landconflictsignal.go",
         "landsignal.go",
@@ -37,6 +38,7 @@ go_test(
     srcs = [
         "batch_test.go",
         "buildsignal_test.go",
+        "dependencyanalysis_test.go",
         "dlq_test.go",
         "landconflictsignal_test.go",
         "landsignal_test.go",
