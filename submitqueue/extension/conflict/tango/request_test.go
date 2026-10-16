@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
 
 func TestChangedTargetsRequestFor(t *testing.T) {
@@ -41,13 +40,12 @@ func TestChangedTargetsRequestFor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := changedTargetsRequestFor(base, mergestrategy.MergeStrategySquashRebase, tt.changes)
+			got := changedTargetsRequestFor(base, tt.changes)
 
 			assert.Equal(t, ChangedTargetsRequest{
 				Remote:       base.Remote,
 				BaseRevision: base.Revision,
 				ChangeURIs:   tt.want,
-				Strategy:     mergestrategy.MergeStrategySquashRebase,
 			}, got)
 		})
 	}
