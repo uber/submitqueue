@@ -35,6 +35,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
 func TestValidateProfileQueueTenants(t *testing.T) {
@@ -122,6 +123,7 @@ queues:
 	resolved := cfg.resolve(cfg.Queues[0])
 	assert.Equal(t, analyzerTypeNone, resolved.Analyzer.Type)
 	assert.Equal(t, changeProviderTypeFake, resolved.ChangeProvider.Type)
+	assert.Equal(t, validatorTypeFake, resolved.Validator.Type)
 	assert.Equal(t, buildRunnerTypeFake, resolved.BuildRunner.Type)
 }
 
@@ -129,6 +131,7 @@ func TestLoadProfilesConfig_AppliesForgeDefaults(t *testing.T) {
 	path := writeProfiles(t, `
 defaults:
   changeProvider: {type: github}
+  validator: {type: github}
   buildRunner: {type: githubactions, owner: uber, repo: sq-sandbox, workflow: validate.yml}
 `)
 
@@ -138,6 +141,9 @@ defaults:
 	require.NotNil(t, cfg.Defaults.ChangeProvider.GitHub)
 	assert.Equal(t, defaultGitHubTokenEnv, cfg.Defaults.ChangeProvider.GitHub.TokenEnv)
 	assert.Equal(t, defaultGitHubBaseURL, cfg.Defaults.ChangeProvider.GitHub.BaseURL)
+	assert.Equal(t, defaultGitHubTokenEnv, cfg.Defaults.Validator.TokenEnv)
+	assert.Equal(t, defaultGitHubBaseURL, cfg.Defaults.Validator.BaseURL)
+	assert.Equal(t, defaultGitHubHost, cfg.Defaults.Validator.Host)
 	assert.Equal(t, defaultGitHubTokenEnv, cfg.Defaults.BuildRunner.TokenEnv)
 	assert.Equal(t, defaultGitHubBaseURL, cfg.Defaults.BuildRunner.BaseURL)
 }
@@ -146,6 +152,7 @@ func TestLoadProfilesConfig_EmptyFileIsAllFakes(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t, ""))
 	require.NoError(t, err)
 	assert.Equal(t, changeProviderTypeFake, cfg.Defaults.ChangeProvider.Type)
+	assert.Equal(t, validatorTypeFake, cfg.Defaults.Validator.Type)
 	assert.Equal(t, buildRunnerTypeFake, cfg.Defaults.BuildRunner.Type)
 	assert.Equal(t, analyzerTypeAll, cfg.Defaults.Analyzer.Type)
 }
@@ -169,6 +176,14 @@ func TestLoadProfilesConfig_Rejects(t *testing.T) {
 		{
 			name:     "unknown change provider",
 			contents: "defaults:\n  changeProvider: {type: gitlab}\n",
+		},
+		{
+			name:     "unknown validator",
+			contents: "defaults:\n  validator: {type: lint}\n",
+		},
+		{
+			name:     "unknown validator on a queue",
+			contents: "queues:\n  - name: a\n    validator: {type: lint}\n",
 		},
 		{
 			name:     "unknown build runner",
@@ -308,18 +323,70 @@ func TestNewProfiles_ResolvesPerQueueAnalyzers(t *testing.T) {
 func TestNewProfiles_FailsWhenAForgeTokenIsMissing(t *testing.T) {
 	// Failing at startup beats accepting land requests and discovering the
 	// credential gap one API call into the first merge.
-	t.Setenv("TEST_GH_TOKEN_UNSET", "")
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{
+			name:     "github change provider",
+			contents: "defaults:\n  changeProvider:\n    type: github\n    github: {tokenEnv: TEST_GH_TOKEN_UNSET}\n",
+		},
+		{
+			name:     "github validator",
+			contents: "queues:\n  - name: gh\n    validator: {type: github, tokenEnv: TEST_GH_TOKEN_UNSET}\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TEST_GH_TOKEN_UNSET", "")
+			cfg, err := loadProfilesConfig(writeProfiles(t, tt.contents))
+			require.NoError(t, err)
+
+			_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestNewProfiles_ResolvesPerQueueValidators(t *testing.T) {
+	// A change URI on another GitHub host is one the GitHub validator rejects
+	// without calling GitHub, so the two types differ observably offline.
+	t.Setenv("TEST_GH_TOKEN", "token")
 	path := writeProfiles(t, `
-defaults:
-  changeProvider:
-    type: github
-    github: {tokenEnv: TEST_GH_TOKEN_UNSET}
+queues:
+  - name: gh
+    validator: {type: github, tokenEnv: TEST_GH_TOKEN}
 `)
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	require.NoError(t, err)
 
-	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
-	require.Error(t, err)
+	foreignHost := entity.Request{Change: change.Change{URIs: []string{
+		"github://github.example.com/acme/widgets/pull/1/" + strings.Repeat("a", 40),
+	}}}
+
+	tests := []struct {
+		queue      string
+		wantReject bool
+	}{
+		{queue: "gh", wantReject: true},
+		{queue: "unlisted-falls-back-to-fake"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.queue, func(t *testing.T) {
+			v, err := profiles.ValidatorFactory().For(validator.Config{QueueName: tt.queue})
+			require.NoError(t, err)
+
+			err = v.Validate(context.Background(), foreignHost)
+			if tt.wantReject {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestNewProfiles_RoutingFallsBackToFakeWithoutTokens(t *testing.T) {
