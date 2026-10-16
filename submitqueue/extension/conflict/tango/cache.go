@@ -38,10 +38,11 @@ type signatureCacheEntry struct {
 	bytes     int64
 }
 
-// signatureCache is a byte-bounded LRU of target signatures keyed by queue and
-// batch ID, safe for concurrent use. Signatures are immutable, so a cached
-// value is shared with callers: neither side may modify Targets.
-type signatureCache struct {
+// SignatureCache is a byte-bounded LRU of target signatures keyed by queue and
+// batch ID, safe for concurrent use and meant to be shared by every queue's
+// analyzer. Signatures are immutable, so a cached value is shared rather than
+// copied: nobody may modify Targets. A zero budget caches nothing.
+type SignatureCache struct {
 	mu        sync.Mutex
 	maxBytes  int64
 	usedBytes int64
@@ -49,8 +50,9 @@ type signatureCache struct {
 	entries   map[signatureCacheKey]*list.Element
 }
 
-func newSignatureCache(maxBytes int64) *signatureCache {
-	return &signatureCache{
+// NewSignatureCache returns an empty cache that holds at most maxBytes.
+func NewSignatureCache(maxBytes int64) *SignatureCache {
+	return &SignatureCache{
 		maxBytes:  maxBytes,
 		byRecency: list.New(),
 		entries:   make(map[signatureCacheKey]*list.Element),
@@ -64,7 +66,7 @@ func signatureCacheBytes(signature TargetSignature) int64 {
 }
 
 // get returns the cached signature and marks it most recently used.
-func (c *signatureCache) get(queue, batchID string) (TargetSignature, bool) {
+func (c *SignatureCache) get(queue, batchID string) (TargetSignature, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -78,7 +80,7 @@ func (c *signatureCache) get(queue, batchID string) (TargetSignature, bool) {
 
 // put caches signature, evicting least recently used entries to stay within the
 // budget. A signature larger than the whole budget is not cached.
-func (c *signatureCache) put(signature TargetSignature) {
+func (c *SignatureCache) put(signature TargetSignature) {
 	size := signatureCacheBytes(signature)
 	if size > c.maxBytes {
 		return
@@ -99,7 +101,7 @@ func (c *signatureCache) put(signature TargetSignature) {
 	}
 }
 
-func (c *signatureCache) removeLocked(element *list.Element) {
+func (c *SignatureCache) removeLocked(element *list.Element) {
 	entry := c.byRecency.Remove(element).(*signatureCacheEntry)
 	delete(c.entries, entry.key)
 	c.usedBytes -= entry.bytes
