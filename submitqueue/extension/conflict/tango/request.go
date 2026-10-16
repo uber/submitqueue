@@ -22,13 +22,10 @@ import (
 	"github.com/uber/submitqueue/platform/base/change"
 )
 
-// ChangedTargetsRequest asks which targets change when Changes are applied on
-// top of a base revision.
+// ChangedTargetsRequest asks which targets change when ChangeURIs are applied
+// on top of a base revision.
 type ChangedTargetsRequest struct {
-	// Remote is the repository remote that BaseRevision belongs to.
-	Remote string
-
-	// BaseRevision is the commit SHA the changes are applied on top of.
+	// BaseRevision is the full commit SHA the changes are applied on top of.
 	BaseRevision string
 
 	// ChangeURIs lists every change to apply, in batch order.
@@ -44,25 +41,10 @@ type ChangedTargetsClient interface {
 	ChangedTargets(ctx context.Context, request ChangedTargetsRequest) ([]LabelDistance, error)
 }
 
-// Base is the newest revision of a queue's target branch.
-type Base struct {
-	// Remote names the repository in the form the ChangedTargetsClient expects.
-	Remote string
-
-	// Revision is the full commit SHA of the branch tip.
-	Revision string
-}
-
-// BaseResolver finds the base a queue's batches are analyzed against.
-type BaseResolver interface {
-	// Base returns the current base of the named queue.
-	Base(ctx context.Context, queue string) (Base, error)
-}
-
-func changedTargetsRequestFor(base Base, changes []change.Change) ChangedTargetsRequest {
+func changedTargetsRequestFor(baseRevision string, changes []change.Change) ChangedTargetsRequest {
 	var uris []string
 	for _, c := range changes {
 		uris = append(uris, c.URIs...)
 	}
-	return ChangedTargetsRequest{Remote: base.Remote, BaseRevision: base.Revision, ChangeURIs: uris}
+	return ChangedTargetsRequest{BaseRevision: baseRevision, ChangeURIs: uris}
 }

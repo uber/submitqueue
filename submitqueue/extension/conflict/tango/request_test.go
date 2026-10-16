@@ -23,7 +23,7 @@ import (
 )
 
 func TestChangedTargetsRequestFor(t *testing.T) {
-	base := Base{Remote: "git://host/repo", Revision: "9f2c1d0e3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d"}
+	baseRevision := "9f2c1d0e3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d"
 
 	tests := []struct {
 		name    string
@@ -40,11 +40,10 @@ func TestChangedTargetsRequestFor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := changedTargetsRequestFor(base, tt.changes)
+			got := changedTargetsRequestFor(baseRevision, tt.changes)
 
 			assert.Equal(t, ChangedTargetsRequest{
-				Remote:       base.Remote,
-				BaseRevision: base.Revision,
+				BaseRevision: baseRevision,
 				ChangeURIs:   tt.want,
 			}, got)
 		})
