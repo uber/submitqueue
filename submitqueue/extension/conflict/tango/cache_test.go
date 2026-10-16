@@ -48,7 +48,7 @@ func TestSignatureCache_GetPut(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cache := newSignatureCache(1 << 20)
+			cache := NewSignatureCache(1 << 20)
 			for _, signature := range tt.put {
 				cache.put(signature)
 			}
@@ -71,12 +71,12 @@ func TestSignatureCache_Eviction(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		run       func(cache *signatureCache)
+		run       func(cache *SignatureCache)
 		wantFound map[string]bool
 	}{
 		{
 			name: "least recently put is evicted first",
-			run: func(cache *signatureCache) {
+			run: func(cache *SignatureCache) {
 				cache.put(a)
 				cache.put(b)
 				cache.put(c)
@@ -85,7 +85,7 @@ func TestSignatureCache_Eviction(t *testing.T) {
 		},
 		{
 			name: "a read refreshes recency",
-			run: func(cache *signatureCache) {
+			run: func(cache *SignatureCache) {
 				cache.put(a)
 				cache.put(b)
 				cache.get("q", "a")
@@ -95,7 +95,7 @@ func TestSignatureCache_Eviction(t *testing.T) {
 		},
 		{
 			name: "putting an existing key does not evict a neighbour",
-			run: func(cache *signatureCache) {
+			run: func(cache *SignatureCache) {
 				cache.put(a)
 				cache.put(b)
 				for i := 0; i < 100; i++ {
@@ -106,7 +106,7 @@ func TestSignatureCache_Eviction(t *testing.T) {
 		},
 		{
 			name: "a signature larger than the budget is not cached",
-			run: func(cache *signatureCache) {
+			run: func(cache *SignatureCache) {
 				cache.put(a)
 				cache.put(cacheTestSignature("q", "c", 1000))
 			},
@@ -115,7 +115,7 @@ func TestSignatureCache_Eviction(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cache := newSignatureCache(budgetForTwo)
+			cache := NewSignatureCache(budgetForTwo)
 
 			tt.run(cache)
 
@@ -131,7 +131,7 @@ func TestSignatureCache_ChargesSpareCapacity(t *testing.T) {
 	tight := cacheTestSignature("q", "tight", 10)
 	roomy := cacheTestSignature("q", "roomy", 10)
 	roomy.Targets = append(make([]SignatureTarget, 0, 1000), roomy.Targets...)
-	cache := newSignatureCache(signatureCacheBytes(tight) * 2)
+	cache := NewSignatureCache(signatureCacheBytes(tight) * 2)
 
 	cache.put(roomy)
 
@@ -140,7 +140,7 @@ func TestSignatureCache_ChargesSpareCapacity(t *testing.T) {
 }
 
 func TestSignatureCache_ZeroBudgetCachesNothing(t *testing.T) {
-	cache := newSignatureCache(0)
+	cache := NewSignatureCache(0)
 
 	cache.put(cacheTestSignature("q", "1", 0))
 
@@ -152,7 +152,7 @@ func TestSignatureCache_ConcurrentUse(t *testing.T) {
 	const workers = 8
 	const perWorker = 200
 	sample := cacheTestSignature("q", "0", 5)
-	cache := newSignatureCache(signatureCacheBytes(sample) * 4)
+	cache := NewSignatureCache(signatureCacheBytes(sample) * 4)
 
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
