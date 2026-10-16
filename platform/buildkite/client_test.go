@@ -221,11 +221,27 @@ func TestDecodeMetadataEnv_PresentAndValid(t *testing.T) {
 	assert.Equal(t, map[string]string{"requester": "alice", "ticket": "SQ-42"}, got)
 }
 
-func TestDecodeMetadataEnv_Absent_ReturnsEmptyMap(t *testing.T) {
-	got, err := DecodeMetadataEnv(map[string]string{}, "SQ_METADATA")
-	require.NoError(t, err)
-	assert.Empty(t, got)
-	assert.NotNil(t, got)
+func TestDecodeMetadataEnv_Empty_ReturnsWritableMap(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"absent", nil},
+		{"empty string", map[string]string{"SQ_METADATA": ""}},
+		{"empty object", map[string]string{"SQ_METADATA": "{}"}},
+		{"null", map[string]string{"SQ_METADATA": "null"}},
+		{"null with whitespace", map[string]string{"SQ_METADATA": " \nnull\t"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := DecodeMetadataEnv(tt.env, "SQ_METADATA")
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Empty(t, got)
+			got["url"] = "https://buildkite.com/test-org/my-pipeline/builds/42"
+			assert.Len(t, got, 1)
+		})
+	}
 }
 
 func TestDecodeMetadataEnv_Malformed_ReturnsError(t *testing.T) {

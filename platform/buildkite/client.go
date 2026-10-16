@@ -208,11 +208,9 @@ func ParseState(raw string) State {
 }
 
 // DecodeMetadataEnv recovers a JSON-encoded map[string]string from env[key].
-// Buildkite echoes env vars back on the build object, so a caller that seeded
-// a JSON-encoded map at Trigger time can recover it here at Status time
-// without any local state. Returns an empty non-nil map when the key is
-// absent. When the value is present but cannot be decoded, returns a nil map
-// and the decode error for the caller to log or act on as it sees fit.
+// Returns a non-nil map on success, including when the value is absent,
+// empty, or JSON null. A value that cannot be decoded returns a nil map
+// and the decode error.
 func DecodeMetadataEnv(env map[string]string, key string) (map[string]string, error) {
 	meta := make(map[string]string)
 	raw, ok := env[key]
@@ -221,6 +219,9 @@ func DecodeMetadataEnv(env map[string]string, key string) (map[string]string, er
 	}
 	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
 		return nil, fmt.Errorf("decode metadata env %q: %w", key, err)
+	}
+	if meta == nil {
+		meta = make(map[string]string)
 	}
 	return meta, nil
 }
