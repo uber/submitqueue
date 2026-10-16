@@ -50,8 +50,6 @@ import (
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/extension/validator"
-	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	"go.uber.org/zap"
@@ -220,7 +218,7 @@ func run() error {
 		ChangeProvider: profiles.ChangeProviderFactory(),
 		Analyzer:       profiles.AnalyzerFactory(),
 		Speculator:     profiles.SpeculatorFactory(),
-		Validator:      validatorFactory{},
+		Validator:      profiles.ValidatorFactory(),
 		Hooks:          hookResolver{},
 	}
 
@@ -491,15 +489,4 @@ type hookResolver struct{}
 // For returns the hooks that run for event.
 func (hookResolver) For(*basehook.HookEvent) []hookext.Hook {
 	return []hookext.Hook{hooknoop.New()}
-}
-
-// validatorFactory routes every queue to the always-passing fake validator.
-// Choosing an impl per queue is host policy, so the adapter lives here rather
-// than in the extension package. A deployment with real validation swaps this
-// for a routing adapter.
-type validatorFactory struct{}
-
-// For returns the Validator bound to the queue named in config.
-func (validatorFactory) For(config validator.Config) (validator.Validator, error) {
-	return validatorfake.New(config), nil
 }

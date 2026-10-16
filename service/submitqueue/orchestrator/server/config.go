@@ -40,6 +40,12 @@ const (
 	buildRunnerTypeBuildkite     = "buildkite"
 )
 
+// Validator types selectable from configuration.
+const (
+	validatorTypeFake   = "fake"
+	validatorTypeGitHub = "github"
+)
+
 // Conflict analyzer types selectable from configuration.
 const (
 	analyzerTypeAll         = "all"
@@ -97,6 +103,7 @@ const (
 	defaultGitTokenUser   = "x-access-token"
 	defaultGitHubTokenEnv = "GITHUB_TOKEN"
 	defaultGitHubBaseURL  = "https://api.github.com"
+	defaultGitHubHost     = "github.com"
 	defaultPhabTokenEnv   = "PHAB_API_TOKEN"
 	defaultHTTPTimeout    = 30 * time.Second
 )
@@ -122,6 +129,7 @@ type profilesConfig struct {
 type namedQueueProfileConfig struct {
 	Name           string                `yaml:"name"`
 	ChangeProvider *changeProviderConfig `yaml:"changeProvider"`
+	Validator      *validatorConfig      `yaml:"validator"`
 	BuildRunner    *buildRunnerConfig    `yaml:"buildRunner"`
 	Analyzer       *analyzerConfig       `yaml:"analyzer"`
 	Scorer         *scorerConfig         `yaml:"scorer"`
@@ -131,6 +139,7 @@ type namedQueueProfileConfig struct {
 // queueProfileConfig is the full set of extensions a queue resolves to.
 type queueProfileConfig struct {
 	ChangeProvider changeProviderConfig `yaml:"changeProvider"`
+	Validator      validatorConfig      `yaml:"validator"`
 	BuildRunner    buildRunnerConfig    `yaml:"buildRunner"`
 	Analyzer       analyzerConfig       `yaml:"analyzer"`
 	Scorer         scorerConfig         `yaml:"scorer"`
@@ -189,6 +198,19 @@ type phabProviderConfig struct {
 	// Endpoint is the Conduit API root.
 	Endpoint string `yaml:"endpoint"`
 	Timeout  string `yaml:"timeout"`
+}
+
+// validatorConfig selects the custom validation a request passes before it is
+// batched.
+type validatorConfig struct {
+	Type string `yaml:"type"`
+	// TokenEnv names the environment variable holding the API token (github only).
+	TokenEnv string `yaml:"tokenEnv"`
+	// BaseURL is the GitHub API root, for GitHub Enterprise (github only).
+	BaseURL string `yaml:"baseUrl"`
+	// Host is the GitHub instance change URIs must name (github only).
+	Host    string `yaml:"host"`
+	Timeout string `yaml:"timeout"`
 }
 
 // buildRunnerConfig selects how a batch's build is triggered and polled.
@@ -304,6 +326,11 @@ func (c *profilesConfig) normalizeAndValidate() error {
 				return err
 			}
 		}
+		if q.Validator != nil {
+			if err := q.Validator.normalizeAndValidate(where); err != nil {
+				return err
+			}
+		}
 		if q.BuildRunner != nil {
 			if err := q.BuildRunner.normalizeAndValidate(where); err != nil {
 				return err
@@ -370,6 +397,9 @@ func (c profilesConfig) resolve(q namedQueueProfileConfig) queueProfileConfig {
 	if q.ChangeProvider != nil {
 		profile.ChangeProvider = *q.ChangeProvider
 	}
+	if q.Validator != nil {
+		profile.Validator = *q.Validator
+	}
 	if q.BuildRunner != nil {
 		profile.BuildRunner = *q.BuildRunner
 	}
@@ -409,6 +439,9 @@ func overlayScorer(base, override scorerConfig) scorerConfig {
 
 func (p *queueProfileConfig) normalizeAndValidate(where string) error {
 	if err := p.ChangeProvider.normalizeAndValidate(where); err != nil {
+		return err
+	}
+	if err := p.Validator.normalizeAndValidate(where); err != nil {
 		return err
 	}
 	if err := p.BuildRunner.normalizeAndValidate(where); err != nil {
@@ -509,6 +542,29 @@ func (c *changeProviderConfig) ensurePhabricator(where string) error {
 		return fmt.Errorf("%s: phabricator change provider requires an endpoint", where)
 	}
 	return nil
+}
+
+func (v *validatorConfig) normalizeAndValidate(where string) error {
+	if v.Type == "" {
+		v.Type = validatorTypeFake
+	}
+	switch v.Type {
+	case validatorTypeFake:
+		return nil
+	case validatorTypeGitHub:
+		if v.TokenEnv == "" {
+			v.TokenEnv = defaultGitHubTokenEnv
+		}
+		if v.BaseURL == "" {
+			v.BaseURL = defaultGitHubBaseURL
+		}
+		if v.Host == "" {
+			v.Host = defaultGitHubHost
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s: unknown validator type %q", where, v.Type)
+	}
 }
 
 func (b *buildRunnerConfig) normalizeAndValidate(where string) error {
