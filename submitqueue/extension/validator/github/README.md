@@ -42,3 +42,12 @@ The validator adds no credential and no base URL. Its HTTP client's transport ro
 ## Metrics
 
 Under the `github_validator` scope, tagged with the `queue`: `validate.start` and the `validate.finish` latency histogram, whose `result` tag is `error` only for a failure to read GitHub, and `validate.rejections` tagged with the rejection `reason`.
+
+## Live tests
+
+Two suites run against a real repository whenever `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO=owner/repo` are set, and skip otherwise (see [`test/testutil/githubtestrepo`](../../../../test/testutil/githubtestrepo)):
+
+- [`test/integration/submitqueue/extension/validator/github`](../../../../test/integration/submitqueue/extension/validator/github) validates throwaway pull requests on their own (`make integration-test-submitqueue-validator`).
+- `TestGitHubLandE2E` in [`test/e2e/submitqueue`](../../../../test/e2e/submitqueue) validates every pull request it lands through the whole stack (`make e2e-test`).
+
+The test repository requires no reviews or checks, since the tests merge directly, so the suites cover the passing path against the real API, and the extension test also a moved head and a missing pull request; the review and check rules themselves are covered by the unit tests. CI runs both in its e2e and validator extension jobs.

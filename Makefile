@@ -155,7 +155,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps docs-build docs-serve e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go web-build web-check web-e2e-test web-image-load web-install web-proto help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps docs-build docs-serve e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator integration-test-submitqueue-validator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go web-build web-check web-e2e-test web-image-load web-install web-proto help
 
 
 build: ## Build all services and examples
@@ -319,6 +319,10 @@ integration-test-submitqueue-gateway: ## Run Gateway integration tests
 integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/orchestrator:go_default_test --test_output=streamed
+
+integration-test-submitqueue-validator: ## Run the GitHub validator extension test (needs SQ_GITHUB_TOKEN and SQ_GITHUB_TEST_REPO=owner/repo, else skips)
+	@echo "Running GitHub validator extension tests..."
+	@$(BAZEL) test //test/integration/submitqueue/extension/validator/... --test_output=errors
 
 land: ## Land a change or a stack (PR=<url>, PRS="<url> <url>", or URI=<change-uri>)
 	@if [ -z "$(PR)$(PRS)$(URI)$(URIS)" ]; then \

@@ -269,6 +269,34 @@ jobs:
         if: ${{ failure() }}
         uses: ./.github/actions/upload-testlogs
 
+  validator-integration-test:
+    name: Validator Extension Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      - name: Run validator extension tests
+        env:
+          # Opens pull requests in the test repository; see the secrets guard
+          # in workflow-security.
+          SQ_GITHUB_TOKEN: ${{ secrets.SQ_TEST_REPO_TOKEN }}
+          SQ_GITHUB_TEST_REPO: ${{ vars.SQ_GITHUB_TEST_REPO }}
+          # Fail rather than skip when the secret is missing, but only in a
+          # repository that set up a test repo (forks without one skip), and
+          # not on fork PRs, which GitHub never gives secrets to.
+          SQ_GITHUB_TEST_REQUIRED: ${{ vars.SQ_GITHUB_TEST_REPO != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: make integration-test-submitqueue-validator
+
+      - name: Upload Bazel failure logs
+        if: ${{ failure() }}
+        uses: ./.github/actions/upload-testlogs
+
   storage-integration-test:
     name: Storage Extension Test
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -346,10 +374,10 @@ jobs:
       # .github/. GITHUB_TOKEN (least-privilege, read-only here) is allowlisted.
       #
       # SQ_TEST_REPO_TOKEN is the one deliberate exception. The live GitHub
-      # tests (e2e and merger extension) merge real pull requests in a separate
-      # test repository, which GITHUB_TOKEN cannot reach. It is a fine-grained
-      # token limited to that repository, so a PR that exfiltrated it could only
-      # reach that repository.
+      # tests (e2e, merger and validator extension) open and merge real pull
+      # requests in a separate test repository, which GITHUB_TOKEN cannot
+      # reach. It is a fine-grained token limited to that repository, so a PR
+      # that exfiltrated it could only reach that repository.
       - name: Guard — no repository secrets on the untrusted-code path
         run: |
           hits="$(grep -rnE '\$\{\{[^}]*secrets\.' \
@@ -387,6 +415,7 @@ jobs:
       - counter-integration-test
       - queue-integration-test
       - merger-integration-test
+      - validator-integration-test
       - storage-integration-test
       - consumer-integration-test
       - web

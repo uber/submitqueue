@@ -17,8 +17,9 @@
 // The git suite (git_suite_test.go) proves the merge machinery against a bare
 // repository and deliberately leaves out the half that is specific to a change
 // provider. This suite covers that half: the orchestrator reads change metadata
-// from GitHub, and Runway lands each change through the GitHub merger, so a
-// request reaching `landed` here means GitHub itself merged the pull requests.
+// from GitHub and validates each request against the repository's own rules,
+// and Runway lands each change through the GitHub merger, so a request reaching
+// `landed` here means GitHub itself merged the pull requests.
 // Builds stay fake — what is under test is the land path, not CI.
 //
 // It needs a test repository and a token with write access to it, and skips
@@ -177,6 +178,7 @@ func (s *GitHubLandSuite) writeProviderConfig() string {
 queues:
   - name: %s
     changeProvider: {type: github}
+    validator: {type: github}
     analyzer: {type: none}
 `, githubQueue)
 	merge := fmt.Sprintf(`defaults:
