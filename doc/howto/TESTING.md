@@ -94,7 +94,7 @@ make build-all-linux                # Build Linux binaries for the local docker-
 
 ### Live GitHub Tests
 
-Two suites land real pull requests on github.com: `TestGitHubLandE2E` (in `make e2e-test`) and the Runway GitHub merger extension test (`make integration-test-runway-merger`). They run only when `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO=owner/repo` are set, and skip otherwise, so every other run is unaffected. The token needs write access to the test repository; everything the tests open is named under `sq-it/` and removed afterwards, while what they merge stays on its default branch.
+Three suites open real pull requests on github.com: `TestGitHubLandE2E` (in `make e2e-test`), which lands them through the whole stack with the GitHub change provider, validator and merger; the Runway GitHub merger extension test (`make integration-test-runway-merger`); and the GitHub validator extension test (`make integration-test-submitqueue-validator`). They run only when `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO=owner/repo` are set, and skip otherwise, so every other run is unaffected. The token needs write access to the test repository; everything the tests open is named under `sq-it/` and removed afterwards, while what they merge stays on its default branch.
 
 ```bash
 SQ_GITHUB_TOKEN=$(gh auth token) SQ_GITHUB_TEST_REPO=<owner>/<repo> make e2e-test
@@ -107,7 +107,7 @@ CI takes the repository from the `SQ_GITHUB_TEST_REPO` repository variable and t
 Any contributor can run these suites against a repository of their own:
 
 1. Create a repository on github.com with a default branch (an initial commit is enough). It must allow squash and rebase merges, and its default branch must not require reviews or status checks, since the tests merge directly.
-2. Create a token that can write to it: a fine-grained token limited to that repository with read and write access to contents, pull requests and issues, or simply `gh auth token`.
+2. Create a token that can write to it: a fine-grained token limited to that repository with read and write access to contents, pull requests and issues and read access to checks and commit statuses, or simply `gh auth token`.
 3. Run locally with `SQ_GITHUB_TOKEN` and `SQ_GITHUB_TEST_REPO` set, as above.
 4. For CI in your fork, set the `SQ_GITHUB_TEST_REPO` repository variable and the `SQ_TEST_REPO_TOKEN` repository secret in the fork's Actions settings. Runs in the fork then exercise your test repository.
 
