@@ -34,10 +34,13 @@ type ChangedTargetsRequest struct {
 
 // ChangedTargetsClient returns the targets a request affects. An adapter owns
 // the Tango client and its stream, collects the response, and resolves each
-// target's label; any failure to produce a complete answer is an error.
+// target's label; any failure to produce a complete answer is an error. It also
+// owns the Tango repository remote and computation strategy, which the request
+// does not carry. ChangeURIs are passed through as given, so a URI scheme Tango
+// does not support is an error.
 type ChangedTargetsClient interface {
-	// ChangedTargets returns one entry per affected target, in no particular
-	// order. An empty result is valid and means nothing is affected.
+	// ChangedTargets returns the affected targets in no particular order, and a
+	// label may repeat. An empty result is valid and means nothing is affected.
 	ChangedTargets(ctx context.Context, request ChangedTargetsRequest) ([]LabelDistance, error)
 }
 
