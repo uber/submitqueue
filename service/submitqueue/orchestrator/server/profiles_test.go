@@ -30,12 +30,14 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
 // recorder captures the queue name each seam's factory was handed, so a test
 // can assert the Config survived the profile lookup instead of stopping at it.
 type recorder struct {
 	changeProvider string
+	validator      string
 	buildRunner    string
 	analyzer       string
 	storage        string
@@ -57,6 +59,10 @@ func profileRecording(rec *recorder) Profile {
 	return Profile{
 		ChangeProvider: changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 			rec.changeProvider = c.QueueName
+			return nil, nil
+		}),
+		Validator: validatorFunc(func(c validator.Config) (validator.Validator, error) {
+			rec.validator = c.QueueName
 			return nil, nil
 		}),
 		BuildRunner: buildRunnerFunc(func(c buildrunner.Config) (buildrunner.BuildRunner, error) {
@@ -106,6 +112,8 @@ func TestProfilesForwardQueueNameToFactories(t *testing.T) {
 
 			_, err := profiles.ChangeProviderFactory().For(changeprovider.Config{QueueName: tt.queue})
 			require.NoError(t, err)
+			_, err = profiles.ValidatorFactory().For(validator.Config{QueueName: tt.queue})
+			require.NoError(t, err)
 			_, err = profiles.BuildRunnerFactory().For(buildrunner.Config{QueueName: tt.queue})
 			require.NoError(t, err)
 			_, err = profiles.AnalyzerFactory().For(conflict.Config{QueueName: tt.queue})
@@ -116,6 +124,7 @@ func TestProfilesForwardQueueNameToFactories(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.queue, rec.changeProvider)
+			assert.Equal(t, tt.queue, rec.validator)
 			assert.Equal(t, tt.queue, rec.buildRunner)
 			assert.Equal(t, tt.queue, rec.analyzer)
 			assert.Equal(t, tt.queue, rec.storage)

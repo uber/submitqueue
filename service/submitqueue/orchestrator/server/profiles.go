@@ -56,6 +56,9 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	specstandard "github.com/uber/submitqueue/submitqueue/extension/speculation/speculator/standard"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
+	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
+	githubvalidator "github.com/uber/submitqueue/submitqueue/extension/validator/github"
 )
 
 // Profile holds the per-queue extension implementations. Grouping them per
@@ -65,6 +68,10 @@ import (
 type Profile struct {
 	// ChangeProvider resolves change metadata for requests in this queue.
 	ChangeProvider changeprovider.Factory
+
+	// Validator runs custom validation on requests in this queue before they
+	// are batched.
+	Validator validator.Factory
 
 	// BuildRunner triggers and polls builds for batches in this queue.
 	BuildRunner buildrunner.Factory
@@ -109,6 +116,14 @@ func (p Profiles) For(queue string) Profile {
 func (p Profiles) ChangeProviderFactory() changeprovider.Factory {
 	return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 		return p.For(c.QueueName).ChangeProvider.For(c)
+	})
+}
+
+// ValidatorFactory returns a validator.Factory that resolves the Validator for
+// each queue from the profile registry.
+func (p Profiles) ValidatorFactory() validator.Factory {
+	return validatorFunc(func(c validator.Config) (validator.Validator, error) {
+		return p.For(c.QueueName).Validator.For(c)
 	})
 }
 
@@ -161,6 +176,10 @@ type changeProviderFunc func(changeprovider.Config) (changeprovider.ChangeProvid
 func (f changeProviderFunc) For(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 	return f(c)
 }
+
+type validatorFunc func(validator.Config) (validator.Validator, error)
+
+func (f validatorFunc) For(c validator.Config) (validator.Validator, error) { return f(c) }
 
 type buildRunnerFunc func(buildrunner.Config) (buildrunner.BuildRunner, error)
 
@@ -221,6 +240,7 @@ func newProfiles(
 
 	logger.Info("extension profiles built",
 		zap.String("default_change_provider", cfg.Defaults.ChangeProvider.Type),
+		zap.String("default_validator", cfg.Defaults.Validator.Type),
 		zap.String("default_build_runner", cfg.Defaults.BuildRunner.Type),
 		zap.String("default_analyzer", cfg.Defaults.Analyzer.Type),
 		zap.String("default_scorer", cfg.Defaults.Scorer.Type),
@@ -255,6 +275,10 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	if err != nil {
 		return Profile{}, err
 	}
+	val, err := reuse(b, cfg.Validator, where, b.newValidatorFactory)
+	if err != nil {
+		return Profile{}, err
+	}
 	runner, err := reuse(b, cfg.BuildRunner, where, b.newBuildRunnerFactory)
 	if err != nil {
 		return Profile{}, err
@@ -269,6 +293,7 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	}
 	return withSpeculator(Profile{
 		ChangeProvider: provider,
+		Validator:      val,
 		BuildRunner:    runner,
 		Analyzer:       analyzer,
 		Storage:        b.stores,
@@ -554,6 +579,40 @@ func (b *profileBuilder) newPhabChangeProvider(cfg phabProviderConfig, where str
 	}, nil
 }
 
+// newValidatorFactory builds the configured validator's factory. The HTTP client
+// is built once here; only the per-queue validator is built per call.
+func (b *profileBuilder) newValidatorFactory(cfg validatorConfig, where string) (validator.Factory, error) {
+	switch cfg.Type {
+	case validatorTypeFake:
+		return validatorFunc(func(c validator.Config) (validator.Validator, error) {
+			return validatorfake.New(c), nil
+		}), nil
+
+	case validatorTypeGitHub:
+		token, ok := tokenFrom(cfg.TokenEnv)
+		if !ok {
+			return nil, fmt.Errorf("%s: github validator needs %s to be set", where, cfg.TokenEnv)
+		}
+		client, err := b.githubClient(cfg.BaseURL, cfg.Timeout, token, where)
+		if err != nil {
+			return nil, err
+		}
+		scope := b.scope.SubScope("validator.github")
+		return validatorFunc(func(c validator.Config) (validator.Validator, error) {
+			return githubvalidator.New(githubvalidator.Params{
+				Config:       c,
+				HTTPClient:   client,
+				Host:         cfg.Host,
+				Logger:       b.logger.Sugar(),
+				MetricsScope: scope,
+			})
+		}), nil
+
+	default:
+		return nil, fmt.Errorf("%s: unknown validator type %q", where, cfg.Type)
+	}
+}
+
 // newBuildRunnerFactory builds the configured build runner's factory. The HTTP
 // client is built once here; only the per-queue runner is built per call.
 func (b *profileBuilder) newBuildRunnerFactory(cfg buildRunnerConfig, where string) (buildrunner.Factory, error) {
@@ -658,8 +717,8 @@ func pathOverlapKey(by string) pathoverlap.PathKey {
 }
 
 // githubClient builds an HTTP client rooted at a GitHub API and authenticated
-// with the given token. Shared by the change provider and the Actions runner,
-// which differ only in which endpoints they call.
+// with the given token. Shared by the change provider, the validator and the
+// Actions runner, which differ only in which endpoints they call.
 func (b *profileBuilder) githubClient(baseURL, timeout, token, where string) (*nethttp.Client, error) {
 	client, err := http.NewClient(baseURL)
 	if err != nil {
