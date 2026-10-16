@@ -20,7 +20,6 @@ import (
 	"context"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
 
 // ChangedTargetsRequest asks which targets change when Changes are applied on
@@ -34,9 +33,6 @@ type ChangedTargetsRequest struct {
 
 	// ChangeURIs lists every change to apply, in batch order.
 	ChangeURIs []string
-
-	// Strategy is the merge strategy used to apply the changes.
-	Strategy mergestrategy.MergeStrategy
 }
 
 // ChangedTargetsClient returns the targets a request affects. An adapter owns
@@ -50,7 +46,7 @@ type ChangedTargetsClient interface {
 
 // Base is the newest revision of a queue's target branch.
 type Base struct {
-	// Remote is the repository remote the revision lives on.
+	// Remote names the repository in the form the ChangedTargetsClient expects.
 	Remote string
 
 	// Revision is the full commit SHA of the branch tip.
@@ -63,10 +59,10 @@ type BaseResolver interface {
 	Base(ctx context.Context, queue string) (Base, error)
 }
 
-func changedTargetsRequestFor(base Base, strategy mergestrategy.MergeStrategy, changes []change.Change) ChangedTargetsRequest {
+func changedTargetsRequestFor(base Base, changes []change.Change) ChangedTargetsRequest {
 	var uris []string
 	for _, c := range changes {
 		uris = append(uris, c.URIs...)
 	}
-	return ChangedTargetsRequest{Remote: base.Remote, BaseRevision: base.Revision, ChangeURIs: uris, Strategy: strategy}
+	return ChangedTargetsRequest{Remote: base.Remote, BaseRevision: base.Revision, ChangeURIs: uris}
 }
