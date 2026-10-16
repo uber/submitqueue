@@ -20,7 +20,8 @@ import (
 )
 
 // The budget counts memory: a SignatureTarget is 16 bytes (uint64 plus int32,
-// padded), and the fixed overhead covers the entry, key and map bookkeeping.
+// padded) and the backing array is charged by capacity, and the fixed overhead
+// covers the entry, key and map bookkeeping.
 const (
 	signatureTargetBytes   = 16
 	signatureEntryOverhead = 256
@@ -59,7 +60,7 @@ func newSignatureCache(maxBytes int64) *signatureCache {
 func signatureCacheBytes(signature TargetSignature) int64 {
 	return signatureEntryOverhead +
 		int64(len(signature.Queue)+len(signature.BatchID)+len(signature.BaseRevision)) +
-		int64(len(signature.Targets))*signatureTargetBytes
+		int64(cap(signature.Targets))*signatureTargetBytes
 }
 
 // get returns the cached signature and marks it most recently used.
