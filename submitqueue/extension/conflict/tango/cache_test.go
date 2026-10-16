@@ -102,7 +102,7 @@ func TestSignatureCache_Eviction(t *testing.T) {
 					cache.put(a)
 				}
 			},
-			wantFound: map[string]bool{"a": true, "b": true, "c": false},
+			wantFound: map[string]bool{"a": true, "b": true},
 		},
 		{
 			name: "a signature larger than the budget is not cached",
@@ -110,7 +110,7 @@ func TestSignatureCache_Eviction(t *testing.T) {
 				cache.put(a)
 				cache.put(cacheTestSignature("q", "c", 1000))
 			},
-			wantFound: map[string]bool{"a": true, "b": false, "c": false},
+			wantFound: map[string]bool{"a": true, "c": false},
 		},
 	}
 	for _, tt := range tests {
@@ -125,6 +125,18 @@ func TestSignatureCache_Eviction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSignatureCache_ChargesSpareCapacity(t *testing.T) {
+	tight := cacheTestSignature("q", "tight", 10)
+	roomy := cacheTestSignature("q", "roomy", 10)
+	roomy.Targets = append(make([]SignatureTarget, 0, 1000), roomy.Targets...)
+	cache := newSignatureCache(signatureCacheBytes(tight) * 2)
+
+	cache.put(roomy)
+
+	_, found := cache.get("q", "roomy")
+	assert.False(t, found)
 }
 
 func TestSignatureCache_ZeroBudgetCachesNothing(t *testing.T) {
