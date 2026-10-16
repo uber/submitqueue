@@ -25,10 +25,9 @@ import (
 // idBytes is the width of an encoded target ID.
 const idBytes = 8
 
-// encodeSignatureTargets packs targets as a flat byte string: per target, the ID
-// as 8 big-endian bytes followed by the distance as a signed varint. The result
-// is never nil, because a nil slice would be written as NULL into a NOT NULL
-// column.
+// encodeSignatureTargets packs each target as its ID (8 big-endian bytes) and a
+// signed varint distance, in the order given. The result is never nil, because a
+// nil slice would be written as NULL into a NOT NULL column.
 func encodeSignatureTargets(targets []tango.SignatureTarget) []byte {
 	encoded := make([]byte, 0, len(targets)*(idBytes+1))
 	for _, target := range targets {

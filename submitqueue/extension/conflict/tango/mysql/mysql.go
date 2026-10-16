@@ -13,6 +13,11 @@
 // limitations under the License.
 
 // Package mysql implements the tango analyzer's stores over MySQL.
+//
+// Targets are stored in the order given. TargetSignature.Targets is sorted by ID
+// with no duplicates, established when the signature is built. The store neither
+// sorts nor validates. The order is not needed for correctness; it lets
+// signatures be intersected without building a set.
 package mysql
 
 // mysqlErrDuplicateEntry is MySQL error code 1062 ("Duplicate entry"), returned on a unique or primary key violation.
