@@ -48,6 +48,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/pipeline"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
+	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
@@ -223,6 +224,11 @@ func run() error {
 		Hooks:          hookResolver{},
 	}
 
+	queuePauses, err := core.QueuePauseStoreFromEnv(logger)
+	if err != nil {
+		return err
+	}
+
 	// Assemble the pipeline: one call builds the topic registry, creates
 	// primary and DLQ consumers, eagerly constructs all controllers, and
 	// returns a single lifecycle.Component the host drives with Start/Stop.
@@ -235,7 +241,7 @@ func run() error {
 		orchestrator.Stages,
 		pipeline.PublishOnly(orchestrator.PublishOnlyTopics...),
 		pipeline.Classifiers(primaryErrorClassifiers()...),
-		pipeline.Gate(newConsumerGate(logger)),
+		pipeline.Gate(newQueuePauseGate(logger.Sugar(), queuePauses, newConsumerGate(logger))),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to construct pipeline: %w", err)

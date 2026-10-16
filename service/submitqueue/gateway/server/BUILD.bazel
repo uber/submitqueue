@@ -29,6 +29,7 @@ go_library(
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//service/messagequeue:go_default_library",
+        "//service/submitqueue/core:go_default_library",
         "//service/submitqueue/gateway/server/mapper:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/extension/queueconfig/yaml:go_default_library",
@@ -86,6 +87,7 @@ go_test(
     embed = [":gateway_lib"],  # keep
     deps = [
         "//api/submitqueue/gateway/protopb:go_default_library",
+        "//platform/errs:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/queueconfig/mock:go_default_library",
         "//submitqueue/gateway/controller:go_default_library",

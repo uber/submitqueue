@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
+	"github.com/uber/submitqueue/submitqueue/extension/queuepause"
 	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	"go.uber.org/zap"
@@ -63,6 +64,28 @@ func IsUnrecognizedQueue(err error) bool {
 	return errors.As(err, &target)
 }
 
+// QueuePausedError indicates the queue is refusing new land requests.
+type QueuePausedError struct {
+	Queue string
+	// Reason is the operator's explanation for the pause, empty when none was given.
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *QueuePausedError) Error() string {
+	msg := fmt.Sprintf("queue %q is paused and not accepting land requests", e.Queue)
+	if e.Reason != "" {
+		msg += ": " + e.Reason
+	}
+	return msg
+}
+
+// IsQueuePaused returns true if any error in the chain is a *QueuePausedError.
+func IsQueuePaused(err error) bool {
+	var target *QueuePausedError
+	return errors.As(err, &target)
+}
+
 // counterDomainRequest names the per-queue sequence that mints request IDs.
 const counterDomainRequest = "request"
 
@@ -80,13 +103,14 @@ type landController struct {
 	stores       storage.Factory
 	materializer *requestcore.Materializer
 	queueConfigs queueconfig.Store
+	queuePauses  queuepause.Store
 	registry     consumer.TopicRegistry
 }
 
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // topickey.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counters counter.Factory, stores storage.Factory, materializer *requestcore.Materializer, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counters counter.Factory, stores storage.Factory, materializer *requestcore.Materializer, queueConfigs queueconfig.Store, queuePauses queuepause.Store, registry consumer.TopicRegistry) LandController {
 	return &landController{
 		logger:       logger,
 		metricsScope: scope.SubScope("land_controller"),
@@ -94,6 +118,7 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counters co
 		stores:       stores,
 		materializer: materializer,
 		queueConfigs: queueConfigs,
+		queuePauses:  queuePauses,
 		registry:     registry,
 	}
 }
@@ -119,6 +144,15 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 			return entity.LandResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
 		}
 		return entity.LandResult{}, fmt.Errorf("failed to look up queue %q: %w", queue, err)
+	}
+
+	// A failed read fails the land: an unreadable pause state must not let a paused queue accept work.
+	pauseState, err := c.queuePauses.Get(ctx, queue)
+	if err != nil {
+		return entity.LandResult{}, fmt.Errorf("failed to read pause state for queue=%s: %w", queue, err)
+	}
+	if pauseState.RejectLands {
+		return entity.LandResult{}, errs.NewUserError(&QueuePausedError{Queue: queue, Reason: pauseState.Reason})
 	}
 
 	// Generate a queue-scoped request ID for the land request.

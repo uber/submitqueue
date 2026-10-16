@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
@@ -102,8 +103,13 @@ func TestGatewayStatusError(t *testing.T) {
 		},
 		{
 			name: "unrecognized queue",
-			err:  &controller.UnrecognizedQueueError{Queue: "missing"},
+			err:  errs.NewUserError(&controller.UnrecognizedQueueError{Queue: "missing"}),
 			code: codes.InvalidArgument,
+		},
+		{
+			name: "queue paused",
+			err:  errs.NewUserError(&controller.QueuePausedError{Queue: "paused"}),
+			code: codes.FailedPrecondition,
 		},
 		{
 			name: "request not found",

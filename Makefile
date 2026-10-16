@@ -632,6 +632,7 @@ GO_GENERATE_PACKAGES := \
 	./submitqueue/extension/changeprovider/... \
 	./submitqueue/extension/conflict/... \
 	./submitqueue/extension/queueconfig/... \
+	./submitqueue/extension/queuepause/... \
 	./submitqueue/extension/speculation/... \
 	./submitqueue/extension/storage/... \
 	./submitqueue/extension/validator/... \

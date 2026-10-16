@@ -13,6 +13,12 @@
 # individual queue controllers by writing/removing gate files from the host.
 # Override the host side with SQ_CONSUMER_GATE_DIR (the e2e suite points it at
 # a per-run temp dir); it defaults to /tmp/sq-consumergate for local runs.
+# Queue pause: the gateway and orchestrator read a pause file from a shared host
+# directory (bind-mounted at /var/submitqueue/queuepause), so E2E tests can pause
+# and unpause queues by rewriting it. Override the host side with
+# SQ_QUEUE_PAUSE_DIR and set SQ_QUEUE_PAUSE_CONFIG_PATH to the file's path inside
+# the container. It is unset by default, which leaves pausing disabled, because
+# the file store requires its file to exist when the service starts.
 # SQ_CONTAINER_USER controls the UID:GID of the application services that write
 # parked records into that bind mount. It defaults to root for normal local
 # usage; the e2e suite selects the host user for rootful Docker and root for
@@ -77,15 +83,17 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
-      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,e2e-github-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue}
+      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,e2e-github-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue,e2e-pause-queue}
       # Path to YAML queue configuration baked into the image
       - QUEUE_CONFIG_PATH=/app/queues.yaml
       # Stable subscriber name for the request-log consumer
       - HOSTNAME=gateway-dev
       # Consumer-gate state shared with the host (see header comment)
       - CONSUMER_GATE_DIR=/var/submitqueue/consumergate
+      - QUEUE_PAUSE_CONFIG_PATH=${SQ_QUEUE_PAUSE_CONFIG_PATH:-}
     volumes:
       - ${SQ_CONSUMER_GATE_DIR:-/tmp/sq-consumergate}:/var/submitqueue/consumergate
+      - ${SQ_QUEUE_PAUSE_DIR:-/tmp/sq-queuepause}:/var/submitqueue/queuepause
     depends_on:
       mysql-app:
         condition: service_healthy
@@ -110,12 +118,14 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
-      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,e2e-github-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue}
+      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,e2e-github-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue,e2e-pause-queue}
       - HOSTNAME=orchestrator-dev
       # Consumer-gate state shared with the host (see header comment)
       - CONSUMER_GATE_DIR=/var/submitqueue/consumergate
+      - QUEUE_PAUSE_CONFIG_PATH=${SQ_QUEUE_PAUSE_CONFIG_PATH:-}
     volumes:
       - ${SQ_CONSUMER_GATE_DIR:-/tmp/sq-consumergate}:/var/submitqueue/consumergate
+      - ${SQ_QUEUE_PAUSE_DIR:-/tmp/sq-queuepause}:/var/submitqueue/queuepause
     depends_on:
       mysql-app:
         condition: service_healthy
@@ -143,7 +153,7 @@ services:
       # Level for the queue's own logs; info by default so its per-message
       # chatter does not bury the rest of the service at debug.
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
-      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,e2e-github-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue}
+      - MQ_TENANTS=${MQ_TENANTS:-test-queue,e2e-test-queue,e2e-cancel-queue,e2e-chain-queue,e2e-redelivery-queue,e2e-strand-queue,e2e-conflict-error-queue,e2e-git-queue,e2e-github-queue,demo-queue,e2e-respeculate-queue,file-overlap-queue,e2e-pause-queue}
       - HOSTNAME=runway-dev
       # Consumer-gate state shared with the host (see header comment)
       - CONSUMER_GATE_DIR=/var/submitqueue/consumergate

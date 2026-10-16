@@ -7,6 +7,7 @@ go_test(
         "git_suite_test.go",
         "github_suite_test.go",
         "harness_test.go",
+        "queuepause_test.go",
         "suite_test.go",
     ],
     data = [
