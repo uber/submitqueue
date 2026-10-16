@@ -16,6 +16,7 @@ The analyzer does not mutate batch inputs and may be called concurrently. Implem
 - [`fake/`](fake/) — wraps another analyzer and optionally injects configured failures for tests and example wiring.
 - [`none/`](none/) — optimistic stub: reports no conflicts. Useful as a best-case baseline and for wiring tests where speculation should run all batches in parallel.
 - [`pathoverlap/`](pathoverlap/) — resolves changed files and reports overlap conflicts by whole file or parent directory.
+- [`tango/`](tango/) — compares the build targets each batch affects, as reported by a Tango build graph, and reports target-overlap conflicts.
 
 ## Adding a new backend
 
