@@ -95,11 +95,11 @@ type Deps struct {
 //
 // Pipeline:
 //
-//	start → cancel → validate ⇢ (runway) ⇢ landconflictsignal → batch → speculate → build → buildsignal ─┐
-//	                                                                       ↑  ↘             ↻ poll       │
-//	                                                                       │   land → conclude           │
-//	                                                                       │     │                       │
-//	                                                                       └─────┴───────────────────────┘
+//	start → cancel → validate ⇢ (runway) ⇢ landconflictsignal → batch → dependency-analysis → speculate → build → buildsignal ─┐
+//	                                                                                             ↑  ↘             ↻ poll       │
+//	                                                                                             │   land → conclude           │
+//	                                                                                             │     │                       │
+//	                                                                                             └─────┴───────────────────────┘
 var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyStart,

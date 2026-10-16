@@ -302,7 +302,8 @@ func TestController_Process_DedupesAnalyzerConflicts(t *testing.T) {
 }
 
 // A redelivery whose previous attempt transitioned but lost its announcement:
-// re-announcing is the whole job, and re-analyzing would corrupt the graph.
+// it repairs the Created record and re-announces, and re-analyzing would
+// corrupt the graph.
 func TestController_Process_RedeliveryAfterTransitionOnlyRepublishes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -314,9 +315,17 @@ func TestController_Process_RedeliveryAfterTransitionOnlyRepublishes(t *testing.
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 
+	queueBatchStateStore := storagemock.NewMockQueueBatchStateStore(ctrl)
+	queueBatchStateStore.EXPECT().Put(gomock.Any(), entity.QueueBatchState{
+		Queue:   testQueue,
+		State:   entity.BatchStateCreated,
+		BatchID: batch.ID,
+	}).Return(nil)
+
 	// Dependent store and request store with no EXPECTs — must not be touched.
 	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetQueueBatchStateStore().Return(queueBatchStateStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(storagemock.NewMockBatchDependentStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noPriorEnrollment(ctrl)).AnyTimes()
