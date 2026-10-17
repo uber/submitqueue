@@ -105,3 +105,7 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.submitqueue.sto
 ## Shutdown
 
 The server handles `SIGINT` / `SIGTERM` gracefully: it drains in-flight RPCs, then stops the primary pipeline consumer followed by the DLQ consumer (30-second limit for each). It exits `0` on clean shutdown, `143` (128 + SIGTERM) when stopped by signal, and `1` on startup/runtime errors (details on stderr). Shutdown errors override the signal exit code.
+
+## Queue status
+
+Queue enablement is stored separately from validation results. Startup registers configured queues as disabled and preserves any registered state. `GetQueueStatus` returns the current summary, or the state covering a supplied commit through the existing source-control integration. History and summary writes can be retried after an interruption, so the summary may briefly lag internal state. Apply the schemas before starting the service; the local Make targets handle this order. See [queue status](../../doc/rfc/stovepipe/queue-state.md).

@@ -11,6 +11,7 @@ go_library(
         "queue_config.go",
         "queue_log.go",
         "queue_state.go",
+        "queue_status.go",
         "queue_summary.go",
         "request.go",
         "request_acceptance.go",

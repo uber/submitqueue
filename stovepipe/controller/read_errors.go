@@ -24,12 +24,15 @@ import (
 
 const maxHistoryIdentifierBytes = 255
 
+var errInvalidRequestCause = errors.New("invalid request")
+
 // ErrInvalidRequest is returned when a request fails validation.
-var ErrInvalidRequest = errs.NewUserError(errors.New("invalid request"))
+var ErrInvalidRequest = errs.NewUserError(errInvalidRequestCause)
 
 // IsInvalidRequest reports whether err contains an invalid request classification.
 func IsInvalidRequest(err error) bool {
-	return errors.Is(err, ErrInvalidRequest)
+	// Framework user-error wrappers match by category, so match the domain cause.
+	return errors.Is(err, errInvalidRequestCause)
 }
 
 func validateHistoryIdentifier(name, value string) error {
