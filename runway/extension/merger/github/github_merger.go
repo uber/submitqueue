@@ -417,9 +417,9 @@ func (m *githubMerger) validateStepIsGitHubStack(ctx context.Context, step *runw
 	if len(pending) == 0 {
 		return nil
 	}
-	for _, p := range pulls[:len(pulls)-len(pending)] {
-		if !p.pr.Merged {
-			return fmt.Errorf("%w: step %q: %s is unmerged but listed below merged pull requests", merger.ErrInvalidRequest, step.GetStepId(), p.ref.Label)
+	for _, p := range pending {
+		if p.pr.Merged {
+			return fmt.Errorf("%w: step %q: %s is already merged but listed after an unmerged pull request", merger.ErrInvalidRequest, step.GetStepId(), p.ref.Label)
 		}
 	}
 

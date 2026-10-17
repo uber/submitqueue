@@ -811,3 +811,37 @@ func TestNewRejectsUnusableParams(t *testing.T) {
 	_, err := New(valid)
 	require.NoError(t, err)
 }
+
+func stepPullForTest(n int, merged bool, base string) stepPull {
+	return stepPull{
+		ref: changeRef{PRNumber: n, SHA: headSHA(n), Label: fmt.Sprintf("uber/submitqueue#%d", n)},
+		pr:  pullRequest{Number: n, Merged: merged, Base: gitRef{Ref: base}},
+	}
+}
+
+func TestValidateStepIsGitHubStack_MergedMustPrecedeUnmerged(t *testing.T) {
+	m := &githubMerger{target: testTarget}
+	step := &runwaymq.MergeStep{}
+
+	tests := []struct {
+		name    string
+		pulls   []stepPull
+		wantErr bool
+	}{
+		{name: "all merged", pulls: []stepPull{stepPullForTest(1, true, testTarget), stepPullForTest(2, true, testTarget)}},
+		{name: "merged prefix then one open pull on target", pulls: []stepPull{stepPullForTest(1, true, testTarget), stepPullForTest(2, false, testTarget)}},
+		{name: "merged pull listed after an unmerged one", pulls: []stepPull{stepPullForTest(1, false, testTarget), stepPullForTest(2, true, testTarget)}, wantErr: true},
+		{name: "merged pull between unmerged ones", pulls: []stepPull{stepPullForTest(1, false, testTarget), stepPullForTest(2, true, "branch-1"), stepPullForTest(3, false, "branch-2")}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.validateStepIsGitHubStack(context.Background(), step, tt.pulls)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, merger.ErrInvalidRequest)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
