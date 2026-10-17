@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
+	gitlocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
 )
 
 // resolveGitRuntime determines the pinned git runtime the merger invokes.
@@ -36,23 +36,23 @@ import (
 // override is unset. GIT_EXECUTABLE, GIT_EXEC_PATH, and GIT_TEMPLATE_DIR still
 // take precedence, which is how a deployment pins a git other than the one on
 // PATH.
-func resolveGitRuntime(ctx context.Context) (gitmerger.GitRuntime, error) {
+func resolveGitRuntime(ctx context.Context) (gitlocal.Runtime, error) {
 	executable, err := resolveGitExecutable()
 	if err != nil {
-		return gitmerger.GitRuntime{}, err
+		return gitlocal.Runtime{}, err
 	}
 
 	execPath, err := resolveGitExecPath(ctx, executable)
 	if err != nil {
-		return gitmerger.GitRuntime{}, err
+		return gitlocal.Runtime{}, err
 	}
 
 	templateDir, err := resolveGitTemplateDir(execPath)
 	if err != nil {
-		return gitmerger.GitRuntime{}, err
+		return gitlocal.Runtime{}, err
 	}
 
-	return gitmerger.GitRuntime{
+	return gitlocal.Runtime{
 		Executable:  executable,
 		ExecPath:    execPath,
 		TemplateDir: templateDir,

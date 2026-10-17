@@ -43,6 +43,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
+	gitlocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	phttp "github.com/uber/submitqueue/platform/http"
@@ -370,7 +371,7 @@ func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope
 	// The git runtime is resolved only when something actually needs it, so a
 	// deployment running nothing but the noop merger does not require git to be
 	// installed at all.
-	var runtime gitmerger.GitRuntime
+	var runtime gitlocal.Runtime
 	if cfg.usesGit() {
 		runtime, err = resolveGitRuntime(ctx)
 		if err != nil {
@@ -508,7 +509,7 @@ type mergerBuilder struct {
 	ctx     context.Context
 	logger  *zap.Logger
 	scope   tally.Scope
-	runtime gitmerger.GitRuntime
+	runtime gitlocal.Runtime
 	// byTarget caches one merger per checkout path. Keying on the path alone is
 	// safe only because validation has already rejected two queues that share a
 	// checkout and disagree anywhere in their merger config: the cached instance
