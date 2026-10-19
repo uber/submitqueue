@@ -98,7 +98,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
@@ -107,29 +107,29 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
-		return c.attributed(fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err),
+		return c.attributed(ctx, fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err),
 			entity.QueueSubject(bid.Queue))
 	}
 
 	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return c.attributed(fmt.Errorf("failed to get batch %s: %w", bid.ID, err),
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		return c.attributed(ctx, fmt.Errorf("failed to get batch %s: %w", bid.ID, err),
 			entity.BatchSubject(bid.ID))
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if bid.Queue != "" && bid.Queue != batch.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
-		return c.attributed(fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID),
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
+		return c.attributed(ctx, fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID),
 			entity.BatchSubject(batch.ID))
 	}
 
 	if batch.State.IsTerminal() {
-		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1, metrics.TagsFromContext(ctx)...)
 		if err := c.fanout(ctx, batch.ID, batch.Queue); err != nil {
 			return err
 		}
@@ -145,9 +145,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// A Landing batch has left the set finalize walks, so a message naming it
 	// is the only thing that will look at it again.
 	if batch.State == entity.BatchStateLanding {
-		metrics.NamedCounter(c.metricsScope, opName, "self_heal_landing", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "self_heal_landing", 1, metrics.TagsFromContext(ctx)...)
 		if err := c.dispatchLand(ctx, batch); err != nil {
-			return c.attributed(err, entity.BatchSubject(batch.ID))
+			return c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 		}
 	}
 
@@ -171,8 +171,8 @@ func (c *Controller) admit(ctx context.Context, store orchstorage.Storage, batch
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
 		entity.RequestStatusSpeculating, batch.ID, map[string]string{"batch_id": batch.ID},
 	); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
-		return batch, c.attributed(fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err),
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
+		return batch, c.attributed(ctx, fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err),
 			entity.BatchSubject(batch.ID))
 	}
 
@@ -180,11 +180,11 @@ func (c *Controller) admit(ctx context.Context, store orchstorage.Storage, batch
 	// record has to leave the created bucket with the batch.
 	updated, err := corebatch.Transition(ctx, store, batch, entity.BatchStateSpeculating)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return batch, c.attributed(err, entity.BatchSubject(batch.ID))
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		return batch, c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "admitted", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "admitted", 1, metrics.TagsFromContext(ctx)...)
 	c.logger.Infow("admitted batch to speculation",
 		"batch_id", updated.ID,
 		"queue", updated.Queue,
@@ -202,8 +202,8 @@ func (c *Controller) admit(ctx context.Context, store orchstorage.Storage, batch
 // is exactly what a stable ID would dedup against.
 func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, publish.UniqueID(batchID), batchID, queue, queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return c.attributed(fmt.Errorf("failed to publish to conclude: %w", err),
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
+		return c.attributed(ctx, fmt.Errorf("failed to publish to conclude: %w", err),
 			entity.BatchSubject(batchID))
 	}
 	return nil
@@ -260,10 +260,10 @@ func (c *Controller) publishBatchIDWithMetadata(ctx context.Context, key consume
 //
 // Only the attribution is added. Whether the error is retryable stays with the
 // classifiers, which read the cause underneath this wrapper unchanged.
-func (c *Controller) attributed(err error, subjects ...failure.Subject) error {
+func (c *Controller) attributed(ctx context.Context, err error, subjects ...failure.Subject) error {
 	for _, s := range subjects {
 		metrics.NamedCounter(c.metricsScope, opName, "attributed_failure", 1,
-			metrics.NewTag("subject_type", s.Type))
+			metrics.TagsFromContext(ctx, metrics.NewTag("subject_type", s.Type))...)
 	}
 	return errs.Attribute(err, subjects...)
 }

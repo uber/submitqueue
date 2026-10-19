@@ -96,7 +96,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	rid, err := sqmq.UnmarshalRequestID(c.topicKey, msg.Payload)
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, rid.Queue); err != nil {
@@ -105,7 +105,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: rid.Queue})
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
 	}
@@ -113,14 +113,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Fetch request from storage
 	request, err := store.GetRequestStore().Get(ctx, rid.ID)
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if rid.Queue != "" && rid.Queue != request.Queue {
-		coremetrics.NamedCounter(c.metricsScope, "process", "queue_mismatch", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "queue_mismatch", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
 	}
 
@@ -138,7 +138,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// (RequestStateCancelling). Without this guard we would still publish to batch
 	// and spawn a batch for a request that should never proceed.
 	if entity.IsRequestStateHalted(request.State) {
-		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_halted", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_halted", 1, coremetrics.TagsFromContext(ctx)...)
 		c.logger.Infow("skipping validate for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
@@ -152,7 +152,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// request is validated once, and a redelivery is a retry of that one event.
 	logEntry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusValidating, 0, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "request_log_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "request_log_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
 	}
 
@@ -168,19 +168,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"queue", request.Queue,
 			"duplicate_id", dupID,
 		)
-		coremetrics.NamedCounter(c.metricsScope, "process", "duplicate_requests", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "duplicate_requests", 1, coremetrics.TagsFromContext(ctx)...)
 		return c.reject(ctx, store, request.ID, fmt.Sprintf("request %s is a duplicate of in-flight request %s", request.ID, dupID))
 	}
 
 	// Fetch change metadata
 	changeProvider, err := c.changeProviders.For(changeprovider.Config{QueueName: request.Queue})
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to build change provider for queue %s: %w", request.Queue, err)
 	}
 	changeInfos, err := changeProvider.Get(ctx, request)
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to fetch change information for request %s: %w", request.ID, err)
 	}
 
@@ -197,7 +197,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		v, err := c.validators.For(cfg)
 		if err != nil {
-			coremetrics.NamedCounter(c.metricsScope, "process", "validator_errors", 1)
+			coremetrics.NamedCounter(c.metricsScope, "process", "validator_errors", 1, coremetrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to build validator for request %s: %w", request.ID, err)
 		}
 		if v != nil {
@@ -206,10 +206,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				// is left to the consumer's classifiers, so a transient one retries
 				// instead of failing a request nothing was wrong with.
 				if !errors.Is(err, validator.ErrRejected) {
-					coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_errors", 1)
+					coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_errors", 1, coremetrics.TagsFromContext(ctx)...)
 					return fmt.Errorf("failed to validate request %s: %w", request.ID, err)
 				}
-				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1)
+				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1, coremetrics.TagsFromContext(ctx)...)
 				c.logger.Infow("custom validation rejected request",
 					"request_id", request.ID,
 					"queue", request.Queue,
@@ -226,7 +226,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// details (immutable thereafter; no separate enrichment update). Create is
 	// idempotent per (queue, uri, request_id), so redelivery is a no-op.
 	if err := c.claimChanges(ctx, store, request, changeInfos); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to claim change records for request %s: %w", request.ID, err)
 	}
 
@@ -247,7 +247,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		},
 	}
 	if err := c.publishLandConflictCheck(ctx, req); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to runway merge-conflict-check: %w", err)
 	}
 
@@ -271,10 +271,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // validation once rejected.
 func (c *Controller) reject(ctx context.Context, store orchstorage.Storage, requestID, reason string) error {
 	if _, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, entity.RequestStateError, reason, nil); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1)
+		coremetrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to terminate rejected request %s: %w", requestID, err)
 	}
-	coremetrics.NamedCounter(c.metricsScope, "process", "rejected_requests", 1)
+	coremetrics.NamedCounter(c.metricsScope, "process", "rejected_requests", 1, coremetrics.TagsFromContext(ctx)...)
 	return nil
 }
 
@@ -293,7 +293,7 @@ func (c *Controller) checkDuplicate(ctx context.Context, store orchstorage.Stora
 	for _, uri := range request.Change.URIs {
 		records, err := store.GetChangeStore().GetByURI(ctx, uri)
 		if err != nil {
-			coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1)
+			coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1, coremetrics.TagsFromContext(ctx)...)
 			return "", fmt.Errorf("failed to query change store for request %s uri=%s: %w", request.ID, uri, err)
 		}
 		for _, rec := range records {
@@ -310,7 +310,7 @@ func (c *Controller) checkDuplicate(ctx context.Context, store orchstorage.Stora
 				continue
 			}
 			if err != nil {
-				coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+				coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1, coremetrics.TagsFromContext(ctx)...)
 				return "", fmt.Errorf("failed to look up overlapping request %s: %w", rec.RequestID, err)
 			}
 			if !entity.IsRequestStateTerminal(owner.State) {

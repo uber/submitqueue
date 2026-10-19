@@ -118,7 +118,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 
 	rid, err := c.decode(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Malformed DLQ payload is non-retryable: a re-delivery will decode the
 		// same bytes and fail the same way. The framework will route this DLQ
 		// message to its own DLQ if one is configured; otherwise the message is
@@ -126,17 +126,17 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, rid.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 	if rid.ID == "" {
-		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("dlq payload decoded to empty request id")
 	}
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: rid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
 	}
@@ -159,11 +159,11 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 	// claim and leave it building for a request reported as failed.
 	owner, err := owningBatch(ctx, store, rid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 	if owner != "" {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_owned_by_batch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_owned_by_batch", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("dlq reconcile: request is carried by a live batch, leaving the outcome to conclude",
 			"request_id", rid.ID,
 			"batch_id", owner,
@@ -172,7 +172,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 	}
 
 	if err := failRequest(ctx, store, c.registry, c.logger, rid.ID, lastError, failureMeta); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 

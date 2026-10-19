@@ -106,7 +106,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
@@ -115,7 +115,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
 	}
@@ -123,14 +123,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Fetch batch from storage
 	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if bid.Queue != "" && bid.Queue != batch.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
@@ -139,10 +139,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if errors.Is(err, storage.ErrNotFound) {
 			// No speculation run has funded this head yet, so there is nothing
 			// to dispatch. A later run publishes again once it has.
-			metrics.NamedCounter(c.metricsScope, opName, "no_path_set", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "no_path_set", 1, metrics.TagsFromContext(ctx)...)
 			return nil
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err)
 	}
 
@@ -182,7 +182,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 
 		if entry.Status == entity.SpeculationPathStatusPending {
-			metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
 		}
 
 		if recovering {
@@ -225,10 +225,10 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 	case err == nil:
 		// Already dispatched and named; all that can be missing is the signal,
 		// and a re-publish is deduped by the queue when it is not.
-		metrics.NamedCounter(c.metricsScope, opName, "already_dispatched", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "already_dispatched", 1, metrics.TagsFromContext(ctx)...)
 		return c.publishBuildSignal(ctx, existing.BuildID, batch.Queue)
 	case !errors.Is(err, storage.ErrNotFound):
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to look up build for path %s attempt %d: %w", entry.ID, entry.Attempt, err)
 	}
 
@@ -239,7 +239,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
 	}
 
@@ -247,7 +247,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 	// requester / ticket pulled off the originating LandRequest).
 	buildID, err := buildRunner.Trigger(ctx, base, batch, nil)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to trigger build for path %s attempt %d: %w", entry.ID, entry.Attempt, err)
 	}
 
@@ -263,7 +263,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 	// row to Update against. ErrAlreadyExists is benign — a redelivery
 	// of this message after a previous successful Create.
 	if err := store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to record build %s: %w", buildID.ID, err)
 	}
 
@@ -277,7 +277,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 			// because the dispatch that won may have died before sending it,
 			// and acking this message would retire the redelivery that would
 			// otherwise repair that.
-			metrics.NamedCounter(c.metricsScope, opName, "lost_dispatch_race", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "lost_dispatch_race", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Infow("lost the dispatch race; handing both builds to the poll loop",
 				"batch_id", batch.ID,
 				"path_id", entry.ID,
@@ -289,16 +289,16 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 			}
 			winner, err := store.GetPathBuildStore().Get(ctx, entry.ID, entry.Attempt)
 			if err != nil {
-				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 				return fmt.Errorf("failed to look up the winning build for path %s attempt %d: %w", entry.ID, entry.Attempt, err)
 			}
 			return c.publishBuildSignal(ctx, winner.BuildID, batch.Queue)
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to link path %s attempt %d to build %s: %w", entry.ID, entry.Attempt, buildID.ID, err)
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "build_triggered", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "build_triggered", 1, metrics.TagsFromContext(ctx)...)
 	c.logger.Infow("triggered build for speculation path",
 		"batch_id", batch.ID,
 		"path_id", entry.ID,
@@ -333,11 +333,11 @@ func (c *Controller) ensureSignal(ctx context.Context, store orchstorage.Storage
 		return nil
 	}
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to look up build for path %s attempt %d: %w", entry.ID, entry.Attempt, err)
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "signal_ensured", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "signal_ensured", 1, metrics.TagsFromContext(ctx)...)
 	c.logger.Debugw("re-published build signal on redelivery",
 		"batch_id", batch.ID,
 		"path_id", entry.ID,
@@ -362,7 +362,7 @@ func (c *Controller) loadBase(ctx context.Context, store orchstorage.Storage, pa
 	for _, depID := range deps {
 		b, err := store.GetBatchStore().Get(ctx, depID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return nil, fmt.Errorf("failed to get dependency batch %s of path %s: %w", depID, path.ID(), err)
 		}
 		base = append(base, b)
@@ -394,7 +394,7 @@ func (c *Controller) publishBuildSignal(ctx context.Context, buildID, queue stri
 		Payload:      payload,
 		PartitionKey: buildID,
 	}); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
 	}
 	return nil

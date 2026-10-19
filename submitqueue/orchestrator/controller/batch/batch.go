@@ -85,7 +85,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	rid, err := sqmq.UnmarshalRequestID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, rid.Queue); err != nil {
@@ -94,7 +94,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: rid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
 	}
@@ -102,14 +102,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Fetch request from storage
 	request, err := store.GetRequestStore().Get(ctx, rid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if rid.Queue != "" && rid.Queue != request.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
 	}
 
@@ -127,7 +127,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// (RequestStateCancelling). A halted request must never spawn a new batch.
 	// If cancellation races with an attempt already initializing below, speculate re-checks the contained request state before starting work.
 	if entity.IsRequestStateHalted(request.State) {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("skipping batch for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
@@ -140,17 +140,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Generate a queue-scoped batch ID.
 	queueCounter, err := c.counters.For(counter.Config{QueueName: request.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to resolve counter for queue=%s: %w", request.Queue, err)
 	}
 	seq, err := queueCounter.Next(ctx, counterDomainBatch)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
 	}
 	batchID, err := id.FromCounter(seq)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("generated invalid batch ID for queue=%s: %w", request.Queue, err)
 	}
 
@@ -170,7 +170,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// DependencyBatchStates, and nothing is associated with it yet, so a batch
 	// abandoned here is a row nobody can reach.
 	if err := store.GetBatchStore().Create(ctx, batch); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to create batch in batch store: %w", err)
 	}
 
@@ -181,7 +181,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"batch_id": batch.ID,
 	})
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request log for request %s: %w", request.ID, err)
 	}
 
@@ -194,8 +194,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// another. Enrolment is decided downstream, so duplicates here cost storage,
 	// not correctness.
 	if err := c.publishToDependencyAnalysis(ctx, batch); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish batch ID to dependency-analysis topic: %w", err)
 	}
 

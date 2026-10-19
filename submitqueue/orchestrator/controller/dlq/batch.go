@@ -85,21 +85,21 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 
 	bid, err := sqmq.UnmarshalBatchID(primaryTopicKey(c.topicKey), msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to decode batch id from dlq payload: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 	if bid.ID == "" {
-		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("dlq payload decoded to empty batch id")
 	}
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
 	}
@@ -115,7 +115,7 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 	)
 
 	if _, err := failBatch(ctx, store, c.registry, c.logger, bid.ID, lastError, failureMeta); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 

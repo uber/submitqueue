@@ -110,7 +110,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	cancelReq, err := sqmq.UnmarshalCancelRequest(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize cancel request: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, cancelReq.Queue); err != nil {
@@ -119,21 +119,21 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: cancelReq.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", cancelReq.Queue, err)
 	}
 
 	request, err := store.GetRequestStore().Get(ctx, cancelReq.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get request %s: %w", cancelReq.ID, err)
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if cancelReq.Queue != "" && cancelReq.Queue != request.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", cancelReq.Queue, request.Queue, request.ID)
 	}
 
@@ -148,7 +148,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	if entity.IsRequestStateTerminal(request.State) {
-		metrics.NamedCounter(c.metricsScope, opName, "already_terminal", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "already_terminal", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 
@@ -176,7 +176,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		case batch.State.IsCancellable():
 			foundApplicableBatch = true
 			if err := c.cancelBatch(ctx, store, batch); err != nil {
-				metrics.NamedCounter(c.metricsScope, opName, "batch_cancel_errors", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "batch_cancel_errors", 1, metrics.TagsFromContext(ctx)...)
 				c.logger.Errorw("failed to cancel batch",
 					"batch_id", batch.ID,
 					"batch_state", string(batch.State),
@@ -189,11 +189,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		case batch.State == entity.BatchStateLanding:
 			// Land owns the outcome once it has started. Conclude will reconcile the request with that outcome.
 			foundApplicableBatch = true
-			metrics.NamedCounter(c.metricsScope, opName, "batch_landing", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_landing", 1, metrics.TagsFromContext(ctx)...)
 		case batch.State.IsTerminal():
 			// The terminal batch outcome wins; conclude may not have reconciled the request yet.
 			foundApplicableBatch = true
-			metrics.NamedCounter(c.metricsScope, opName, "batch_already_terminal", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_already_terminal", 1, metrics.TagsFromContext(ctx)...)
 		}
 	}
 
@@ -215,17 +215,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 func (c *Controller) markCancelling(ctx context.Context, store orchstorage.Storage, request entity.Request) (entity.Request, error) {
 	if request.State == entity.RequestStateCancelling {
 		// Idempotent re-delivery: prior pass already recorded intent.
-		metrics.NamedCounter(c.metricsScope, opName, "already_cancelling", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "already_cancelling", 1, metrics.TagsFromContext(ctx)...)
 		return request, nil
 	}
 	newVersion := request.Version + 1
 	request.State = entity.RequestStateCancelling
 	if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_update_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_update_errors", 1, metrics.TagsFromContext(ctx)...)
 		return entity.Request{}, fmt.Errorf("failed to mark request %s as cancelling: %w", request.ID, err)
 	}
 	request.Version = newVersion
-	metrics.NamedCounter(c.metricsScope, opName, "request_cancelling", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "request_cancelling", 1, metrics.TagsFromContext(ctx)...)
 	return request, nil
 }
 
@@ -234,11 +234,11 @@ func (c *Controller) markCancelling(ctx context.Context, store orchstorage.Stora
 func (c *Controller) findBatches(ctx context.Context, store orchstorage.Storage, request entity.Request) ([]entity.Batch, error) {
 	batches, stale, err := corebatch.FindByRequestID(ctx, store, request.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil, err
 	}
 	if stale > 0 {
-		metrics.NamedCounter(c.metricsScope, opName, "stale_batch_associations", int64(stale))
+		metrics.NamedCounter(c.metricsScope, opName, "stale_batch_associations", int64(stale), metrics.TagsFromContext(ctx)...)
 	}
 	return batches, nil
 }
@@ -263,7 +263,7 @@ func (c *Controller) cancelRequest(ctx context.Context, store orchstorage.Storag
 	}
 	res, err := corerequest.TerminateRequest(ctx, store, c.registry, request.ID, entity.RequestStateCancelled, "", metadata)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_terminate_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_terminate_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to cancel request %s: %w", request.ID, err)
 	}
 
@@ -273,16 +273,16 @@ func (c *Controller) cancelRequest(ctx context.Context, store orchstorage.Storag
 			"request_id", request.ID,
 			"queue", request.Queue,
 		)
-		metrics.NamedCounter(c.metricsScope, opName, "request_cancelled", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_cancelled", 1, metrics.TagsFromContext(ctx)...)
 	case corerequest.TerminationOutcomeDiverged:
 		c.logger.Infow("request reached a different terminal state before cancel, skipping",
 			"request_id", request.ID,
 			"queue", request.Queue,
 			"actual_state", string(res.BeforeState),
 		)
-		metrics.NamedCounter(c.metricsScope, opName, "request_terminal_divergence", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_terminal_divergence", 1, metrics.TagsFromContext(ctx)...)
 	case corerequest.TerminationOutcomeNotFound:
-		metrics.NamedCounter(c.metricsScope, opName, "request_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s not found during cancel: %w", request.ID, storage.ErrNotFound)
 	}
 	return nil
@@ -315,7 +315,7 @@ func (c *Controller) cancelBatch(ctx context.Context, store orchstorage.Storage,
 		var err error
 		batch, err = corebatch.Transition(ctx, store, batch, entity.BatchStateCancelling)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1, metrics.TagsFromContext(ctx)...)
 			// storage.ErrVersionMismatch here means the batch advanced concurrently
 			// (e.g. speculate / land progressed). Returned as-is because the
 			// sentinel is intrinsically retryable; the re-fetch will see the new state
@@ -323,23 +323,23 @@ func (c *Controller) cancelBatch(ctx context.Context, store orchstorage.Storage,
 			// again.
 			return fmt.Errorf("failed to mark batch %s as cancelling: %w", batch.ID, err)
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "batch_cancelling", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_cancelling", 1, metrics.TagsFromContext(ctx)...)
 	} else {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_already_cancelling", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_already_cancelling", 1, metrics.TagsFromContext(ctx)...)
 		// A prior pass wrote the intent but may have crashed before completing
 		// the membership record move; repair before re-publishing.
 		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1, metrics.TagsFromContext(ctx)...)
 			return err
 		}
 	}
 
 	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to hand off cancelled batch %s to speculate: %w", batch.ID, err)
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "batch_handed_off", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "batch_handed_off", 1, metrics.TagsFromContext(ctx)...)
 	return nil
 }
 

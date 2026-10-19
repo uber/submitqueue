@@ -73,7 +73,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
@@ -82,7 +82,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
 	}
@@ -90,14 +90,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Fetch batch from storage
 	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if bid.Queue != "" && bid.Queue != batch.Queue {
-		metrics.NamedCounter(c.metricsScope, "process", "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
@@ -116,7 +116,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// failOnDependency, Cancelled via cancelBatch).
 	requestState, err := batchStateToRequestState(batch.State)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("unexpected batch state %q for batch %s: %w", batch.State, batch.ID, err)
 	}
 
@@ -137,7 +137,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"batch_id": batch.ID,
 		})
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1)
+			metrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to terminate request %s for batch %s: %w", requestID, batch.ID, err)
 		}
 
@@ -149,7 +149,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"new_state", string(res.AfterState),
 			)
 		case corerequest.TerminationOutcomeAlreadyInTargetState:
-			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1)
+			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1, metrics.TagsFromContext(ctx)...)
 		case corerequest.TerminationOutcomeDiverged:
 			c.logger.Warnw("request already in different terminal state, skipping reconcile",
 				"batch_id", batch.ID,
@@ -157,9 +157,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"expected_state", string(requestState),
 				"actual_state", string(res.BeforeState),
 			)
-			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1)
+			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1, metrics.TagsFromContext(ctx)...)
 		case corerequest.TerminationOutcomeNotFound:
-			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to get request %s for batch %s: %w", requestID, batch.ID, storage.ErrNotFound)
 		}
 	}
