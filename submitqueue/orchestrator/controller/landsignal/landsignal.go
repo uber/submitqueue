@@ -89,7 +89,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// id is the batch id echoed back, so correlate straight to the batch.
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize land result: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
@@ -98,14 +98,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: result.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
 	}
 
 	batch, err := store.GetBatchStore().Get(ctx, result.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get batch %s: %w", result.Id, err)
 	}
 
@@ -123,7 +123,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// not transition (a racing terminal land result must not override the
 	// cancel) and do not fan out.
 	if batch.State == entity.BatchStateCancelling {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_cancelling", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_cancelling", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 
@@ -144,9 +144,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// CAS'd without completing the record move), re-fan-out in case that
 	// attempt missed the downstream publishes, then ack.
 	if batch.State.IsTerminal() {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1, metrics.TagsFromContext(ctx)...)
 		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1, metrics.TagsFromContext(ctx)...)
 			return err
 		}
 		return c.fanout(ctx, batch.ID, batch.Queue, failureReason)
@@ -160,7 +160,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"steps", result.Steps,
 		)
 	} else {
-		metrics.NamedCounter(c.metricsScope, opName, "not_landed", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "not_landed", 1, metrics.TagsFromContext(ctx)...)
 		newState = entity.BatchStateFailed
 		c.logger.Warnw("batch land failed",
 			"batch_id", batch.ID,
@@ -170,7 +170,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	batch, err = corebatch.Transition(ctx, store, batch, newState)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
@@ -193,11 +193,11 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue, failureReason s
 		concludeMeta = map[string]string{topickey.MetadataKeyFailureReason: failureReason}
 	}
 	if err := c.publish(ctx, topickey.TopicKeyConclude, publish.IntentID(batchID, "conclude", "landed"), batchID, queue, concludeMeta); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
 	if err := c.publish(ctx, topickey.TopicKeySpeculate, publish.IntentID(batchID, "landed"), batchID, queue, nil); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 	return nil

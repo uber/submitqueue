@@ -87,7 +87,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// id is the request id echoed back, so correlate straight to the request.
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize land conflict check result: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
@@ -96,14 +96,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: result.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
 	}
 
 	request, err := store.GetRequestStore().Get(ctx, result.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get request %s: %w", result.Id, err)
 	}
 
@@ -116,7 +116,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Short-circuit halted requests: the cancel path owns driving them terminal.
 	if entity.IsRequestStateHalted(request.State) {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("skipping landconflict signal for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
@@ -125,13 +125,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	if result.Outcome != runwaypb.Outcome_SUCCEEDED {
-		metrics.NamedCounter(c.metricsScope, opName, "not_landable", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "not_landable", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("request not landable",
 			"request_id", request.ID,
 			"reason", result.Reason,
 		)
 		if err := c.failRequest(ctx, store, request, result.Reason); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "fail_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "fail_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to fail request %s: %w", request.ID, err)
 		}
 		return nil
@@ -141,19 +141,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	newVersion := request.Version + 1
 	request.State = entity.RequestStateValidated
 	if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "state_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "state_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to update request %s state to validated: %w", request.ID, err)
 	}
 	request.Version = newVersion
 
 	logEntry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusValidated, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
 	}
 
 	if err := c.publishRequestID(ctx, topickey.TopicKeyBatch, request.ID, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to batch: %w", err)
 	}
 

@@ -100,7 +100,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
@@ -109,21 +109,21 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
 	}
 
 	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if bid.Queue != "" && bid.Queue != batch.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
@@ -142,7 +142,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// state transition and fan-out once runway's result returns, so a redelivery
 	// at this stage simply acks.
 	if entity.IsBatchStateHalted(batch.State) {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("skipping land for halted batch",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
@@ -155,7 +155,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// and runway dedupes on it; the result is matched straight back to the batch.
 	req, err := c.buildLandRequest(ctx, store, batch)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to build land request for batch %s: %w", batch.ID, err)
 	}
 
@@ -165,12 +165,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
 		entity.RequestStatusLanding, batch.ID, map[string]string{"batch_id": batch.ID},
 	); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request log for batch %s: %w", batch.ID, err)
 	}
 
 	if err := c.publish(ctx, c.runwayTopicKey, req, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to runway merge: %w", err)
 	}
 

@@ -122,7 +122,7 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				continue
 			}
 			if bypassed {
-				metrics.NamedCounter(c.metricsScope, opName, "bypass", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "bypass", 1, metrics.TagsFromContext(ctx)...)
 			}
 			c.recordOutcome(snap, batch.ID, decision)
 			decided++
@@ -177,11 +177,11 @@ func (c *Controller) reportSpeculation(
 			"path_id":  path.ID,
 		},
 	); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Attributed to this head, not the trigger: the loop walks the whole
 		// queue, so the batch whose members could not be told is usually not the
 		// one the message named.
-		return c.attributed(fmt.Errorf("failed to publish request events for batch %s: %w", batch.ID, err),
+		return c.attributed(ctx, fmt.Errorf("failed to publish request events for batch %s: %w", batch.ID, err),
 			entity.BatchSubject(batch.ID))
 	}
 	return nil
@@ -207,7 +207,7 @@ func (c *Controller) finalizeCancellations(ctx context.Context, snap *snapshot, 
 		if batch.State != entity.BatchStateCancelling {
 			continue
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1, metrics.TagsFromContext(ctx)...)
 
 		set, exists := snap.pathSets[batch.ID]
 		if exists && cancelAllPaths(&set, nowMs) {
@@ -219,7 +219,7 @@ func (c *Controller) finalizeCancellations(ctx context.Context, snap *snapshot, 
 		// wait for. Statuses here already reflect what the build stages saw —
 		// read folded that in — so a path still reading as unstopped really is.
 		if exists && !allPathsStopped(set) {
-			metrics.NamedCounter(c.metricsScope, opName, "cancel_awaiting_paths", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "cancel_awaiting_paths", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Infow("cancelling batch; waiting for its builds to stop",
 				"batch_id", batch.ID,
 				"queue", batch.Queue,
@@ -253,7 +253,7 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 		stored, err := c.persist(ctx, snap.store, set, exists)
 		if err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
-				metrics.NamedCounter(c.metricsScope, opName, "path_set_cas_lost", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "path_set_cas_lost", 1, metrics.TagsFromContext(ctx)...)
 				c.logger.Infow("lost a path set write; the next run re-plans this head",
 					"batch_id", batch.ID,
 					"queue", batch.Queue,
@@ -262,7 +262,7 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 				snap.markClean(batch.ID)
 				return false, nil
 			}
-			return false, c.attributed(err, entity.BatchSubject(batch.ID))
+			return false, c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 		}
 		snap.pathSets[batch.ID] = stored
 		snap.markClean(batch.ID)
@@ -273,7 +273,7 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 	// over every decided batch in the queue — rarely the one on the message.
 	landed, err := c.applyOutcome(ctx, snap.store, batch, decision, snap.isTrigger(batch.ID))
 	if err != nil {
-		return landed, c.attributed(err, entity.BatchSubject(batch.ID))
+		return landed, c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 	}
 	return landed, nil
 }
@@ -332,14 +332,14 @@ func (c *Controller) applyOutcome(ctx context.Context, store orchstorage.Storage
 	// queue would go on listing and hydrating it.
 	if _, err := corebatch.Transition(ctx, store, batch, state); err != nil {
 		if errors.Is(err, storage.ErrVersionMismatch) {
-			metrics.NamedCounter(c.metricsScope, opName, "outcome_cas_lost", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "outcome_cas_lost", 1, metrics.TagsFromContext(ctx)...)
 			return false, nil
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return false, err
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "outcome", 1, metrics.NewTag("outcome", string(decision)))
+	metrics.NamedCounter(c.metricsScope, opName, "outcome", 1, metrics.TagsFromContext(ctx, metrics.NewTag("outcome", string(decision)))...)
 	c.logger.Infow("batch outcome",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
@@ -367,7 +367,7 @@ func (c *Controller) applyOutcome(ctx context.Context, store orchstorage.Storage
 		// A conclude that goes missing is recovered by fanout, which is
 		// deliberately un-deduplicated.
 		if err := c.publishBatchIDWithMetadata(ctx, topickey.TopicKeyConclude, publish.IntentID(batch.ID, "conclude", "speculate"), batch.ID, batch.Queue, batch.Queue, concludeMeta); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 			return true, fmt.Errorf("failed to publish batch %s to conclude: %w", batch.ID, err)
 		}
 	}
@@ -382,12 +382,12 @@ func (c *Controller) dispatchLand(ctx context.Context, batch entity.Batch) error
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
 		entity.RequestStatusSpeculated, batch.ID, map[string]string{"batch_id": batch.ID},
 	); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err)
 	}
 
 	if err := c.publishBatchID(ctx, topickey.TopicKeyLand, publish.IntentID(batch.ID, "land-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish batch %s to land: %w", batch.ID, err)
 	}
 	return nil
@@ -416,10 +416,10 @@ func (c *Controller) dispatchLand(ctx context.Context, batch entity.Batch) error
 // a nudge that re-plans a queue nothing has changed.
 func (c *Controller) recoverable(ctx context.Context, store orchstorage.Storage, batch entity.Batch) error {
 	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, publish.UniqueID(batch.ID), batch.ID, batch.Queue, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish recovery signal for batch %s: %w", batch.ID, err)
 	}
-	metrics.NamedCounter(c.metricsScope, opName, "recovery_signal_published", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "recovery_signal_published", 1, metrics.TagsFromContext(ctx)...)
 	return nil
 }
 

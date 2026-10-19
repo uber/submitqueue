@@ -142,7 +142,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	buildID, err := sqmq.UnmarshalBuildID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: malformed messages will never succeed.
 		return fmt.Errorf("failed to deserialize build ID: %w", err)
 	}
@@ -152,7 +152,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: buildID.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", buildID.Queue, err)
 	}
@@ -162,7 +162,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// snapshot the poll loop updates.
 	build, err := store.GetBuildStore().Get(ctx, buildID.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get build %s: %w", buildID.ID, err)
 	}
 
@@ -177,26 +177,26 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// BuildRunner) and lets us short-circuit halted batches before polling.
 	batch, err := store.GetBatchStore().Get(ctx, build.BatchID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if buildID.Queue != "" && buildID.Queue != batch.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", buildID.Queue, batch.Queue, batch.ID)
 	}
 
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
 	}
 
 	status, buildMeta, err := buildRunner.Status(ctx, buildID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)
 	}
 
@@ -211,14 +211,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		if stop {
 			if err := buildRunner.Cancel(ctx, buildID); err != nil {
-				metrics.NamedCounter(c.metricsScope, opName, "cancel_errors", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "cancel_errors", 1, metrics.TagsFromContext(ctx)...)
 				c.logger.Warnw("failed to cancel an unwanted build; the next poll retries",
 					"build_id", build.ID,
 					"batch_id", build.BatchID,
 					"error", err,
 				)
 			} else {
-				metrics.NamedCounter(c.metricsScope, opName, "build_cancelled", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "build_cancelled", 1, metrics.TagsFromContext(ctx)...)
 				c.logger.Infow("requested cancellation of a build nothing wants running",
 					"build_id", build.ID,
 					"batch_id", build.BatchID,
@@ -236,13 +236,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		// replay would read the already-updated record and take neither branch.
 		// Publishing first means the replay re-publishes and the queue dedupes.
 		if err := c.publishBuildLogs(ctx, batch, build, status, buildMeta); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to publish request logs for build %s: %w", build.ID, err)
 		}
 
 		build.Status = status
 		if err := store.GetBuildStore().Update(ctx, build); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
 		}
 	}
@@ -258,12 +258,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate,
 		publish.IntentID(batch.ID, "build-signal", build.ID, string(status)),
 		batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 
 	if status.IsTerminal() {
-		metrics.NamedCounter(c.metricsScope, opName, "terminal", 1, metrics.NewTag("status", string(status)))
+		metrics.NamedCounter(c.metricsScope, opName, "terminal", 1, metrics.TagsFromContext(ctx, metrics.NewTag("status", string(status)))...)
 		c.logger.Infow("build reached terminal status",
 			"build_id", build.ID,
 			"batch_id", build.BatchID,
@@ -275,7 +275,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Not terminal yet: hold the delivery so this same message redelivers
 	// after the poll delay, without counting toward the retry limit.
 	delayMs := pollDelay(status)
-	metrics.NamedCounter(c.metricsScope, opName, "rescheduled", 1, metrics.NewTag("status", string(status)))
+	metrics.NamedCounter(c.metricsScope, opName, "rescheduled", 1, metrics.TagsFromContext(ctx, metrics.NewTag("status", string(status)))...)
 	delivery.Hold(delayMs)
 
 	c.logger.Debugw("holding for next build status poll",
@@ -376,20 +376,20 @@ func (c *Controller) unwanted(ctx context.Context, store orchstorage.Storage, ba
 	set, err := store.GetSpeculationPathSetStore().Get(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			metrics.NamedCounter(c.metricsScope, opName, "kill_list_anomalies", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "kill_list_anomalies", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Warnw("build exists but its head has no path set; keeping the build",
 				"build_id", build.ID,
 				"batch_id", batch.ID,
 			)
 			return false, nil
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return false, fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err)
 	}
 
 	entry, found := findEntry(set, build.PathID)
 	if !found {
-		metrics.NamedCounter(c.metricsScope, opName, "kill_list_anomalies", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "kill_list_anomalies", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Warnw("build exists but its path is gone from the set; keeping the build",
 			"build_id", build.ID,
 			"batch_id", batch.ID,
@@ -412,7 +412,7 @@ func (c *Controller) unwanted(ctx context.Context, store orchstorage.Storage, ba
 	link, err := store.GetPathBuildStore().Get(ctx, build.PathID, build.Attempt)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			metrics.NamedCounter(c.metricsScope, opName, "kill_list_anomalies", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "kill_list_anomalies", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Warnw("build exists but its attempt has no link; keeping the build",
 				"build_id", build.ID,
 				"path_id", build.PathID,
@@ -420,7 +420,7 @@ func (c *Controller) unwanted(ctx context.Context, store orchstorage.Storage, ba
 			)
 			return false, nil
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return false, fmt.Errorf("failed to look up build for path %s attempt %d: %w", build.PathID, build.Attempt, err)
 	}
 

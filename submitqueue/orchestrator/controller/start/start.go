@@ -80,7 +80,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	landRequest, err := sqmq.UnmarshalLandRequest(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize land request: %w", err)
 	}
@@ -90,7 +90,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: landRequest.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", landRequest.Queue, err)
 	}
@@ -119,19 +119,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Persist request to storage. ErrAlreadyExists means a queue redelivery of the same
 	// request_id (an at-least-once retry of THIS message), not a cross-request collision.
 	if err := store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Record the "new" status in the request log.
 	logEntry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusStarted, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request log: %w", err)
 	}
 
 	if err := c.publish(ctx, topickey.TopicKeyValidate, request.ID, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
 

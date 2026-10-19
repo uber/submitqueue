@@ -63,7 +63,7 @@ func (c *Controller) run(ctx context.Context, store orchstorage.Storage, trigger
 	kept, rejected := filterProposals(proposals, snap)
 	for _, reason := range rejected {
 		metrics.NamedCounter(c.metricsScope, opName, "speculation_rejected", 1,
-			metrics.NewTag("reason", string(reason)))
+			metrics.TagsFromContext(ctx, metrics.NewTag("reason", string(reason)))...)
 		c.logger.Warnw("dropped a speculator proposal",
 			"queue", trigger.Queue,
 			"reason", string(reason),
@@ -96,7 +96,7 @@ func (c *Controller) admitCreated(ctx context.Context, snap *snapshot) {
 
 		updated, err := c.admit(ctx, snap.store, batch)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "unadmitted_repair_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "unadmitted_repair_errors", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Warnw("failed to admit a batch found in created",
 				"batch_id", batch.ID,
 				"queue", batch.Queue,
@@ -105,7 +105,7 @@ func (c *Controller) admitCreated(ctx context.Context, snap *snapshot) {
 			continue
 		}
 
-		metrics.NamedCounter(c.metricsScope, opName, "unadmitted_repaired", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "unadmitted_repaired", 1, metrics.TagsFromContext(ctx)...)
 		snap.batches[updated.ID] = updated
 		snap.inFlight[i] = updated
 		snap.speculating = append(snap.speculating, updated)
@@ -118,8 +118,8 @@ func (c *Controller) admitCreated(ctx context.Context, snap *snapshot) {
 func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue string) (snapshot, error) {
 	inFlight, err := corebatch.ListByStates(ctx, store, entity.ActiveBatchStates())
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return snapshot{}, c.attributed(fmt.Errorf("failed to list in-flight batches of queue %s: %w", queue, err),
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		return snapshot{}, c.attributed(ctx, fmt.Errorf("failed to list in-flight batches of queue %s: %w", queue, err),
 			entity.QueueSubject(queue))
 	}
 
@@ -148,8 +148,8 @@ func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue 
 			}
 			dep, err := store.GetBatchStore().Get(ctx, depID)
 			if err != nil {
-				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-				return snapshot{}, c.attributed(fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err),
+				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+				return snapshot{}, c.attributed(ctx, fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err),
 					entity.BatchSubject(depID))
 			}
 			snap.batches[depID] = dep
@@ -163,8 +163,8 @@ func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue 
 				// Nothing has been funded for this head yet.
 				continue
 			}
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return snapshot{}, c.attributed(fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err),
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+			return snapshot{}, c.attributed(ctx, fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err),
 				entity.BatchSubject(batch.ID))
 		}
 		changed, err := c.updatePathsFromBuilds(ctx, store, &set)
@@ -219,13 +219,13 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorag
 			if entry.Status == entity.SpeculationPathStatusCancelling {
 				entry.Status = entity.SpeculationPathStatusCancelled
 				changed = true
-				metrics.NamedCounter(c.metricsScope, opName, "path_cancelled_undispatched", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "path_cancelled_undispatched", 1, metrics.TagsFromContext(ctx)...)
 			}
 			continue
 		}
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return false, c.attributed(fmt.Errorf("failed to look up build for path %s attempt %d: %w", entry.ID, entry.Attempt, err),
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+			return false, c.attributed(ctx, fmt.Errorf("failed to look up build for path %s attempt %d: %w", entry.ID, entry.Attempt, err),
 				entity.BatchSubject(set.Head))
 		}
 
@@ -238,8 +238,8 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorag
 				// wedging a whole queue's run on one corrupt row.
 				continue
 			}
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return false, c.attributed(fmt.Errorf("failed to get build %s for path %s: %w", link.BuildID, entry.ID, err),
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+			return false, c.attributed(ctx, fmt.Errorf("failed to get build %s for path %s: %w", link.BuildID, entry.ID, err),
 				entity.BatchSubject(set.Head))
 		}
 
@@ -264,7 +264,7 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorag
 		entry.Status = result
 		changed = true
 		metrics.NamedCounter(c.metricsScope, opName, "path_outcome_recorded", 1,
-			metrics.NewTag("status", string(result)))
+			metrics.TagsFromContext(ctx, metrics.NewTag("status", string(result)))...)
 	}
 	return changed, nil
 }
@@ -306,8 +306,8 @@ func terminalPathStatus(status entity.BuildStatus) entity.SpeculationPathStatus 
 func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]entity.Speculation, error) {
 	spec, err := c.speculators.For(speculator.Config{QueueName: queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1)
-		return nil, c.attributed(fmt.Errorf("failed to build speculator for queue %s: %w", queue, err),
+		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1, metrics.TagsFromContext(ctx)...)
+		return nil, c.attributed(ctx, fmt.Errorf("failed to build speculator for queue %s: %w", queue, err),
 			entity.QueueSubject(queue))
 	}
 
@@ -320,8 +320,8 @@ func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]en
 
 	proposals, err := spec.Speculate(ctx, slices.Collect(maps.Values(snap.batches)), sets)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1)
-		return nil, c.attributed(fmt.Errorf("speculator failed for queue %s: %w", queue, err),
+		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1, metrics.TagsFromContext(ctx)...)
+		return nil, c.attributed(ctx, fmt.Errorf("speculator failed for queue %s: %w", queue, err),
 			entity.QueueSubject(queue))
 	}
 	return proposals, nil

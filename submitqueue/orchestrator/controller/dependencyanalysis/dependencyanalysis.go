@@ -114,7 +114,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	bid, err := sqmq.UnmarshalBatchID(c.topicKey, msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, bid.Queue); err != nil {
@@ -123,21 +123,21 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: bid.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
 	}
 
 	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if bid.Queue != "" && bid.Queue != batch.Queue {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
@@ -153,7 +153,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	case entity.IsBatchStateHalted(batch.State):
 		// Cancelled or concluded while the analysis message was in flight.
 		// Promoting it now would hand speculate a batch nobody expects to land.
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 
 	case batch.State == entity.BatchStateCreating:
@@ -165,7 +165,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			// A previous batch message for this request was redelivered and minted
 			// this batch too. The first one through here owns the request; this one
 			// stays Creating, where nothing can reach it.
-			metrics.NamedCounter(c.metricsScope, opName, "skipped_already_enrolled", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "skipped_already_enrolled", 1, metrics.TagsFromContext(ctx)...)
 			return nil
 		}
 
@@ -176,7 +176,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if halted != "" {
 			// Nothing has claimed the request yet, so cancel owned it outright and
 			// has already written its outcome.
-			metrics.NamedCounter(c.metricsScope, opName, "skipped_halted_request", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "skipped_halted_request", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Infow("abandoning batch; contained request is halted",
 				"batch_id", batch.ID,
 				"request_id", halted,
@@ -210,7 +210,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		batch.Dependencies = dependencies
 		batch, err = corebatch.Transition(ctx, store, batch, entity.BatchStateCreated)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to mark batch %s created: %w", batch.ID, err)
 		}
 		c.logger.Infow("batch created",
@@ -224,15 +224,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		// have crashed before filing the Created record, without which the next
 		// batch's analysis cannot see this one as a dependency.
 		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return err
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "reannounced", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "reannounced", 1, metrics.TagsFromContext(ctx)...)
 
 	default:
 		// Speculating or landing: the announcement landed and the batch has
 		// already moved past this stage.
-		metrics.NamedCounter(c.metricsScope, opName, "already_admitted", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "already_admitted", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 
@@ -243,7 +243,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
 		entity.RequestStatusBatched, "", map[string]string{"batch_id": batch.ID},
 	); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err)
 	}
 
@@ -262,11 +262,11 @@ func (c *Controller) requestEnrolledInAnotherBatch(ctx context.Context, store or
 	for _, requestID := range batch.Contains {
 		existing, stale, err := corebatch.FindByRequestID(ctx, store, requestID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1, metrics.TagsFromContext(ctx)...)
 			return false, err
 		}
 		if stale > 0 {
-			metrics.NamedCounter(c.metricsScope, opName, "stale_batch_associations", int64(stale))
+			metrics.NamedCounter(c.metricsScope, opName, "stale_batch_associations", int64(stale), metrics.TagsFromContext(ctx)...)
 		}
 		for _, other := range existing {
 			if other.ID == batch.ID || other.State == entity.BatchStateCreating {
@@ -290,7 +290,7 @@ func (c *Controller) associateRequestsWithBatch(ctx context.Context, store orchs
 	for _, requestID := range batch.Contains {
 		association := entity.RequestBatch{RequestID: requestID, BatchID: batch.ID, Version: 1}
 		if err := store.GetRequestBatchStore().Create(ctx, association); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-			metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to associate request %s with batch %s: %w", requestID, batch.ID, err)
 		}
 	}
@@ -315,12 +315,12 @@ func (c *Controller) claimRequestsForBatch(ctx context.Context, store orchstorag
 	for _, requestID := range batch.Contains {
 		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return false, fmt.Errorf("failed to get request %s of batch %s: %w", requestID, batch.ID, err)
 		}
 
 		if entity.IsRequestStateHalted(request.State) {
-			metrics.NamedCounter(c.metricsScope, opName, "request_claim_lost_race", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "request_claim_lost_race", 1, metrics.TagsFromContext(ctx)...)
 			c.logger.Infow("abandoning batch; request was halted during analysis",
 				"batch_id", batch.ID,
 				"request_id", requestID,
@@ -334,14 +334,14 @@ func (c *Controller) claimRequestsForBatch(ctx context.Context, store orchstorag
 		claimed.State = entity.RequestStateBatched
 		if err := store.GetRequestStore().Update(ctx, claimed, request.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
-				metrics.NamedCounter(c.metricsScope, opName, "request_claim_lost_race", 1)
+				metrics.NamedCounter(c.metricsScope, opName, "request_claim_lost_race", 1, metrics.TagsFromContext(ctx)...)
 				c.logger.Infow("abandoning batch; request advanced concurrently (likely cancel)",
 					"batch_id", batch.ID,
 					"request_id", requestID,
 				)
 				return false, nil
 			}
-			metrics.NamedCounter(c.metricsScope, opName, "request_claim_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "request_claim_errors", 1, metrics.TagsFromContext(ctx)...)
 			return false, fmt.Errorf("failed to claim request %s for batch %s: %w", requestID, batch.ID, err)
 		}
 	}
@@ -354,7 +354,7 @@ func (c *Controller) firstHaltedRequestID(ctx context.Context, store orchstorage
 	for _, requestID := range batch.Contains {
 		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return "", fmt.Errorf("failed to get request %s of batch %s: %w", requestID, batch.ID, err)
 		}
 		if entity.IsRequestStateHalted(request.State) {
@@ -371,18 +371,18 @@ func (c *Controller) firstHaltedRequestID(ctx context.Context, store orchstorage
 func (c *Controller) resolveDependencies(ctx context.Context, store orchstorage.Storage, batch entity.Batch) ([]string, error) {
 	inFlight, err := corebatch.ListByStates(ctx, store, entity.DependencyBatchStates())
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil, fmt.Errorf("failed to get active batches for queue=%s: %w", batch.Queue, err)
 	}
 
 	analyzer, err := c.analyzers.For(conflict.Config{QueueName: batch.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil, fmt.Errorf("failed to build conflict analyzer for queue=%s: %w", batch.Queue, err)
 	}
 	conflicts, err := analyzer.Analyze(ctx, batch, inFlight)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil, fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)
 	}
 
@@ -414,14 +414,14 @@ func (c *Controller) writeDependentIndexes(ctx context.Context, store orchstorag
 		Version:    1,
 	}
 	if err := store.GetBatchDependentStore().Create(ctx, own); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
 	}
 
 	for _, dependencyID := range dependencies {
 		existing, err := store.GetBatchDependentStore().Get(ctx, dependencyID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dependencyID, err)
 		}
 		if slices.Contains(existing.Dependents, batch.ID) {
@@ -432,7 +432,7 @@ func (c *Controller) writeDependentIndexes(ctx context.Context, store orchstorag
 		updated.Dependents = append(append([]string(nil), existing.Dependents...), batch.ID)
 		newVersion := existing.Version + 1
 		if err := store.GetBatchDependentStore().Update(ctx, updated, existing.Version, newVersion); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dependencyID, batch.ID, err)
 		}
 	}
@@ -457,7 +457,7 @@ func (c *Controller) publishToSpeculate(ctx context.Context, batch entity.Batch)
 		Payload:      payload,
 		PartitionKey: batch.Queue,
 	}); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish batch ID to speculate topic: %w", err)
 	}
 

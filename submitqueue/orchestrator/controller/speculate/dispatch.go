@@ -82,7 +82,7 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 					// against a snapshot that is now stale anyway; any later
 					// signal on the queue re-plans this head from stored
 					// state.
-					metrics.NamedCounter(c.metricsScope, opName, "path_set_cas_lost", 1)
+					metrics.NamedCounter(c.metricsScope, opName, "path_set_cas_lost", 1, metrics.TagsFromContext(ctx)...)
 					c.logger.Infow("lost a path set write; the next run re-plans this head",
 						"batch_id", batch.ID,
 						"queue", queue,
@@ -91,7 +91,7 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 				}
 				// The loop covers every in-flight batch, so the head whose
 				// write failed is usually not the one named on the message.
-				return c.attributed(err, entity.BatchSubject(batch.ID))
+				return c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 			}
 		}
 
@@ -108,8 +108,8 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 		// that went missing.
 		if hasActionablePaths(set) {
 			if err := c.publishBatchID(ctx, topickey.TopicKeyBuild, publish.UniqueID(batch.ID), batch.ID, queue, batch.ID); err != nil {
-				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-				return c.attributed(fmt.Errorf("failed to publish batch %s to build: %w", batch.ID, err),
+				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
+				return c.attributed(ctx, fmt.Errorf("failed to publish batch %s to build: %w", batch.ID, err),
 					entity.BatchSubject(batch.ID))
 			}
 		}
@@ -132,7 +132,7 @@ func (c *Controller) persist(ctx context.Context, store orchstorage.Storage, set
 				// Treat it as a lost race: the next run reads the winner.
 				return set, storage.ErrVersionMismatch
 			}
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return set, fmt.Errorf("failed to create path set for batch %s: %w", set.Head, err)
 		}
 		return set, nil
@@ -143,7 +143,7 @@ func (c *Controller) persist(ctx context.Context, store orchstorage.Storage, set
 		if errors.Is(err, storage.ErrVersionMismatch) {
 			return set, err
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return set, fmt.Errorf("failed to update path set for batch %s: %w", set.Head, err)
 	}
 	set.Version = newVersion

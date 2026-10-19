@@ -73,17 +73,17 @@ func (c *landConflictSignalController) Process(ctx context.Context, delivery con
 
 	result := &runwaymq.MergeResult{}
 	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to decode land conflict check result from dlq payload: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, result.GetQueueName()); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: result.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
 	}
@@ -99,7 +99,7 @@ func (c *landConflictSignalController) Process(ctx context.Context, delivery con
 	)
 
 	if err := failRequest(ctx, store, c.registry, c.logger, result.Id, lastError, failureMeta); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 

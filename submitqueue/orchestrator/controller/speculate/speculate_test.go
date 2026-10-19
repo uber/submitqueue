@@ -24,10 +24,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -339,4 +341,37 @@ func TestProcess_Errors(t *testing.T) {
 
 		require.Error(t, h.process(t, ctrl, batch.ID))
 	})
+}
+
+func TestAttributed_CountsFailureWithContextQueueTag(t *testing.T) {
+	tests := []struct {
+		name       string
+		ctx        context.Context
+		counterKey string
+	}{
+		{
+			name:       "context carries the queue",
+			ctx:        metrics.WithContextTags(context.Background(), metrics.NewTag("queue", "q")),
+			counterKey: "test.speculate_controller.process.attributed_failure+queue=q,subject_type=batch",
+		},
+		{
+			name:       "context carries no tags",
+			ctx:        context.Background(),
+			counterKey: "test.speculate_controller.process.attributed_failure+subject_type=batch",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scope := tally.NewTestScope("test", nil)
+			c := &Controller{metricsScope: scope.SubScope("speculate_controller")}
+
+			err := c.attributed(tt.ctx, fmt.Errorf("boom"), failure.Subject{Type: "batch", ID: "b1"})
+
+			require.Error(t, err)
+			counter, ok := scope.Snapshot().Counters()[tt.counterKey]
+			require.True(t, ok, "counters: %v", scope.Snapshot().Counters())
+			assert.EqualValues(t, 1, counter.Value())
+		})
+	}
 }

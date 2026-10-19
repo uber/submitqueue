@@ -51,7 +51,7 @@ func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *p
 	if req.Message != "" {
 		message = "echo: " + req.Message
 		isEcho = true
-		metrics.NamedCounter(c.metricsScope, opName, "echo_requests", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "echo_requests", 1, metrics.TagsFromContext(ctx)...)
 	}
 
 	hostname, _ := os.Hostname()

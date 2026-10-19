@@ -78,21 +78,21 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 
 	buildID, err := sqmq.UnmarshalBuildID(primaryTopicKey(c.topicKey), msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to decode build id from dlq payload: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, buildID.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "queue_identity_errors", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 	if buildID.ID == "" {
-		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("dlq payload decoded to empty build id")
 	}
 
 	store, err := c.stores.For(orchstorage.Config{QueueName: buildID.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", buildID.Queue, err)
 	}
@@ -114,10 +114,10 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 			// writing it down). There is no batch to reconcile from this
 			// signal; any associated batch reconciles from its own DLQ.
 			c.logger.Warnw("dlq reconcile: build not found, skipping", "build_id", buildID.ID)
-			metrics.NamedCounter(c.metricsScope, opName, "build_not_found", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "build_not_found", 1, metrics.TagsFromContext(ctx)...)
 			return nil
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "build_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "build_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get build %s: %w", buildID.ID, err)
 	}
 
@@ -125,16 +125,16 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		// Defensive: a build without a batch is malformed and there is nothing
 		// to fan out to. Log and ack so the DLQ does not grow unbounded.
 		c.logger.Errorw("dlq reconcile: build has empty batch id, skipping", "build_id", buildID.ID)
-		metrics.NamedCounter(c.metricsScope, opName, "build_missing_batch", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "build_missing_batch", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 
 	if _, err := failBatch(ctx, store, c.registry, c.logger, build.BatchID, lastError, failureMeta); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "reconciled", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "reconciled", 1, metrics.TagsFromContext(ctx)...)
 	return nil
 }
 
