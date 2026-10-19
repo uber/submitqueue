@@ -53,7 +53,7 @@ func NewRequestReceiptStore(db *sql.DB, scope tally.Scope, queue string) storage
 
 func (r *requestReceiptStore) Create(ctx context.Context, receipt entity.RequestReceipt) (retErr error) {
 	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	if receipt.Queue != r.queue {
 		return fmt.Errorf("request receipt queue %q does not match the store's bound queue %q", receipt.Queue, r.queue)
@@ -76,7 +76,7 @@ func (r *requestReceiptStore) Create(ctx context.Context, receipt entity.Request
 
 func (r *requestReceiptStore) List(ctx context.Context, bounds storage.RequestReceiptRange) (ret []entity.RequestReceipt, retErr error) {
 	op := metrics.Begin(r.scope, "list", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	if err := validateRequestReceiptRange(bounds); err != nil {
 		return nil, err

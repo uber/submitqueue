@@ -45,7 +45,7 @@ func NewRequestStore(db *sql.DB, scope tally.Scope, queue string) storage.Reques
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
 	op := metrics.Begin(r.scope, "get", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	var req entity.Request
 	var changeURIsJSON []byte
@@ -73,7 +73,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 // Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
 	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	if request.Queue != r.queue {
 		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
@@ -104,7 +104,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 // If versions do not match, returns ErrVersionMismatch. Version arithmetic is owned by the caller; this is a pure conditional write.
 func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(r.scope, "update_state", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	if request.Queue != r.queue {
 		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)

@@ -44,7 +44,7 @@ func NewBuildStore(db *sql.DB, scope tally.Scope, queue string) storage.BuildSto
 // Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
 func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	var build entity.Build
 
@@ -66,7 +66,7 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 // Create creates a new build. The build must have a unique ID already assigned. Returns ErrAlreadyExists if the build ID already exists.
 func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO build (queue, id, batch_id, path_id, attempt, status) VALUES (?, ?, ?, ?, ?, ?)",
@@ -86,7 +86,7 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 // Update replaces all non-key fields of a build. Returns ErrNotFound if the build is not found.
 func (s *buildStore) Update(ctx context.Context, build entity.Build) (retErr error) {
 	op := metrics.Begin(s.scope, "update_status", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE build SET batch_id = ?, path_id = ?, attempt = ?, status = ? WHERE queue = ? AND id = ?",

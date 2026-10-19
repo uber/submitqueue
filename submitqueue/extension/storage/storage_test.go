@@ -15,11 +15,14 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/metrics"
 )
 
 func TestErrVersionMismatchClassification(t *testing.T) {
@@ -29,4 +32,29 @@ func TestErrVersionMismatchClassification(t *testing.T) {
 	assert.True(t, errs.IsRetryable(err))
 	assert.False(t, errs.IsUserError(err))
 	assert.False(t, errs.IsDependencyError(err))
+}
+
+func TestCompleteMetricsOp(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		result string
+	}{
+		{name: "success", result: "success"},
+		{name: "wrapped not found", err: WrapNotFound(sql.ErrNoRows), result: MetricsResultNotFound},
+		{name: "not found wrapped by a caller", err: fmt.Errorf("get build: %w", ErrNotFound), result: MetricsResultNotFound},
+		{name: "other error", err: fmt.Errorf("connection refused"), result: "error"},
+		{name: "version mismatch", err: ErrVersionMismatch, result: "error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scope := tally.NewTestScope("", nil)
+			CompleteMetricsOp(metrics.Begin(scope, "get", metrics.StorageLatencyBuckets), tt.err)
+
+			histograms := scope.Snapshot().Histograms()
+			assert.Len(t, histograms, 1)
+			assert.Contains(t, histograms, "get.finish+result="+tt.result)
+		})
+	}
 }
