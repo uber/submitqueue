@@ -1588,6 +1588,10 @@ func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
 	counter, ok := h.metrics.Snapshot().Counters()["test.speculate_controller.process.bypass+"]
 	require.True(t, ok)
 	assert.EqualValues(t, 1, counter.Value())
+
+	paths, ok := h.metrics.Snapshot().Histograms()["test.speculate_controller.process.paths+"]
+	require.True(t, ok, "a finalized head records how many paths it speculated")
+	assert.Equal(t, int64(1), paths.Values()[5])
 }
 
 // The land stage publishes landing as its first act on the dispatch. Both

@@ -233,6 +233,13 @@ func TestLatencyBuckets_Sorted(t *testing.T) {
 	}
 }
 
+func TestCountBuckets_Sorted(t *testing.T) {
+	for i := 1; i < len(CountBuckets); i++ {
+		assert.Greater(t, CountBuckets[i], CountBuckets[i-1],
+			"CountBuckets[%d] (%v) must be greater than CountBuckets[%d] (%v)", i, CountBuckets[i], i-1, CountBuckets[i-1])
+	}
+}
+
 // counterKeys extracts map keys for error messages.
 func counterKeys(m map[string]tally.CounterSnapshot) []string {
 	keys := make([]string, 0, len(m))

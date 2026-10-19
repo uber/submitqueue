@@ -213,6 +213,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to mark batch %s created: %w", batch.ID, err)
 		}
+		// Recorded on the Creating→Created transition, which happens once per batch; abandoned batches never reach it.
+		metrics.NamedHistogram(c.metricsScope, opName, "batch_size", metrics.CountBuckets, metrics.TagsFromContext(ctx)...).
+			RecordValue(float64(len(batch.Contains)))
+		metrics.NamedHistogram(c.metricsScope, opName, "batch_dependencies", metrics.CountBuckets, metrics.TagsFromContext(ctx)...).
+			RecordValue(float64(len(batch.Dependencies)))
 		c.logger.Infow("batch created",
 			"batch_id", batch.ID,
 			"queue", batch.Queue,

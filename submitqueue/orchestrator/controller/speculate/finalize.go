@@ -275,6 +275,10 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 	if err != nil {
 		return landed, c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 	}
+	if landed {
+		metrics.NamedHistogram(c.metricsScope, opName, "paths", metrics.CountBuckets, metrics.TagsFromContext(ctx)...).
+			RecordValue(float64(len(snap.pathSets[batch.ID].Paths)))
+	}
 	return landed, nil
 }
 
