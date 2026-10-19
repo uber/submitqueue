@@ -343,6 +343,30 @@ func (s *StovepipeIntegrationSuite) TestProjectStatusAPI() {
 	assert.Empty(t, lastPage.Projects)
 	assert.Empty(t, lastPage.NextPageToken)
 
+	_, err = s.db.Exec(`INSERT INTO validation_fact (queue, uri, project, degree, request_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+		queue, uri, "project-green", 0.0, id, 4000, queue, uri, "project-b", 1.0, id, 5000)
+	require.NoError(t, err)
+	failed, err := s.client.GetProjectStatusByURI(s.ctx, &pb.GetProjectStatusByURIRequest{
+		Queue: queue, ChangeUri: uri, PageSize: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, failed.Projects, 1)
+	assert.Equal(t, "project-a", failed.Projects[0].GetProject())
+	assert.Equal(t, 0.5, failed.Projects[0].GetBreakageDegree())
+	assert.Equal(t, int64(3000), failed.GetUpdatedAtMs())
+	require.NotEmpty(t, failed.NextPageToken)
+	remaining, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
+		Queue: queue, RequestId: id, PageToken: failed.NextPageToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, remaining.Projects, 1)
+	assert.Equal(t, "project-b", remaining.Projects[0].GetProject())
+	assert.Equal(t, 1.0, remaining.Projects[0].GetBreakageDegree())
+	assert.Equal(t, int64(5000), remaining.GetUpdatedAtMs())
+	assert.Empty(t, remaining.NextPageToken)
+	assert.False(t, remaining.ProjectResultsComplete)
+
 	for _, selector := range []struct{ queue, id string }{{queue, "999"}, {"project-status-api/other", id}} {
 		_, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
 			Queue: selector.queue, RequestId: selector.id, Projects: []string{"project-a"},

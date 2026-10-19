@@ -22,9 +22,9 @@ type GetProjectStatusRequest struct {
 	RequestID string
 	// ChangeURI identifies the exact commit under validation, empty when selecting by request ID.
 	ChangeURI string
-	// Projects limits results to the supplied consumer-defined project IDs.
+	// Projects limits results to the supplied consumer-defined project IDs; empty selects all recorded non-green projects.
 	Projects []string
-	// PageSize is the requested maximum number of requested projects to inspect.
+	// PageSize is the maximum number of project results per page.
 	PageSize int32
 	// PageToken is an opaque continuation token for full project-result pagination.
 	PageToken string
@@ -40,7 +40,7 @@ type GetProjectStatusResult struct {
 	HasRepositoryValidationFact bool
 	// ProjectResultsComplete reports whether the implementation has finished its project-result set.
 	ProjectResultsComplete bool
-	// ProjectValidationFacts contains recorded results for requested projects in request order.
+	// ProjectValidationFacts contains recorded results in request order, or project-ID order when Projects is empty.
 	ProjectValidationFacts []ValidationFact
 	// NextPageToken continues requested-project result pagination when another page exists.
 	NextPageToken string

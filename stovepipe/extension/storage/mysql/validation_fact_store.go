@@ -93,3 +93,34 @@ func (v *validationFactStore) Get(ctx context.Context, uri, project string) (ret
 
 	return fact, nil
 }
+
+func (v *validationFactStore) ListProjects(ctx context.Context, uri, afterProject string, limit int) (ret []entity.ValidationFact, retErr error) {
+	op := metrics.Begin(v.scope, "list_projects", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	if limit <= 0 {
+		return nil, fmt.Errorf("validation fact list limit must be positive")
+	}
+	rows, err := v.db.QueryContext(ctx, `
+		SELECT uri, project, degree, request_id, created_at FROM validation_fact
+		WHERE queue = ? AND uri = ? AND project > ?
+		ORDER BY project ASC LIMIT ?`,
+		v.queue, uri, afterProject, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project facts queue=%s uri=%s: %w", v.queue, uri, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var fact entity.ValidationFact
+		if err := rows.Scan(&fact.URI, &fact.Project, &fact.Degree, &fact.RequestID, &fact.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan project fact: %w", err)
+		}
+		ret = append(ret, fact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read project facts: %w", err)
+	}
+	return ret, nil
+}

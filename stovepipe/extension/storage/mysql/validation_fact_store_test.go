@@ -179,3 +179,56 @@ func TestValidationFactStore_Get(t *testing.T) {
 		})
 	}
 }
+
+func TestValidationFactStore_ListProjects(t *testing.T) {
+	readErr := fmt.Errorf("connection reset")
+	columns := []string{"uri", "project", "degree", "request_id", "created_at"}
+	want := entity.ValidationFact{URI: testFactURI, Project: "project-b", Degree: 0.5, RequestID: "2", CreatedAt: 20}
+	tests := []struct {
+		name     string
+		rows     *sqlmock.Rows
+		queryErr error
+		wantErr  bool
+		want     []entity.ValidationFact
+	}{
+		{name: "found", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.Degree, want.RequestID, want.CreatedAt), want: []entity.ValidationFact{want}},
+		{name: "empty", rows: sqlmock.NewRows(columns)},
+		{name: "query failure", queryErr: readErr, wantErr: true},
+		{name: "scan failure", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, "invalid", want.RequestID, want.CreatedAt), wantErr: true},
+		{name: "iteration failure", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.Degree, want.RequestID, want.CreatedAt).RowError(0, readErr), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setupValidationFactStoreTest(t)
+			defer db.Close()
+			query := mock.ExpectQuery(`SELECT uri, project, degree, request_id, created_at FROM validation_fact\s+WHERE queue = \? AND uri = \? AND project > \?\s+ORDER BY project ASC LIMIT \?`).WithArgs(testFactQueue, testFactURI, "project-a", 3)
+			if tt.queryErr != nil {
+				query.WillReturnError(tt.queryErr)
+			} else {
+				query.WillReturnRows(tt.rows)
+			}
+			got, err := store.ListProjects(context.Background(), testFactURI, "project-a", 3)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.queryErr != nil {
+					assert.ErrorIs(t, err, tt.queryErr)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestValidationFactStore_ListProjectsRejectsInvalidLimit(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		db, mock, store := setupValidationFactStoreTest(t)
+		_, err := store.ListProjects(context.Background(), testFactURI, "", limit)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+		mock.ExpectClose()
+		require.NoError(t, db.Close())
+	}
+}

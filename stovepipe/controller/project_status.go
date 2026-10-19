@@ -23,7 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
+	"slices"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
@@ -39,9 +39,11 @@ const (
 )
 
 type projectStatusPageToken struct {
-	RequestID string   `json:"request_id"`
-	Projects  []string `json:"projects"`
-	NextIndex int      `json:"next_index"`
+	Queue        string   `json:"queue"`
+	RequestID    string   `json:"request_id"`
+	Projects     []string `json:"projects"`
+	NextIndex    int      `json:"next_index"`
+	AfterProject string   `json:"after_project,omitempty"`
 }
 
 // ProjectStatusNotFoundError indicates that no validation request matches a lookup selector.
@@ -102,7 +104,7 @@ func NewProjectStatusController(logger *zap.SugaredLogger, scope tally.Scope, st
 	}
 }
 
-// GetProjectStatus returns the selected request summary and its repository validation fact, if recorded.
+// GetProjectStatus returns the selected request summary and recorded validation facts.
 func (c *projectStatusController) GetProjectStatus(ctx context.Context, req entity.GetProjectStatusRequest) (result entity.GetProjectStatusResult, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_project_status", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
@@ -158,26 +160,23 @@ func (c *projectStatusController) GetProjectStatus(ctx context.Context, req enti
 			result.UpdatedAtMs = fact.CreatedAt
 		}
 	}
-	page, err := selectProjectStatusPage(req, requestSummary.RequestID)
+
+	page, err := loadProjectStatusPage(ctx, req, requestSummary, factStore)
 	if err != nil {
 		return entity.GetProjectStatusResult{}, err
 	}
-	for _, project := range page.projects {
-		projectFact, err := factStore.Get(ctx, requestSummary.URI, project)
-		if err != nil {
-			if storage.IsNotFound(err) {
-				continue
-			}
-			return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to load project fact for request %q and project %q: %w", requestSummary.RequestID, project, err)
+
+	for _, projectFact := range page.facts {
+		if len(req.Projects) == 0 && projectFact.IsGreen() {
+			continue
 		}
-		if err := validateProjectFact(projectFact, requestSummary, project); err != nil {
-			return entity.GetProjectStatusResult{}, err
-		}
+
 		result.ProjectValidationFacts = append(result.ProjectValidationFacts, projectFact)
 		if projectFact.CreatedAt > result.UpdatedAtMs {
 			result.UpdatedAtMs = projectFact.CreatedAt
 		}
 	}
+
 	result.NextPageToken = page.nextToken
 
 	c.logger.Debugw("project status retrieved", "request_id", requestSummary.RequestID, "queue", requestSummary.Queue, "change_uri", requestSummary.URI, "has_repository_result", result.HasRepositoryValidationFact, "project_results", len(result.ProjectValidationFacts))
@@ -200,9 +199,6 @@ func validateProjectStatusRequest(req entity.GetProjectStatusRequest) error {
 			return fmt.Errorf("GetProjectStatus invalid change_uri=%q: %w", req.ChangeURI, err)
 		}
 	}
-	if len(req.Projects) == 0 {
-		return fmt.Errorf("GetProjectStatus projects must be non-empty: %w", ErrInvalidRequest)
-	}
 	seen := make(map[string]struct{}, len(req.Projects))
 	for _, project := range req.Projects {
 		if err := validateHistoryIdentifier("project", project); err != nil {
@@ -220,55 +216,153 @@ func validateProjectStatusRequest(req entity.GetProjectStatusRequest) error {
 }
 
 type projectStatusPage struct {
-	projects  []string
+	facts     []entity.ValidationFact
 	nextToken string
 }
 
-func selectProjectStatusPage(req entity.GetProjectStatusRequest, requestID string) (projectStatusPage, error) {
-	start := 0
-	if req.PageToken != "" {
-		token, err := decodeProjectStatusPageToken(req.PageToken)
-		if err != nil {
-			return projectStatusPage{}, err
-		}
-		if token.RequestID != requestID || !reflect.DeepEqual(token.Projects, req.Projects) || token.NextIndex <= 0 || token.NextIndex >= len(req.Projects) {
-			return projectStatusPage{}, fmt.Errorf("GetProjectStatus page_token does not match the selected request and projects: %w", ErrInvalidRequest)
-		}
-		start = token.NextIndex
+func loadProjectStatusPage(
+	ctx context.Context,
+	req entity.GetProjectStatusRequest,
+	summary entity.RequestSummary,
+	store storage.ValidationFactStore,
+) (projectStatusPage, error) {
+	token, err := parseProjectStatusPageToken(req, summary)
+	if err != nil {
+		return projectStatusPage{}, err
 	}
+
 	pageSize := int(req.PageSize)
 	if pageSize == 0 {
 		pageSize = defaultProjectStatusPageSize
 	}
-	end := min(start+pageSize, len(req.Projects))
-	page := projectStatusPage{projects: req.Projects[start:end]}
-	if end < len(req.Projects) {
-		token, err := encodeProjectStatusPageToken(projectStatusPageToken{RequestID: requestID, Projects: req.Projects, NextIndex: end})
-		if err != nil {
-			return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to create page token: %w", err)
-		}
-		page.nextToken = token
+
+	if len(req.Projects) == 0 {
+		return listProjectStatusPage(ctx, summary, store, token, pageSize)
 	}
-	return page, nil
+
+	return getRequestedProjectStatusPage(ctx, summary, store, token, pageSize)
+}
+
+func getRequestedProjectStatusPage(
+	ctx context.Context,
+	summary entity.RequestSummary,
+	store storage.ValidationFactStore,
+	token projectStatusPageToken,
+	pageSize int,
+) (projectStatusPage, error) {
+	end := min(token.NextIndex+pageSize, len(token.Projects))
+	var page projectStatusPage
+
+	for _, project := range token.Projects[token.NextIndex:end] {
+		fact, err := store.Get(ctx, summary.URI, project)
+		if err != nil {
+			if storage.IsNotFound(err) {
+				continue
+			}
+
+			return projectStatusPage{}, fmt.Errorf(
+				"GetProjectStatus failed to load project fact for request %q and project %q: %w",
+				summary.RequestID, project, err,
+			)
+		}
+
+		if err := validateProjectFact(fact, summary, project); err != nil {
+			return projectStatusPage{}, err
+		}
+
+		page.facts = append(page.facts, fact)
+	}
+
+	var err error
+	if end < len(token.Projects) {
+		token.NextIndex = end
+		page.nextToken, err = encodeProjectStatusPageToken(token)
+	}
+
+	return page, err
+}
+
+func listProjectStatusPage(
+	ctx context.Context,
+	summary entity.RequestSummary,
+	store storage.ValidationFactStore,
+	token projectStatusPageToken,
+	pageSize int,
+) (projectStatusPage, error) {
+	facts, err := store.ListProjects(ctx, summary.URI, token.AfterProject, pageSize+1)
+	if err != nil {
+		return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to list project facts for request %q: %w", summary.RequestID, err)
+	}
+
+	for _, fact := range facts {
+		if err := validateProjectFact(fact, summary, fact.Project); err != nil {
+			return projectStatusPage{}, err
+		}
+
+		if fact.Project == "" {
+			return projectStatusPage{}, &ProjectStatusConsistencyError{message: "project listing contains a repository fact"}
+		}
+	}
+
+	page := projectStatusPage{facts: facts}
+	if len(facts) > pageSize {
+		page.facts = facts[:pageSize]
+		token.AfterProject = page.facts[pageSize-1].Project
+		page.nextToken, err = encodeProjectStatusPageToken(token)
+	}
+
+	return page, err
 }
 
 func encodeProjectStatusPageToken(token projectStatusPageToken) (string, error) {
 	contents, err := json.Marshal(token)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("GetProjectStatus failed to create page token: %w", err)
 	}
+
 	return base64.RawURLEncoding.EncodeToString(contents), nil
 }
 
-func decodeProjectStatusPageToken(encoded string) (projectStatusPageToken, error) {
-	contents, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return projectStatusPageToken{}, fmt.Errorf("GetProjectStatus invalid page_token: %w", ErrInvalidRequest)
+func parseProjectStatusPageToken(
+	req entity.GetProjectStatusRequest,
+	summary entity.RequestSummary,
+) (projectStatusPageToken, error) {
+	if req.PageToken == "" {
+		return projectStatusPageToken{
+			Queue:     summary.Queue,
+			RequestID: summary.RequestID,
+			Projects:  req.Projects,
+		}, nil
 	}
+
+	invalidToken := fmt.Errorf("GetProjectStatus page_token does not match the selected request and projects: %w", ErrInvalidRequest)
+
+	contents, err := base64.RawURLEncoding.DecodeString(req.PageToken)
+	if err != nil {
+		return projectStatusPageToken{}, invalidToken
+	}
+
 	var token projectStatusPageToken
 	if err := json.Unmarshal(contents, &token); err != nil {
-		return projectStatusPageToken{}, fmt.Errorf("GetProjectStatus invalid page_token: %w", ErrInvalidRequest)
+		return projectStatusPageToken{}, invalidToken
 	}
+
+	if token.Queue != summary.Queue ||
+		token.RequestID != summary.RequestID ||
+		!slices.Equal(token.Projects, req.Projects) {
+		return projectStatusPageToken{}, invalidToken
+	}
+
+	if len(req.Projects) == 0 {
+		if token.NextIndex != 0 || validateHistoryIdentifier("project", token.AfterProject) != nil {
+			return projectStatusPageToken{}, invalidToken
+		}
+	} else if token.AfterProject != "" ||
+		token.NextIndex <= 0 ||
+		token.NextIndex >= len(req.Projects) {
+		return projectStatusPageToken{}, invalidToken
+	}
+
 	return token, nil
 }
 

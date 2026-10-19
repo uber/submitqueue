@@ -69,3 +69,18 @@ func (mr *MockValidationFactStoreMockRecorder) Get(ctx, uri, project any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockValidationFactStore)(nil).Get), ctx, uri, project)
 }
+
+// ListProjects mocks base method.
+func (m *MockValidationFactStore) ListProjects(ctx context.Context, uri, afterProject string, limit int) ([]entity.ValidationFact, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListProjects", ctx, uri, afterProject, limit)
+	ret0, _ := ret[0].([]entity.ValidationFact)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListProjects indicates an expected call of ListProjects.
+func (mr *MockValidationFactStoreMockRecorder) ListProjects(ctx, uri, afterProject, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListProjects", reflect.TypeOf((*MockValidationFactStore)(nil).ListProjects), ctx, uri, afterProject, limit)
+}

@@ -40,6 +40,18 @@ const (
 
 func TestGetProjectStatus(t *testing.T) {
 	requestSummary := entity.RequestSummary{RequestID: projectStatusID, Queue: projectStatusQueue, URI: projectStatusURI, State: entity.RequestStateProcessing, RequestVersion: 1, StateTimestampMs: 1}
+	projectFact := entity.ValidationFact{
+		URI:       projectStatusURI,
+		RequestID: projectStatusID,
+		Project:   "project-a",
+		Degree:    0.5,
+		CreatedAt: 20,
+	}
+	greenFact := projectFact
+	greenFact.Project = "project-green"
+	greenFact.Degree = entity.DegreeGreen
+	readErr := errors.New("project listing failed")
+
 	tests := []struct {
 		name            string
 		request         entity.GetProjectStatusRequest
@@ -47,6 +59,9 @@ func TestGetProjectStatus(t *testing.T) {
 		summaryErr      error
 		fact            entity.ValidationFact
 		factErr         error
+		projectFacts    []entity.ValidationFact
+		wantProjects    []entity.ValidationFact
+		wantErr         error
 		wantFact        bool
 		wantNotFound    bool
 		wantRetryable   bool
@@ -59,7 +74,28 @@ func TestGetProjectStatus(t *testing.T) {
 		{name: "missing uri", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, uriErr: storage.ErrNotFound, wantNotFound: true},
 		{name: "request summary visibility gap", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, summaryErr: storage.ErrNotFound, wantRetryable: true},
 		{name: "empty queue", request: entity.GetProjectStatusRequest{ChangeURI: projectStatusURI}, wantInvalid: true},
-		{name: "empty projects", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI}, wantInvalid: true},
+		{
+			name:    "omitted projects returns failures",
+			request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI},
+			factErr: storage.ErrNotFound, projectFacts: []entity.ValidationFact{projectFact, greenFact},
+			wantProjects: []entity.ValidationFact{projectFact},
+		},
+		{
+			name:    "empty projects returns failures",
+			request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{}},
+			factErr: storage.ErrNotFound, projectFacts: []entity.ValidationFact{projectFact},
+			wantProjects: []entity.ValidationFact{projectFact},
+		},
+		{
+			name:    "no recorded projects",
+			request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI},
+			factErr: storage.ErrNotFound,
+		},
+		{
+			name:    "project listing failure",
+			request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI},
+			factErr: storage.ErrNotFound, wantErr: readErr,
+		},
 		{name: "empty project", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{""}}, wantInvalid: true},
 		{name: "duplicate projects", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a", "project-a"}}, wantInvalid: true},
 		{name: "invalid page size", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, PageSize: maxProjectStatusPageSize + 1}, wantInvalid: true},
@@ -86,6 +122,9 @@ func TestGetProjectStatus(t *testing.T) {
 						store.EXPECT().GetValidationFactStore().Return(factStore)
 						factStore.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(tt.fact, tt.factErr)
 						if !tt.noProjectLookup && !(tt.factErr == nil && tt.wantConsistency) {
+							if len(tt.request.Projects) == 0 {
+								factStore.EXPECT().ListProjects(gomock.Any(), projectStatusURI, "", defaultProjectStatusPageSize+1).Return(tt.projectFacts, tt.wantErr)
+							}
 							for _, project := range tt.request.Projects {
 								factStore.EXPECT().Get(gomock.Any(), projectStatusURI, project).Return(entity.ValidationFact{}, storage.ErrNotFound)
 							}
@@ -96,6 +135,11 @@ func TestGetProjectStatus(t *testing.T) {
 
 			controller := NewProjectStatusController(zap.NewNop().Sugar(), tally.NoopScope, factory)
 			got, err := controller.GetProjectStatus(context.Background(), tt.request)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
 
 			if tt.wantInvalid {
 				assert.True(t, IsInvalidRequest(err))
@@ -111,6 +155,7 @@ func TestGetProjectStatus(t *testing.T) {
 			assert.Equal(t, requestSummary, got.RequestSummary)
 			assert.Equal(t, tt.wantFact, got.HasRepositoryValidationFact)
 			assert.False(t, got.ProjectResultsComplete)
+			assert.Equal(t, tt.wantProjects, got.ProjectValidationFacts)
 			if tt.wantFact {
 				assert.Equal(t, tt.fact, got.RepositoryValidationFact)
 			}
@@ -200,7 +245,6 @@ func TestGetProjectStatusRejectsInvalidIDSelectors(t *testing.T) {
 		{name: "zero ID", modify: func(req *entity.GetProjectStatusRequest) { req.RequestID = "0" }},
 		{name: "negative ID", modify: func(req *entity.GetProjectStatusRequest) { req.RequestID = "-7" }},
 		{name: "overflow ID", modify: func(req *entity.GetProjectStatusRequest) { req.RequestID = "9223372036854775808" }},
-		{name: "empty projects", modify: func(req *entity.GetProjectStatusRequest) { req.Projects = nil }},
 		{name: "empty project", modify: func(req *entity.GetProjectStatusRequest) { req.Projects = []string{""} }},
 		{name: "duplicate project", modify: func(req *entity.GetProjectStatusRequest) { req.Projects = []string{"p", "p"} }},
 		{name: "negative page size", modify: func(req *entity.GetProjectStatusRequest) { req.PageSize = -1 }},
@@ -316,12 +360,179 @@ func TestGetProjectStatusPaginatesProjectFacts(t *testing.T) {
 	assert.Empty(t, got.NextPageToken)
 }
 
-func TestSelectProjectStatusPageRejectsMismatchedToken(t *testing.T) {
-	token, err := encodeProjectStatusPageToken(projectStatusPageToken{RequestID: projectStatusID, Projects: []string{"project-a", "project-b"}, NextIndex: 1})
-	require.NoError(t, err)
-	_, err = selectProjectStatusPage(entity.GetProjectStatusRequest{Projects: []string{"project-b", "project-a"}, PageToken: token}, projectStatusID)
-	require.Error(t, err)
-	assert.True(t, IsInvalidRequest(err))
+func TestParseProjectStatusPageTokenRejectsMismatches(t *testing.T) {
+	modes := []struct {
+		name     string
+		projects []string
+	}{
+		{name: "listed projects"},
+		{
+			name:     "requested projects",
+			projects: []string{"a", "b"},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		modify func(*projectStatusPageToken)
+	}{
+		{
+			name:   "other request",
+			modify: func(token *projectStatusPageToken) { token.RequestID = "8" },
+		},
+		{
+			name:   "other queue",
+			modify: func(token *projectStatusPageToken) { token.Queue = "other/main" },
+		},
+		{
+			name:   "missing queue",
+			modify: func(token *projectStatusPageToken) { token.Queue = "" },
+		},
+		{
+			name:   "different selection",
+			modify: func(token *projectStatusPageToken) { token.Projects = []string{"b", "a"} },
+		},
+		{
+			name: "mixed cursors",
+			modify: func(token *projectStatusPageToken) {
+				token.AfterProject = "a"
+				token.NextIndex = 1
+			},
+		},
+		{
+			name: "missing cursor",
+			modify: func(token *projectStatusPageToken) {
+				token.AfterProject = ""
+				token.NextIndex = 0
+			},
+		},
+		{
+			name: "invalid cursor",
+			modify: func(token *projectStatusPageToken) {
+				if len(token.Projects) == 0 {
+					token.AfterProject = strings.Repeat("p", 256)
+				} else {
+					token.NextIndex = len(token.Projects)
+				}
+			},
+		},
+		{
+			name:   "negative index",
+			modify: func(token *projectStatusPageToken) { token.NextIndex = -1 },
+		},
+	}
+
+	for _, mode := range modes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					token := projectStatusPageToken{Queue: projectStatusQueue, RequestID: projectStatusID, Projects: mode.projects}
+					if len(mode.projects) == 0 {
+						token.AfterProject = "a"
+					} else {
+						token.NextIndex = 1
+					}
+
+					tt.modify(&token)
+					encoded, err := encodeProjectStatusPageToken(token)
+					require.NoError(t, err)
+
+					_, err = parseProjectStatusPageToken(
+						entity.GetProjectStatusRequest{Projects: mode.projects, PageToken: encoded},
+						entity.RequestSummary{Queue: projectStatusQueue, RequestID: projectStatusID},
+					)
+					require.Error(t, err)
+					assert.True(t, IsInvalidRequest(err))
+				})
+			}
+		})
+	}
+}
+
+func TestGetProjectStatusPaginatesBeforeFiltering(t *testing.T) {
+	summary := entity.RequestSummary{RequestID: projectStatusID, Queue: projectStatusQueue, URI: projectStatusURI, StateTimestampMs: 10}
+	failedA := entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "a", Degree: 0.5, CreatedAt: 20}
+	greenA := entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "a", Degree: 0, CreatedAt: 50}
+	greenB := entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "b", Degree: 0, CreatedAt: 50}
+	failedB := entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "b", Degree: 0.25, CreatedAt: 30}
+	failedC := entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Project: "c", Degree: 1, CreatedAt: 40}
+
+	tests := []struct {
+		name        string
+		pageSize    int32
+		firstFacts  []entity.ValidationFact
+		secondFacts []entity.ValidationFact
+		after       string
+		wantFirst   []entity.ValidationFact
+		wantSecond  []entity.ValidationFact
+	}{
+		{
+			name:        "continue past an empty page",
+			pageSize:    1,
+			firstFacts:  []entity.ValidationFact{greenA, failedB},
+			secondFacts: []entity.ValidationFact{failedB},
+			after:       "a",
+			wantSecond:  []entity.ValidationFact{failedB},
+		},
+		{
+			name:        "cursor follows trailing green project",
+			pageSize:    2,
+			firstFacts:  []entity.ValidationFact{failedA, greenB, failedC},
+			secondFacts: []entity.ValidationFact{failedC},
+			after:       "b",
+			wantFirst:   []entity.ValidationFact{failedA},
+			wantSecond:  []entity.ValidationFact{failedC},
+		},
+		{
+			name:        "finish with an empty page",
+			pageSize:    1,
+			firstFacts:  []entity.ValidationFact{greenA, greenB},
+			secondFacts: []entity.ValidationFact{greenB},
+			after:       "a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			factory := storagemock.NewMockFactory(ctrl)
+			store := storagemock.NewMockStorage(ctrl)
+			summaries := storagemock.NewMockRequestSummaryStore(ctrl)
+			facts := storagemock.NewMockValidationFactStore(ctrl)
+
+			factory.EXPECT().For(storage.Config{QueueName: projectStatusQueue}).Return(store, nil).Times(2)
+			store.EXPECT().GetRequestSummaryStore().Return(summaries).Times(2)
+			summaries.EXPECT().Get(gomock.Any(), projectStatusID).Return(summary, nil).Times(2)
+			store.EXPECT().GetValidationFactStore().Return(facts).Times(2)
+			facts.EXPECT().Get(gomock.Any(), projectStatusURI, "").Return(entity.ValidationFact{}, storage.ErrNotFound).Times(2)
+			facts.EXPECT().ListProjects(gomock.Any(), projectStatusURI, "", int(tt.pageSize)+1).Return(tt.firstFacts, nil)
+			facts.EXPECT().ListProjects(gomock.Any(), projectStatusURI, tt.after, defaultProjectStatusPageSize+1).Return(tt.secondFacts, nil)
+
+			controller := NewProjectStatusController(zap.NewNop().Sugar(), tally.NoopScope, factory)
+			req := entity.GetProjectStatusRequest{Queue: projectStatusQueue, RequestID: projectStatusID, PageSize: tt.pageSize}
+
+			first, err := controller.GetProjectStatus(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantFirst, first.ProjectValidationFacts)
+			require.NotEmpty(t, first.NextPageToken)
+
+			req.PageToken = first.NextPageToken
+			req.Projects = []string{}
+			req.PageSize = 0
+
+			second, err := controller.GetProjectStatus(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSecond, second.ProjectValidationFacts)
+			assert.Empty(t, second.NextPageToken)
+
+			wantUpdatedAt := summary.StateTimestampMs
+			for _, fact := range tt.wantFirst {
+				wantUpdatedAt = max(wantUpdatedAt, fact.CreatedAt)
+			}
+
+			assert.Equal(t, wantUpdatedAt, first.UpdatedAtMs)
+		})
+	}
 }
 
 func TestValidateProjectFact(t *testing.T) {

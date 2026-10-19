@@ -352,7 +352,7 @@ export type GetProjectStatusByIDRequest = Message<"uber.submitqueue.stovepipe.Ge
   requestId: string;
 
   /**
-   * Required consumer-defined project IDs whose recorded results are requested.
+   * Optional consumer-defined project IDs. Empty returns recorded non-green projects.
    *
    * @generated from field: repeated string projects = 3;
    */
@@ -401,7 +401,7 @@ export type GetProjectStatusByURIRequest = Message<"uber.submitqueue.stovepipe.G
   changeUri: string;
 
   /**
-   * Required consumer-defined project IDs whose recorded results are requested.
+   * Optional consumer-defined project IDs. Empty returns recorded non-green projects.
    *
    * @generated from field: repeated string projects = 3;
    */

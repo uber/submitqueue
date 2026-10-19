@@ -35,4 +35,9 @@ type ValidationFactStore interface {
 	// Get returns the bound queue's fact for uri and project. Returns ErrNotFound if no
 	// fact exists, which means the scope was never validated rather than validated green.
 	Get(ctx context.Context, uri, project string) (entity.ValidationFact, error)
+
+	// ListProjects returns at most limit project facts for uri in ascending project-ID
+	// order, excluding the repository fact. afterProject is an exclusive cursor (empty
+	// for the first page); limit must be positive. No matches returns an empty slice.
+	ListProjects(ctx context.Context, uri, afterProject string, limit int) ([]entity.ValidationFact, error)
 }

@@ -116,7 +116,7 @@ message GetProjectStatusByIDRequest {
     string queue = 1;
     // Canonical decimal request identifier returned from Ingest.
     string request_id = 2;
-    // Required consumer-defined project IDs whose recorded results are requested.
+    // Optional consumer-defined project IDs. Empty returns recorded non-green projects.
     repeated string projects = 3;
     // Maximum requested projects to return in one page. Zero selects the server default.
     int32 page_size = 4;
@@ -130,7 +130,7 @@ message GetProjectStatusByURIRequest {
     string queue = 1;
     // Exact VCS-agnostic URI of the commit under validation.
     string change_uri = 2;
-    // Required consumer-defined project IDs whose recorded results are requested.
+    // Optional consumer-defined project IDs. Empty returns recorded non-green projects.
     repeated string projects = 3;
     // Maximum requested projects to return in one page. Zero selects the server default.
     int32 page_size = 4;

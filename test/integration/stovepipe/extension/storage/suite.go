@@ -680,3 +680,37 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_QueueIsolatio
 	require.NoError(t, err)
 	assert.Equal(t, factA, gotA)
 }
+
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_ListProjects() {
+	t := s.T()
+	const queue = "contract/fact-list-projects"
+	const uri = "git://remote/contract/fact-list-projects/aaaa"
+	store := s.storeFor(queue)
+	failedA := entity.ValidationFact{URI: uri, Project: "a", Degree: 0.25, RequestID: "1", CreatedAt: 10}
+	failedC := entity.ValidationFact{URI: uri, Project: "c", Degree: 1, RequestID: "1", CreatedAt: 20}
+	greenB := entity.ValidationFact{URI: uri, Project: "b", Degree: 0, RequestID: "1", CreatedAt: 30}
+	for _, fact := range []entity.ValidationFact{
+		failedC, failedA,
+		greenB,
+		{URI: uri, Degree: 1, RequestID: "1", CreatedAt: 40},
+		{URI: uri + "-other", Project: "other-uri", Degree: 1, RequestID: "2", CreatedAt: 50},
+	} {
+		require.NoError(t, store.Create(s.ctx, fact))
+	}
+	require.NoError(t, s.storeFor(queue+"-other").Create(s.ctx, entity.ValidationFact{URI: uri, Project: "other-queue", Degree: 1, RequestID: "1", CreatedAt: 60}))
+	first, err := store.ListProjects(s.ctx, uri, "", 1)
+	require.NoError(t, err)
+	assert.Equal(t, []entity.ValidationFact{failedA}, first)
+	second, err := store.ListProjects(s.ctx, uri, "a", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []entity.ValidationFact{greenB, failedC}, second)
+	all, err := store.ListProjects(s.ctx, uri, "", 10)
+	require.NoError(t, err)
+	assert.Equal(t, []entity.ValidationFact{failedA, greenB, failedC}, all)
+	empty, err := store.ListProjects(s.ctx, uri, "c", 10)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+	missing, err := store.ListProjects(s.ctx, "missing", "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}
