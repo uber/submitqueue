@@ -181,6 +181,12 @@ var (
 	}
 )
 
+// CountBuckets suits small cardinalities recorded with RecordValue, such as how
+// many items a unit of work carries or depends on. Zero has its own bucket
+// because "none" is a meaningful answer, and the Fibonacci spacing keeps
+// resolution where counts usually fall while still separating outliers.
+var CountBuckets = tally.ValueBuckets{0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144}
+
 // Op tracks the lifecycle of a named operation. It captures the start time on
 // creation, emits a {name}.start counter, and records the duration and result
 // on a {name}.finish histogram when Complete is called.

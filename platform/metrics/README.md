@@ -91,3 +91,5 @@ There is no default bucket set. The package exports five common sets:
 | `LandLatencyBuckets` | ~1m – 24h | End-to-end request lifecycles, from accepting a land request to its terminal outcome |
 
 Pass one of these sets or a custom `tally.DurationBuckets` to `Begin` or `NamedHistogram`.
+
+For counts recorded with `RecordValue`, such as how many items a unit of work carries or depends on, use `CountBuckets` (0 – 144, Fibonacci-spaced, with zero in its own bucket).

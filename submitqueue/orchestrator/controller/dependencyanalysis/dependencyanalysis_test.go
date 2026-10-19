@@ -113,6 +113,11 @@ func storageFactoryFor(ctrl *gomock.Controller, store orchstorage.Storage) *orch
 // conflicts.
 func newTestController(t *testing.T, ctrl *gomock.Controller, store orchstorage.Storage, analyzer conflict.Analyzer, publisher *queuemock.MockPublisher) *Controller {
 	t.Helper()
+	return newTestControllerWithScope(t, ctrl, store, analyzer, publisher, tally.NoopScope)
+}
+
+func newTestControllerWithScope(t *testing.T, ctrl *gomock.Controller, store orchstorage.Storage, analyzer conflict.Analyzer, publisher *queuemock.MockPublisher, scope tally.Scope) *Controller {
+	t.Helper()
 
 	if analyzer == nil {
 		analyzer = all.New(analyzerCfg)
@@ -132,7 +137,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store orchstorage.
 	})
 	require.NoError(t, err)
 
-	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, storageFactoryFor(ctrl, store),
+	return NewController(zaptest.NewLogger(t).Sugar(), scope, storageFactoryFor(ctrl, store),
 		analyzerFactory, registry, topickey.TopicKeyDependencyAnalysis, "orchestrator-dependency-analysis")
 }
 
@@ -248,8 +253,17 @@ func TestController_Process_AnalyzesAndTransitionsToCreated(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(requestStoreFor(ctrl, liveRequest())).AnyTimes()
 	store.EXPECT().GetRequestBatchStore().Return(noPriorEnrollment(ctrl)).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, nil, nil)
+	scope := tally.NewTestScope("", nil)
+	controller := newTestControllerWithScope(t, ctrl, store, nil, nil, scope)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, batch.ID, testQueue)))
+
+	histograms := scope.Snapshot().Histograms()
+	size, ok := histograms["dependency_analysis_controller.process.batch_size+"]
+	require.True(t, ok)
+	assert.Equal(t, int64(1), size.Values()[1])
+	dependencies, ok := histograms["dependency_analysis_controller.process.batch_dependencies+"]
+	require.True(t, ok)
+	assert.Equal(t, int64(1), dependencies.Values()[2])
 }
 
 // The analyzer may report one in-flight batch several times when more than one
@@ -334,8 +348,10 @@ func TestController_Process_RedeliveryAfterTransitionOnlyRepublishes(t *testing.
 	publisher.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).Return(nil).AnyTimes()
 	publisher.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
 
-	controller := newTestController(t, ctrl, store, nil, publisher)
+	scope := tally.NewTestScope("", nil)
+	controller := newTestControllerWithScope(t, ctrl, store, nil, publisher, scope)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, batch.ID, testQueue)))
+	assert.Empty(t, scope.Snapshot().Histograms(), "a batch already created must not be measured again")
 }
 
 // A failure part-way through the index loop leaves the batch in Creating, so
