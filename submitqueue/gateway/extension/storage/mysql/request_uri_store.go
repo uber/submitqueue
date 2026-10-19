@@ -43,7 +43,7 @@ func NewRequestURIStore(db *sql.DB, scope tally.Scope, queue string) storage.Req
 
 func (s *requestURIStore) Create(ctx context.Context, mapping entity.RequestURI) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	if mapping.Queue != s.queue {
 		return fmt.Errorf("request URI change_uri=%s queue %q does not match the store's bound queue %q", mapping.ChangeURI, mapping.Queue, s.queue)
@@ -65,7 +65,7 @@ func (s *requestURIStore) Create(ctx context.Context, mapping entity.RequestURI)
 
 func (s *requestURIStore) ListByURI(ctx context.Context, changeURI string, limit int) (ret []entity.RequestURI, retErr error) {
 	op := metrics.Begin(s.scope, "list_by_uri", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT queue, change_uri, received_at_ms, request_id

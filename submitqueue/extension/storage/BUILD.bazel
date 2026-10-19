@@ -22,6 +22,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//platform/errs:go_default_library",
+        "//platform/metrics:go_default_library",
         "//submitqueue/entity:go_default_library",
     ],
 )
@@ -32,7 +33,9 @@ go_test(
     embed = [":go_default_library"],
     deps = [
         "//platform/errs:go_default_library",
+        "//platform/metrics:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
     ],
 )
 

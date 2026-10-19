@@ -45,7 +45,7 @@ func NewChangeStore(db *sql.DB, scope tally.Scope, queue string) storage.ChangeS
 // queue-redelivery of the same request is a no-op.
 func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	if record.Queue != s.queue {
 		return fmt.Errorf("change record uri=%s request_id=%s queue %q does not match the store's bound queue %q", record.URI, record.RequestID, record.Queue, s.queue)
@@ -70,7 +70,7 @@ func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (r
 // PK-prefix scan.
 func (s *changeStore) GetByURI(ctx context.Context, uri string) (ret []entity.ChangeRecord, retErr error) {
 	op := metrics.Begin(s.scope, "get_by_uri", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
+	defer func() { storage.CompleteMetricsOp(op, retErr) }()
 
 	queue := s.queue
 	const query = "SELECT uri, request_id, queue, details, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"

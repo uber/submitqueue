@@ -25,6 +25,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/metrics"
 )
 
 // ErrNotFound is returned by storage implementations when the requested record is not found in the database.
@@ -38,6 +39,21 @@ func IsNotFound(err error) bool {
 // WrapNotFound wraps ErrNotFound with the original error from the storage implementation.
 func WrapNotFound(err error) error {
 	return fmt.Errorf("%w: %w", ErrNotFound, err)
+}
+
+// MetricsResultNotFound is the result tag CompleteMetricsOp records for a missing record.
+const MetricsResultNotFound = "not_found"
+
+// CompleteMetricsOp finishes a store operation's metrics. A missing record is an
+// expected answer rather than a storage failure, so ErrNotFound is recorded as
+// result=not_found instead of result=error; every other outcome is classified by
+// metrics.Op.Complete.
+func CompleteMetricsOp(op metrics.Op, err error) {
+	if IsNotFound(err) {
+		op.CompleteAs(MetricsResultNotFound)
+		return
+	}
+	op.Complete(err)
 }
 
 // ErrAlreadyExists is returned by storage implementations when attempting to create a record with an ID that already exists.
