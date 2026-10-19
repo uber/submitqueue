@@ -20,6 +20,7 @@ For any operation with a clear start and end, use `Begin` and `Complete`:
 |----------|-------|
 | `Begin(scope, name, buckets, ...tags)` | `{name}.start` counter +1 and returns an `Op` |
 | `op.Complete(err, ...tags)` | `{name}.finish` histogram tagged with `result=success\|error\|cancel` and any completion tags |
+| `op.CompleteAs(result, ...tags)` | `{name}.finish` histogram tagged with the given `result` and any completion tags, for outcomes the error alone does not classify (for example `result=not_found`) |
 
 `buckets` is required at `Begin` because operations differ widely in expected latency. The finish histogram records both the duration distribution and the number of completed operations, so `Complete` does not emit a separate counter.
 
@@ -79,7 +80,7 @@ metrics.NamedCounter(c.scope, "publish", "attempts", 1, metrics.NewTag("topic", 
 
 ## Duration Buckets
 
-There is no default bucket set. The package exports four common sets:
+There is no default bucket set. The package exports five common sets:
 
 | Set | Range | Use for |
 |-----|-------|---------|
@@ -87,5 +88,6 @@ There is no default bucket set. The package exports four common sets:
 | `StorageLatencyBuckets` | ~1ms – 1m | Storage and message-queue round trips such as database reads, writes, publishing, and consuming |
 | `LongLatencyBuckets` | ~5ms – 4h | Long-running pipeline work and external calls such as builds, lands, pushes, and provider calls |
 | `ChangeAgeBuckets` | ~1m – 30d | Elapsed time measured from a source-control change's commit timestamp rather than from work this system started |
+| `LandLatencyBuckets` | ~1m – 24h | End-to-end request lifecycles, from accepting a land request to its terminal outcome |
 
 Pass one of these sets or a custom `tally.DurationBuckets` to `Begin` or `NamedHistogram`.
