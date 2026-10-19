@@ -19,7 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"time"
 
+	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
@@ -30,12 +33,26 @@ import (
 // Every store it touches is queue-scoped, so each call resolves the aggregate once
 // from the queue carried on the log being persisted.
 type Materializer struct {
-	stores gwstorage.Factory
+	stores       gwstorage.Factory
+	metricsScope tally.Scope
+}
+
+// MaterializerOption configures a Materializer.
+type MaterializerOption func(*Materializer)
+
+// WithMetricsScope emits request lifecycle metrics on scope. Without it the
+// materializer emits none.
+func WithMetricsScope(scope tally.Scope) MaterializerOption {
+	return func(m *Materializer) { m.metricsScope = scope }
 }
 
 // NewMaterializer creates a request read-model materializer.
-func NewMaterializer(stores gwstorage.Factory) *Materializer {
-	return &Materializer{stores: stores}
+func NewMaterializer(stores gwstorage.Factory, opts ...MaterializerOption) *Materializer {
+	m := &Materializer{stores: stores, metricsScope: tally.NoopScope}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // PersistLog appends one audit log and materializes its winning state.
@@ -76,6 +93,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 				return fmt.Errorf("failed to update request summary request_id=%s: %w", log.RequestID, err)
 			}
 			updated.Version = newVersion
+			m.recordLifecycleTransition(summary, updated)
 			summary = updated
 		}
 
@@ -90,6 +108,38 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 		}
 		return nil
 	}
+}
+
+// recordLifecycleTransition counts a request's public lifecycle milestones from
+// one successful summary update.
+//
+// Each milestone is recorded on the update that crosses it, never on a winning
+// log that merely restates it: an orchestrator retry re-publishes a terminal log
+// with the same request version and a newer timestamp, which wins logWins and
+// rewrites the summary again. Comparing the summary before and after the update
+// is what keeps each request counted once.
+func (m *Materializer) recordLifecycleTransition(before, after entity.RequestSummary) {
+	queueTag := metrics.NewTag("queue", after.Queue)
+	if before.Status == entity.RequestStatusAccepting && after.Status != entity.RequestStatusAccepting {
+		metrics.NamedCounter(m.metricsScope, "request_lifecycle", "accepted", 1, queueTag)
+	}
+	if isTerminalStatus(before.Status) || !isTerminalStatus(after.Status) {
+		return
+	}
+	statusTag := metrics.NewTag("status", string(after.Status))
+	metrics.NamedCounter(m.metricsScope, "request_lifecycle", "terminated", 1,
+		queueTag, statusTag, metrics.NewTag("from_status", string(before.Status)))
+	if before.ReceivedAtMs <= 0 {
+		return
+	}
+	// Clock skew between the gateway and the orchestrator can put the terminal timestamp before receipt.
+	elapsed := max(time.Duration(after.StatusTimestampMs-before.ReceivedAtMs)*time.Millisecond, 0)
+	metrics.NamedHistogram(m.metricsScope, "request_lifecycle", "end_to_end_latency", metrics.LandLatencyBuckets,
+		queueTag, statusTag).RecordDuration(elapsed)
+}
+
+func isTerminalStatus(status entity.RequestStatus) bool {
+	return entity.IsRequestStateTerminal(entity.RequestState(status))
 }
 
 // ensureRequestURIMappings retries every immutable mapping, including after partial activation.

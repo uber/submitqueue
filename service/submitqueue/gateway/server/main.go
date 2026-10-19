@@ -366,7 +366,7 @@ func run() error {
 	// Create controllers and wrap them for gRPC. Every store is queue-scoped and
 	// resolves through the factory adapter; land/cancel/log share one materializer.
 	storageFty := storageFactory{backend: store}
-	materializer := requestcore.NewMaterializer(storageFty)
+	materializer := requestcore.NewMaterializer(storageFty, requestcore.WithMetricsScope(scope))
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, storageFty, materializer, queueConfigs, queuePauses, registry)
 	cancelController := controller.NewCancelController(logger.Sugar(), scope, storageFty, materializer, registry)
