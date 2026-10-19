@@ -419,6 +419,74 @@ func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
 	assert.ElementsMatch(t, []entity.QueueBatchState{otherQueue}, got)
 }
 
+// TestStorage_QueueRequestStateRecordsFollowRequestWrites exercises the
+// QueueRequestStateStore contract: every committed request write leaves exactly one
+// record under the request's current in-queue state, none once it is terminal, and
+// a failed write changes nothing.
+func (s *StorageContractSuite) TestStorage_QueueRequestStateRecordsFollowRequestWrites() {
+	t := s.T()
+	ctx := s.ctx
+	requestsA := s.forQueue("qrs-queue-a").GetRequestStore()
+	recordsA := s.forQueue("qrs-queue-a").GetQueueRequestStateStore()
+	recordsB := s.forQueue("qrs-queue-b").GetQueueRequestStateStore()
+
+	newRequest := func(queue, id string) entity.Request {
+		return entity.Request{
+			ID:           id,
+			Queue:        queue,
+			Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/" + id + "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+			State:        entity.RequestStateStarted,
+			LandStrategy: mergestrategy.MergeStrategyMerge,
+			Version:      1,
+		}
+	}
+	listIDs := func(records storage.QueueRequestStateStore, state entity.RequestState) []string {
+		got, err := records.List(ctx, state)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(got))
+		for _, rec := range got {
+			assert.Equal(t, state, rec.State)
+			assert.Positive(t, rec.EnteredAtMs)
+			ids = append(ids, rec.RequestID)
+		}
+		return ids
+	}
+
+	first, second := newRequest("qrs-queue-a", "1"), newRequest("qrs-queue-a", "2")
+	require.NoError(t, requestsA.Create(ctx, first))
+	require.NoError(t, requestsA.Create(ctx, second))
+	require.NoError(t, s.forQueue("qrs-queue-b").GetRequestStore().Create(ctx, newRequest("qrs-queue-b", "1")))
+	assert.ElementsMatch(t, []string{"1", "2"}, listIDs(recordsA, entity.RequestStateStarted))
+
+	validated := first
+	validated.State = entity.RequestStateValidated
+	require.NoError(t, requestsA.Update(ctx, validated, 1, 2))
+	assert.ElementsMatch(t, []string{"2"}, listIDs(recordsA, entity.RequestStateStarted))
+	assert.ElementsMatch(t, []string{"1"}, listIDs(recordsA, entity.RequestStateValidated))
+
+	enteredValidated, err := recordsA.List(ctx, entity.RequestStateValidated)
+	require.NoError(t, err)
+	require.NoError(t, requestsA.Update(ctx, validated, 2, 3))
+	afterVersionBump, err := recordsA.List(ctx, entity.RequestStateValidated)
+	require.NoError(t, err)
+	assert.Equal(t, enteredValidated, afterVersionBump, "a version-only update keeps the time the state was entered")
+
+	batched := validated
+	batched.State = entity.RequestStateBatched
+	require.ErrorIs(t, requestsA.Update(ctx, batched, 2, 3), storage.ErrVersionMismatch)
+	assert.ElementsMatch(t, []string{"1"}, listIDs(recordsA, entity.RequestStateValidated))
+	assert.Empty(t, listIDs(recordsA, entity.RequestStateBatched))
+
+	landed := second
+	landed.State = entity.RequestStateLanded
+	require.NoError(t, requestsA.Update(ctx, landed, 1, 2))
+	for _, state := range entity.InQueueRequestStates {
+		assert.NotContains(t, listIDs(recordsA, state), "2", "a terminal request has no record")
+	}
+
+	assert.ElementsMatch(t, []string{"1"}, listIDs(recordsB, entity.RequestStateStarted))
+}
+
 // TestStorage_QueueIsolation verifies a store aggregate bound to one queue can
 // neither read nor write another queue's records: cross-queue reads miss, and
 // writes whose entity queue disagrees with the binding are rejected.

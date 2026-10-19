@@ -62,6 +62,9 @@ type Storage interface {
 	// GetQueueBatchStateStore returns the QueueBatchStateStore instance.
 	GetQueueBatchStateStore() basestorage.QueueBatchStateStore
 
+	// GetQueueRequestStateStore returns the QueueRequestStateStore instance.
+	GetQueueRequestStateStore() basestorage.QueueRequestStateStore
+
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() basestorage.BuildStore
 

@@ -78,7 +78,7 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// Create storage instance using the existing database connection
-	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope, mysqlstorage.WithQueueRequestStateRecords())
 	require.NoError(t, err, "failed to create storage")
 
 	gwStore, err := gwmysqlstorage.NewStorage(s.db, tally.NoopScope)

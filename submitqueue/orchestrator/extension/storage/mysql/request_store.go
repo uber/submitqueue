@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
@@ -35,11 +36,48 @@ type requestStore struct {
 	// queue is the queue name this store instance is bound to; every read and
 	// write is scoped to it.
 	queue string
+	// stateRecords files each written request's queue_request_state record in the
+	// same transaction as the request row.
+	stateRecords bool
+	now          func() time.Time
 }
 
-// NewRequestStore creates a new MySQL-backed RequestStore.
+// NewRequestStore creates a new MySQL-backed RequestStore that keeps no
+// queue_request_state records.
 func NewRequestStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestStore {
-	return &requestStore{db: db, scope: scope, queue: queue}
+	return newRequestStore(db, scope, queue, false)
+}
+
+func newRequestStore(db *sql.DB, scope tally.Scope, queue string, stateRecords bool) *requestStore {
+	return &requestStore{db: db, scope: scope, queue: queue, stateRecords: stateRecords, now: time.Now}
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// writeRequest runs write and, when the store keeps queue_request_state records,
+// files the request's record in the same transaction so the two never diverge.
+func (r *requestStore) writeRequest(ctx context.Context, request entity.Request, write func(execer) error) error {
+	if !r.stateRecords {
+		return write(r.db)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin request write transaction id=%s: %w", request.ID, err)
+	}
+	if err := write(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := fileQueueRequestStateRecord(ctx, tx, r.queue, request.ID, request.State, r.now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit request write transaction id=%s: %w", request.ID, err)
+	}
+	return nil
 }
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
@@ -79,25 +117,25 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
 	}
 
-	// Marshal the change URIs to JSON
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
 	if err != nil {
 		return fmt.Errorf("failed to marshal change URIs for request id=%s: %w", request.ID, err)
 	}
 
-	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO request (id, queue, change_uri, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?)",
-		request.ID, request.Queue, changeURIsJSON, request.LandStrategy, request.State, request.Version,
-	)
-	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
-			return fmt.Errorf("request entity id=%s: %w", request.ID, storage.ErrAlreadyExists)
+	return r.writeRequest(ctx, request, func(ex execer) error {
+		_, err := ex.ExecContext(ctx,
+			"INSERT INTO request (id, queue, change_uri, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?)",
+			request.ID, request.Queue, changeURIsJSON, request.LandStrategy, request.State, request.Version,
+		)
+		if err != nil {
+			var mysqlErr *mysql.MySQLError
+			if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
+				return fmt.Errorf("request entity id=%s: %w", request.ID, storage.ErrAlreadyExists)
+			}
+			return fmt.Errorf("failed to insert request entity id=%s: %w", request.ID, err)
 		}
-		return fmt.Errorf("failed to insert request entity id=%s: %w", request.ID, err)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // Update replaces every non-key field of a land request and writes newVersion if the current persisted version matches oldVersion.
@@ -115,31 +153,32 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 		return fmt.Errorf("failed to marshal change URIs for request id=%s: %w", request.ID, err)
 	}
 
-	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
-		changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to update request for id=%q oldVersion=%d newVersion=%d: %w",
-			request.ID, oldVersion, newVersion, err,
+	return r.writeRequest(ctx, request, func(ex execer) error {
+		result, err := ex.ExecContext(ctx,
+			"UPDATE request SET change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
+			changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion,
 		)
-	}
+		if err != nil {
+			return fmt.Errorf(
+				"failed to update request for id=%q oldVersion=%d newVersion=%d: %w",
+				request.ID, oldVersion, newVersion, err,
+			)
+		}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf(
-			"failed to get rows affected from update for id=%q oldVersion=%d newVersion=%d: %w",
-			request.ID, oldVersion, newVersion, err,
-		)
-	}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf(
+				"failed to get rows affected from update for id=%q oldVersion=%d newVersion=%d: %w",
+				request.ID, oldVersion, newVersion, err,
+			)
+		}
 
-	if rowsAffected != 1 {
-		return fmt.Errorf(
-			"version mismatch for request update: id=%q expected_version=%d: %w",
-			request.ID, oldVersion, storage.ErrVersionMismatch,
-		)
-	}
-
-	return nil
+		if rowsAffected != 1 {
+			return fmt.Errorf(
+				"version mismatch for request update: id=%q expected_version=%d: %w",
+				request.ID, oldVersion, storage.ErrVersionMismatch,
+			)
+		}
+		return nil
+	})
 }

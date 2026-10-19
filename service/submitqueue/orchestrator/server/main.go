@@ -143,7 +143,7 @@ func run() error {
 
 	cnt := counterFactory{db: appDB, scope: scope.SubScope("counter")}
 
-	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
+	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"), mysqlstorage.WithQueueRequestStateRecords())
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}

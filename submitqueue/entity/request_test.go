@@ -15,6 +15,7 @@
 package entity
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,28 @@ func TestIsRequestStateTerminal(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(string(tt.state), func(t *testing.T) {
 			assert.Equal(t, tt.terminal, IsRequestStateTerminal(tt.state))
+		})
+	}
+}
+
+func TestInQueueRequestStates(t *testing.T) {
+	tests := []struct {
+		state   RequestState
+		inQueue bool
+	}{
+		{RequestStateStarted, true},
+		{RequestStateValidated, true},
+		{RequestStateBatched, true},
+		{RequestStateProcessing, true},
+		{RequestStateCancelling, true},
+		{RequestStateLanded, false},
+		{RequestStateError, false},
+		{RequestStateCancelled, false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			assert.Equal(t, tt.inQueue, slices.Contains(InQueueRequestStates, tt.state))
+			assert.NotEqual(t, tt.inQueue, IsRequestStateTerminal(tt.state), "a valid state is either in-queue or terminal")
 		})
 	}
 }

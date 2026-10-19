@@ -2,7 +2,7 @@
 
 ## Queue-leading primary keys
 
-Every table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, and `speculation_path_set` on `(queue, head)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and every table is shardable by queue. `//tool/linter/queueshard` enforces this, and also rejects any secondary index that does not itself lead with `queue`, since such an index would reintroduce a cross-queue access path.
+Every table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, `queue_request_state` on `(queue, state, request_id)`, and `speculation_path_set` on `(queue, head)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and every table is shardable by queue. `//tool/linter/queueshard` enforces this, and also rejects any secondary index that does not itself lead with `queue`, since such an index would reintroduce a cross-queue access path.
 
 The `build` key also removes a cross-queue uniqueness assumption: build IDs are runner-minted, so two queues sharing one CI pipeline may legitimately mint the same identifier. `speculation_path_set` relies on the same property for its head: a batch ID is unique only within its queue.
 
@@ -21,6 +21,12 @@ The `batch` table is keyed by `(queue, id)` and carries no secondary index. List
 #### Future: Prune job
 
 Terminal-state records (and their batches) accumulate as the queue processes work. A prune job should periodically delete records and batches in terminal states (`succeeded`, `failed`, `cancelled`) older than a configurable retention period, keeping both tables bounded so query and write performance stay consistent over time.
+
+## queue_request_state table
+
+### Composite primary key: `(queue, state, request_id)`
+
+`queue_request_state` files each in-queue request under its current state (see `entity.QueueRequestState`), so listing a queue's requests by state is a primary-key-prefix scan and the `request` table keeps no secondary index. Unlike `queue_batch_state`, the rows are exact rather than advisory: the MySQL request store writes a request's row in the same transaction as the `request` row, removing it from every other in-queue state and filing it under the new one (`INSERT IGNORE`, so a version-only update keeps `entered_at_ms`). A terminal request has no row, so the table only ever holds in-queue requests. The records are kept only by a storage built with `WithQueueRequestStateRecords`, which a deployment enables once the table exists.
 
 ## change table
 

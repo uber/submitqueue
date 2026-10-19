@@ -9,6 +9,7 @@ go_library(
         "change_store.go",
         "path_build_store.go",
         "queue_batch_state_store.go",
+        "queue_request_state_store.go",
         "request_batch_store.go",
         "request_log_store.go",
         "request_receipt_store.go",

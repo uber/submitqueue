@@ -34,13 +34,28 @@ const mysqlErrDuplicateEntry = 1062
 // The wiring layer adapts For into the storage.Factory seam; per-queue backend
 // routing stays a host decision.
 type Storage struct {
-	db    *sql.DB
-	scope tally.Scope
+	db                       *sql.DB
+	scope                    tally.Scope
+	queueRequestStateRecords bool
+}
+
+// StorageOption configures a Storage.
+type StorageOption func(*Storage)
+
+// WithQueueRequestStateRecords keeps the queue_request_state membership records in
+// step with every request write and serves them through GetQueueRequestStateStore.
+// The queue_request_state table must exist before such a Storage writes a request.
+func WithQueueRequestStateRecords() StorageOption {
+	return func(s *Storage) { s.queueRequestStateRecords = true }
 }
 
 // NewStorage creates a new MySQL storage backend over the given connection pool.
-func NewStorage(db *sql.DB, scope tally.Scope) (*Storage, error) {
-	return &Storage{db: db, scope: scope}, nil
+func NewStorage(db *sql.DB, scope tally.Scope, opts ...StorageOption) (*Storage, error) {
+	s := &Storage{db: db, scope: scope}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // For returns the queue-scoped store aggregate bound to queueName over the
@@ -50,13 +65,18 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 	if queueName == "" {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
+	var queueRequestStateStore basestorage.QueueRequestStateStore = disabledQueueRequestStateStore{}
+	if s.queueRequestStateRecords {
+		queueRequestStateStore = NewQueueRequestStateStore(s.db, s.scope.SubScope("queue_request_state_store"), queueName)
+	}
 	return &boundStorage{
-		requestStore:            NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
+		requestStore:            newRequestStore(s.db, s.scope.SubScope("request_store"), queueName, s.queueRequestStateRecords),
 		requestBatchStore:       NewRequestBatchStore(s.db, s.scope.SubScope("request_batch_store"), queueName),
 		changeStore:             NewChangeStore(s.db, s.scope.SubScope("change_store"), queueName),
 		batchStore:              NewBatchStore(s.db, s.scope.SubScope("batch_store"), queueName),
 		batchDependentStore:     NewBatchDependentStore(s.db, s.scope.SubScope("batch_dependent_store"), queueName),
 		queueBatchStateStore:    NewQueueBatchStateStore(s.db, s.scope.SubScope("queue_batch_state_store"), queueName),
+		queueRequestStateStore:  queueRequestStateStore,
 		buildStore:              NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
 		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store"), queueName),
 		pathBuildStore:          NewPathBuildStore(s.db, s.scope.SubScope("path_build_store"), queueName),
@@ -76,6 +96,7 @@ type boundStorage struct {
 	batchStore              basestorage.BatchStore
 	batchDependentStore     basestorage.BatchDependentStore
 	queueBatchStateStore    basestorage.QueueBatchStateStore
+	queueRequestStateStore  basestorage.QueueRequestStateStore
 	buildStore              basestorage.BuildStore
 	speculationPathSetStore basestorage.SpeculationPathSetStore
 	pathBuildStore          basestorage.PathBuildStore
@@ -112,6 +133,12 @@ func (f *boundStorage) GetBatchDependentStore() basestorage.BatchDependentStore 
 // GetQueueBatchStateStore returns the bound MySQL-backed QueueBatchStateStore.
 func (f *boundStorage) GetQueueBatchStateStore() basestorage.QueueBatchStateStore {
 	return f.queueBatchStateStore
+}
+
+// GetQueueRequestStateStore returns the bound MySQL-backed QueueRequestStateStore. Its
+// List fails unless the Storage was built WithQueueRequestStateRecords.
+func (f *boundStorage) GetQueueRequestStateStore() basestorage.QueueRequestStateStore {
+	return f.queueRequestStateStore
 }
 
 // GetBuildStore returns the bound MySQL-backed BuildStore.

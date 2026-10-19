@@ -26,7 +26,7 @@ Separating the services onto their own databases already worked — the orchestr
 2. An extension shared between a domain's services stays wholly at `{domain}/extension/{ext}/` — including one used by a single service today but expected in both. `submitqueue/extension/queueconfig/` is gateway-only now and stays where it is on that basis. A single-service domain is unaffected: its domain root is its service root, so nothing moves.
 3. Storage is the extension this split applied to. `changeprovider`, `validator`, `conflict`, `buildrunner` and `speculation` are orchestrator-only and would qualify under Decision 1, but none has a schema and none was the reason for this change; they stay at `{domain}/extension/` until a later RFC takes them. The trigger for moving storage was a schema that a separate-database deployment must not over-provision.
 4. SubmitQueue's storage aggregate splits in two: `submitqueue/gateway/extension/storage/` declares a `Factory` and a four-accessor `Storage`, `submitqueue/orchestrator/extension/storage/` a `Factory` and a nine-accessor `Storage`. Neither can resolve the other's stores.
-5. `submitqueue/extension/storage/` keeps the thirteen store contracts, their mocks, the error vocabulary, `Config`, and the package README, which documents the contracts. Its import path does not change, so callers that name only a contract or an error are untouched.
+5. `submitqueue/extension/storage/` keeps the fourteen store contracts, their mocks, the error vocabulary, `Config`, and the package README, which documents the contracts. Its import path does not change, so callers that name only a contract or an error are untouched.
 6. The contract package is not promoted to `platform/`. It is not cross-domain — `stovepipe/extension/storage/storage.go` already declares its own verbatim copy of the same symbols, so a per-domain error vocabulary is the existing pattern rather than something this RFC introduces.
 7. Each half owns its own MySQL schema directory, so the tables a service creates are the tables it reads. A union target over both stays available for deployments that colocate the services — the end-to-end tests and the local compose stack take it and name no service directory. Split schemas are the opt-in, not the default.
 
@@ -49,6 +49,7 @@ Every store, verified against actual usage rather than intent.
 | `BatchStore` | `batch` |
 | `BatchDependentStore` | `batch_dependent` |
 | `QueueBatchStateStore` | `queue_batch_state` |
+| `QueueRequestStateStore` | `queue_request_state` |
 | `BuildStore` | `build` |
 | `SpeculationPathSetStore` | `speculation_path_set` |
 | `PathBuildStore` | `path_build` |

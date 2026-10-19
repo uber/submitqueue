@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -299,6 +300,125 @@ func TestRequestStore_Update(t *testing.T) {
 					assert.ErrorIs(t, err, tt.wantErrIs)
 				}
 			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestRequestStore_WritesQueueRequestStateRecords(t *testing.T) {
+	started := entity.Request{
+		ID:           "1",
+		Queue:        "monorepo",
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/123/deadbeef"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+		State:        entity.RequestStateStarted,
+		Version:      1,
+	}
+	validated := started
+	validated.State = entity.RequestStateValidated
+	landed := started
+	landed.State = entity.RequestStateLanded
+
+	const insertRecord = "INSERT IGNORE INTO queue_request_state"
+	const deleteRecords = "DELETE FROM queue_request_state"
+	otherStatesThan := func(state entity.RequestState) []driver.Value {
+		args := []driver.Value{"monorepo"}
+		for _, s := range entity.InQueueRequestStates {
+			if s != state {
+				args = append(args, string(s))
+			}
+		}
+		return append(args, "1")
+	}
+
+	tests := []struct {
+		name      string
+		write     func(storage.RequestStore) error
+		setup     func(sqlmock.Sqlmock)
+		wantErrIs error
+		wantErr   bool
+	}{
+		{
+			name:  "create files the started record in the same transaction",
+			write: func(store storage.RequestStore) error { return store.Create(context.Background(), started) },
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("INSERT INTO request").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(deleteRecords).WithArgs(otherStatesThan(entity.RequestStateStarted)...).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(insertRecord).WithArgs("monorepo", "started", "1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			},
+		},
+		{
+			name:  "duplicate create rolls back without touching records",
+			write: func(store storage.RequestStore) error { return store.Create(context.Background(), started) },
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("INSERT INTO request").WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
+				mock.ExpectRollback()
+			},
+			wantErrIs: storage.ErrAlreadyExists,
+		},
+		{
+			name:  "state change moves the record",
+			write: func(store storage.RequestStore) error { return store.Update(context.Background(), validated, 1, 2) },
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("UPDATE request").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(deleteRecords).WithArgs(otherStatesThan(entity.RequestStateValidated)...).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(insertRecord).WithArgs("monorepo", "validated", "1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			},
+		},
+		{
+			name:  "terminal update removes the record without filing a new one",
+			write: func(store storage.RequestStore) error { return store.Update(context.Background(), landed, 1, 2) },
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("UPDATE request").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(deleteRecords).WithArgs(otherStatesThan(entity.RequestStateLanded)...).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			},
+		},
+		{
+			name:  "version mismatch rolls back without touching records",
+			write: func(store storage.RequestStore) error { return store.Update(context.Background(), validated, 1, 2) },
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("UPDATE request").WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectRollback()
+			},
+			wantErrIs: storage.ErrVersionMismatch,
+		},
+		{
+			name:  "failed record write rolls back the request write",
+			write: func(store storage.RequestStore) error { return store.Update(context.Background(), validated, 1, 2) },
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("UPDATE request").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(deleteRecords).WillReturnError(fmt.Errorf("lock wait timeout"))
+				mock.ExpectRollback()
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			tt.setup(mock)
+
+			err = tt.write(newRequestStore(db, testMetrics(), "monorepo", true))
+			switch {
+			case tt.wantErrIs != nil:
+				require.ErrorIs(t, err, tt.wantErrIs)
+			case tt.wantErr:
+				require.Error(t, err)
+			default:
 				require.NoError(t, err)
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
