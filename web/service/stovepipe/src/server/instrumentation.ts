@@ -15,8 +15,9 @@ export function instrumentStovepipeWeb(
         const result = await web.handle(request);
         outcome = result.kind;
         if (result.kind === "render") {
-          const section = result.model.kind === "queue" ? result.model.requests : result.model.history;
-          if (!section.ok) {
+          const sections = result.model.kind === "queue"
+            ? [result.model.requests] : [result.model.history, result.model.projectStatus];
+          if (sections.some((section) => !section.ok)) {
             outcome = "error";
             observeTelemetry(() => span?.setStatus({ code: SpanStatusCode.ERROR }));
           }

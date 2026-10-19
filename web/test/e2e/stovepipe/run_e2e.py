@@ -30,8 +30,9 @@ def _pagination_fixture_sql() -> str:
         uri = f"git://web/pagination/{i}" + (
             "?file=src%2Fmain#fragment" if i == 51 else ""
         )
+        state = "failed" if i == 51 else "succeeded"
         statements.append(
-            f"INSERT INTO request_summary VALUES ('web/pagination','{i}','{uri}','','succeeded',1,{1000+i},1,{1000+i},'');"
+            f"INSERT INTO request_summary VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'');"
         )
         statements.append(
             f"INSERT INTO request_acceptance VALUES ('web/pagination',{1000+i},'{i}');"
@@ -39,6 +40,15 @@ def _pagination_fixture_sql() -> str:
     statements.append(
         "INSERT INTO request_log VALUES ('web/pagination','51','accepted',1000,'accepted','',1,'','{}');"
     )
+    uri = "git://web/pagination/51?file=src%2Fmain#fragment"
+    statements.append(
+        f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','',0.25,'51',2000);"
+    )
+    for i in range(1, 52):
+        degree = 0.25 if i == 1 else 0
+        statements.append(
+            f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
+        )
     return "\n".join(statements)
 
 

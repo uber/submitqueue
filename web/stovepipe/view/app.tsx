@@ -5,6 +5,7 @@ import { RefreshControls } from "./refresh.js";
 import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestList, RequestDetails, History } from "./pages.js";
+import { ProjectResults } from "./projects.js";
 
 function Page({ model }: { model: StovepipePageModel }) {
   return (
@@ -56,9 +57,10 @@ function Page({ model }: { model: StovepipePageModel }) {
             {(data) => <RequestList {...data} />}
           </Section>
         ) : (
-          <Section result={model.history}>
+          <div className="sq-stacked-sections">
+            <Section result={model.history}>
             {({ request, events }) => (
-              <div className="sq-stacked-sections">
+              <>
                 <section aria-label="Request status">
                   <h2>Request status</h2>
                   <RequestDetails request={request} />
@@ -67,9 +69,16 @@ function Page({ model }: { model: StovepipePageModel }) {
                   <h2>History</h2>
                   <History events={events} />
                 </section>
-              </div>
+              </>
             )}
-          </Section>
+            </Section>
+            <section aria-label="Project results">
+              <h2>Project results</h2>
+              <Section result={model.projectStatus}>
+                {(data) => <ProjectResults model={data} />}
+              </Section>
+            </section>
+          </div>
         )}
       </main>
       <footer className="site-footer">

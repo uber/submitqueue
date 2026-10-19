@@ -4,6 +4,7 @@ import { StovepipePaths } from "./core/paths.js";
 import type {
   StovepipeService,
   RequestSummary,
+  ProjectStatus,
 } from "./extension/service/index.js";
 
 const summary: RequestSummary = {
@@ -31,6 +32,19 @@ function createPageTestContext() {
           outcomeReason: "event_reason",
         },
       ],
+    }),
+    getProjectStatusByID: vi.fn().mockResolvedValue({
+      queue: summary.queue,
+      requestId: summary.requestId,
+      updatedAtMs: 9007199254740993n,
+      repositoryResult: { case: "repositoryBreakageDegree", value: 0 },
+      projectResultsComplete: false,
+      projects: [
+        { project: "green", result: { case: "breakageDegree", value: 0 } },
+        { project: "broken", result: { case: "breakageDegree", value: 0.25 } },
+        { project: "unknown", result: { case: undefined } },
+      ],
+      nextPageToken: "next+/=",
     }),
   };
   const paths = new StovepipePaths("/stovepipe");
@@ -142,6 +156,7 @@ describe("Stovepipe page loading", () => {
       paths.request("repo/main", "7"),
     ]);
     expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
+    expect(service.getProjectStatusByID).not.toHaveBeenCalled();
   });
   it("loads the current summary and events by ID without reconstructing state from history", async () => {
     const { app, service, paths } = createPageTestContext();
@@ -153,6 +168,10 @@ describe("Stovepipe page loading", () => {
     });
     expect(service.getRequestHistoryByID).toHaveBeenCalledWith(
       { queue: "repo/main", requestId: summary.requestId },
+      { signal },
+    );
+    expect(service.getProjectStatusByID).toHaveBeenCalledWith(
+      { queue: summary.queue, requestId: summary.requestId, projects: [], pageSize: 50, pageToken: "" },
       { signal },
     );
     expect(result).toMatchObject({
@@ -247,6 +266,7 @@ describe("Stovepipe page loading", () => {
     });
     expect(result).toEqual({ kind: "forbidden" });
     expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
+    expect(service.getProjectStatusByID).not.toHaveBeenCalled();
   });
   it.each([
     "/other",
@@ -263,5 +283,85 @@ describe("Stovepipe page loading", () => {
     ).toEqual({ kind: "not-found" });
     expect(service.list).not.toHaveBeenCalled();
     expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
+    expect(service.getProjectStatusByID).not.toHaveBeenCalled();
+  });
+
+  it("loads recorded projects by exact request ID and preserves opaque cursors and int64 precision", async () => {
+    const { app, service, paths } = createPageTestContext();
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId),
+      search: new URLSearchParams({ projects: "opaque+/=" }),
+    });
+    expect(service.getProjectStatusByID).toHaveBeenCalledWith({
+      queue: summary.queue, requestId: summary.requestId,
+      projects: [], pageSize: 50, pageToken: "opaque+/=",
+    }, {});
+    expect(result).toMatchObject({ kind: "render", model: { projectStatus: {
+      ok: true,
+      data: {
+        updatedAtMs: "9007199254740993",
+        repositoryBreakageDegree: 0,
+        complete: false,
+        projects: [
+          { project: "green", breakageDegree: 0 },
+          { project: "broken", breakageDegree: 0.25 },
+          { project: "unknown", breakageDegree: null },
+        ],
+        firstHref: paths.request(summary.queue, summary.requestId),
+        nextHref: paths.request(summary.queue, summary.requestId, "next+/="),
+      },
+    } } });
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
+  it.each([
+    { queue: "other" },
+    { requestId: "other" },
+    { projects: [{ project: "invalid", result: { case: "breakageDegree", value: NaN } }] },
+    { repositoryResult: { case: "repositoryBreakageDegree", value: 1.1 } },
+  ] satisfies Partial<ProjectStatus>[])("rejects mismatched or malformed project status %j", async (overrides) => {
+    const { app, service, paths } = createPageTestContext();
+    const original = await service.getProjectStatusByID({
+      queue: summary.queue, requestId: summary.requestId, projects: [], pageSize: 50, pageToken: "",
+    });
+    vi.mocked(service.getProjectStatusByID).mockResolvedValue({
+      ...original, ...overrides,
+    });
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams(),
+    });
+    expect(result).toMatchObject({
+      kind: "render", model: { history: { ok: true }, projectStatus: { ok: false } },
+    });
+  });
+
+  it("loads history independently when the project read fails without leaking diagnostics", async () => {
+    const { app, service, paths } = createPageTestContext();
+    vi.mocked(service.getProjectStatusByID).mockRejectedValue(new Error("private diagnostic"));
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams(),
+    });
+    expect(result).toMatchObject({
+      kind: "render", model: { history: { ok: true }, projectStatus: { ok: false } },
+    });
+    expect(JSON.stringify(result)).not.toContain("private diagnostic");
+  });
+
+  it("keeps unknown repository results and empty complete pages distinct from green", async () => {
+    const { app, service, paths } = createPageTestContext();
+    vi.mocked(service.getProjectStatusByID).mockResolvedValue({
+      queue: summary.queue, requestId: summary.requestId, updatedAtMs: 0n,
+      repositoryResult: { case: undefined }, projectResultsComplete: true,
+      projects: [], nextPageToken: "",
+    });
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams(),
+    });
+    expect(result).toMatchObject({ kind: "render", model: { projectStatus: {
+      ok: true, data: {
+        repositoryBreakageDegree: null, complete: true, projects: [],
+        firstHref: null, nextHref: null,
+      },
+    } } });
   });
 });

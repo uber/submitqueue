@@ -6,6 +6,7 @@ import { StovepipePaths } from "./core/paths.js";
 import { readSection } from "./controller/page.js";
 import { loadQueueRequests } from "./controller/queue.js";
 import { loadRequestHistory } from "./controller/request.js";
+import { loadProjectStatus } from "./controller/projects.js";
 
 export interface StovepipeWebRequest {
   /** Percent-encoded URL pathname, including the mount path. */
@@ -78,14 +79,24 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
           );
           return { kind: "render", model: { ...common, kind: "queue", requests } };
         }
-        const history = await readSection(
-          () => loadRequestHistory(service, paths, queue.name, requestId, request.signal),
-          onLog,
-          "request history"
-        );
+        const [history, projectStatus] = await Promise.all([
+          readSection(
+            () => loadRequestHistory(service, paths, queue.name, requestId, request.signal),
+            onLog,
+            "request history",
+          ),
+          readSection(
+            () => loadProjectStatus(
+              service, paths, queue.name, requestId,
+              request.search.get("projects") ?? "", request.signal,
+            ),
+            onLog,
+            "project results",
+          ),
+        ]);
         return {
           kind: "render",
-          model: { ...common, kind: "request", requestId, history },
+          model: { ...common, kind: "request", requestId, history, projectStatus },
         };
       } catch (error) {
         onLog("error", "Web page load failed", { error });

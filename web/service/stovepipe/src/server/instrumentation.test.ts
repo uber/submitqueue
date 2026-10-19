@@ -6,7 +6,8 @@ import { instrumentStovepipeWeb } from "./instrumentation";
 function createHostFixture() {
   const list = vi.fn().mockResolvedValue({ requests: [], nextPageToken: "" });
   const getRequestHistoryByID = vi.fn().mockRejectedValue(new Error("private failure"));
-  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, getRequestHistoryByID } });
+  const getProjectStatusByID = vi.fn().mockRejectedValue(new Error("private failure"));
+  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, getRequestHistoryByID, getProjectStatusByID } });
   const record = vi.fn();
   const add = vi.fn();
   const span = { setAttribute: vi.fn(), setStatus: vi.fn(), recordException: vi.fn(), end: vi.fn() };

@@ -1,5 +1,7 @@
 @import "@submitqueue/web-platform/styles.css";
 
+.sq-app .sq-project-name { overflow-wrap: anywhere; }
+
 /* Stovepipe pages. */
 .sq-app .sq-stacked-sections {
   display: grid;

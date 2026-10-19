@@ -10,7 +10,7 @@ const client = createClient(
     defaultTimeoutMs: 5_000,
   }),
 );
-test("real ingestion, queue selection, cursors, request summaries, history and refresh", async ({
+test("real ingestion, queue selection, cursors, request summaries, history, project results and refresh", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -85,7 +85,7 @@ test("real ingestion, queue selection, cursors, request summaries, history and r
       page.getByRole("heading", { name: "Request 51", exact: true }),
     ).toBeVisible();
     const status = page.getByRole("region", { name: "Request status" });
-    await expect(status.getByText("succeeded", { exact: true })).toBeVisible();
+    await expect(status.getByText("failed", { exact: true })).toBeVisible();
     await expect(
       status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", {
         exact: true,
@@ -101,11 +101,58 @@ test("real ingestion, queue selection, cursors, request summaries, history and r
     await expect(page.getByRole("heading", { level: 2 })).toHaveText([
       "Request status",
       "History",
+      "Project results",
     ]);
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request.png`,
       fullPage: true,
     });
+  });
+  await test.step("Read recorded project results and reload their cursor", async () => {
+    const section = page.getByRole("region", { name: "Project results", exact: true });
+    const projects = section.getByRole("table", { name: "Project results", exact: true });
+    await expect(projects.locator("tbody tr")).toHaveCount(51);
+    await expect(
+      projects.getByRole("row").filter({
+        has: page.getByRole("rowheader", { name: "Repository", exact: true }),
+      }),
+    ).toContainText("Breakage (25%)");
+    await expect(
+      projects.getByRole("row").filter({
+        has: page.getByRole("cell", { name: "project-01", exact: true }),
+      }),
+    ).toContainText("Breakage (25%)");
+    await expect(
+      projects.getByRole("row").filter({
+        has: page.getByRole("cell", { name: "project-02", exact: true }),
+      }),
+    ).toContainText("Green (0%)");
+    await refresh.click();
+    await expect(refresh).toBeEnabled();
+    await expect(projects.locator("tbody tr")).toHaveCount(51);
+    await section.getByRole("link", { name: "Next projects →", exact: true }).click();
+    await expect(projects.locator("tbody tr")).toHaveCount(2);
+    await expect(projects.getByRole("cell", { name: "project-51", exact: true })).toBeVisible();
+    const cursor = new URL(page.url()).searchParams.get("projects");
+    expect(cursor).toBeTruthy();
+    await page.reload();
+    await expect(projects.locator("tbody tr")).toHaveCount(2);
+    expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
+    await expect(section.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
+    await section.getByRole("link", { name: "First projects", exact: true }).click();
+    await expect(projects.locator("tbody tr")).toHaveCount(51);
+    expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  });
+  await test.step("Keep another request's missing results distinct from green", async () => {
+    await page.goto("/web%2Fpagination/request/49");
+    const section = page.getByRole("region", { name: "Project results", exact: true });
+    await expect(section.getByText("No project results recorded on this page.", { exact: true })).toBeVisible();
+    const projects = section.getByRole("table", { name: "Project results", exact: true });
+    await expect(projects.locator("tbody tr")).toHaveCount(1);
+    await expect(projects.getByRole("rowheader", { name: "Repository", exact: true })).toBeVisible();
+    await expect(projects.getByRole("cell", { name: "No result recorded", exact: true })).toBeVisible();
+    await expect(section.getByText("Green (0%)", { exact: true })).toHaveCount(0);
   });
   await test.step("Follow and reload the queue cursor, then select an empty queue", async () => {
     await page.getByRole("link", { name: "← Queue requests" }).click();

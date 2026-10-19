@@ -41,6 +41,20 @@ export interface RequestHistoryModel {
   /** Retained events ordered by occurrence time and stable event identity. */
   events: HistoryEventModel[];
 }
+export interface ProjectStatusModel {
+  /** Newest durable result or lifecycle record in Unix milliseconds. */
+  updatedAtMs: string;
+  /** Whole-repository breakage on [0, 1]; null means no recorded result. */
+  repositoryBreakageDegree: number | null;
+  /** Whether production of relevant project results has finished, independent of pagination. */
+  complete: boolean;
+  /** Recorded projects on this page; null breakage means no result. */
+  projects: { project: string; breakageDegree: number | null }[];
+  /** First project page for this request; null on the first page. */
+  firstHref: string | null;
+  /** Opaque project continuation URL; null on the final page. */
+  nextHref: string | null;
+}
 interface PageBase {
   /** Route and cursor identity; independent of refresh time. */
   key: string;
@@ -70,5 +84,6 @@ export type StovepipePageModel = PageBase &
         kind: "request";
         requestId: string;
         history: ReadResult<RequestHistoryModel>;
+        projectStatus: ReadResult<ProjectStatusModel>;
       }
   );
