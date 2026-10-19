@@ -125,6 +125,46 @@ func TestOp_CompleteWithTags(t *testing.T) {
 	assert.True(t, ok, "expected finish-only tags, got keys: %v", histogramKeys(histograms))
 }
 
+func TestOp_CompleteAs(t *testing.T) {
+	tests := []struct {
+		name         string
+		result       string
+		tags         []Tag
+		histogramKey string
+	}{
+		{
+			name:         "records the given result",
+			result:       "not_found",
+			histogramKey: "process.finish+result=not_found",
+		},
+		{
+			name:         "records completion tags alongside the result",
+			result:       "not_found",
+			tags:         []Tag{NewTag("store", "build")},
+			histogramKey: "process.finish+result=not_found,store=build",
+		},
+		{
+			name:         "result tag wins over a completion tag of the same key",
+			result:       "not_found",
+			tags:         []Tag{NewTag("result", "success")},
+			histogramKey: "process.finish+result=not_found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scope := tally.NewTestScope("", nil)
+			op := Begin(scope, "process", StorageLatencyBuckets)
+			op.CompleteAs(tt.result, tt.tags...)
+
+			histograms := scope.Snapshot().Histograms()
+			_, ok := histograms[tt.histogramKey]
+			assert.True(t, ok, "expected histogram key %s, got keys: %v", tt.histogramKey, histogramKeys(histograms))
+			assert.Len(t, histograms, 1)
+		})
+	}
+}
+
 func TestNamedCounter(t *testing.T) {
 	scope := tally.NewTestScope("", nil)
 	NamedCounter(scope, "publish", "attempts", 5)
@@ -180,6 +220,7 @@ func TestLatencyBuckets_Sorted(t *testing.T) {
 		"StorageLatencyBuckets": StorageLatencyBuckets,
 		"LongLatencyBuckets":    LongLatencyBuckets,
 		"ChangeAgeBuckets":      ChangeAgeBuckets,
+		"LandLatencyBuckets":    LandLatencyBuckets,
 	}
 	for name, buckets := range sets {
 		t.Run(name, func(t *testing.T) {

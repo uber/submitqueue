@@ -153,6 +153,32 @@ var (
 		14 * 24 * time.Hour,
 		30 * 24 * time.Hour,
 	}
+
+	// LandLatencyBuckets suits end-to-end request lifecycles, from accepting a
+	// land request to its terminal outcome. Resolution is densest between 5 and
+	// 60 minutes, where typical lands fall, and the tail reaches a day so that
+	// requests stuck overnight stay distinguishable instead of overflowing.
+	LandLatencyBuckets = tally.DurationBuckets{
+		1 * time.Minute,
+		2 * time.Minute,
+		3 * time.Minute,
+		5 * time.Minute,
+		7*time.Minute + 30*time.Second,
+		10 * time.Minute,
+		15 * time.Minute,
+		20 * time.Minute,
+		30 * time.Minute,
+		45 * time.Minute,
+		1 * time.Hour,
+		90 * time.Minute,
+		2 * time.Hour,
+		3 * time.Hour,
+		4 * time.Hour,
+		6 * time.Hour,
+		8 * time.Hour,
+		12 * time.Hour,
+		24 * time.Hour,
+	}
 )
 
 // Op tracks the lifecycle of a named operation. It captures the start time on
@@ -200,6 +226,13 @@ func (o Op) Complete(err error, tags ...Tag) {
 		}
 	}
 
+	o.CompleteAs(result, tags...)
+}
+
+// CompleteAs records elapsed time on the {name}.finish histogram like Complete,
+// but with a caller-chosen result tag. It serves outcomes that the error alone
+// does not classify, such as a lookup that found no record.
+func (o Op) CompleteAs(result string, tags ...Tag) {
 	tagged(o.scope, tags).
 		Tagged(map[string]string{"result": result}).
 		Histogram("finish", o.buckets).
