@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
 // rejectionReason names why a pull request was rejected. The values are metric
@@ -52,6 +53,9 @@ type rejection struct {
 func (r rejection) Error() string {
 	return fmt.Sprintf("%s: %s", r.uri, r.detail)
 }
+
+// Unwrap marks every rejection as validator.ErrRejected for the validate stage.
+func (r rejection) Unwrap() error { return validator.ErrRejected }
 
 // checkOutcome is ordered worst to best; requiredChecksNotPassed relies on it.
 type checkOutcome int

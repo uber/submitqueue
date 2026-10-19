@@ -33,7 +33,7 @@ URIs that are not GitHub change IDs are skipped, so the validator composes with 
 
 ## Failures
 
-A rejection is an error naming the pull request and the rule it breaks. A failure to read GitHub — a transport error, an HTTP status, a GraphQL error such as a pull request that does not exist — is returned wrapped, and an HTTP status stays in the chain as `platform/http.StatusError` so `platform/errs/http` can classify it. Neither is classified here, as for any extension, and the validate stage currently rejects the request on either.
+A rejection is an error naming the pull request and the rule it breaks, wrapping `validator.ErrRejected`; the validate stage terminates the request with it as the reason. A failure to read GitHub — a transport error, an HTTP status, a GraphQL error such as a pull request that does not exist — does not wrap it, so the validate stage hands it to the consumer's classifiers like any other stage failure: an HTTP status stays in the chain as `platform/http.StatusError`, so `platform/errs/http` retries a 5xx or 429 and dead-letters a 403 or 404.
 
 ## Auth and hosts
 

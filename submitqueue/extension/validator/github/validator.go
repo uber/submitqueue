@@ -81,10 +81,10 @@ func New(params Params) (validator.Validator, error) {
 }
 
 // Validate checks the request's GitHub pull requests bottom first and returns
-// the first rule one breaks. A failure to read GitHub is returned wrapped,
-// keeping an HTTP status code in the chain for platform/errs/http. URIs that
-// are not GitHub change IDs are skipped, so this validator composes with
-// validators for other change providers.
+// the first rule one breaks, wrapping validator.ErrRejected. A failure to read
+// GitHub is returned without it, keeping an HTTP status code in the chain for
+// platform/errs/http. URIs that are not GitHub change IDs are skipped, so this
+// validator composes with validators for other change providers.
 func (v *githubValidator) Validate(ctx context.Context, request entity.Request) error {
 	op := coremetrics.Begin(v.metricsScope, "validate", coremetrics.LongLatencyBuckets)
 	rej, rejected, err := v.findRejection(ctx, request)

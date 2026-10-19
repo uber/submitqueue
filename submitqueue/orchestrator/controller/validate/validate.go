@@ -202,6 +202,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		if v != nil {
 			if err := v.Validate(ctx, request); err != nil {
+				// Only a rejection is the request's outcome. A failure to validate
+				// is left to the consumer's classifiers, so a transient one retries
+				// instead of failing a request nothing was wrong with.
+				if !errors.Is(err, validator.ErrRejected) {
+					coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_errors", 1)
+					return fmt.Errorf("failed to validate request %s: %w", request.ID, err)
+				}
 				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1)
 				c.logger.Infow("custom validation rejected request",
 					"request_id", request.ID,

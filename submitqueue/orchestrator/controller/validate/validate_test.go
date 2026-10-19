@@ -16,6 +16,7 @@ package validate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -31,6 +32,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	phttp "github.com/uber/submitqueue/platform/http"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -735,8 +737,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
 
 	mockValidator := validatormock.NewMockValidator(ctrl)
-	// mockValidator returns an error - validation failed
-	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("some validation error"))
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("%w: some validation error", validator.ErrRejected))
 	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
 	mockValidatorFactory.EXPECT().For(validator.Config{
 		QueueName: request.Queue,
@@ -756,6 +757,79 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	assert.Equal(t, entity.RequestStatusError, gotLog.Status)
 	assert.Equal(t, int32(2), gotLog.RequestVersion)
 	assert.Contains(t, gotLog.LastError, "some validation error")
+}
+
+// A validator that could not validate has said nothing about the request, so
+// the failure goes to the consumer's classifiers instead of terminating it.
+func TestController_Process_CustomValidatorCannotValidate(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "plain failure", err: errors.New("policy service unreachable")},
+		{name: "HTTP status", err: fmt.Errorf("read pull request: %w", phttp.NewStatusError(502, nil))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			request := entity.Request{
+				ID:           "123",
+				Queue:        "test-queue",
+				Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+				LandStrategy: mergestrategy.MergeStrategyRebase,
+				State:        entity.RequestStateStarted,
+				Version:      1,
+			}
+			// No Update and no claim Create are expected: the request must stay
+			// live and unclaimed for the redelivery to validate it again.
+			store, _ := newMockStorage(ctrl, request)
+			cs := storagemock.NewMockChangeStore(ctrl)
+			cs.EXPECT().GetByURI(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+			store.EXPECT().GetChangeStore().Return(cs).AnyTimes()
+
+			var statuses []entity.RequestStatus
+			mockPub := queuemock.NewMockPublisher(ctrl)
+			mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ string, msg entityqueue.Message) error {
+					if log, err := sqmq.UnmarshalRequestLog(msg.Payload); err == nil {
+						statuses = append(statuses, log.Status)
+					}
+					return nil
+				},
+			).AnyTimes()
+			mockQ := queuemock.NewMockQueue(ctrl)
+			mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+			registry, err := consumer.NewTopicRegistry(
+				[]consumer.TopicConfig{
+					{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+					{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+				},
+			)
+			require.NoError(t, err)
+
+			cpFactory := changeprovidermock.NewMockFactory(ctrl)
+			cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+			mockValidator := validatormock.NewMockValidator(ctrl)
+			mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(tt.err)
+			mockValidatorFactory := validatormock.NewMockFactory(ctrl)
+			mockValidatorFactory.EXPECT().For(validator.Config{QueueName: request.Queue}).Return(mockValidator, nil)
+
+			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			msg.Tenant = request.Queue
+			delivery := consumermock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+			err = controller.Process(context.Background(), delivery)
+
+			require.ErrorIs(t, err, tt.err)
+			assert.NotErrorIs(t, err, validator.ErrRejected)
+			assert.NotContains(t, statuses, entity.RequestStatusError, "the request must not be terminated")
+		})
+	}
 }
 
 func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *testing.T) {
@@ -800,7 +874,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
 
 	mockValidator := validatormock.NewMockValidator(ctrl)
-	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("some validation error"))
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("%w: some validation error", validator.ErrRejected))
 	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
 	mockValidatorFactory.EXPECT().For(validator.Config{
 		QueueName: request.Queue,

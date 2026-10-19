@@ -208,6 +208,7 @@ func TestValidate(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
+			require.ErrorIs(t, err, validator.ErrRejected)
 			var rej rejection
 			require.True(t, errors.As(err, &rej), "want a rejection, got %v", err)
 			assert.Equal(t, tt.wantReason, rej.reason)
@@ -250,7 +251,7 @@ func TestValidateReadFailures(t *testing.T) {
 			err := v.Validate(context.Background(), request(testURI(1)))
 
 			require.Error(t, err)
-			assert.False(t, errors.As(err, &rejection{}), "a failure to read GitHub is not a rejection")
+			assert.NotErrorIs(t, err, validator.ErrRejected, "a failure to read GitHub is not a rejection")
 			var statusErr *phttp.StatusError
 			if tt.wantStatus != 0 {
 				require.True(t, errors.As(err, &statusErr))

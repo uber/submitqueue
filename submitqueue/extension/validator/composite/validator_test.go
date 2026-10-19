@@ -17,6 +17,7 @@ package composite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,6 +102,38 @@ func TestNew(t *testing.T) {
 			for _, want := range tt.wantErrs {
 				assert.ErrorIs(t, err, want)
 			}
+		})
+	}
+}
+
+func TestNew_RejectsWhenAnyChildRejects(t *testing.T) {
+	rejection := fmt.Errorf("%w: missing approval", validator.ErrRejected)
+	failure := errors.New("could not reach the policy service")
+
+	tests := []struct {
+		name         string
+		children     []error
+		wantRejected bool
+	}{
+		{name: "one child rejects", children: []error{nil, rejection}, wantRejected: true},
+		{name: "a rejection beside a failure still rejects", children: []error{failure, rejection}, wantRejected: true},
+		{name: "failures alone do not reject", children: []error{failure, nil}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			var children []validator.Validator
+			for _, err := range tt.children {
+				child := validatormock.NewMockValidator(ctrl)
+				child.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(err)
+				children = append(children, child)
+			}
+
+			err := New(validator.Config{QueueName: "test-queue"}, children).Validate(context.Background(), entity.Request{})
+
+			require.Error(t, err)
+			assert.Equal(t, tt.wantRejected, errors.Is(err, validator.ErrRejected))
 		})
 	}
 }
