@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -33,6 +34,7 @@ type materializerReceiptFixture struct {
 	uris         *storagemock.MockRequestURIStore
 	logs         *storagemock.MockRequestLogStore
 	receipts     *storagemock.MockRequestReceiptStore
+	metrics      tally.TestScope
 }
 
 func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptFixture {
@@ -40,6 +42,7 @@ func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptF
 		summaries: storagemock.NewMockRequestSummaryStore(ctrl),
 		uris:      storagemock.NewMockRequestURIStore(ctrl), logs: storagemock.NewMockRequestLogStore(ctrl),
 		receipts: storagemock.NewMockRequestReceiptStore(ctrl),
+		metrics:  tally.NewTestScope("", nil),
 	}
 	stores := gwstoragemock.NewMockStorage(ctrl)
 	stores.EXPECT().GetRequestSummaryStore().Return(f.summaries).AnyTimes()
@@ -48,7 +51,7 @@ func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptF
 	stores.EXPECT().GetRequestReceiptStore().Return(f.receipts).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(stores, nil).AnyTimes()
-	f.materializer = NewMaterializer(factory)
+	f.materializer = NewMaterializer(factory, WithMetricsScope(f.metrics))
 	return f
 }
 

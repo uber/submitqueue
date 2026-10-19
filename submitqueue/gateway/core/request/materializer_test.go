@@ -65,6 +65,103 @@ func TestMaterializer_PersistLog(t *testing.T) {
 	})
 }
 
+func TestMaterializer_RecordsLifecycleMetrics(t *testing.T) {
+	started := testRequestSummary()
+	started.Status, started.RequestVersion, started.StatusTimestampMs = entity.RequestStatusStarted, 1, 15
+	landed := started
+	landed.Status, landed.RequestVersion, landed.StatusTimestampMs = entity.RequestStatusLanded, 2, 20
+	unreceived := started
+	unreceived.ReceivedAtMs = 0
+	statusLog := func(status entity.RequestStatus, version int32, timestampMs int64) entity.RequestLog {
+		return entity.RequestLog{Queue: "q", RequestID: "1", Type: entity.RequestLogTypeStatus, Status: status, RequestVersion: version, TimestampMs: timestampMs}
+	}
+
+	tests := []struct {
+		name           string
+		before         entity.RequestSummary
+		log            entity.RequestLog
+		wantUpdate     bool
+		wantCounters   map[string]int64
+		wantHistograms []string
+	}{
+		{
+			name:         "accepted log moves the request out of accepting",
+			before:       testRequestSummary(),
+			log:          statusLog(entity.RequestStatusAccepted, 0, 20),
+			wantUpdate:   true,
+			wantCounters: map[string]int64{"request_lifecycle.accepted+queue=q": 1},
+		},
+		{
+			name:         "a later status overtaking the accepted log still counts acceptance once",
+			before:       testRequestSummary(),
+			log:          statusLog(entity.RequestStatusStarted, 1, 20),
+			wantUpdate:   true,
+			wantCounters: map[string]int64{"request_lifecycle.accepted+queue=q": 1},
+		},
+		{
+			name:           "terminal log finishes the request and records its land time",
+			before:         started,
+			log:            statusLog(entity.RequestStatusLanded, 2, 20),
+			wantUpdate:     true,
+			wantCounters:   map[string]int64{"request_lifecycle.terminated+from_status=started,queue=q,status=landed": 1},
+			wantHistograms: []string{"request_lifecycle.end_to_end_latency+queue=q,status=landed"},
+		},
+		{
+			name:         "missing receipt time counts the finish without a land time",
+			before:       unreceived,
+			log:          statusLog(entity.RequestStatusError, 2, 20),
+			wantUpdate:   true,
+			wantCounters: map[string]int64{"request_lifecycle.terminated+from_status=started,queue=q,status=error": 1},
+		},
+		{
+			name:       "re-published terminal log with a newer timestamp rewrites the summary without counting again",
+			before:     landed,
+			log:        statusLog(entity.RequestStatusLanded, 2, 30),
+			wantUpdate: true,
+		},
+		{
+			name:   "identical terminal redelivery leaves the summary and the metrics alone",
+			before: landed,
+			log:    statusLog(entity.RequestStatusLanded, 2, 20),
+		},
+		{
+			name:       "cancelling is not a finished status",
+			before:     started,
+			log:        statusLog(entity.RequestStatusCancelling, 0, 20),
+			wantUpdate: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newMaterializerReceiptFixture(gomock.NewController(t))
+			f.logs.EXPECT().Insert(gomock.Any(), tt.log).Return(nil)
+			f.summaries.EXPECT().Get(gomock.Any(), tt.before.RequestID).Return(tt.before, nil)
+			if tt.wantUpdate {
+				f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), tt.before.Version, tt.before.Version+1).Return(nil)
+			}
+			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+			require.NoError(t, f.materializer.PersistLog(context.Background(), tt.log))
+
+			snapshot := f.metrics.Snapshot()
+			counters := map[string]int64{}
+			for key, counter := range snapshot.Counters() {
+				counters[key] = counter.Value()
+			}
+			if tt.wantCounters == nil {
+				tt.wantCounters = map[string]int64{}
+			}
+			assert.Equal(t, tt.wantCounters, counters)
+			histograms := []string{}
+			for key := range snapshot.Histograms() {
+				histograms = append(histograms, key)
+			}
+			assert.ElementsMatch(t, tt.wantHistograms, histograms)
+		})
+	}
+}
+
 func TestMaterializer_PersistenceFailures(t *testing.T) {
 	writeErr := errors.New("storage unavailable")
 	tests := []struct {
