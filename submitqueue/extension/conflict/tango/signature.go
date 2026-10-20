@@ -23,10 +23,6 @@ import (
 	"slices"
 )
 
-// targetIDBytes is how much of a label's SHA-256 digest forms its target ID.
-// 8 bytes fit a uint64; a collision only adds a false conflict.
-const targetIDBytes = 8
-
 // LabelDistance is one affected target: its label exactly as Tango reported it
 // and its distance from the nearest directly changed source.
 type LabelDistance struct {
@@ -49,9 +45,10 @@ type hashedTarget struct {
 }
 
 // targetID returns the first 8 bytes of the SHA-256 of label, read big-endian.
+// A collision only adds a false conflict.
 func targetID(label string) uint64 {
 	digest := sha256.Sum256([]byte(label))
-	return binary.BigEndian.Uint64(digest[:targetIDBytes])
+	return binary.BigEndian.Uint64(digest[:])
 }
 
 // toSignatureTargets returns the signature targets sorted ascending by ID, one
