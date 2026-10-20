@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "build.go",
+        "build_issue.go",
         "ingest.go",
         "list.go",
         "project_status.go",

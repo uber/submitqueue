@@ -627,6 +627,7 @@ GO_GENERATE_PACKAGES := \
 	./runway/extension/merger/... \
 	./stovepipe/controller/... \
 	./stovepipe/core/requestlog/... \
+	./stovepipe/extension/buildissue/... \
 	./stovepipe/extension/buildrunner/... \
 	./stovepipe/extension/projectstatus/... \
 	./stovepipe/extension/queueconfig/... \
