@@ -81,7 +81,7 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 
-	gwStore, err := gwmysqlstorage.NewStorage(s.db, tally.NoopScope)
+	gwStore, err := gwmysqlstorage.NewStorage(s.db, tally.NoopScope, gwmysqlstorage.WithQueueRequestStatusRecords())
 	require.NoError(t, err, "failed to create gateway storage")
 
 	// Provide the storage backend to the contract suite through the
