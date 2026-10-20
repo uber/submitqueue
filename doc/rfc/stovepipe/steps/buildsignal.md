@@ -2,15 +2,15 @@
 
 `buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, and publishes the **request id** to `record`. See [workflow.md](../workflow.md) for where it sits in the pipeline and [build.md](build.md) for how the build it polls was triggered.
 
-It handles only the poll loop: it does not decide build strategy, write greenness, or map targets to projects — those are `process`'s, `record`'s, and `analyze`'s jobs. It reports the *fact* (this request's build ended succeeded, failed, or cancelled); `record` derives what that fact *means* for greenness.
+Build strategy belongs to `process`. Repository and project facts belong to `record`, which already invokes `projectstatus.Resolver` for project analysis. `buildsignal` reports the *fact* (this request's build ended succeeded, failed, or cancelled); `record` derives what that fact *means* for greenness.
 
 `buildsignal` is structurally the same controller as `submitqueue/orchestrator/controller/buildsignal/buildsignal.go`, and the "Flow", "Status delivery", and "Polling primitive" sections of [doc/rfc/submitqueue/build-runner.md](../../submitqueue/build-runner.md) are the reference rationale it reuses directly. The entity and storage shapes it depends on are defined in [build.md](build.md#entity-and-storage-additions-needed); this doc introduces none of its own.
 
 ## Input and re-entrancy
 
-`buildsignal` consumes a build id, published by `build` — once per phase, since Phase 1 (whole-repo) and Phase 2 (per-project) each run their own `build` → `buildsignal` cycle against builds tied to the same `Request` (see [workflow.md](../workflow.md#workflow)).
+`buildsignal` consumes a build id published by `build` (see [workflow.md](../workflow.md#workflow)). Project analysis uses the terminal build from this validation through `projectstatus.Resolver` in `record`.
 
-Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the request id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
+It loads the `Build`, polls it toward terminal, persists the result, and publishes the request id onward to `record`, which records repository and project greenness.
 
 `buildsignal` is the sole writer of `Build.Status`/`Build.Version` after `build` creates the row (see [build.md](build.md#input-partitioning-and-the-single-writer-property)). It reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and writes it exactly once, at the terminal transition, to record the build's outcome — the one `Request.State` write outside `process` and the DLQ reconciler.
 
@@ -94,7 +94,7 @@ For a delivery carrying build id `B`:
 
 `Status` is not a point of conceptual divergence from SubmitQueue: both domains' `BuildRunner`s poll by the same opaque, runner-minted id with the same `Status(ctx, buildID) (BuildStatus, BuildMetadata, error)` signature. That similarity stays a shape, not a shared `platform/extension/buildrunner` interface — each domain keeps its own `BuildRunner` (including its own local `Status`), with reuse pushed to a shared backend implementation instead (see [build.md](build.md#alternatives-considered-for-sharing-the-contract)). `BuildMetadata` is caller-supplied and provider-echoed — the runner must not depend on it, but nothing stops a consumer from reading it. `buildsignal`'s own poll loop (steps 6-8) doesn't need to interpret it to decide when to stop polling, same as SubmitQueue's, but that's a statement about what the poll loop happens to need, not a rule that the value is unused: `build-runner.md` describes its purpose as round-tripping to users ([#buildmetadata](../../submitqueue/build-runner.md#buildmetadata)), and a future check in either domain's buildsignal is free to read it — e.g. to short-circuit some behavior — without changing the contract.
 
-Returning `TargetGraph` from `Status` in place of `BuildMetadata`, with `buildsignal` persisting it for `analyze` to read later, was considered and set aside — how `analyze` obtains the target graph is left to its own design, not `buildsignal`'s poll loop.
+Artifact extraction belongs to `projectstatus.Resolver` today and may move into the planned [build-analysis step](../workflow.md#build-analysis). `Status` remains the build-status contract; `buildsignal` persists that status and the terminal build identity for downstream work.
 
 ## Polling primitive: hold, not `Nack`
 

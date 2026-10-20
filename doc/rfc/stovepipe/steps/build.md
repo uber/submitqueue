@@ -8,13 +8,13 @@ It handles only the trigger: it does not poll for completion, record greenness, 
 
 ## Input, partitioning, and the single-writer property
 
-`build` consumes a request id, published by `process` in Phase 1 (see [workflow.md](../workflow.md#workflow)). Both phases drive the same `build` → `buildsignal` machinery against the same `Request` row. The `process`/`analyze` → `build` topic is partitioned by **request id**; see [Partitioning](#partitioning) for the full rationale, including why `build` → `buildsignal` partitions finer (by build id) than SubmitQueue's equivalent topic.
+`build` consumes a request id published by `process` (see [workflow.md](../workflow.md#workflow)). The `process` → `build` topic is partitioned by **request id**; see [Partitioning](#partitioning) for the full rationale, including why `build` → `buildsignal` partitions finer (by build id) than SubmitQueue's equivalent topic.
 
 **`build` is not the sole writer of the rows it touches, and its own writes are narrow.** On `Request`, `build` never writes at all — it only reads the `BuildStrategy`/`BaseURI`/`URI` fields `process` set at admit, and it leaves `Request.State` untouched at `processing` throughout (`process`, `buildsignal`, and the DLQ reconciler are `Request.State`'s only writers). On `Build`, `build` is the sole creator — it calls `BuildStore.Create` exactly once, at step 6 — and never mutates the row again; `buildsignal` is the sole writer of `Build.Status`/`Build.Version` afterward (see [buildsignal.md](buildsignal.md#input-and-re-entrancy)). This division is why `build` never needs a CAS/version write of its own: `Create` is the only storage mutation in its algorithm.
 
-`build` is phase-agnostic: it never asks "which phase is this?" It reads whatever scope is already persisted and immutable on the `Request` and acts on it. Phase 2's project-scoped invocation is expected to read project-scoped equivalents of the scope fields off the same `Request`; the exact shape of a project-scoped trigger is left to the `analyze` design, consistent with `workflow.md`'s "project mapping contract" open question — see [Project-scoped `Trigger`: reserved, not yet designed](#project-scoped-trigger-reserved-not-yet-designed) for the resulting gap in the `BuildRunner` contract itself.
+Project analysis already runs in `record` through `projectstatus.Resolver`, using the terminal build from this validation. Artifact extraction and project-result calculation may later move into [build analysis](../workflow.md#build-analysis).
 
-In both phases `build` is strictly the trigger — `buildsignal` owns polling — so a crash between `Trigger` and the publish leaves a build no poller ever picks up; the redelivery triggers a replacement and the orphan is accepted waste, mirroring SubmitQueue (see [Idempotency](#idempotency)).
+`build` triggers and `buildsignal` polls. A crash between `Trigger` and the publish leaves a build no poller picks up; redelivery triggers a replacement and the orphan is accepted waste, mirroring SubmitQueue (see [Idempotency](#idempotency)).
 
 ## Algorithm
 
@@ -86,7 +86,6 @@ Every branch is safe under at-least-once redelivery — with SubmitQueue's postu
 ## Edge cases
 
 - **Head equals last-green** (`R.URI == R.BaseURI`). `process.md` calls this degenerate and leaves it to `build`. Resolution: run a normal incremental build with an empty delta — pass `baseURI = R.BaseURI` unchanged and let the runner apply zero changes on top of it. This needs no branch in `build`: the runner must already handle "no delta" (two adjacent commits) as valid input. Rejected: skipping the build and copying last-green's result forward, because that would force `build` to reason about whether last-green's *recorded greenness* (not just its URI) is still valid — a `record` concern `build` has no business making.
-- **Phase 2 triggers another build for the same Request.** No collision by construction: every `Trigger` mints a fresh runner id, so the Phase-1 whole-repo build and each Phase-2 project-scoped build get distinct `Build` rows, all carrying the same `RequestID`. Each build's id travels in its own messages, so downstream navigation stays a direct get; how `analyze` obtains and forwards the ids of the project builds it triggers is part of the deferred project-scoped trigger design.
 
 ## Fail-closed interaction
 
@@ -186,23 +185,15 @@ type Config struct{ QueueName string } // the only identity the system hands a F
 type Factory interface{ For(cfg Config) (BuildRunner, error) }
 ```
 
-#### Project-scoped `Trigger`: reserved, not yet designed
+#### Project results from the validation build
 
-**TODO**, tracked pending the `analyze` design (see [workflow.md](../workflow.md#open-questions)'s "Project mapping contract" open question). The interface above has only a whole-repo/incremental dimension (`headURI`, `baseURI`); it has no parameter for "build only this project," so as written it cannot express a Phase 2 invocation. `build` itself stays phase-agnostic (see [Input, partitioning, and the single-writer property](#input-partitioning-and-the-single-writer-property)) — it reads whatever scope is already decided and passes it through — but `Trigger` still needs a slot to read that scope from and forward to the runner.
-
-The shape isn't decided here because project semantics belong to `analyze`, not `build`: how a project maps to a buildable scope (a Bazel target pattern, a directory, a service name) is implementer-specific per [workflow.md](../workflow.md#project---greenness-at-a-finer-grain). The expectation is that this stays an opaque token — following the same "identity in, resolve internally" shape already used for `headURI`/`baseURI` (owned and interpreted by `SourceControl`) — that `build` reads off the `Request`/message and hands to the runner uninterpreted, rather than a structured type `build` would have to understand:
-
-```go
-Trigger(ctx context.Context, baseURI, headURI string, projectScope entity.ProjectScope, metadata entity.BuildMetadata) (entity.BuildID, error)
-```
-
-`ProjectScope` lives in `stovepipe/entity` alongside `BuildID`/`BuildStatus`/`BuildMetadata` — projects have no SubmitQueue equivalent at all, not even a shape to mirror. Its zero value covers Phase 1 (no project — whole-repo/incremental scope only, exactly today's contract); `analyze` is what would populate a non-zero value for Phase 2. This mirrors the additive optional field already reserved on `BuildRequest` for the same purpose (see [Queue contract additions](#queue-contract-additions)) — the wire message and the extension contract need the same new dimension, and both are deferred to the same design.
+[`projectstatus.Resolver`](../../../../stovepipe/extension/projectstatus/projectstatus.go) derives project results from the terminal validation build when called by `record`. A project-scoped build would be a separate capability requiring an explicit scope contract; it is independent of the project analysis already implemented.
 
 Both `Trigger` and `Status`/`Cancel` differ *in contract* between domains, even though `Status`/`Cancel` happen to be identical in shape: both domains poll and cancel by the same opaque, runner-minted id with the same async semantics. Rather than promoting that shape parity into a shared `platform/base`/`platform/extension/buildrunner` type and interface — which would force a one-time migration of SubmitQueue's already-shipped controllers, storage, and protobuf mappings onto the shared type — each domain keeps its own `BuildRunner` interface and its own local `BuildID`/`BuildStatus`/`BuildMetadata`, and real code reuse happens one layer down, in a shared backend implementation (e.g. a Buildkite client) that both domains' concrete runners wrap. [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract) below records the shapes weighed against this one, including the shared-interface alternative that was set aside.
 
 There is exactly one build id: the runner mints it at `Trigger`, `build` adopts it as `Build.ID`, and every later call and message carries it verbatim — `Status`/`Cancel` take the same value `Trigger` returned, the queue payload is the same value, the store key is the same value. This is SubmitQueue's convention end to end. The id is opaque: no stovepipe reader parses it, derives it, or equates it with another entity's id — the trap SubmitQueue's speculate/cancel path falls into. And per the extension rules a runner keeps only transient local state, so the durable `Request` ↔ `Build` linkage lives in **our** store as `Build.RequestID`, never in the runner.
 
-Supporting entity types: `BuildStatus`, `BuildMetadata`, and `BuildID` live in `stovepipe/entity`, shaped the same as SubmitQueue's `submitqueue/entity` equivalents but defined and duplicated locally rather than shared — `BuildStatus` is the narrow lowercase enum `"" (unknown) / accepted / running / succeeded / failed / cancelled` with an `IsTerminal()` predicate covering the last three, `BuildMetadata` is the free-form `map[string]string`, and `BuildID` is a `{ID string}` wire struct wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, `Status`/`Cancel`'s parameter, the queue payload. `stovepipe/entity/build.go` keeps what's stovepipe-specific: the `Build` entity itself (`RequestID` alongside `ID`/`Status`/`Version`). How a target graph reaches `analyze` is out of scope for this doc — left to the `analyze` design.
+Supporting entity types: `BuildStatus`, `BuildMetadata`, and `BuildID` live in `stovepipe/entity`, shaped the same as SubmitQueue's `submitqueue/entity` equivalents but defined and duplicated locally rather than shared — `BuildStatus` is the narrow lowercase enum `"" (unknown) / accepted / running / succeeded / failed / cancelled` with an `IsTerminal()` predicate covering the last three, `BuildMetadata` is the free-form `map[string]string`, and `BuildID` is a `{ID string}` wire struct wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, `Status`/`Cancel`'s parameter, the queue payload. `stovepipe/entity/build.go` keeps what's stovepipe-specific: the `Build` entity itself (`RequestID` alongside `ID`/`Status`/`Version`). Artifact interpretation is delegated to `projectstatus.Resolver` and may later move into build analysis.
 
 ### Alternatives considered for sharing the contract
 
@@ -259,7 +250,7 @@ Two alternatives to the runner-minted id are worth recording. They are independe
 
 #### Alternative A: caller-derived build key
 
-Key the `Build` by identity derived from the Request — `buildKey(R) = R.ID` for the Phase-1 whole-repo build, a `{R.ID}/{hash(project)}` composite for Phase 2 — and store the runner's id in a separate `Build.RunnerBuildID` field (with a distinct wire type, so the two ids can never be passed for each other).
+Key the `Build` by identity derived from the Request — `buildKey(R) = R.ID` for the validation build — and store the runner's id in a separate `Build.RunnerBuildID` field (with a distinct wire type, so the two ids can never be passed for each other).
 
 | Pros | Cons |
 |---|---|
@@ -267,13 +258,13 @@ Key the `Build` by identity derived from the Request — `buildKey(R) = R.ID` fo
 | `Request` → `Build` navigation with no reverse index, per the KV key-derivation rule in [AGENTS.md](../../../../AGENTS.md) | The terminal build id is persisted on the Request so project-result resolution can use it without deriving a build id |
 | Enforces (rather than assumes) the direct-navigation property SubmitQueue's speculate takes on faith | Diverges entity shape and controller flow from SubmitQueue, weakening the "structurally the same controller" claim and dual-implementing-backend symmetry |
 
-Trade-offs: the dedup guards a rare event at a permanent modeling cost. The duplicate it prevents arises only from a redelivery inside the trigger window — rare, and already harmless (identical scope; `buildsignal`'s superseded short-circuit and its first-writer-wins outcome CAS make the loser a no-op — see [Idempotency](#idempotency)). The prospective key-derivers — a future canceller, or `analyze` reaching back to the Phase-1 target graph — would need to be handed the id by their producing stage instead, if those designs land.
+Trade-offs: the dedup guards a rare event at a permanent modeling cost. The duplicate it prevents arises only from a redelivery inside the trigger window — rare, and already harmless (identical scope; `buildsignal`'s superseded short-circuit and its first-writer-wins outcome CAS make the loser a no-op — see [Idempotency](#idempotency)). A future consumer needing the build identity can receive it from the producing stage or load `Request.TerminalBuildID` after completion.
 
 Moving `record`'s input from the build id to the request id does not require a caller-derived key. `buildsignal` persists the terminal build id with the Request's terminal state, and `record` reads that id directly from the Request.
 
 #### Alternative B: caller-supplied idempotency key on `Trigger`
 
-Orthogonal to how the `Build` is keyed: give `Trigger` an extra parameter — a stable per-build token the caller already holds (`R.ID` in Phase 1) — that a runner supporting deduplication uses to **re-attach** a retried `Trigger` to the build it already started instead of spawning a second. The runner still returns its own native id; `Build.ID` stays runner-minted. Backends that cannot dedup ignore the token and degrade to today's behavior.
+Orthogonal to how the `Build` is keyed: give `Trigger` an extra parameter — a stable per-build token the caller already holds (`R.ID` for the validation) — that a runner supporting deduplication uses to **re-attach** a retried `Trigger` to the build it already started instead of spawning a second. The runner still returns its own native id; `Build.ID` stays runner-minted. Backends that cannot dedup ignore the token and degrade to today's behavior.
 
 | Pros | Cons |
 |---|---|
@@ -289,7 +280,7 @@ Either could be adopted independently: the idempotency token, if a backend that 
 
 - **Shaped the same, not shared code**: the `BuildStatus` enum and `IsTerminal()` (nothing batch-specific — [build-runner.md](../../submitqueue/build-runner.md#buildstatus)); `BuildMetadata` (caller-supplied, provider-echoed, controller-uninterpreted — [#buildmetadata](../../submitqueue/build-runner.md#buildmetadata)); the async contract — `Trigger` returns a handle not an outcome, `Status` may round-trip, `Cancel` reaches the provider not the engine ([#async-vs-sync-contract](../../submitqueue/build-runner.md#async-vs-sync-contract)); and the id model — no caller-supplied id, the runner mints the build's identity, and that one `entity.BuildID` is the store key, queue payload, and `Status`/`Cancel` parameter (see [Alternatives considered](#alternatives-considered-for-the-build-identity)). These are duplicated locally in `stovepipe/entity`/`stovepipe/extension/buildrunner` rather than promoted to `platform/base`/`platform/extension/buildrunner` — see the contract above and [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract).
 - **Shared as implementation, not contract**: a concrete backend (e.g. Buildkite) can satisfy both domains' `BuildRunner` interfaces off one client, sharing HTTP/auth/poll-loop plumbing internally even though the two `BuildRunner` interfaces it implements are separate types — see the "Shared backend under `platform`, thin per-domain contracts" option above.
-- **New in stovepipe**: URI-based scope in `Trigger` instead of batch lists — the one part of the contract that was always domain-specific by necessity, per [Why separate contracts](#why-separate-contracts). Mapping targets to projects is still stovepipe-only; how `analyze` obtains a target graph is left to its own design, out of scope for this doc.
+- **New in stovepipe**: URI-based scope in `Trigger` instead of batch lists — the one part of the contract that was always domain-specific by necessity, per [Why separate contracts](#why-separate-contracts). Project analysis is Stovepipe-specific and delegated to `projectstatus.Resolver` in `record`.
 
 ## Entity and storage additions needed
 
@@ -340,11 +331,11 @@ Single-key reads/writes only — no list-by-request, no query-by-attribute — p
 
 ## Queue contract additions
 
-Two topic keys in `stovepipe/core/messagequeue/topics.go` — `TopicKeyBuild` (`process`/`analyze` → `build`) and `TopicKeyBuildSignal` (`build` → `buildsignal`) — and one proto message per key, since the contract test binds **exactly one message to each topic key** (see [messagequeue-contract.md](../../messagequeue-contract.md)). `ProcessRequest` is bound to `process` and cannot be reused; the new messages mirror its shape (one id field, its own `topic_keys` option):
+Two topic keys in `stovepipe/core/messagequeue/topics.go` — `TopicKeyBuild` (`process` → `build`) and `TopicKeyBuildSignal` (`build` → `buildsignal`) — and one proto message per key, since the contract test binds **exactly one message to each topic key** (see [messagequeue-contract.md](../../messagequeue-contract.md)). `ProcessRequest` is bound to `process` and cannot be reused; the new messages mirror its shape (one id field, its own `topic_keys` option):
 
-- `BuildRequest{ id }` (request id) → `topic_keys "build"`, produced by `process`/`analyze`, consumed by `build`. Phase 2's per-project trigger must also identify its project; because each topic key binds exactly one message, that lands as an **additive optional field on this same message** (protojson discards unknown fields, so the evolution is backward-compatible), not a second message type — the field's shape is deferred to the `analyze` design with the rest of the project-scoped trigger.
+- `BuildRequest{ id }` (request id) → `topic_keys "build"`, produced by `process`, consumed by `build`.
 - `BuildSignal{ id }` (build id) → `topic_keys "buildsignal"`, produced by `build` and consumed by `buildsignal`. A non-terminal poll postpones that same delivery with `delivery.Hold`; `buildsignal` does not publish another `BuildSignal` (see [buildsignal.md](buildsignal.md)).
 
 ### Partitioning
 
-`process`/`analyze` → `build` is partitioned by **request id**: per-request build work is independent (the per-Queue concurrency gate already ran in `process`), and a single Request's (rare) duplicate deliveries stay ordered — though with no pre-trigger dedup check that ordering is a tidiness property, not a correctness dependency; duplicates are absorbed downstream (see [Idempotency](#idempotency)). `build` → `buildsignal` is partitioned by **build id** (the runner-assigned `Build.ID`), so each build's poll loop is an independent partition. The id is unique per build, so one `Request`'s several Phase-2 project builds land in distinct partitions — the point: a slow poll on one must not block the others. The flip side of request-id partitioning on the `build` topic is that all of one Request's Phase-2 *triggers* serialize through a single partition; that is fine because `build` is trigger-only and cheap, and the concurrency Phase 2 needs comes from the per-build poll partitions, not from parallel triggering. This is a deliberate divergence from SubmitQueue, which partitions its build poll loop by *batch id* (its unit of work); stovepipe goes finer.
+`process` → `build` is partitioned by **request id**: per-request build work is independent, and duplicate deliveries for one Request stay ordered. Duplicate builds are absorbed downstream (see [Idempotency](#idempotency)). `build` → `buildsignal` is partitioned by **build id**, the runner-assigned `Build.ID`, so a slow poll for one build does not block another. SubmitQueue instead partitions its build poll loop by batch id, its unit of work.
