@@ -45,7 +45,7 @@ func NewBatchStore(db *sql.DB, scope tally.Scope, queue string) storage.BatchSto
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
 func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	var batch entity.Batch
 	var containsJSON []byte
@@ -77,7 +77,7 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 // Create creates a new batch. The batch must have a unique ID already assigned. Returns ErrAlreadyExists if the batch ID already exists.
 func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if batch.Queue != s.queue {
 		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
@@ -113,7 +113,7 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if batch.Queue != s.queue {
 		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)

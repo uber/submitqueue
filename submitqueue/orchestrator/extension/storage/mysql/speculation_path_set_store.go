@@ -46,7 +46,7 @@ func NewSpeculationPathSetStore(db *sql.DB, scope tally.Scope, queue string) sto
 // Returns ErrNotFound if the head has no set.
 func (s *speculationPathSetStore) Get(ctx context.Context, head string) (ret entity.SpeculationPathSet, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	var set entity.SpeculationPathSet
 	var pathsJSON []byte
@@ -73,7 +73,7 @@ func (s *speculationPathSetStore) Get(ctx context.Context, head string) (ret ent
 // Create stores a head's first path set. Returns ErrAlreadyExists if the head already has one.
 func (s *speculationPathSetStore) Create(ctx context.Context, set entity.SpeculationPathSet) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if set.Queue != s.queue {
 		return fmt.Errorf("speculation path set head=%s queue %q does not match the store's bound queue %q", set.Head, set.Queue, s.queue)
@@ -104,7 +104,7 @@ func (s *speculationPathSetStore) Create(ctx context.Context, set entity.Specula
 // version arithmetic is owned by the caller and this is a pure conditional write.
 func (s *speculationPathSetStore) Update(ctx context.Context, set entity.SpeculationPathSet, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if set.Queue != s.queue {
 		return fmt.Errorf("speculation path set head=%s queue %q does not match the store's bound queue %q", set.Head, set.Queue, s.queue)
