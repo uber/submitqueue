@@ -276,7 +276,9 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 		return landed, c.attributed(ctx, err, entity.BatchSubject(batch.ID))
 	}
 	if landed {
-		metrics.NamedHistogram(c.metricsScope, opName, "paths", metrics.CountBuckets, metrics.TagsFromContext(ctx)...).
+		// Named under batch_shape rather than opName so wildcards over the controller's process.* counters never
+		// match the histogram's bucket series.
+		metrics.NamedHistogram(c.metricsScope, "batch_shape", "paths", metrics.CountBuckets, metrics.TagsFromContext(ctx)...).
 			RecordValue(float64(len(snap.pathSets[batch.ID].Paths)))
 	}
 	return landed, nil

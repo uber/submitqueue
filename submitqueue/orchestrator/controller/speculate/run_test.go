@@ -1589,7 +1589,7 @@ func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
 	require.True(t, ok)
 	assert.EqualValues(t, 1, counter.Value())
 
-	paths, ok := h.metrics.Snapshot().Histograms()["test.speculate_controller.process.paths+"]
+	paths, ok := h.metrics.Snapshot().Histograms()["test.speculate_controller.batch_shape.paths+"]
 	require.True(t, ok, "a finalized head records how many paths it speculated")
 	assert.Equal(t, int64(1), paths.Values()[5])
 }

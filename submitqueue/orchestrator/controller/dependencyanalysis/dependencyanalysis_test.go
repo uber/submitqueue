@@ -258,10 +258,10 @@ func TestController_Process_AnalyzesAndTransitionsToCreated(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, batch.ID, testQueue)))
 
 	histograms := scope.Snapshot().Histograms()
-	size, ok := histograms["dependency_analysis_controller.process.batch_size+"]
+	size, ok := histograms["dependency_analysis_controller.batch_shape.size+"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), size.Values()[1])
-	dependencies, ok := histograms["dependency_analysis_controller.process.batch_dependencies+"]
+	dependencies, ok := histograms["dependency_analysis_controller.batch_shape.dependencies+"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), dependencies.Values()[2])
 }
