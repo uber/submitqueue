@@ -41,14 +41,15 @@ func WrapNotFound(err error) error {
 	return fmt.Errorf("%w: %w", ErrNotFound, err)
 }
 
-// MetricsResultNotFound is the result tag CompleteMetricsOp records for a missing record.
+// MetricsResultNotFound is the result tag CompleteReadMetricsOp records for a missing record.
 const MetricsResultNotFound = "not_found"
 
-// CompleteMetricsOp finishes a store operation's metrics. A missing record is an
-// expected answer rather than a storage failure, so ErrNotFound is recorded as
-// result=not_found instead of result=error; every other outcome is classified by
-// metrics.Op.Complete.
-func CompleteMetricsOp(op metrics.Op, err error) {
+// CompleteReadMetricsOp finishes a store read's metrics. A read that finds no
+// record has answered the question rather than failed, so ErrNotFound is recorded
+// as result=not_found instead of result=error; every other outcome is classified
+// by metrics.Op.Complete. Writes finish with metrics.Op.Complete directly: a write
+// whose row is missing is an anomaly and stays counted as an error.
+func CompleteReadMetricsOp(op metrics.Op, err error) {
 	if IsNotFound(err) {
 		op.CompleteAs(MetricsResultNotFound)
 		return

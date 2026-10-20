@@ -34,7 +34,7 @@ func TestErrVersionMismatchClassification(t *testing.T) {
 	assert.False(t, errs.IsDependencyError(err))
 }
 
-func TestCompleteMetricsOp(t *testing.T) {
+func TestCompleteReadMetricsOp(t *testing.T) {
 	tests := []struct {
 		name   string
 		err    error
@@ -50,7 +50,7 @@ func TestCompleteMetricsOp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scope := tally.NewTestScope("", nil)
-			CompleteMetricsOp(metrics.Begin(scope, "get", metrics.StorageLatencyBuckets), tt.err)
+			CompleteReadMetricsOp(metrics.Begin(scope, "get", metrics.StorageLatencyBuckets), tt.err)
 
 			histograms := scope.Snapshot().Histograms()
 			assert.Len(t, histograms, 1)

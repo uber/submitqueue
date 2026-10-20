@@ -44,7 +44,7 @@ func NewRequestSummaryStore(db *sql.DB, scope tally.Scope, queue string) storage
 
 func (s *requestSummaryStore) Create(ctx context.Context, summary entity.RequestSummary) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if summary.Queue != s.queue {
 		return fmt.Errorf("request summary request_id=%s queue %q does not match the store's bound queue %q", summary.RequestID, summary.Queue, s.queue)
@@ -78,7 +78,7 @@ func (s *requestSummaryStore) Create(ctx context.Context, summary entity.Request
 
 func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret entity.RequestSummary, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	var changeURIsJSON []byte
 	var metadataJSON []byte
@@ -108,7 +108,7 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 
 func (s *requestSummaryStore) Update(ctx context.Context, summary entity.RequestSummary, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if summary.Queue != s.queue {
 		return fmt.Errorf("request summary request_id=%s queue %q does not match the store's bound queue %q", summary.RequestID, summary.Queue, s.queue)

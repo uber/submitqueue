@@ -45,7 +45,7 @@ func NewPathBuildStore(db *sql.DB, scope tally.Scope, queue string) storage.Path
 // been recorded for it.
 func (s *pathBuildStore) Get(ctx context.Context, pathID string, attempt int) (ret entity.PathBuild, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	var pathBuild entity.PathBuild
 
@@ -68,7 +68,7 @@ func (s *pathBuildStore) Get(ctx context.Context, pathID string, attempt int) (r
 // ErrAlreadyExists if the attempt already has a build.
 func (s *pathBuildStore) Create(ctx context.Context, pathBuild entity.PathBuild) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if pathBuild.Queue != s.queue {
 		return fmt.Errorf("path build pathID=%s attempt=%d queue %q does not match the store's bound queue %q", pathBuild.PathID, pathBuild.Attempt, pathBuild.Queue, s.queue)

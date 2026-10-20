@@ -44,7 +44,7 @@ func NewQueueBatchStateStore(db *sql.DB, scope tally.Scope, queue string) storag
 // PK-prefix scan.
 func (s *queueBatchStateStore) List(ctx context.Context, state entity.BatchState) (ret []entity.QueueBatchState, retErr error) {
 	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	queue := s.queue
 	const query = "SELECT queue, state, batch_id FROM queue_batch_state WHERE queue = ? AND state = ?"
@@ -73,7 +73,7 @@ func (s *queueBatchStateStore) List(ctx context.Context, state entity.BatchState
 // identity, so re-putting it is a no-op success.
 func (s *queueBatchStateStore) Put(ctx context.Context, record entity.QueueBatchState) (retErr error) {
 	op := metrics.Begin(s.scope, "put", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if record.Queue != s.queue {
 		return fmt.Errorf("queue batch state record batch_id=%s queue %q does not match the store's bound queue %q", record.BatchID, record.Queue, s.queue)
@@ -91,7 +91,7 @@ func (s *queueBatchStateStore) Put(ctx context.Context, record entity.QueueBatch
 // not checked.
 func (s *queueBatchStateStore) Delete(ctx context.Context, state entity.BatchState, batchID string) (retErr error) {
 	op := metrics.Begin(s.scope, "delete", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	queue := s.queue
 	const query = "DELETE FROM queue_batch_state WHERE queue = ? AND state = ? AND batch_id = ?"

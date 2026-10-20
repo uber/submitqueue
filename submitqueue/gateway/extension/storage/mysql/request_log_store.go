@@ -47,7 +47,7 @@ func NewRequestLogStore(db *sql.DB, scope tally.Scope, queue string) storage.Req
 // without requiring the caller to manage deduplication.
 func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (retErr error) {
 	op := metrics.Begin(r.scope, "insert", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { op.Complete(retErr) }()
 
 	if log.Queue != r.queue {
 		return fmt.Errorf("request log request_id=%s queue %q does not match the store's bound queue %q", log.RequestID, log.Queue, r.queue)
@@ -80,7 +80,7 @@ func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (re
 // and never returned to callers.
 func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []entity.RequestLog, retErr error) {
 	op := metrics.Begin(r.scope, "list", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT queue, request_id, timestamp_ms, type, status, event, request_version, last_error, metadata FROM request_log WHERE queue = ? AND request_id = ? ORDER BY timestamp_ms ASC, salt ASC",

@@ -24,6 +24,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -246,6 +247,57 @@ func TestBuildStore_Update(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestBuildStore_NotFoundMetrics covers how a missing row is counted: a read that
+// finds nothing has answered and is recorded as not_found, while a write whose row
+// is missing is an anomaly and stays an error.
+func TestBuildStore_NotFoundMetrics(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func(mock sqlmock.Sqlmock)
+		call   func(store storage.BuildStore) error
+		metric string
+	}{
+		{
+			name: "read of a missing build",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery("SELECT id, batch_id, path_id, attempt, status FROM build").
+					WillReturnError(sql.ErrNoRows)
+			},
+			call: func(store storage.BuildStore) error {
+				_, err := store.Get(context.Background(), "build-1")
+				return err
+			},
+			metric: "get.finish+result=not_found",
+		},
+		{
+			name: "write to a missing build",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("UPDATE build SET").WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+			call: func(store storage.BuildStore) error {
+				return store.Update(context.Background(), entity.Build{ID: "build-1"})
+			},
+			metric: "update_status.finish+result=error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			scope := tally.NewTestScope("", nil)
+			store := NewBuildStore(db, scope, "monorepo")
+			tt.setup(mock)
+
+			require.ErrorIs(t, tt.call(store), storage.ErrNotFound)
+
+			assert.Contains(t, scope.Snapshot().Histograms(), tt.metric)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
