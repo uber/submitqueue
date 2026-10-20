@@ -10,6 +10,7 @@ A batch's signature is the sorted set of its affected targets, each as a 64-bit 
 
 - Only the batch being analyzed is ever sent to Tango, and only when it has no recorded signature. Redelivery finds the record the earlier attempt created and does not call Tango again.
 - The new batch is signed even when nothing is in flight, so later batches find its record.
+- After the attempt that created a signature succeeds, it records each target's label in the dictionary in the background, off the request path, so an ID can be read back as a label. This is best-effort: a failed write is logged and skipped, because conflicts are decided by ID alone and a later batch that touches the label writes it again. On a hash collision the first label recorded stays.
 - An in-flight batch is read from the cache, then the store, and never from Tango. A missing record or a store error fails the analysis (`ErrNoSignature` for the missing record), because a signature computed later could differ from the one the batch was admitted with.
 - The analyzer fails closed on any error.
 - A queue must have no in-flight batches when it is switched to this analyzer, because batches admitted earlier have no signature.

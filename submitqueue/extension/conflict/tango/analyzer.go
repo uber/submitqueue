@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
@@ -37,6 +39,10 @@ type Params struct {
 	// analyzer serves.
 	Signatures SignatureStore
 
+	// Dictionary records the label behind each target ID, in the background and
+	// best-effort. It must be bound to the queue the analyzer serves.
+	Dictionary DictionaryStore
+
 	// Cache holds recently used signatures and may be shared across queues.
 	Cache *SignatureCache
 
@@ -49,6 +55,9 @@ type Params struct {
 
 	// Changes resolves a batch into the changes it contains.
 	Changes changeset.Resolver
+
+	// Logger reports best-effort failures. It defaults to a no-op logger.
+	Logger *zap.SugaredLogger
 }
 
 type analyzer struct {
@@ -60,6 +69,9 @@ type analyzer struct {
 // the analyzed batch's. It fails closed: any signature it cannot obtain fails
 // the analysis.
 func New(params Params) conflict.Analyzer {
+	if params.Logger == nil {
+		params.Logger = zap.NewNop().Sugar()
+	}
 	return &analyzer{Params: params}
 }
 
@@ -102,6 +114,18 @@ func (a *analyzer) recordedSignature(ctx context.Context, queue, batchID string)
 	return signature, true, nil
 }
 
+// recordLabels is best-effort: signatures compare IDs alone, and a label that
+// fails to record is written again by any later batch that touches it.
+func (a *analyzer) recordLabels(ctx context.Context, queue string, labels []hashedLabel) {
+	createdAt := time.Now().UnixMilli()
+	for _, l := range labels {
+		err := a.Dictionary.Create(ctx, TargetLabel{Queue: queue, ID: l.id, Label: l.label, CreatedAt: createdAt})
+		if err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+			a.Logger.Warnw("failed to record target label", "queue", queue, "id", l.id, "label", l.label, "error", err)
+		}
+	}
+}
+
 // signNewBatch returns the batch's own record if an earlier attempt created
 // one; otherwise it creates the signature first, so racing attempts agree.
 func (a *analyzer) signNewBatch(ctx context.Context, batch entity.Batch) (TargetSignature, error) {
@@ -123,9 +147,8 @@ func (a *analyzer) signNewBatch(ctx context.Context, batch entity.Batch) (Target
 		return TargetSignature{}, fmt.Errorf("failed to get the changed targets: %w", err)
 	}
 
-	// TODO(tango): record the labels in the target dictionary before creating the signature.
 	// TODO(tango): add the destination of each new dependency edge to the signature, the RFC's known gap. The adapter must return direct dependencies first.
-	targets, _ := toSignatureTargets(affected)
+	targets, labels := toSignatureTargets(affected)
 	signature = TargetSignature{
 		Queue:        batch.Queue,
 		BatchID:      batch.ID,
@@ -145,6 +168,10 @@ func (a *analyzer) signNewBatch(ctx context.Context, batch entity.Batch) (Target
 		if !found {
 			return TargetSignature{}, fmt.Errorf("signature reported as existing but not found")
 		}
+	} else {
+		// Only the attempt that created the signature records its labels, off the
+		// request path and detached so a finished request does not cancel it.
+		go a.recordLabels(context.WithoutCancel(ctx), batch.Queue, labels)
 	}
 	a.Cache.put(signature)
 	return signature, nil
