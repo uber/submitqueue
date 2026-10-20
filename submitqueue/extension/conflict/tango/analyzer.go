@@ -73,6 +73,7 @@ func (a *analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []e
 	}
 
 	// TODO(tango): read the in-flight signatures concurrently with a bound.
+	// New dependency edges are not in the signatures yet; see the TODO in signNewBatch.
 	var conflicts []entity.Conflict
 	for _, other := range inFlight {
 		theirs, found, err := a.recordedSignature(ctx, other.Queue, other.ID)
