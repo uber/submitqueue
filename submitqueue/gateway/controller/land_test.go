@@ -492,6 +492,12 @@ func TestLand_PublishesToQueue(t *testing.T) {
 				return nil
 			},
 		),
+		// The status record is filed, then the summary re-read to confirm it still holds.
+		summaryStore.EXPECT().Get(gomock.Any(), "123").DoAndReturn(
+			func(context.Context, string) (entity.RequestSummary, error) {
+				return materializedSummary, nil
+			},
+		),
 	)
 
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: cnt}, factoryForStorage(ctrl, store), materializer, noopQueueConfigStore(ctrl), queuepausenoop.New(), registry)

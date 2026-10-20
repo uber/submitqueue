@@ -74,14 +74,18 @@ func TestMaterializer_ActivatesReceiptMapping(t *testing.T) {
 			f := newMaterializerReceiptFixture(gomock.NewController(t))
 			current := testRequestSummary()
 			log := entity.RequestLog{Queue: current.Queue, RequestID: current.RequestID, Type: entity.RequestLogTypeStatus, Status: status, TimestampMs: 20}
-			gomock.InOrder(
+			calls := []any{
 				f.logs.EXPECT().Insert(gomock.Any(), log).Return(nil),
 				f.summaries.EXPECT().Get(gomock.Any(), current.RequestID).Return(current, nil),
 				f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil),
 				f.uris.EXPECT().Create(gomock.Any(), entity.RequestURI{Queue: current.Queue, ChangeURI: current.ChangeURIs[0], ReceivedAtMs: current.ReceivedAtMs, RequestID: current.RequestID}).Return(nil),
 				f.uris.EXPECT().Create(gomock.Any(), entity.RequestURI{Queue: current.Queue, ChangeURI: current.ChangeURIs[1], ReceivedAtMs: current.ReceivedAtMs, RequestID: current.RequestID}).Return(nil),
 				f.receipts.EXPECT().Create(gomock.Any(), receiptFromTestSummary(current)).Return(nil),
-			)
+			}
+			if entity.IsRequestStatusInQueue(status) {
+				calls = append(calls, f.expectRecheck(status))
+			}
+			gomock.InOrder(calls...)
 			require.NoError(t, f.materializer.PersistLog(context.Background(), log))
 		})
 	}
@@ -128,6 +132,7 @@ func TestMaterializer_RetriesReceiptMappingFailure(t *testing.T) {
 		f.receipts.EXPECT().Create(gomock.Any(), receiptFromTestSummary(current)).Return(writeErr),
 		f.summaries.EXPECT().Get(gomock.Any(), current.RequestID).Return(updated, nil),
 		f.receipts.EXPECT().Create(gomock.Any(), receiptFromTestSummary(current)).Return(nil),
+		f.expectRecheck(updated.Status),
 	)
 	require.ErrorIs(t, f.materializer.PersistLog(context.Background(), log), writeErr)
 	require.NoError(t, f.materializer.PersistLog(context.Background(), log))
@@ -161,6 +166,14 @@ func TestMaterializer_DoesNotCreateReceiptAfterURIMappingFailure(t *testing.T) {
 	require.ErrorIs(t, f.materializer.PersistLog(context.Background(), log), writeErr)
 }
 
+// expectRecheck expects the summary re-read that follows filing a status record, reporting
+// the summary still at status.
+func (f materializerReceiptFixture) expectRecheck(status entity.RequestStatus) *gomock.Call {
+	current := testRequestSummary()
+	current.Status = status
+	return f.summaries.EXPECT().Get(gomock.Any(), current.RequestID).Return(current, nil)
+}
+
 func receiptFromTestSummary(summary entity.RequestSummary) entity.RequestReceipt {
 	return entity.RequestReceipt{Queue: summary.Queue, ReceivedAtMs: summary.ReceivedAtMs, RequestID: summary.RequestID}
 }
@@ -175,7 +188,8 @@ func TestMaterializer_RetriesPartialURIActivation(t *testing.T) {
 	current.Status = entity.RequestStatusAccepted
 	log := entity.RequestLog{Queue: current.Queue, RequestID: current.RequestID, Type: entity.RequestLogTypeStatus, Status: current.Status, TimestampMs: current.StatusTimestampMs}
 	f.logs.EXPECT().Insert(gomock.Any(), log).Return(nil).Times(2)
-	f.summaries.EXPECT().Get(gomock.Any(), current.RequestID).Return(current, nil).Times(2)
+	// Two deliveries read the summary; the second, which files the status record, re-reads it.
+	f.summaries.EXPECT().Get(gomock.Any(), current.RequestID).Return(current, nil).Times(3)
 	mapping := func(uri string) entity.RequestURI {
 		return entity.RequestURI{Queue: current.Queue, ChangeURI: uri, ReceivedAtMs: current.ReceivedAtMs, RequestID: current.RequestID}
 	}

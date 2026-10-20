@@ -110,20 +110,54 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 		if err := ensureRequestReceiptMapping(ctx, stores.GetRequestReceiptStore(), summary); err != nil {
 			return err
 		}
-		return fileStatusRecord(ctx, stores.GetQueueRequestStatusStore(), summary, previous, moved)
+		// An event log never moves the summary, so it leaves the status record to the
+		// status logs around it rather than spend a write re-filing an unchanged status.
+		if log.Type != entity.RequestLogTypeStatus {
+			return nil
+		}
+		return fileStatusRecord(ctx, stores.GetQueueRequestStatusStore(), summaries, summary, previous, moved)
 	}
 }
 
 // fileStatusRecord keeps the request's status membership record in step with its summary.
 //
-// It runs on every delivery, like the immutable mappings: putting the record for the
-// summary's current status repairs a delivery that failed after the summary update, and is
-// a no-op when the record already exists. When this delivery moved the summary, the record
+// It runs on every status-log delivery, like the immutable mappings: putting the record for
+// the summary's current status repairs a delivery that failed after the summary update, and
+// is a no-op when the record already exists. When this delivery moved the summary, the record
 // under the previous status is deleted only after the new one is filed, so a request in the
-// queue is never without a record. A record left under an old status by a delivery that
-// failed before that delete is not found again here — the redelivery no longer knows the old
-// status — which is why records are advisory and readers confirm them against the summary.
-func fileStatusRecord(ctx context.Context, records basestorage.QueueRequestStatusStore, summary entity.RequestSummary, previous entity.RequestStatus, moved bool) error {
+// queue is never without a record.
+//
+// Two rules keep records from outliving the status they file:
+//
+//   - Land and Cancel persist logs outside the log consumer's per-request ordering, so another
+//     writer may move the summary on, and delete this status's record, between this
+//     delivery's summary update and its Put. Every writer updates the summary before deleting
+//     the old record, so re-reading the summary after the Put sees any such move, and the
+//     record just filed is removed.
+//   - A redelivery no longer knows the status a failed delivery moved away from, so a
+//     terminal summary deletes the request's record under every in-queue status. Each
+//     terminal redelivery retries that sweep, and it also clears records stranded by earlier
+//     failed moves.
+//
+// A record stranded by a failed move while the request is still in the queue remains until
+// the request finishes, which is why readers must confirm records against the summary.
+func fileStatusRecord(
+	ctx context.Context,
+	records basestorage.QueueRequestStatusStore,
+	summaries basestorage.RequestSummaryStore,
+	summary entity.RequestSummary,
+	previous entity.RequestStatus,
+	moved bool,
+) error {
+	if isTerminalStatus(summary.Status) {
+		for _, status := range entity.InQueueRequestStatuses() {
+			if err := records.Delete(ctx, status, summary.RequestID); err != nil {
+				return fmt.Errorf("failed to remove request status record request_id=%s status=%s: %w", summary.RequestID, status, err)
+			}
+		}
+		return nil
+	}
+
 	if entity.IsRequestStatusInQueue(summary.Status) {
 		record := entity.QueueRequestStatus{
 			Queue:        summary.Queue,
@@ -135,7 +169,17 @@ func fileStatusRecord(ctx context.Context, records basestorage.QueueRequestStatu
 		if err := records.Put(ctx, record); err != nil {
 			return fmt.Errorf("failed to file request status record request_id=%s status=%s: %w", summary.RequestID, summary.Status, err)
 		}
+		current, err := summaries.Get(ctx, summary.RequestID)
+		if err != nil {
+			return fmt.Errorf("failed to re-read request summary request_id=%s: %w", summary.RequestID, err)
+		}
+		if current.Status != summary.Status {
+			if err := records.Delete(ctx, summary.Status, summary.RequestID); err != nil {
+				return fmt.Errorf("failed to remove superseded request status record request_id=%s status=%s: %w", summary.RequestID, summary.Status, err)
+			}
+		}
 	}
+
 	if moved && previous != summary.Status && entity.IsRequestStatusInQueue(previous) {
 		if err := records.Delete(ctx, previous, summary.RequestID); err != nil {
 			return fmt.Errorf("failed to remove request status record request_id=%s status=%s: %w", summary.RequestID, previous, err)

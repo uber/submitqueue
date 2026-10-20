@@ -166,6 +166,11 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 		return materializer
 	}
 	receiptStore.EXPECT().Create(gomock.Any(), entity.RequestReceipt{Queue: "test-queue", ReceivedAtMs: 1, RequestID: "2"}).Return(receiptErr)
+	if receiptErr != nil {
+		return materializer
+	}
+	// Filing the status record re-reads the summary to confirm the status still holds.
+	summaryStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.RequestSummary{RequestID: "2", Queue: "test-queue", Status: entity.RequestStatusAccepted}, nil).AnyTimes()
 	return materializer
 }
 
