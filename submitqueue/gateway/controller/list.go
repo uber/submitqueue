@@ -16,11 +16,8 @@ package controller
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/url"
-	"strconv"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
@@ -36,14 +33,6 @@ const (
 	defaultListPageSize = 50
 	maxListPageSize     = 200
 )
-
-type listPageToken struct {
-	Queue               string
-	ReceivedAtOrAfterMs int64
-	ReceivedBeforeMs    int64
-	LastReceivedAtMs    int64
-	LastRequestID       string
-}
 
 // ListController handles bounded queue receipt-history queries.
 type ListController interface {
@@ -69,7 +58,8 @@ func NewListController(logger *zap.SugaredLogger, scope tally.Scope, stores stor
 	}
 }
 
-// List returns one page of requests received for a queue in the supplied half-open time range.
+// List returns one page of requests received for a queue in a half-open time range, taken from the request on the
+// first page and from the page token afterwards.
 func (c *listController) List(ctx context.Context, req entity.ListRequest) (result entity.ListResult, retErr error) {
 	op := metrics.Begin(c.metricsScope, "list", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
@@ -83,9 +73,6 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 		}
 		return entity.ListResult{}, fmt.Errorf("failed to look up queue %q: %w", req.Queue, err)
 	}
-	if req.ReceivedAtOrAfterMs >= req.ReceivedBeforeMs {
-		return entity.ListResult{}, fmt.Errorf("requires received_at_or_after_ms < received_before_ms: %w", ErrInvalidRequest)
-	}
 	pageSize := int(req.PageSize)
 	if pageSize == 0 {
 		pageSize = defaultListPageSize
@@ -93,26 +80,14 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 	if pageSize < 0 || pageSize > maxListPageSize {
 		return entity.ListResult{}, fmt.Errorf("page_size must be between 0 and %d: %w", maxListPageSize, ErrInvalidRequest)
 	}
+	query, err := resolveListRange(req, pageSize)
+	if err != nil {
+		return entity.ListResult{}, err
+	}
 
 	store, err := c.stores.For(storage.Config{QueueName: req.Queue})
 	if err != nil {
 		return entity.ListResult{}, fmt.Errorf("failed to resolve storage for queue %q: %w", req.Queue, err)
-	}
-
-	query := basestorage.RequestReceiptRange{
-		ReceivedAtOrAfterMs: req.ReceivedAtOrAfterMs,
-		ReceivedBeforeMs:    req.ReceivedBeforeMs,
-		Limit:               pageSize + 1,
-	}
-	if req.PageToken != "" {
-		token, err := decodeListPageToken(req.PageToken)
-		if err != nil {
-			return entity.ListResult{}, fmt.Errorf("invalid page token: %w", ErrInvalidRequest)
-		}
-		if token.Queue != req.Queue || token.ReceivedAtOrAfterMs != req.ReceivedAtOrAfterMs || token.ReceivedBeforeMs != req.ReceivedBeforeMs {
-			return entity.ListResult{}, fmt.Errorf("page token does not match query: %w", ErrInvalidRequest)
-		}
-		query.Before = basestorage.RequestReceiptCursor{ReceivedAtMs: token.LastReceivedAtMs, RequestID: token.LastRequestID}
 	}
 
 	receipts, err := store.GetRequestReceiptStore().List(ctx, query)
@@ -121,6 +96,8 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 	}
 
 	visible := receipts[:min(len(receipts), pageSize)]
+	result.ReceivedAtOrAfterMs = query.ReceivedAtOrAfterMs
+	result.ReceivedBeforeMs = query.ReceivedBeforeMs
 	result.Requests = make([]entity.RequestSummary, 0, len(visible))
 	if len(visible) > 0 {
 		summaries := store.GetRequestSummaryStore()
@@ -134,13 +111,18 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 	}
 	if len(receipts) > pageSize {
 		last := visible[len(visible)-1]
-		result.NextPageToken = encodeListPageToken(listPageToken{
+		token, err := encodeListPageToken(listPageToken{
+			Version:             listPageTokenVersion,
 			Queue:               req.Queue,
-			ReceivedAtOrAfterMs: req.ReceivedAtOrAfterMs,
-			ReceivedBeforeMs:    req.ReceivedBeforeMs,
+			ReceivedAtOrAfterMs: query.ReceivedAtOrAfterMs,
+			ReceivedBeforeMs:    query.ReceivedBeforeMs,
 			LastReceivedAtMs:    last.ReceivedAtMs,
 			LastRequestID:       last.RequestID,
 		})
+		if err != nil {
+			return entity.ListResult{}, fmt.Errorf("failed to encode page token queue=%q: %w", req.Queue, err)
+		}
+		result.NextPageToken = token
 	}
 	c.logger.Debugw("queue requests listed", "queue", req.Queue, "request_count", len(result.Requests), "has_next_page", result.NextPageToken != "")
 	return result, nil
@@ -161,49 +143,4 @@ func readListSummary(ctx context.Context, summaries basestorage.RequestSummarySt
 		return entity.RequestSummary{}, &InternalConsistencyError{Message: fmt.Sprintf("request receipt disagrees with public summary queue=%q request_id=%q", queue, receipt.RequestID)}
 	}
 	return summary, nil
-}
-
-func encodeListPageToken(token listPageToken) string {
-	values := url.Values{
-		"queue":                   {token.Queue},
-		"received_at_or_after_ms": {strconv.FormatInt(token.ReceivedAtOrAfterMs, 10)},
-		"received_before_ms":      {strconv.FormatInt(token.ReceivedBeforeMs, 10)},
-		"last_received_at_ms":     {strconv.FormatInt(token.LastReceivedAtMs, 10)},
-		"last_request_id":         {token.LastRequestID},
-	}
-	return base64.RawURLEncoding.EncodeToString([]byte(values.Encode()))
-}
-
-func decodeListPageToken(encoded string) (listPageToken, error) {
-	data, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return listPageToken{}, err
-	}
-	values, err := url.ParseQuery(string(data))
-	if err != nil {
-		return listPageToken{}, err
-	}
-	receivedAtOrAfterMs, err := strconv.ParseInt(values.Get("received_at_or_after_ms"), 10, 64)
-	if err != nil {
-		return listPageToken{}, err
-	}
-	receivedBeforeMs, err := strconv.ParseInt(values.Get("received_before_ms"), 10, 64)
-	if err != nil {
-		return listPageToken{}, err
-	}
-	lastReceivedAtMs, err := strconv.ParseInt(values.Get("last_received_at_ms"), 10, 64)
-	if err != nil {
-		return listPageToken{}, err
-	}
-	token := listPageToken{
-		Queue:               values.Get("queue"),
-		ReceivedAtOrAfterMs: receivedAtOrAfterMs,
-		ReceivedBeforeMs:    receivedBeforeMs,
-		LastReceivedAtMs:    lastReceivedAtMs,
-		LastRequestID:       values.Get("last_request_id"),
-	}
-	if token.Queue == "" || token.LastRequestID == "" || token.LastReceivedAtMs <= 0 || token.ReceivedAtOrAfterMs >= token.ReceivedBeforeMs {
-		return listPageToken{}, fmt.Errorf("invalid token fields")
-	}
-	return token, nil
 }

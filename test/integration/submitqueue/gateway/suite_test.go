@@ -189,7 +189,7 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: resp.Sqid, Queue: req.Queue})
 	require.NoError(t, err)
 	listed, err := s.client.List(s.ctx, &pb.ListRequest{
-		Queue: req.Queue, ReceivedAtOrAfterMs: summary.Request.ReceivedAtMs, ReceivedBeforeMs: summary.Request.ReceivedAtMs + 1,
+		Queue: req.Queue, ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: summary.Request.ReceivedAtMs}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: summary.Request.ReceivedAtMs + 1},
 	})
 	require.NoError(t, err)
 	assert.Contains(t, listed.Requests, summary.Request)
@@ -225,7 +225,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 		RequestID: "904", Queue: "test-queue", ReceivedAtMs: 180, Status: entity.RequestStatusAccepting, Version: 1,
 	}))
 
-	resp, err := s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1})
+	resp, err := s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 50}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 250}, PageSize: 1})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "903", resp.Requests[0].Sqid)
@@ -242,10 +242,12 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	updated.Metadata = map[string]string{"build": "url"}
 	require.NoError(t, queueStore.GetRequestSummaryStore().Update(s.ctx, updated, current.Version, current.Version+1))
 
-	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", PageSize: 1, PageToken: resp.NextPageToken})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "902", resp.Requests[0].Sqid)
+	assert.Equal(t, int64(50), resp.ReceivedAtOrAfterMs)
+	assert.Equal(t, int64(250), resp.ReceivedBeforeMs)
 	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "902", Queue: "test-queue"})
 	require.NoError(t, err)
 	assert.Equal(t, summary.Request, resp.Requests[0])
@@ -254,14 +256,14 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	assert.Equal(t, map[string]string{"build": "url"}, resp.Requests[0].Metadata)
 	require.NotEmpty(t, resp.NextPageToken)
 
-	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 50}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 250}, PageSize: 1, PageToken: resp.NextPageToken})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "901", resp.Requests[0].Sqid)
 	assert.Equal(t, string(entity.RequestStatusAccepted), resp.Requests[0].Status)
 	assert.Empty(t, resp.NextPageToken)
 
-	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200})
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 100}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 200}})
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "901", resp.Requests[0].Sqid)
@@ -276,9 +278,9 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
 	_, err = s.client.List(s.ctx, &pb.ListRequest{
-		Queue:               "missing-queue",
-		ReceivedAtOrAfterMs: 1,
-		ReceivedBeforeMs:    2,
+		Queue:              "missing-queue",
+		ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 1},
+		ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 2},
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -323,7 +325,7 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	require.NoError(t, receiptStore.GetRequestReceiptStore().Create(s.ctx, entity.RequestReceipt{
 		Queue: "test-queue", RequestID: "999", ReceivedAtMs: 500,
 	}))
-	_, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 500, ReceivedBeforeMs: 501})
+	_, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 500}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 501}})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }

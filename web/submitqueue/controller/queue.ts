@@ -3,30 +3,35 @@ import type { LoadResult } from "../entity/index.js";
 import type { RequestListModel, RequestSummaryModel } from "../entity/index.js";
 import type { GatewayReader } from "../extension/gateway/index.js";
 import { requestChangeLabels, requestChangeLinks } from "../core/change.js";
-import { decodeWindowCursor, defaultRequestWindow, encodeWindowCursor, REQUEST_PAGE_SIZE } from "../core/window.js";
+import { defaultRequestWindow, REQUEST_PAGE_SIZE, type RequestPageStart } from "../core/window.js";
 import { INTERNAL_ERROR, INVALID_INPUT } from "./error.js";
 import { callGateway, type GatewayLoadOptions } from "./gateway-call.js";
-import { mapRequestSummary } from "./mapping.js";
+import { mapRequestSummary, mapResponseWindow } from "./mapping.js";
 import { redirect, refreshModel, render, type PageDependencies, type SubmitQueueWebResult } from "./page.js";
 
-export interface LoadRequestListInput {
+export type LoadRequestListInput = RequestPageStart & {
   queue: string;
-  receivedAtOrAfterMs: number;
-  receivedBeforeMs: number;
   pageSize?: number;
-  pageToken?: string;
-}
+};
 
 function validListInput(input: LoadRequestListInput): boolean {
   const pageSize = input.pageSize ?? REQUEST_PAGE_SIZE;
-  return (
-    input.queue !== "" &&
-    Number.isSafeInteger(input.receivedAtOrAfterMs) &&
-    Number.isSafeInteger(input.receivedBeforeMs) &&
-    input.receivedAtOrAfterMs < input.receivedBeforeMs &&
-    Number.isInteger(pageSize) &&
-    pageSize > 0
-  );
+  const validStart = "pageToken" in input
+    ? input.pageToken !== ""
+    : Number.isSafeInteger(input.window.fromMs) && Number.isSafeInteger(input.window.toMs) && input.window.fromMs < input.window.toMs;
+  return input.queue !== "" && validStart && Number.isInteger(pageSize) && pageSize > 0;
+}
+
+/** The gateway `list` input for one page; bounds are sent only when no token carries them. */
+export function gatewayListInput(queue: string, start: RequestPageStart, pageSize = REQUEST_PAGE_SIZE): Parameters<GatewayReader["list"]>[0] {
+  if ("pageToken" in start) {
+    return { queue, pageSize, pageToken: start.pageToken };
+  }
+  return {
+    queue, pageSize, pageToken: "",
+    receivedLowerBound: { case: "receivedAtOrAfterMs", value: BigInt(start.window.fromMs) },
+    receivedUpperBound: { case: "receivedBeforeMs", value: BigInt(start.window.toMs) },
+  };
 }
 
 export async function loadRequestList(
@@ -37,17 +42,16 @@ export async function loadRequestList(
   if (!validListInput(input)) {
     return { ok: false, error: INVALID_INPUT };
   }
-  const call = await callGateway(options, "list", { queue: input.queue }, () => gateway.list({
-    queue: input.queue,
-    receivedAtOrAfterMs: BigInt(input.receivedAtOrAfterMs),
-    receivedBeforeMs: BigInt(input.receivedBeforeMs),
-    pageSize: input.pageSize ?? REQUEST_PAGE_SIZE,
-    pageToken: input.pageToken ?? "",
-  }));
+  const call = await callGateway(options, "list", { queue: input.queue }, () =>
+    gateway.list(gatewayListInput(input.queue, input, input.pageSize)));
   if (!call.ok) {
     return call;
   }
   const response = call.value;
+  const window = mapResponseWindow(response);
+  if (window === null) {
+    return { ok: false, error: INTERNAL_ERROR };
+  }
   const requests: RequestSummaryModel[] = [];
   for (const value of response.requests) {
     const request = mapRequestSummary(value);
@@ -60,17 +64,12 @@ export async function loadRequestList(
     ok: true,
     data: {
       queue: input.queue,
-      receivedAtOrAfterMs: input.receivedAtOrAfterMs,
-      receivedBeforeMs: input.receivedBeforeMs,
+      receivedAtOrAfterMs: window.fromMs,
+      receivedBeforeMs: window.toMs,
       requests,
       nextPageToken: response.nextPageToken === "" ? null : response.nextPageToken,
     },
   };
-}
-
-// Namespaced so a codec shared with other pages or modules never accepts this page's cursors elsewhere.
-function queueCursorScope(queue: string): string {
-  return `submitqueue:queue:${queue}`;
 }
 
 export async function loadQueuePage(
@@ -80,26 +79,23 @@ export async function loadQueuePage(
 ): Promise<SubmitQueueWebResult> {
   const latestHref = deps.paths.requests(queue);
   if (search.from !== undefined || search.to !== undefined ||
-    (search.page !== undefined && typeof search.page !== "string")) {
+    (search.page !== undefined && (typeof search.page !== "string" || search.page === ""))) {
     return redirect(latestHref);
   }
-  const pageWindow = typeof search.page === "string" ? await decodeWindowCursor(deps.cursors, queueCursorScope(queue), search.page) : undefined;
-  if (search.page !== undefined && pageWindow === undefined) {
-    return redirect(latestHref);
-  }
-  const window = pageWindow ?? defaultRequestWindow(deps.now());
-  const loaded = deps.catalog.ok ? await loadRequestList(deps.gateway, {
-    queue, receivedAtOrAfterMs: window.fromMs, receivedBeforeMs: window.toMs,
-    pageSize: REQUEST_PAGE_SIZE, ...(window.pageToken ? { pageToken: window.pageToken } : {}),
+  const pageToken = search.page;
+  const liveWindow = defaultRequestWindow(deps.now());
+  const result = deps.catalog.ok ? await loadRequestList(deps.gateway, {
+    queue, pageSize: REQUEST_PAGE_SIZE, ...(pageToken === undefined ? { window: liveWindow } : { pageToken }),
   }, deps.gatewayOptions) : deps.catalog;
-  const result = loaded.ok && loaded.data.nextPageToken ? {
-    ...loaded,
-    data: { ...loaded.data, nextPageToken: await encodeWindowCursor(deps.cursors, queueCursorScope(queue), window, loaded.data.nextPageToken) },
-  } : loaded;
+  // The gateway rejects a stale or foreign token; restart from the live window rather than show an error.
+  if (pageToken !== undefined && !result.ok && result.error === INVALID_INPUT) {
+    return redirect(latestHref);
+  }
+  const window = result.ok ? { fromMs: result.data.receivedAtOrAfterMs, toMs: result.data.receivedBeforeMs } : liveWindow;
   return render({
-    kind: "queue", key: `${queue}:${typeof search.page === "string" ? search.page : "live"}`, title: queue,
-    basePath: deps.paths.basePath, queue, window: { fromMs: window.fromMs, toMs: window.toMs },
-    paged: pageWindow !== undefined, latestHref, result, refresh: refreshModel(result, pageWindow ? latestHref : null),
+    kind: "queue", key: `${queue}:${pageToken ?? "live"}`, title: queue,
+    basePath: deps.paths.basePath, queue, window,
+    paged: pageToken !== undefined, latestHref, result, refresh: refreshModel(result, pageToken !== undefined ? latestHref : null),
     changeLinks: result.ok ? requestChangeLinks(queue, result.data.requests, deps.paths) : {},
     changeLabels: result.ok ? requestChangeLabels(result.data.requests) : {},
   });

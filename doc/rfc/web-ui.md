@@ -62,7 +62,7 @@ Summary is the default request view, and `?view=history` makes History shareable
 
 ## Behavior
 
-**Windows and pagination.** `List` takes a queue and a half-open receipt window. The module recalculates the trailing 24-hour window on refresh and keeps timestamps out of the URL. Older pages carry the original bounds in an opaque cursor, signed under a scope that names the page, so a cursor cannot be replayed elsewhere. The reference host signs with HMAC under a key separate from any viewer credential. Refreshing an older page returns to the live first page.
+**Windows and pagination.** `List` takes a queue and a half-open receipt window. The module recalculates the trailing 24-hour window on refresh and keeps timestamps out of the URL. Older pages carry the gateway's continuation token verbatim as `?page=`; the token holds the original bounds, and the page shows the window the gateway echoes back. The module neither wraps nor signs the token, so hosts need no secret, and a token the gateway rejects redirects to the live first page. Refreshing an older page returns to the live first page.
 
 **Refresh and polling.** A refresh does not schedule the next until it has finished rendering. The wait is the poll interval plus jitter, grows across consecutive transport failures, and pauses while the document is hidden or the browser is offline. A request view stops once the summary is terminal and loaded history contains the same terminal status, or when a terminal summary pairs with a non-retryable history error that polling cannot fix. A queue list keeps polling for the life of its window. A change page that scans the receipt window refreshes only on request, because each render reads up to ten queue pages; a pinned version, found by one exact lookup, keeps polling.
 
@@ -92,7 +92,7 @@ The workspace lives under `web/` and repeats the Go root layout; the UI is a gat
 
 ## Acceptance
 
-- Unit tests cover route round-trips, readable paths, timestamp conversion, stable list bounds, cursor scoping and tampering, error classification and host classifiers, catalog caching, request-scoped logging, gateway and page metrics, mount paths and authorization, client navigation, and polling (transition-aware single flight, progressive backoff, hidden and offline pause, history-aware terminal stop).
+- Unit tests cover route round-trips, readable paths, timestamp conversion, stable list bounds, token-only continuation and rejected tokens, error classification and host classifiers, catalog caching, request-scoped logging, gateway and page metrics, mount paths and authorization, client navigation, and polling (transition-aware single flight, progressive backoff, hidden and offline pause, history-aware terminal stop).
 - Every protected host layout and route repeats the authentication check rather than relying only on the Next.js proxy.
 - `//web/test/e2e/submitqueue:web_test` runs the Bazel-built Go services, the Bazel-built web image, and a digest-pinned MySQL image with pulls and Dockerfile builds disabled. It covers the Basic-auth challenge, explicit h2c, newest-first lists, client-side navigation, a slash-containing request ID, lifecycle and build history, paginated change history, and axe checks.
 - Built package tarballs are inspected for contents and forbidden imports, typechecked by a consumer written only against public entry points, rendered by a plain Node consumer through `handle`, and server-rendered and hydrated under React 18.

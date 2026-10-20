@@ -1,7 +1,6 @@
 import type { LoadResult, QueueModel, SubmitQueuePageModel, WebRefreshModel } from "../entity/index.js";
 import type { SubmitQueueGateway } from "../extension/gateway/index.js";
 import type { WebPaths } from "../core/paths.js";
-import type { CursorCodec } from "../extension/cursor/index.js";
 import type { GatewayLoadOptions } from "./gateway-call.js";
 
 /** Outcome of one page request; only `render` carries a page. */
@@ -14,7 +13,6 @@ export type SubmitQueueWebResult =
 /** Dependencies of one page load, resolved for the current request. */
 export interface PageDependencies {
   gateway: SubmitQueueGateway;
-  cursors: CursorCodec;
   paths: WebPaths;
   now(): number;
   gatewayOptions: GatewayLoadOptions;

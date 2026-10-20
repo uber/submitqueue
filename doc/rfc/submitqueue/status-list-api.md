@@ -59,9 +59,9 @@ The URI result is intentionally unpaginated and has a hard maximum of 100 reques
 
 ### List
 
-`List` is a queue-scoped request receipt history query. It requires a queue and a bounded half-open receipt-time interval. Both bounds are required, and the start must be less than the end.
+`List` is a queue-scoped request receipt history query. It requires a queue and a bounded half-open receipt-time interval. The first page must supply both bounds, and the start must be less than the end.
 
-Results are ordered by `(received_at_ms DESC, sqid DESC)`, so the newest requests are returned first. Pagination uses an opaque token bound to the original queue and time range plus the last returned ordering tuple. Reusing a token with different query parameters is invalid.
+Results are ordered by `(received_at_ms DESC, sqid DESC)`, so the newest requests are returned first. Pagination uses an opaque, versioned token bound to the original queue and time range plus the last returned ordering tuple. A continuation needs only the queue and the token: the window comes from the token, and a bound the caller also supplies must match it. Each response echoes the window it was read from, so a client can show it without decoding the token. The token is not signed; the gateway validates every field, and a forged token can only select a window the caller could have asked for directly.
 
 Page size is optional and subject to a server default and maximum.
 

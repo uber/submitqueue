@@ -45,7 +45,8 @@ func (s *E2EIntegrationSuite) TestFakeDemo_IndependentAndStackedChanges() {
 	var summaries []*gatewaypb.RequestSummary
 	pollUntil(persistPollInterval, func() bool {
 		resp, err := s.gatewayClient.List(s.ctx, &gatewaypb.ListRequest{
-			Queue: queue, ReceivedAtOrAfterMs: started, ReceivedBeforeMs: time.Now().UnixMilli() + 1, PageSize: 10,
+			Queue: queue, PageSize: 10,
+			ReceivedLowerBound: &gatewaypb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: started}, ReceivedUpperBound: &gatewaypb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: time.Now().UnixMilli() + 1},
 		})
 		require.NoError(t, err)
 		summaries = resp.Requests

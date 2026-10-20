@@ -4,7 +4,6 @@ import React, { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { SubmitQueueApp, SubmitQueueShell } from "@submitqueue/web-submitqueue";
 import { createSubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
-import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/cursor/hmac";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
 
 import { StovepipeApp } from "@submitqueue/web-stovepipe";
@@ -14,7 +13,6 @@ assert.match(React.version, /^18\./u);
 
 const web = createSubmitQueueWeb({
   gateway: createFakeGatewayReader(),
-  cursors: newHmacCursorCodec("react-18-consumer-secret"),
 });
 const routes = [
   { path: "/", search: {} },

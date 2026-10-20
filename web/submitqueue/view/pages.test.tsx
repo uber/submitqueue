@@ -4,7 +4,6 @@ import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { SubmitQueueApp } from "./app.js";
 import { SubmitQueuePage, SubmitQueueShell, SubmitQueueStatePage } from "./pages.js";
 import { createSubmitQueueWeb } from "../module.js";
-import { newHmacCursorCodec } from "../extension/cursor/hmac/index.js";
 import { createFakeGatewayReader, gatewayHistoryFixture, gatewayRequestFixture } from "../extension/gateway/mock/index.js";
 import { WebPaths } from "../core/paths.js";
 import { webErrorForGatewayCode } from "../controller/error.js";
@@ -16,7 +15,7 @@ const gateway = createFakeGatewayReader({
   history: [gatewayHistoryFixture()],
 });
 const web = createSubmitQueueWeb({
-  gateway, cursors: newHmacCursorCodec("host-secret"), paths: new WebPaths({ basePath: "/sq" }),
+  gateway, paths: new WebPaths({ basePath: "/sq" }),
 });
 
 describe("default reusable application views", () => {

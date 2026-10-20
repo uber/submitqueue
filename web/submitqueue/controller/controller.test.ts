@@ -65,15 +65,12 @@ describe("server presentation mapping", () => {
     }
   });
 
-  it("maps a request page while preserving its bounds", async () => {
-    const reader = createFakeGatewayReader({ nextPageToken: "next" });
-    const result = await loadRequestList(reader, {
-      queue: "demo-queue",
-      receivedAtOrAfterMs: 100,
-      receivedBeforeMs: 200,
-      pageToken: "current",
-    });
+  it("maps a continuation page with the window its token carries", async () => {
+    const reader = createFakeGatewayReader({ nextPageToken: "next", window: { fromMs: 100n, toMs: 200n } });
+    const list = vi.spyOn(reader, "list");
+    const result = await loadRequestList(reader, { queue: "demo-queue", pageToken: "current" });
 
+    expect(list).toHaveBeenCalledWith({ queue: "demo-queue", pageSize: 50, pageToken: "current" });
     expect(result).toMatchObject({
       ok: true,
       data: {
@@ -93,11 +90,7 @@ describe("server presentation mapping", () => {
     const getRequestHistoryByID = vi.fn(fake.getRequestHistoryByID);
     const reader = { list, getRequestSummaryByID, getRequestHistoryByID };
 
-    await loadRequestList(reader, {
-      queue: "demo-queue",
-      receivedAtOrAfterMs: 100,
-      receivedBeforeMs: 200,
-    });
+    await loadRequestList(reader, { queue: "demo-queue", window: { fromMs: 100, toMs: 200 } });
     await loadRequestDetail(reader, {
       queue: "demo-queue",
       sqid: "demo-queue/1",
@@ -111,11 +104,7 @@ describe("server presentation mapping", () => {
   it("returns an explicit invalid-input result before calling the gateway", async () => {
     const gateway = createFakeGatewayReader();
     const list = vi.spyOn(gateway, "list");
-    const result = await loadRequestList(gateway, {
-      queue: "demo-queue",
-      receivedAtOrAfterMs: 200,
-      receivedBeforeMs: 100,
-    });
+    const result = await loadRequestList(gateway, { queue: "demo-queue", window: { fromMs: 200, toMs: 100 } });
 
     expect(result).toMatchObject({ ok: false, error: { kind: "user" } });
     expect(list).not.toHaveBeenCalled();
@@ -257,7 +246,7 @@ describe("gateway error classification", () => {
     const onLog = vi.fn();
     const result = await loadRequestList(
       createFakeGatewayReader({ listError: new Error("custom transport: upstream timed out") }),
-      { queue: "demo-queue", receivedAtOrAfterMs: 100, receivedBeforeMs: 200 },
+      { queue: "demo-queue", window: { fromMs: 100, toMs: 200 } },
       { classifyError: () => "unavailable", onLog },
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "transient", retryable: true } });
@@ -268,7 +257,7 @@ describe("gateway error classification", () => {
     const onLog = vi.fn();
     const result = await loadRequestList(
       createFakeGatewayReader({ listError: new Error("upstream") }),
-      { queue: "demo-queue", receivedAtOrAfterMs: 100, receivedBeforeMs: 200 },
+      { queue: "demo-queue", window: { fromMs: 100, toMs: 200 } },
       { classifyError: () => { throw new Error("classifier bug"); }, onLog },
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "internal", retryable: false } });
@@ -287,11 +276,7 @@ describe("gateway error classification", () => {
     const onLog = vi.fn();
     const result = await loadRequestList(
       createFakeGatewayReader({ listError: cause }),
-      {
-        queue: "demo-queue",
-        receivedAtOrAfterMs: 100,
-        receivedBeforeMs: 200,
-      },
+      { queue: "demo-queue", window: { fromMs: 100, toMs: 200 } },
       { onLog },
     );
 

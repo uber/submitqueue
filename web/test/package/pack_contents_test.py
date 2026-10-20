@@ -46,7 +46,6 @@ _EXPECTED_FILES = {
     "package/view/styles.css",
     "package/dist/index.d.ts",
     "package/dist/server.d.ts",
-    "package/dist/extension/cursor/hmac/index.d.ts",
     "package/dist/extension/gateway/mock/index.d.ts",
     "package/README.md",
 }

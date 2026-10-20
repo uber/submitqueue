@@ -61,18 +61,18 @@ func (c *Client) List(ctx context.Context, q ListQuery) ([]*pb.RequestSummary, e
 		return nil, fmt.Errorf("queue must not be empty")
 	}
 
-	// Both bounds are fixed before the first page. The gateway requires
-	// received_at_or_after_ms < received_before_ms, so an unset upper bound
-	// rejects every call, and its continuation token pins both bounds, so one
-	// recomputed per page would be rejected from the second page on.
+	// The gateway requires both bounds on the first page; its continuation
+	// token carries the window, so later pages send only the token.
 	now := time.Now()
-	req := &pb.ListRequest{
-		Queue:            q.Queue,
-		PageSize:         int32(q.PageSize),
-		ReceivedBeforeMs: now.UnixMilli(),
-	}
+	var receivedAtOrAfterMs int64
 	if q.Since > 0 {
-		req.ReceivedAtOrAfterMs = now.Add(-q.Since).UnixMilli()
+		receivedAtOrAfterMs = now.Add(-q.Since).UnixMilli()
+	}
+	req := &pb.ListRequest{
+		Queue:              q.Queue,
+		PageSize:           int32(q.PageSize),
+		ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: receivedAtOrAfterMs},
+		ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: now.UnixMilli()},
 	}
 
 	var out []*pb.RequestSummary
@@ -92,7 +92,7 @@ func (c *Client) List(ctx context.Context, q ListQuery) ([]*pb.RequestSummary, e
 		if resp.GetNextPageToken() == "" || len(resp.GetRequests()) == 0 {
 			return out, nil
 		}
-		req.PageToken = resp.GetNextPageToken()
+		req = &pb.ListRequest{Queue: q.Queue, PageSize: int32(q.PageSize), PageToken: resp.GetNextPageToken()}
 	}
 }
 

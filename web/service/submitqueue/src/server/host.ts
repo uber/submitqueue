@@ -1,8 +1,6 @@
 import "server-only";
 
-import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/cursor/hmac";
 import { createSubmitQueueWeb, type SubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
-import { loadCursorSecret } from "./config";
 import { resolveReferenceGateway } from "./gateway";
 import { instrumentSubmitQueueWeb } from "./instrumentation";
 import { referenceTracer, resolveReferenceMeter } from "./observability";
@@ -17,7 +15,6 @@ let web: SubmitQueueWeb | undefined;
 export function resolveReferenceWeb(): SubmitQueueWeb {
   web ??= instrumentSubmitQueueWeb(createSubmitQueueWeb({
     gateway: resolveReferenceGateway,
-    cursors: newHmacCursorCodec(loadCursorSecret()),
   }), resolveReferenceMeter(), referenceTracer);
   return web;
 }

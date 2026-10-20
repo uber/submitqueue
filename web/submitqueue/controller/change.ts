@@ -4,10 +4,11 @@ import type { ChangeDetailModel } from "../entity/index.js";
 import type { GatewayChangeReader, GatewayReader, GatewayRequestSummary } from "../extension/gateway/index.js";
 import { changeHref, parseChangePath, parseChangeUri, type ChangeReference } from "../core/change.js";
 import { WebPaths } from "../core/paths.js";
-import { decodeWindowCursor, defaultRequestWindow, encodeWindowCursor, REQUEST_PAGE_SIZE, type RequestWindow } from "../core/window.js";
+import { defaultRequestWindow, type RequestPageStart, type RequestWindow } from "../core/window.js";
 import { INTERNAL_ERROR, INVALID_INPUT } from "./error.js";
 import { callGateway, type GatewayLoadOptions } from "./gateway-call.js";
-import { mapRequestSummary } from "./mapping.js";
+import { mapRequestSummary, mapResponseWindow } from "./mapping.js";
+import { gatewayListInput } from "./queue.js";
 import { notFound, redirect, refreshModel, render, type PageDependencies, type SubmitQueueWebResult } from "./page.js";
 
 const MAX_CHANGE_SCAN_PAGES = 10;
@@ -21,23 +22,27 @@ export interface GatewayChangeSubmission {
 export interface ChangeSubmissionPage {
   submissions: GatewayChangeSubmission[];
   nextPageToken: string | null;
+  /** Receipt window the gateway scanned, or `null` for an exact lookup. */
+  window: RequestWindow | null;
 }
 
 export interface GatewayChangeSubmissionPage {
   submissions: readonly GatewayChangeSubmission[];
   pagination?: ChangeDetailModel["pagination"];
+  /** Replaces the context's window once the gateway reports the one it scanned. */
+  window?: RequestWindow | null;
 }
 
 /**
  * Finds the submissions of a change: by exact URI when the reference pins a
  * reviewable version, otherwise by scanning at most
- * {@link MAX_CHANGE_SCAN_PAGES} queue pages of the receipt window.
+ * {@link MAX_CHANGE_SCAN_PAGES} queue pages from `start`.
  */
 export async function readChangeSubmissions(
   client: GatewayReader & GatewayChangeReader,
   queue: string,
   reference: ChangeReference,
-  window: RequestWindow,
+  start: RequestPageStart,
   paths = new WebPaths(),
 ): Promise<ChangeSubmissionPage> {
   const submissions: GatewayChangeSubmission[] = [];
@@ -57,30 +62,29 @@ export async function readChangeSubmissions(
   if (reference.uri !== null && reference.scheme !== "git") {
     const response = await client.getRequestSummaryByChangeURI({ queue, changeUri: reference.uri });
     appendSubmissions(response.requests);
-    return { submissions, nextPageToken: null };
+    return { submissions, nextPageToken: null, window: null };
   }
-  let pageToken = window.pageToken ?? "";
-  const seenTokens = new Set<string>(pageToken ? [pageToken] : []);
+  let pageStart = start;
+  let window: RequestWindow | null = null;
+  const seenTokens = new Set<string>("pageToken" in start ? [start.pageToken] : []);
   for (let page = 0; page < MAX_CHANGE_SCAN_PAGES; page += 1) {
-    const response = await client.list({
-      queue,
-      receivedAtOrAfterMs: BigInt(window.fromMs),
-      receivedBeforeMs: BigInt(window.toMs),
-      pageSize: REQUEST_PAGE_SIZE,
-      pageToken,
-    });
+    const response = await client.list(gatewayListInput(queue, pageStart));
+    window ??= mapResponseWindow(response);
+    if (window === null) {
+      throw new Error("The gateway returned an invalid receipt window");
+    }
     appendSubmissions(response.requests);
     if (!response.nextPageToken) {
-      return { submissions, nextPageToken: null };
+      return { submissions, nextPageToken: null, window };
     }
     if (seenTokens.has(response.nextPageToken)) {
       // A gateway contract violation; continuing would present duplicate history.
       throw new Error("The gateway repeated a queue page token");
     }
-    pageToken = response.nextPageToken;
-    seenTokens.add(pageToken);
+    pageStart = { pageToken: response.nextPageToken };
+    seenTokens.add(response.nextPageToken);
   }
-  return { submissions, nextPageToken: pageToken };
+  return { submissions, nextPageToken: "pageToken" in pageStart ? pageStart.pageToken : null, window };
 }
 
 export async function loadChangeSubmissions(
@@ -105,7 +109,14 @@ export async function loadChangeSubmissions(
     }
     submissions.push({ request, version: item.version, versionHref: item.versionHref });
   }
-  return { ok: true, data: { ...context, submissions, ...(page.pagination ? { pagination: page.pagination } : {}) } };
+  return {
+    ok: true,
+    data: {
+      ...context, submissions,
+      ...(page.window !== undefined ? { window: page.window } : {}),
+      ...(page.pagination ? { pagination: page.pagination } : {}),
+    },
+  };
 }
 
 const PROVIDER_NAMES: Readonly<Record<ChangeReference["scheme"], string>> = {
@@ -127,35 +138,36 @@ export async function loadChangePage(
   const latestHref = changeHref(queue, reference, reference.version !== null, deps.paths);
   const scansQueue = reference.version === null || reference.scheme === "git";
   if (search.from !== undefined || search.to !== undefined ||
-    (search.page !== undefined && (typeof search.page !== "string" || !scansQueue))) {
+    (search.page !== undefined && (typeof search.page !== "string" || search.page === "" || !scansQueue))) {
     return redirect(latestHref);
   }
-  const scope = `submitqueue:change:${JSON.stringify([queue, reference.logicalPath, reference.version])}`;
-  const pageWindow = typeof search.page === "string" ? await decodeWindowCursor(deps.cursors, scope, search.page) : undefined;
-  if (search.page !== undefined && pageWindow === undefined) {
-    return redirect(latestHref);
-  }
-  const window = pageWindow ?? defaultRequestWindow(deps.now());
+  const pageToken = search.page;
+  const liveWindow = defaultRequestWindow(deps.now());
   const result = deps.catalog.ok ? await loadChangeSubmissions(async () => {
-    const page = await readChangeSubmissions(deps.gateway, queue, reference, window, deps.paths);
+    const page = await readChangeSubmissions(
+      deps.gateway, queue, reference, pageToken === undefined ? { window: liveWindow } : { pageToken }, deps.paths);
     return {
       submissions: page.submissions,
-      pagination: page.nextPageToken || pageWindow ? {
-        nextHref: page.nextPageToken
-          ? `${latestHref}?page=${await encodeWindowCursor(deps.cursors, scope, window, page.nextPageToken)}` : null,
-        latestHref: pageWindow ? latestHref : null,
+      window: page.window,
+      pagination: page.nextPageToken || pageToken !== undefined ? {
+        nextHref: page.nextPageToken ? `${latestHref}?page=${encodeURIComponent(page.nextPageToken)}` : null,
+        latestHref: pageToken !== undefined ? latestHref : null,
       } : undefined,
     };
   }, {
     queue, provider: PROVIDER_NAMES[reference.scheme],
     host: reference.host, repository: reference.repository, review: reference.review, pinnedVersion: reference.version,
     logicalHref: changeHref(queue, reference, false, deps.paths),
-    window: scansQueue ? { fromMs: window.fromMs, toMs: window.toMs } : null,
+    window: scansQueue ? liveWindow : null,
   }, deps.gatewayOptions) : deps.catalog;
-  const refresh = refreshModel(result, pageWindow ? latestHref : null);
+  // The gateway rejects a stale or foreign token; restart from the live scan rather than show an error.
+  if (pageToken !== undefined && !result.ok && result.error === INVALID_INPUT) {
+    return redirect(latestHref);
+  }
+  const refresh = refreshModel(result, pageToken !== undefined ? latestHref : null);
   return render({
     kind: "change",
-    key: `${queue}:${reference.logicalPath}:${reference.version ?? "all"}:${typeof search.page === "string" ? search.page : "live"}`,
+    key: `${queue}:${reference.logicalPath}:${reference.version ?? "all"}:${pageToken ?? "live"}`,
     title: reference.review, basePath: deps.paths.basePath, result,
     // Each render of a scanning page reads up to MAX_CHANGE_SCAN_PAGES queue pages, too costly to poll.
     refresh: scansQueue ? { ...refresh, terminal: true } : refresh,

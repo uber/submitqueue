@@ -1,4 +1,5 @@
-import { safeInt64ToNumber } from "../core/int64.js";
+import { safeInt64ToNumber, type Int64Value } from "../core/int64.js";
+import type { RequestWindow } from "../core/window.js";
 import type { HistoryEventModel, RequestSummaryModel } from "../entity/index.js";
 import type { GatewayHistoryEvent, GatewayRequestSummary } from "../extension/gateway/index.js";
 
@@ -16,6 +17,12 @@ export function mapRequestSummary(value: GatewayRequestSummary): RequestSummaryM
     lastError: value.lastError === "" ? null : value.lastError,
     metadata: { ...value.metadata },
   };
+}
+
+export function mapResponseWindow(value: { receivedAtOrAfterMs: Int64Value; receivedBeforeMs: Int64Value }): RequestWindow | null {
+  const fromMs = safeInt64ToNumber(value.receivedAtOrAfterMs);
+  const toMs = safeInt64ToNumber(value.receivedBeforeMs);
+  return fromMs === null || toMs === null || fromMs >= toMs ? null : { fromMs, toMs };
 }
 
 export function mapHistoryEvent(value: GatewayHistoryEvent): HistoryEventModel | null {

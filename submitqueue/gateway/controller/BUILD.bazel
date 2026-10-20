@@ -6,6 +6,7 @@ go_library(
         "cancel.go",
         "land.go",
         "list.go",
+        "list_pagination.go",
         "list_queues.go",
         "ping.go",
         "read_errors.go",

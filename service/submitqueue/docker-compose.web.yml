@@ -16,7 +16,6 @@ services:
       - SUBMITQUEUE_GATEWAY_URL=http://gateway-service:8080
       - SUBMITQUEUE_GATEWAY_ALLOW_PLAINTEXT=true
       - SUBMITQUEUE_WEB_TOKEN=${SUBMITQUEUE_WEB_TOKEN:?set SUBMITQUEUE_WEB_TOKEN}
-      - SUBMITQUEUE_WEB_CURSOR_SECRET=${SUBMITQUEUE_WEB_CURSOR_SECRET:?set SUBMITQUEUE_WEB_CURSOR_SECRET}
     depends_on:
       gateway-service:
         condition: service_started

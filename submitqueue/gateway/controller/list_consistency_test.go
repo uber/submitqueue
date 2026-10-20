@@ -61,7 +61,7 @@ func TestList_ConsistencyErrors(t *testing.T) {
 			f.queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
 			f.receipts.EXPECT().List(gomock.Any(), gomock.Any()).Return([]entity.RequestReceipt{badReceipt}, nil)
 
-			result, err := f.controller.List(context.Background(), entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 200})
+			result, err := f.controller.List(context.Background(), boundedListRequest("q", 1, 200))
 
 			require.Error(t, err)
 			assert.True(t, IsInternalConsistency(err))
@@ -83,7 +83,7 @@ func TestList_DoesNotReturnPartialPage(t *testing.T) {
 	}, nil)
 	f.summaries.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, basestorage.ErrNotFound)
 
-	result, err := f.controller.List(context.Background(), entity.ListRequest{Queue: "q", ReceivedAtOrAfterMs: 1, ReceivedBeforeMs: 200})
+	result, err := f.controller.List(context.Background(), boundedListRequest("q", 1, 200))
 
 	assert.True(t, IsInternalConsistency(err))
 	assert.Equal(t, entity.ListResult{}, result)

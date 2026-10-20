@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { loadCursorSecret, loadGatewayConfiguration, loadMetricsPort } from "./config";
+import { loadGatewayConfiguration, loadMetricsPort } from "./config";
 
 describe("loadGatewayConfiguration", () => {
   it("uses TLS by default", () => {
@@ -36,13 +36,6 @@ describe("loadGatewayConfiguration", () => {
     ["credentials", { SUBMITQUEUE_GATEWAY_URL: "https://user:pass@gateway:8081" }],
   ])("rejects %s", (_name, environment) => {
     expect(() => loadGatewayConfiguration(environment)).toThrow();
-  });
-});
-
-describe("loadCursorSecret", () => {
-  it("requires its own secret", () => {
-    expect(loadCursorSecret({ SUBMITQUEUE_WEB_CURSOR_SECRET: "cursor-secret" })).toBe("cursor-secret");
-    expect(() => loadCursorSecret({ SUBMITQUEUE_WEB_TOKEN: "viewer-password" })).toThrow();
   });
 });
 

@@ -33,11 +33,12 @@ export interface GatewayHistoryEvent {
 }
 
 export interface GatewayReader {
+  /** Bounds are sent on a first page only; a `pageToken` carries its own window. */
   list(
     input: {
       queue: string;
-      receivedAtOrAfterMs: bigint;
-      receivedBeforeMs: bigint;
+      receivedLowerBound?: { case: "receivedAtOrAfterMs"; value: bigint };
+      receivedUpperBound?: { case: "receivedBeforeMs"; value: bigint };
       pageSize: number;
       pageToken: string;
     },
@@ -45,6 +46,8 @@ export interface GatewayReader {
   ): Promise<{
     requests: readonly GatewayRequestSummary[];
     nextPageToken: string;
+    receivedAtOrAfterMs: Int64Value;
+    receivedBeforeMs: Int64Value;
   }>;
   getRequestSummaryByID(
     input: { sqid: string; queue: string },

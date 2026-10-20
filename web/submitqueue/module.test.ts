@@ -3,12 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createSubmitQueueWeb, type SubmitQueueWebOptions, type SubmitQueueWebRequest } from "./module.js";
 import { createFakeGatewayReader, gatewayHistoryFixture, gatewayRequestFixture } from "./extension/gateway/mock/index.js";
 import type { SubmitQueueGateway } from "./extension/gateway/index.js";
-import { newHmacCursorCodec } from "./extension/cursor/hmac/index.js";
 import { WebPaths } from "./core/paths.js";
 import { REQUEST_WINDOW_MS } from "./core/window.js";
 
 const now = 1_700_000_000_000;
-const cursors = newHmacCursorCodec("host-owned-test-secret");
 const paths = new WebPaths({ basePath: "/sq" });
 const sha = "0123456789abcdef0123456789abcdef01234567";
 const gitUri = `git://git.example.com/demo/refs%2Fheads%2Fmain/${sha}`;
@@ -16,7 +14,7 @@ const changePath = "/sq/demo-queue/change/git/git.example.com/demo/refs%2Fheads%
 const githubPath = "/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123";
 
 function newWeb(options: Partial<SubmitQueueWebOptions> = {}) {
-  const web = createSubmitQueueWeb({ gateway: createFakeGatewayReader(), cursors, paths, ...options });
+  const web = createSubmitQueueWeb({ gateway: createFakeGatewayReader(), paths, ...options });
   return (path: string, search: Record<string, string | string[]> = {}, extra: Pick<SubmitQueueWebRequest, "principal" | "requestId" | "onLog"> = {}) =>
     web.handle({ path, search, ...extra });
 }
@@ -47,16 +45,23 @@ describe("createSubmitQueueWeb", () => {
     expect(await newWeb()(path)).toEqual({ kind: "not-found" });
   });
 
-  it("loads live pages and resumes signed snapshot cursors without moving their bounds", async () => {
+  it("links the raw gateway token and resumes it without resending bounds", async () => {
     let clock = now;
-    const gateway = createFakeGatewayReader({ nextPageToken: "opaque/gateway-token" });
+    const gateway = createFakeGatewayReader({
+      nextPageToken: "opaque/gateway-token", window: { fromMs: BigInt(now - REQUEST_WINDOW_MS), toMs: BigInt(now) },
+    });
     const list = vi.spyOn(gateway, "list");
     const get = newWeb({ gateway, now: () => clock });
     const first = await get("/sq/demo-queue");
     expect(first).toMatchObject({
       kind: "render", model: { kind: "queue", paged: false, latestHref: "/sq/demo-queue", refresh: { terminal: false } },
     });
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      receivedLowerBound: { case: "receivedAtOrAfterMs", value: BigInt(now - REQUEST_WINDOW_MS) },
+      receivedUpperBound: { case: "receivedBeforeMs", value: BigInt(now) },
+    }));
     const page = nextPageToken(first);
+    expect(page).toBe("opaque/gateway-token");
     clock += 10_000;
     expect(await get("/sq/demo-queue", { page })).toMatchObject({
       kind: "render", model: {
@@ -64,18 +69,24 @@ describe("createSubmitQueueWeb", () => {
         refresh: { terminal: true, refreshHref: "/sq/demo-queue" },
       },
     });
-    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
-      pageToken: "opaque/gateway-token", receivedAtOrAfterMs: BigInt(now - REQUEST_WINDOW_MS), receivedBeforeMs: BigInt(now),
-    }));
+    expect(list).toHaveBeenLastCalledWith({ queue: "demo-queue", pageSize: 50, pageToken: "opaque/gateway-token" });
     expect(await get("/sq/demo-queue")).toMatchObject({ kind: "render", model: { window: { toMs: clock } } });
   });
 
   it.each([
     { from: "1", to: "2" },
-    { page: ["multiple", "cursors"] },
-    { page: "tampered" },
+    { page: ["multiple", "tokens"] },
+    { page: "" },
   ])("normalizes stale or invalid queue inputs to a live URL: %j", async search => {
     expect(await newWeb()("/sq/demo-queue", search)).toEqual({ kind: "redirect", href: "/sq/demo-queue" });
+  });
+
+  it.each([
+    ["queue", "/sq/demo-queue"],
+    ["change", changePath],
+  ])("restarts a %s page from the live window when the gateway rejects its token", async (_name, path) => {
+    const gateway = createFakeGatewayReader({ listError: new ConnectError("bad token", Code.InvalidArgument) });
+    expect(await newWeb({ gateway })(path, { page: "tampered" })).toEqual({ kind: "redirect", href: path });
   });
 
   it("keeps request IDs opaque and provides complete history navigation and refresh policy", async () => {
@@ -94,20 +105,6 @@ describe("createSubmitQueueWeb", () => {
         refresh: { terminal: true }, result: { ok: true, data: { request: { sqid } } },
       },
     });
-  });
-
-  it("accepts asynchronous cursor infrastructure without putting promises in page URLs", async () => {
-    const get = newWeb({
-      gateway: createFakeGatewayReader({ nextPageToken: "gateway-continuation" }),
-      cursors: {
-        encode: async (...args) => cursors.encode(...args),
-        decode: async (...args) => cursors.decode(...args),
-      },
-      now: () => now,
-    });
-    const page = nextPageToken(await get("/sq/demo-queue"));
-    expect(typeof page).toBe("string");
-    expect(await get("/sq/demo-queue", { page })).toMatchObject({ kind: "render", model: { paged: true, window: { toMs: now } } });
   });
 
   it("returns explicit not-found decisions without exceptions for absent resources", async () => {
@@ -146,11 +143,14 @@ describe("createSubmitQueueWeb", () => {
     });
   });
 
-  it("scopes change continuation to queue, reference, and version while preserving the snapshot", async () => {
+  it("continues a change scan from the raw gateway token and shows the token's window", async () => {
     const gateway = createFakeGatewayReader({ requests: [gatewayRequestFixture({ changeUris: [gitUri] })] });
     const list = vi.spyOn(gateway, "list").mockImplementation(async input => {
       const page = input.pageToken ? Number(input.pageToken.slice(5)) : 0;
-      return { requests: [gatewayRequestFixture({ sqid: String(page + 100), changeUris: [gitUri] })], nextPageToken: page < 10 ? `page-${page + 1}` : "" };
+      return {
+        requests: [gatewayRequestFixture({ sqid: String(page + 100), changeUris: [gitUri] })], nextPageToken: page < 10 ? `page-${page + 1}` : "",
+        receivedAtOrAfterMs: BigInt(now - REQUEST_WINDOW_MS), receivedBeforeMs: BigInt(now),
+      };
     });
     const get = newWeb({ gateway, now: () => now });
     const first = await get(changePath);
@@ -158,26 +158,17 @@ describe("createSubmitQueueWeb", () => {
       throw new Error("Expected a change page");
     }
     const page = new URL(first.model.result.data.pagination!.nextHref!, "http://host.invalid").searchParams.get("page")!;
+    expect(page).toBe("page-10");
     expect(first.model.result.data.submissions[0]?.versionHref).toBe(`${changePath}/${sha}`);
-    expect(await get(`${changePath}/${sha}`, { page })).toEqual({ kind: "redirect", href: `${changePath}/${sha}` });
     expect(list).toHaveBeenCalledTimes(10);
-    expect(await get(changePath, { page })).toMatchObject({
+    expect(await newWeb({ gateway, now: () => now + 10_000 })(changePath, { page })).toMatchObject({
       kind: "render",
-      model: { refresh: { terminal: true, refreshHref: changePath }, result: { ok: true, data: { pagination: { nextHref: null } } } },
+      model: {
+        refresh: { terminal: true, refreshHref: changePath },
+        result: { ok: true, data: { window: { fromMs: now - REQUEST_WINDOW_MS, toMs: now }, pagination: { nextHref: null } } },
+      },
     });
-    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
-      pageToken: "page-10", receivedAtOrAfterMs: BigInt(now - REQUEST_WINDOW_MS), receivedBeforeMs: BigInt(now),
-    }));
-  });
-
-  it("refuses a queue-page cursor on a change page", async () => {
-    const get = newWeb({
-      gateway: createFakeGatewayReader({ nextPageToken: "gateway-continuation", requests: [gatewayRequestFixture({ changeUris: [gitUri] })] }),
-      now: () => now,
-    });
-    const queuePageHref = paths.requests("demo-queue", { pageToken: nextPageToken(await get("/sq/demo-queue")) });
-    const page = new URL(queuePageHref, "https://host.invalid").searchParams.get("page")!;
-    expect(await get(changePath, { page })).toEqual({ kind: "redirect", href: changePath });
+    expect(list).toHaveBeenLastCalledWith({ queue: "demo-queue", pageSize: 50, pageToken: "page-10" });
   });
 
   it("resolves the gateway per request, so authorization-dependent visibility is never cached", async () => {

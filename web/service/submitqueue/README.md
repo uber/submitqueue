@@ -16,7 +16,6 @@ Two Next.js specifics: `next.config.ts` sets `htmlLimitedBots: /.*/` so page tit
 | `SUBMITQUEUE_GATEWAY_URL` | Gateway URL (TLS unless plaintext is allowed) |
 | `SUBMITQUEUE_GATEWAY_ALLOW_PLAINTEXT` | `true` to allow local h2c |
 | `SUBMITQUEUE_WEB_TOKEN` | Basic-auth password for user `test` (demo default `test`) |
-| `SUBMITQUEUE_WEB_CURSOR_SECRET` | Key that signs pagination cursors (demo default `local-demo-cursor-secret`) |
 | `SUBMITQUEUE_WEB_METRICS_PORT` | Optional Prometheus port |
 | `LOG_LEVEL` | pino level, default `info` |
 

@@ -18,13 +18,17 @@ package entity
 type ListRequest struct {
 	// Queue is the exact queue to query.
 	Queue string
-	// ReceivedAtOrAfterMs is the inclusive lower receipt-time bound in Unix milliseconds.
+	// ReceivedAtOrAfterMs is the inclusive lower receipt-time bound in Unix milliseconds; meaningful only when HasReceivedAtOrAfterMs.
 	ReceivedAtOrAfterMs int64
-	// ReceivedBeforeMs is the exclusive upper receipt-time bound in Unix milliseconds.
+	// HasReceivedAtOrAfterMs reports whether ReceivedAtOrAfterMs was supplied.
+	HasReceivedAtOrAfterMs bool
+	// ReceivedBeforeMs is the exclusive upper receipt-time bound in Unix milliseconds; meaningful only when HasReceivedBeforeMs.
 	ReceivedBeforeMs int64
+	// HasReceivedBeforeMs reports whether ReceivedBeforeMs was supplied.
+	HasReceivedBeforeMs bool
 	// PageSize is the maximum number of results to return. Zero selects the server default.
 	PageSize int32
-	// PageToken is an opaque continuation token from a previous result.
+	// PageToken is an opaque continuation token from a previous result, bound to its queue and receipt window.
 	PageToken string
 }
 
@@ -34,4 +38,8 @@ type ListResult struct {
 	Requests []RequestSummary
 	// NextPageToken is an opaque continuation token. Empty means this is the last page.
 	NextPageToken string
+	// ReceivedAtOrAfterMs is the inclusive lower receipt-time bound of the window the page was read from, in Unix milliseconds.
+	ReceivedAtOrAfterMs int64
+	// ReceivedBeforeMs is the exclusive upper receipt-time bound of the window the page was read from, in Unix milliseconds.
+	ReceivedBeforeMs int64
 }

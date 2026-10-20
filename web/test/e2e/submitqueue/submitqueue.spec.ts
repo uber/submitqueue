@@ -220,9 +220,10 @@ test("paginates change history through more than 500 queue requests", async ({ p
     const toMs = BigInt(Date.now());
     let pageToken = "";
     do {
-      const response = await gateway.list({
-        queue, receivedAtOrAfterMs: toMs - 86_400_000n, receivedBeforeMs: toMs,
-        pageSize: 50, pageToken,
+      const response = await gateway.list(pageToken ? { queue, pageSize: 50, pageToken } : {
+        queue, pageSize: 50,
+        receivedLowerBound: { case: "receivedAtOrAfterMs", value: toMs - 86_400_000n },
+        receivedUpperBound: { case: "receivedBeforeMs", value: toMs },
       });
       response.requests.forEach(request => ids.add(request.sqid));
       pageToken = response.nextPageToken;

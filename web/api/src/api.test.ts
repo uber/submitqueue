@@ -10,14 +10,15 @@ describe("generated gateway API", () => {
   it("constructs list requests without losing int64 values", () => {
     const request = create(ListRequestSchema, {
       queue: "demo-queue",
-      receivedAtOrAfterMs: 1_700_000_000_000n,
-      receivedBeforeMs: 1_700_086_400_000n,
+      receivedLowerBound: { case: "receivedAtOrAfterMs", value: 1_700_000_000_000n },
+      receivedUpperBound: { case: "receivedBeforeMs", value: 1_700_086_400_000n },
       pageSize: 50,
     });
 
     expect(request.queue).toBe("demo-queue");
-    expect(request.receivedAtOrAfterMs).toBe(1_700_000_000_000n);
-    expect(request.receivedBeforeMs).toBe(1_700_086_400_000n);
+    expect(request.receivedLowerBound).toEqual({ case: "receivedAtOrAfterMs", value: 1_700_000_000_000n });
+    expect(request.receivedUpperBound).toEqual({ case: "receivedBeforeMs", value: 1_700_086_400_000n });
+    expect(create(ListRequestSchema, { queue: "demo-queue", pageToken: "token" }).receivedLowerBound.case).toBeUndefined();
     expect(SubmitQueueGateway.methods.some((method) => method.localName === "list")).toBe(true);
   });
 });

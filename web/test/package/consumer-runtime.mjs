@@ -4,12 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SubmitQueueApp, SubmitQueueShell } from "@submitqueue/web-submitqueue";
 import { createSubmitQueueWeb, WebPaths } from "@submitqueue/web-submitqueue/server";
-import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/cursor/hmac";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
 
 const web = createSubmitQueueWeb({
   gateway: createFakeGatewayReader(),
-  cursors: newHmacCursorCodec("ordinary-server-signing-secret"),
   paths: new WebPaths({ basePath: "/queues" }),
 });
 const result = await web.handle({ path: "/queues/demo-queue", search: {} });

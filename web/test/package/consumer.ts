@@ -7,10 +7,9 @@ import { createStovepipeWeb, StovepipePaths, type StovepipeService } from "@subm
 import { SubmitQueueApp, SubmitQueueShell } from "@submitqueue/web-submitqueue";
 import { createSubmitQueueWeb, type SubmitQueueGateway } from "@submitqueue/web-submitqueue/server";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
-import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/cursor/hmac";
 
 const gateway: SubmitQueueGateway = createFakeGatewayReader();
-const web = createSubmitQueueWeb({ gateway, cursors: newHmacCursorCodec("consumer-owned-secret") });
+const web = createSubmitQueueWeb({ gateway });
 
 export async function render() {
   const result = await web.handle({

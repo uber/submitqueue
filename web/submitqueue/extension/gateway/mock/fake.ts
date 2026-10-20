@@ -1,6 +1,7 @@
 import type { GatewayHistoryEvent, GatewayRequestSummary, SubmitQueueGateway } from "../gateway.js";
 
 const DEFAULT_TIMESTAMP = 1_700_000_000_000n;
+const DEFAULT_WINDOW_MS = 86_400_000n;
 
 export function gatewayRequestFixture(
   overrides: Partial<GatewayRequestSummary> = {},
@@ -36,6 +37,8 @@ export interface FakeGatewayReaderOptions {
   queuesError?: unknown;
   requests?: readonly GatewayRequestSummary[];
   nextPageToken?: string;
+  /** Window reported for a continuation, which sends no bounds; a first page echoes its own bounds. */
+  window?: { fromMs: bigint; toMs: bigint };
   summary?: GatewayRequestSummary;
   history?: readonly GatewayHistoryEvent[];
   listError?: unknown;
@@ -54,13 +57,16 @@ export function createFakeGatewayReader(options: FakeGatewayReaderOptions = {}):
       }
       return { queues: options.queues ?? [{ name: "demo-queue" }] };
     },
-    async list() {
+    async list(input) {
       if (options.listError !== undefined) {
         throw options.listError;
       }
+      const window = options.window ?? { fromMs: DEFAULT_TIMESTAMP - DEFAULT_WINDOW_MS, toMs: DEFAULT_TIMESTAMP };
       return {
         requests: options.requests ?? [summary],
         nextPageToken: options.nextPageToken ?? "",
+        receivedAtOrAfterMs: input.receivedLowerBound?.value ?? window.fromMs,
+        receivedBeforeMs: input.receivedUpperBound?.value ?? window.toMs,
       };
     },
     async getRequestSummaryByID() {

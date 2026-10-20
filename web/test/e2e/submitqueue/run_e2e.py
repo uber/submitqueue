@@ -202,7 +202,6 @@ def main() -> int:
                 "SQ_CONSUMER_GATE_DIR": str(gate_dir),
                 "SQ_DOCKER_IMAGE_PREFIX": _PROJECT,
                 "SUBMITQUEUE_WEB_TOKEN": _TOKEN,
-                "SUBMITQUEUE_WEB_CURSOR_SECRET": "e2e-cursor-secret",
                 "SQ_MYSQL_INITDB_SKIP_TZINFO": "1",
             }
         )

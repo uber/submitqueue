@@ -21,15 +21,6 @@ export function loadGatewayConfiguration(environment: Environment = process.env)
   return { baseUrl: parseServiceBaseUrl(rawBaseUrl, allowPlaintext), allowPlaintext };
 }
 
-/** The key that signs pagination cursors; independent of any viewer credential so either can rotate alone. */
-export function loadCursorSecret(environment: Environment = process.env): string {
-  const secret = environment.SUBMITQUEUE_WEB_CURSOR_SECRET ?? "";
-  if (secret.length === 0) {
-    throw new Error("SUBMITQUEUE_WEB_CURSOR_SECRET must be set");
-  }
-  return secret;
-}
-
 /** Port for the Prometheus metrics endpoint, or `null` when metrics export is disabled. */
 export function loadMetricsPort(environment: Environment = process.env): number | null {
   const raw = environment.SUBMITQUEUE_WEB_METRICS_PORT;

@@ -46,7 +46,6 @@ export REPO_ROOT := $(shell pwd)
 # Local-only credential for the reference web host. Override it for manual
 # testing; production authentication is deliberately outside this demo.
 export SUBMITQUEUE_WEB_TOKEN ?= test
-export SUBMITQUEUE_WEB_CURSOR_SECRET ?= local-demo-cursor-secret
 
 # Which provider the demo stack targets, and the only difference between a free
 # local run and a live one. Selects a configuration directory rather than a code

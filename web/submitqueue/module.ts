@@ -8,7 +8,6 @@ import { notFound, type PageDependencies, type SubmitQueueWebResult } from "./co
 import { loadQueuePage } from "./controller/queue.js";
 import { loadRequestPage } from "./controller/request.js";
 import type { LoadResult, QueueModel } from "./entity/index.js";
-import type { CursorCodec } from "./extension/cursor/index.js";
 import type { GatewayErrorClassifier, SubmitQueueGateway } from "./extension/gateway/index.js";
 
 export type { SubmitQueueWebResult } from "./controller/page.js";
@@ -47,8 +46,6 @@ export interface QueueCatalogCache {
 export interface SubmitQueueWebOptions {
   /** The gateway, or a resolver called once per load; resolve per request when visibility depends on the viewer. */
   gateway: SubmitQueueGateway | ((context: SubmitQueueRequestContext) => SubmitQueueGateway);
-  /** Signs snapshot-page cursors. */
-  cursors: CursorCodec;
   /** Builds links; its base path is where the host mounts the UI. */
   paths?: WebPaths;
   /** Decides whether the principal may see a route; `false` is reported as `forbidden`. */
@@ -123,7 +120,7 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
       ...(context.onLog ? { onLog: context.onLog } : {}),
     };
     const catalog = await loadQueues(gateway, context);
-    const deps: PageDependencies = { gateway, cursors: options.cursors, paths, now, gatewayOptions, catalog };
+    const deps: PageDependencies = { gateway, paths, now, gatewayOptions, catalog };
     if (route.kind === "queues") {
       return loadDirectoryPage(deps);
     }

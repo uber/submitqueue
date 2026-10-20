@@ -614,13 +614,12 @@ func (s *E2EIntegrationSuite) TestReadAPIs() {
 	var listedSqids []string
 	var pageToken string
 	for {
-		listResponse, listErr := s.gatewayClient.List(s.ctx, &gatewaypb.ListRequest{
-			Queue:               queue,
-			ReceivedAtOrAfterMs: receivedAtOrAfterMs,
-			ReceivedBeforeMs:    receivedBeforeMs,
-			PageSize:            1,
-			PageToken:           pageToken,
-		})
+		listRequest := &gatewaypb.ListRequest{Queue: queue, PageSize: 1, PageToken: pageToken}
+		if pageToken == "" {
+			listRequest.ReceivedLowerBound = &gatewaypb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: receivedAtOrAfterMs}
+			listRequest.ReceivedUpperBound = &gatewaypb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: receivedBeforeMs}
+		}
+		listResponse, listErr := s.gatewayClient.List(s.ctx, listRequest)
 		require.NoError(t, listErr)
 		for _, request := range listResponse.Requests {
 			if request.Sqid == firstSqid || request.Sqid == secondSqid {

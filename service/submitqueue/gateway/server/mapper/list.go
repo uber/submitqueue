@@ -22,18 +22,22 @@ import (
 // ProtoToListRequest maps the wire request to the entity request the controller operates on.
 func ProtoToListRequest(req *pb.ListRequest) entity.ListRequest {
 	return entity.ListRequest{
-		Queue:               req.GetQueue(),
-		ReceivedAtOrAfterMs: req.GetReceivedAtOrAfterMs(),
-		ReceivedBeforeMs:    req.GetReceivedBeforeMs(),
-		PageSize:            req.GetPageSize(),
-		PageToken:           req.GetPageToken(),
+		Queue:                  req.GetQueue(),
+		ReceivedAtOrAfterMs:    req.GetReceivedAtOrAfterMs(),
+		HasReceivedAtOrAfterMs: req.GetReceivedLowerBound() != nil,
+		ReceivedBeforeMs:       req.GetReceivedBeforeMs(),
+		HasReceivedBeforeMs:    req.GetReceivedUpperBound() != nil,
+		PageSize:               req.GetPageSize(),
+		PageToken:              req.GetPageToken(),
 	}
 }
 
 // ListResultToProto maps the domain result to the wire response.
 func ListResultToProto(result entity.ListResult) *pb.ListResponse {
 	return &pb.ListResponse{
-		Requests:      RequestSummariesToProto(result.Requests),
-		NextPageToken: result.NextPageToken,
+		Requests:            RequestSummariesToProto(result.Requests),
+		NextPageToken:       result.NextPageToken,
+		ReceivedAtOrAfterMs: result.ReceivedAtOrAfterMs,
+		ReceivedBeforeMs:    result.ReceivedBeforeMs,
 	}
 }

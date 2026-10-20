@@ -7,8 +7,7 @@
   "typesVersions": {
     "*": {
       "server": ["dist/server.d.ts"],
-      "extension/gateway/mock": ["dist/extension/gateway/mock/index.d.ts"],
-      "extension/cursor/hmac": ["dist/extension/cursor/hmac/index.d.ts"]
+      "extension/gateway/mock": ["dist/extension/gateway/mock/index.d.ts"]
     }
   },
   "sideEffects": [
@@ -31,10 +30,6 @@
     "./extension/gateway/mock": {
       "types": "./dist/extension/gateway/mock/index.d.ts",
       "import": "./dist/extension/gateway/mock/index.js"
-    },
-    "./extension/cursor/hmac": {
-      "types": "./dist/extension/cursor/hmac/index.d.ts",
-      "import": "./dist/extension/cursor/hmac/index.js"
     }
   },
   "scripts": {

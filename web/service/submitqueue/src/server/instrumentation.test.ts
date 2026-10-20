@@ -2,13 +2,12 @@ import { Code, ConnectError, type UnaryRequest, type UnaryResponse } from "@conn
 import { SpanStatusCode, type Meter, type Tracer } from "@opentelemetry/api";
 import { createSubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
-import { newHmacCursorCodec } from "@submitqueue/web-submitqueue/extension/cursor/hmac";
 import { describe, expect, it, vi } from "vitest";
 import { instrumentSubmitQueueWeb, measureGatewayRequests } from "./instrumentation";
 
 function createHostFixture() {
   const gateway = createFakeGatewayReader();
-  const web = createSubmitQueueWeb({ gateway, cursors: newHmacCursorCodec("test-only-secret") });
+  const web = createSubmitQueueWeb({ gateway });
   const span = { setAttribute: vi.fn(), setStatus: vi.fn(), recordException: vi.fn(), end: vi.fn() };
   const record = vi.fn();
   const createHistogram = vi.fn(() => ({ record }));
