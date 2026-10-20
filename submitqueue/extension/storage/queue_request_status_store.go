@@ -28,9 +28,11 @@ import (
 // the request summary.
 //
 // Records are advisory: the authoritative status is on the RequestSummary, and a record may
-// file a request under a status it has already left. Readers therefore treat a listing as a
-// set of candidate request IDs — they load each summary by key and classify it by its own
-// Status, never by the bucket the record was found in.
+// file a request under a status it has already left. Readers must therefore treat a listing
+// as a set of candidate request IDs — load each summary by key, classify the request by the
+// summary's own Status rather than the bucket the record was found in, and delete records
+// whose summary is finished or at a different status. Writers do not clean up after every
+// interruption, so reader cleanup is part of the contract, not an optimization.
 //
 // The interface is per-status and per-record so that any backend can implement it without
 // multi-key queries or batch atomicity. A request moves buckets via Put of the new record

@@ -26,7 +26,14 @@ Every table leads its primary key with `queue`: `request_summary` on `(queue, re
 
 `queue_request_status` is keyed by `(queue, status, request_id)` and files each in-queue request under its public status, so "the requests of queue Q at status S" is a primary-key-prefix scan and `request_summary` keeps no secondary index. Each row carries only the request's `received_at_ms` and the `entered_at_ms` of the log that moved it into the status, enough to count and age a queue's requests by status.
 
-The materializer maintains it on every log delivery, after the summary update: it files the record for the summary's current status (a no-op when present, which also repairs a delivery that failed after the update) and, when the delivery moved the summary, then deletes the record under the previous status. Accepting and terminal statuses have no record. Every write is a single-key idempotent put or delete, so the records need no multi-row transaction. A delivery that fails between the summary update and that delete leaves a stale row under the old status that no later delivery revisits, so readers treat a listing as candidate request IDs, confirm each against its summary, and may delete rows that disagree.
+The materializer maintains it on every status-log delivery, after the summary update: it files the record for the summary's current status (a no-op when present, which also repairs a delivery that failed after the update) and, when the delivery moved the summary, then deletes the record under the previous status. Accepting and terminal statuses have no record, and event logs, which never move the summary, write nothing. Every write is a single-key idempotent put or delete, so the records need no multi-row transaction.
+
+Stale rows are a normal occurrence, not only a failure mode, and two rules bound them:
+
+- Land and Cancel persist logs outside the log consumer's per-request ordering, so another writer can move the summary on and delete a status's record before a late put re-creates it. After each put the materializer re-reads the summary and deletes the record it just filed if the status has moved on; every writer updates the summary before deleting, so the re-read sees any such move.
+- A terminal summary deletes the request's record under every in-queue status, on every terminal delivery. That retries a failed removal and clears records stranded by earlier failed moves.
+
+A record stranded by a failed move while the request is still in the queue remains until the request finishes. Readers must therefore confirm each listed request against its summary, count it only under the summary's status, and delete rows whose summary is finished or at a different status. That costs one summary read per listed row per reader per sample, which is small while queues are short but grows with queue depth and the number of reading instances.
 
 The records are kept only by a storage built with `WithQueueRequestStatusRecords`, which a deployment enables once the table exists; without it, record writes are no-ops and listing fails. Requests already in flight at that point gain a record on their next log delivery.
 
