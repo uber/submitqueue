@@ -51,4 +51,8 @@ const (
 	// terminal status; non-terminal polls never publish here. Partitioned by
 	// request id.
 	TopicKeyRecord TopicKey = "record"
+
+	// TopicKeyFix carries confirmed issue references for repair selection.
+	// Deliveries are partitioned by detecting build ID.
+	TopicKeyFix TopicKey = "fix"
 )

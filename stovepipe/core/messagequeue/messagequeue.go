@@ -56,6 +56,9 @@ type (
 	// Record is the payload buildsignal publishes to the record stage once a
 	// build reaches a terminal status: the build id to record.
 	Record = protopb.Record
+
+	// FixRequest identifies a confirmed issue opening and the detecting build.
+	FixRequest = protopb.FixRequest
 )
 
 // marshalOpts keeps the JSON field names identical to the proto field names

@@ -66,6 +66,40 @@ func TestRecordRoundTrip(t *testing.T) {
 	assert.True(t, proto.Equal(rec, got), "round-tripped Record should equal the original")
 }
 
+func TestFixMessagesRoundTrip(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		message proto.Message
+	}{
+		{
+			name: "issue request",
+			message: &FixRequest{
+				QueueName: "repo/main",
+				BuildId:   "build-42", TaskId: "compile", UnitId: "package", FirstSeenBuildId: "build-41",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := Marshal(tt.message)
+			require.NoError(t, err)
+			got := tt.message.ProtoReflect().New().Interface()
+			require.NoError(t, Unmarshal(data, got))
+			assert.True(t, proto.Equal(tt.message, got))
+		})
+	}
+}
+
+func TestFixRequestWireFormat(t *testing.T) {
+	message := &FixRequest{QueueName: "repo/main", BuildId: "build-42", TaskId: "check-a", FirstSeenBuildId: "build-41"}
+	data, err := Marshal(message)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"queue_name":"repo/main","build_id":"build-42","task_id":"check-a","first_seen_build_id":"build-41"}`, string(data))
+
+	var got FixRequest
+	require.NoError(t, Unmarshal([]byte(`{"queue_name":"repo/main","build_id":"build-42","task_id":"check-a","first_seen_build_id":"build-41","future_field":true}`), &got))
+	assert.True(t, proto.Equal(message, &got))
+}
+
 // TestWireFormat locks the protojson encoding decision the contract relies on:
 // snake_case field names (UseProtoNames).
 func TestWireFormat(t *testing.T) {
@@ -80,7 +114,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &Record{}} {
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &Record{}, &FixRequest{}} {
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -94,6 +128,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 		TopicKeyBuildSignal,
 		TopicKeyBuildAnalysis,
 		TopicKeyRecord,
+		TopicKeyFix,
 	}
 
 	valid := map[string]bool{}
