@@ -14,6 +14,10 @@ A batch's signature is the sorted set of its affected targets, each as a 64-bit 
 - The analyzer fails closed on any error.
 - A queue must have no in-flight batches when it is switched to this analyzer, because batches admitted earlier have no signature.
 
+## Limits
+
+Each signature is computed against trunk at its own analysis time, without the other in-flight batches applied. If one batch adds a dependency on a target that another batch changes, no overlap is reported, the same kind of miss that path overlap has. Adding the destination of each new dependency edge to the signature would close it.
+
 ## Injected pieces
 
 The analyzer owns no connection. A deployment supplies the Tango client adapter, which collects the response and resolves each target's label, and a function that returns the commit SHA of the target branch tip a new batch is analyzed against. The changes of a batch come from the changeset resolver, the signature store is bound to one queue, and one signature cache can be shared by every queue's analyzer. The MySQL implementations of the signature and dictionary stores are in `mysql/`.
