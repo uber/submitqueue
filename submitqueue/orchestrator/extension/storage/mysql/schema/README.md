@@ -26,7 +26,20 @@ Terminal-state records (and their batches) accumulate as the queue processes wor
 
 ### Composite primary key: `(queue, state, request_id)`
 
-`queue_request_state` files each in-queue request under its current state (see `entity.QueueRequestState`), so listing a queue's requests by state is a primary-key-prefix scan and the `request` table keeps no secondary index. Unlike `queue_batch_state`, the rows are exact rather than advisory: the MySQL request store writes a request's row in the same transaction as the `request` row, removing it from every other in-queue state and filing it under the new one (`INSERT IGNORE`, so a version-only update keeps `entered_at_ms`). A terminal request has no row, so the table only ever holds in-queue requests. The records are kept only by a storage built with `WithQueueRequestStateRecords`, which a deployment enables once the table exists.
+`queue_request_state` files each in-queue request under its current state (see `entity.QueueRequestState`), so listing a queue's requests by state is a primary-key-prefix scan and the `request` table keeps no secondary index. Unlike `queue_batch_state`, the rows are exact rather than advisory: the MySQL request store writes a request's row in the same transaction as the `request` row, removing it from every other in-queue state and filing it under the new one (`ON DUPLICATE KEY UPDATE entered_at_ms = entered_at_ms`, so a version-only update keeps `entered_at_ms`). That transaction runs at `READ COMMITTED`: the removal usually matches no rows, and at the default `REPEATABLE READ` its gap locks would conflict with concurrent inserts into the same queue and state. A terminal request has no row, so the table only ever holds in-queue requests. The records are kept only by a storage built with `WithQueueRequestStateRecords`, which a deployment enables once the table exists.
+
+### Rolling out to an existing deployment
+
+Requests already in flight get a row only on their next write, and a stuck request never writes again. So after creating the table and enabling `WithQueueRequestStateRecords`, backfill once:
+
+```sql
+INSERT INTO queue_request_state (queue, state, request_id, entered_at_ms)
+SELECT queue, state, id, <now in Unix ms> FROM request
+WHERE state IN ('started', 'validated', 'batched', 'processing', 'cancelling')
+ON DUPLICATE KEY UPDATE entered_at_ms = entered_at_ms;
+```
+
+Run it after enabling the records, not before: a request that changes state between a backfill and the enable would keep its backfilled row under the old state. Rows the store has already written keep their own `entered_at_ms`. For backfilled rows, `entered_at_ms` is the backfill time rather than when the request entered its state, so time-in-state for those requests is understated until their next transition.
 
 ## change table
 
