@@ -49,9 +49,6 @@ type Params struct {
 
 	// Changes resolves a batch into the changes it contains.
 	Changes changeset.Resolver
-
-	// Now returns the current time. It defaults to time.Now.
-	Now func() time.Time
 }
 
 type analyzer struct {
@@ -63,9 +60,6 @@ type analyzer struct {
 // the analyzed batch's. It fails closed: any signature it cannot obtain fails
 // the analysis.
 func New(params Params) conflict.Analyzer {
-	if params.Now == nil {
-		params.Now = time.Now
-	}
 	return &analyzer{Params: params}
 }
 
@@ -136,7 +130,7 @@ func (a *analyzer) signNewBatch(ctx context.Context, batch entity.Batch) (Target
 		BatchID:      batch.ID,
 		BaseRevision: baseRevision,
 		Targets:      targets,
-		CreatedAt:    a.Now().UnixMilli(),
+		CreatedAt:    time.Now().UnixMilli(),
 	}
 
 	if err := a.Signatures.Create(ctx, signature); err != nil {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +33,6 @@ import (
 const analyzerTestQueue = "monorepo"
 
 var (
-	analyzerTestNow          = time.UnixMilli(1700000000000)
 	analyzerTestBaseRevision = "9f2c1d0e3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d"
 	analyzerTestNew          = entity.Batch{ID: "10", Queue: analyzerTestQueue}
 	analyzerTestFailure      = errors.New("dependency down")
@@ -62,7 +60,6 @@ func newAnalyzerHarness(t *testing.T) *analyzerHarness {
 		Client:       h.client,
 		BaseRevision: func(context.Context, string) (string, error) { return analyzerTestBaseRevision, h.baseErr },
 		Changes:      h.changes,
-		Now:          func() time.Time { return analyzerTestNow },
 	})
 	return h
 }
@@ -76,7 +73,6 @@ func analyzerTestNewSignature() TargetSignature {
 		BatchID:      analyzerTestNew.ID,
 		BaseRevision: analyzerTestBaseRevision,
 		Targets:      targets,
-		CreatedAt:    analyzerTestNow.UnixMilli(),
 	}
 }
 
@@ -103,7 +99,11 @@ func (h *analyzerHarness) expectSigningNewBatch(createErr error) {
 		BaseRevision: analyzerTestBaseRevision,
 		ChangeURIs:   []string{"u1", "u2"},
 	}).Return(analyzerTestAffected, nil)
-	h.signatures.EXPECT().Create(gomock.Any(), analyzerTestNewSignature()).Return(createErr)
+	h.signatures.EXPECT().Create(gomock.Any(), gomock.Cond(func(got TargetSignature) bool {
+		stamped := got.CreatedAt != 0
+		got.CreatedAt = 0
+		return stamped && assert.ObjectsAreEqual(analyzerTestNewSignature(), got)
+	})).Return(createErr)
 }
 
 func TestAnalyzer_Analyze(t *testing.T) {
