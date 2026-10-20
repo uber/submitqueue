@@ -14,6 +14,8 @@
 
 package entity
 
+import "slices"
+
 // QueueRequestStatus is a membership record filing one in-queue request under its public
 // status in its queue, so a queue's requests can be listed by status without a secondary
 // index on the request summary.
@@ -23,9 +25,10 @@ package entity
 // disappears; a request that reaches a terminal status keeps no record.
 //
 // Records are advisory. The authoritative status is the Status of the RequestSummary
-// identified by RequestID; a record may transiently, or after an interrupted write, file a
-// request under a status it has already left. Readers load each listed request's summary
-// and classify it by the summary's own Status.
+// identified by RequestID; a record may file a request under a status it has already left,
+// briefly while writers race and until the request finishes after an interrupted write.
+// Readers must load each listed request's summary, count the request only under the
+// summary's own Status, and delete records that disagree.
 type QueueRequestStatus struct {
 	// Queue is the name of the queue the request belongs to. Queue name is defined in the
 	// configuration and should be unique within the system.
@@ -66,12 +69,5 @@ func InQueueRequestStatuses() []RequestStatus {
 
 // IsRequestStatusInQueue reports whether status is one of InQueueRequestStatuses().
 func IsRequestStatusInQueue(status RequestStatus) bool {
-	switch status {
-	case RequestStatusAccepted, RequestStatusStarted, RequestStatusValidating, RequestStatusValidated,
-		RequestStatusBatching, RequestStatusBatched, RequestStatusSpeculating, RequestStatusSpeculated,
-		RequestStatusLanding, RequestStatusCancelling:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(InQueueRequestStatuses(), status)
 }
