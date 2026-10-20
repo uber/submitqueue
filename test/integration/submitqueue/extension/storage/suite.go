@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"testing"
 
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
@@ -480,11 +481,80 @@ func (s *StorageContractSuite) TestStorage_QueueRequestStateRecordsFollowRequest
 	landed := second
 	landed.State = entity.RequestStateLanded
 	require.NoError(t, requestsA.Update(ctx, landed, 1, 2))
-	for _, state := range entity.InQueueRequestStates {
+	for _, state := range entity.InQueueRequestStates() {
 		assert.NotContains(t, listIDs(recordsA, state), "2", "a terminal request has no record")
 	}
 
 	assert.ElementsMatch(t, []string{"1"}, listIDs(recordsB, entity.RequestStateStarted))
+}
+
+// TestStorage_QueueRequestStateRecordsUnderConcurrentWrites runs many request writes
+// for different requests of one queue at once, the load where membership-record
+// transactions could block or deadlock each other on locks taken for records that do
+// not exist yet. Every write must succeed and leave its request filed exactly once.
+func (s *StorageContractSuite) TestStorage_QueueRequestStateRecordsUnderConcurrentWrites() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "qrs-concurrent"
+	const writers = 16
+	requests := s.forQueue(queue).GetRequestStore()
+	records := s.forQueue(queue).GetQueueRequestStateStore()
+
+	newRequest := func(i int) entity.Request {
+		id := fmt.Sprintf("concurrent-%d", i)
+		return entity.Request{
+			ID:           id,
+			Queue:        queue,
+			Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/" + id + "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+			State:        entity.RequestStateStarted,
+			LandStrategy: mergestrategy.MergeStrategyMerge,
+			Version:      1,
+		}
+	}
+	// concurrently runs write once per request, all at the same moment, and requires
+	// every one to succeed.
+	concurrently := func(write func(i int) error) {
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make([]error, writers)
+		for i := range writers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs[i] = write(i)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for i, err := range errs {
+			require.NoError(t, err, "write for request %d", i)
+		}
+	}
+	listIDs := func(state entity.RequestState) []string {
+		got, err := records.List(ctx, state)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(got))
+		for _, rec := range got {
+			ids = append(ids, rec.RequestID)
+		}
+		return ids
+	}
+	allIDs := make([]string, writers)
+	for i := range writers {
+		allIDs[i] = newRequest(i).ID
+	}
+
+	concurrently(func(i int) error { return requests.Create(ctx, newRequest(i)) })
+	assert.ElementsMatch(t, allIDs, listIDs(entity.RequestStateStarted))
+
+	concurrently(func(i int) error {
+		validated := newRequest(i)
+		validated.State = entity.RequestStateValidated
+		return requests.Update(ctx, validated, 1, 2)
+	})
+	assert.Empty(t, listIDs(entity.RequestStateStarted))
+	assert.ElementsMatch(t, allIDs, listIDs(entity.RequestStateValidated))
 }
 
 // TestStorage_QueueIsolation verifies a store aggregate bound to one queue can

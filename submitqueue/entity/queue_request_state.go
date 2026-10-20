@@ -24,7 +24,7 @@ type QueueRequestState struct {
 	// Queue is the name of the queue the request belongs to. Queue name is defined in the
 	// configuration and should be unique within the system.
 	Queue string
-	// State is the request's current state. Always one of InQueueRequestStates.
+	// State is the request's current state. Always one of InQueueRequestStates().
 	State RequestState
 	// RequestID is the request's identifier, unique within Queue.
 	RequestID string

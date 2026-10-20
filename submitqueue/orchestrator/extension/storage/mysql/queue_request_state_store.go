@@ -48,7 +48,7 @@ func NewQueueRequestStateStore(db *sql.DB, scope tally.Scope, queue string) stor
 // is a prefix of the (queue, state, request_id) PK, so this is a PK-prefix scan.
 func (s *queueRequestStateStore) List(ctx context.Context, state entity.RequestState) (ret []entity.QueueRequestState, retErr error) {
 	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
-	defer func() { storage.CompleteMetricsOp(op, retErr) }()
+	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	const query = "SELECT queue, state, request_id, entered_at_ms FROM queue_request_state WHERE queue = ? AND state = ?"
 	rows, err := s.db.QueryContext(ctx, query, s.queue, string(state))
@@ -79,11 +79,13 @@ func (disabledQueueRequestStateStore) List(context.Context, entity.RequestState)
 
 // fileQueueRequestStateRecord makes the request's membership record match state, within
 // the caller's transaction: it removes the record from every other in-queue state and,
-// unless state is terminal, files it under state. INSERT IGNORE keeps the original
-// EnteredAtMs when a version-only update leaves the state unchanged.
+// unless state is terminal, files it under state. A version-only update that leaves the
+// state unchanged hits the existing record, and the no-op ON DUPLICATE KEY UPDATE keeps its
+// original EnteredAtMs; unlike INSERT IGNORE, it does not downgrade other errors to warnings.
 func fileQueueRequestStateRecord(ctx context.Context, tx *sql.Tx, queue, requestID string, state entity.RequestState, nowMs int64) error {
-	others := make([]any, 0, len(entity.InQueueRequestStates))
-	for _, s := range entity.InQueueRequestStates {
+	inQueue := entity.InQueueRequestStates()
+	others := make([]any, 0, len(inQueue))
+	for _, s := range inQueue {
 		if s != state {
 			others = append(others, string(s))
 		}
@@ -96,7 +98,8 @@ func fileQueueRequestStateRecord(ctx context.Context, tx *sql.Tx, queue, request
 	if entity.IsRequestStateTerminal(state) {
 		return nil
 	}
-	const insertQuery = "INSERT IGNORE INTO queue_request_state (queue, state, request_id, entered_at_ms) VALUES (?, ?, ?, ?)"
+	const insertQuery = "INSERT INTO queue_request_state (queue, state, request_id, entered_at_ms) VALUES (?, ?, ?, ?) " +
+		"ON DUPLICATE KEY UPDATE entered_at_ms = entered_at_ms"
 	if _, err := tx.ExecContext(ctx, insertQuery, queue, string(state), requestID, nowMs); err != nil {
 		return fmt.Errorf("failed to file queue request state record for queue=%s request_id=%s state=%s: %w", queue, requestID, state, err)
 	}

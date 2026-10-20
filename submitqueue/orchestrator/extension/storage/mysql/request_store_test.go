@@ -321,11 +321,11 @@ func TestRequestStore_WritesQueueRequestStateRecords(t *testing.T) {
 	landed := started
 	landed.State = entity.RequestStateLanded
 
-	const insertRecord = "INSERT IGNORE INTO queue_request_state"
+	const insertRecord = "INSERT INTO queue_request_state"
 	const deleteRecords = "DELETE FROM queue_request_state"
 	otherStatesThan := func(state entity.RequestState) []driver.Value {
 		args := []driver.Value{"monorepo"}
-		for _, s := range entity.InQueueRequestStates {
+		for _, s := range entity.InQueueRequestStates() {
 			if s != state {
 				args = append(args, string(s))
 			}

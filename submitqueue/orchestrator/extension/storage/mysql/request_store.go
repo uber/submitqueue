@@ -52,6 +52,14 @@ func newRequestStore(db *sql.DB, scope tally.Scope, queue string, stateRecords b
 	return &requestStore{db: db, scope: scope, queue: queue, stateRecords: stateRecords, now: time.Now}
 }
 
+// requestWriteTxOptions runs request writes that file a membership record at READ
+// COMMITTED. The record DELETE usually matches no rows, and at MySQL's default
+// REPEATABLE READ InnoDB would gap-lock where those rows would be; the INSERT that
+// follows needs an insert-intention lock that conflicts with gap locks, so two
+// concurrent writes for different requests in the same queue and state could
+// deadlock. READ COMMITTED takes no gap locks for these lookups.
+var requestWriteTxOptions = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
+
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -62,7 +70,7 @@ func (r *requestStore) writeRequest(ctx context.Context, request entity.Request,
 	if !r.stateRecords {
 		return write(r.db)
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.db.BeginTx(ctx, requestWriteTxOptions)
 	if err != nil {
 		return fmt.Errorf("failed to begin request write transaction id=%s: %w", request.ID, err)
 	}

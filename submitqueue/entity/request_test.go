@@ -58,7 +58,7 @@ func TestInQueueRequestStates(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.state), func(t *testing.T) {
-			assert.Equal(t, tt.inQueue, slices.Contains(InQueueRequestStates, tt.state))
+			assert.Equal(t, tt.inQueue, slices.Contains(InQueueRequestStates(), tt.state))
 			assert.NotEqual(t, tt.inQueue, IsRequestStateTerminal(tt.state), "a valid state is either in-queue or terminal")
 		})
 	}

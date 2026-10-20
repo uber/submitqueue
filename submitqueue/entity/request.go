@@ -59,14 +59,16 @@ func IsRequestStateTerminal(s RequestState) bool {
 	return s == RequestStateLanded || s == RequestStateError || s == RequestStateCancelled
 }
 
-// InQueueRequestStates lists every non-terminal request state: the states a request occupies while it is in its
-// queue. Every valid RequestState is either listed here or terminal.
-var InQueueRequestStates = []RequestState{
-	RequestStateStarted,
-	RequestStateValidated,
-	RequestStateBatched,
-	RequestStateProcessing,
-	RequestStateCancelling,
+// InQueueRequestStates returns every non-terminal request state: the states a request occupies while it is in its
+// queue. Every valid RequestState is either listed here or terminal. Each call returns a fresh slice.
+func InQueueRequestStates() []RequestState {
+	return []RequestState{
+		RequestStateStarted,
+		RequestStateValidated,
+		RequestStateBatched,
+		RequestStateProcessing,
+		RequestStateCancelling,
+	}
 }
 
 // IsRequestStateHalted returns true if the request is either terminal or in the process of being cancelled.
