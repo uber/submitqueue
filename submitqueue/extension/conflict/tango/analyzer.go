@@ -129,6 +129,7 @@ func (a *analyzer) signNewBatch(ctx context.Context, batch entity.Batch) (Target
 	}
 
 	// TODO(tango): record the labels in the target dictionary before creating the signature.
+	// TODO(tango): add the destination of each new dependency edge to the signature, the RFC's known gap. The adapter must return direct dependencies first.
 	targets, _ := toSignatureTargets(affected)
 	signature = TargetSignature{
 		Queue:        batch.Queue,
