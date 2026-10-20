@@ -70,6 +70,9 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 		return fmt.Errorf("failed to insert request log request_id=%s: %w", log.RequestID, err)
 	}
 
+	// previous is the status this delivery moved the summary away from, when it moved it.
+	var previous entity.RequestStatus
+	moved := false
 	for {
 		summary, err := summaries.Get(ctx, log.RequestID)
 		if err != nil {
@@ -94,6 +97,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			}
 			updated.Version = newVersion
 			m.recordLifecycleTransition(summary, updated)
+			previous, moved = summary.Status, true
 			summary = updated
 		}
 
@@ -106,8 +110,38 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 		if err := ensureRequestReceiptMapping(ctx, stores.GetRequestReceiptStore(), summary); err != nil {
 			return err
 		}
-		return nil
+		return fileStatusRecord(ctx, stores.GetQueueRequestStatusStore(), summary, previous, moved)
 	}
+}
+
+// fileStatusRecord keeps the request's status membership record in step with its summary.
+//
+// It runs on every delivery, like the immutable mappings: putting the record for the
+// summary's current status repairs a delivery that failed after the summary update, and is
+// a no-op when the record already exists. When this delivery moved the summary, the record
+// under the previous status is deleted only after the new one is filed, so a request in the
+// queue is never without a record. A record left under an old status by a delivery that
+// failed before that delete is not found again here — the redelivery no longer knows the old
+// status — which is why records are advisory and readers confirm them against the summary.
+func fileStatusRecord(ctx context.Context, records basestorage.QueueRequestStatusStore, summary entity.RequestSummary, previous entity.RequestStatus, moved bool) error {
+	if entity.IsRequestStatusInQueue(summary.Status) {
+		record := entity.QueueRequestStatus{
+			Queue:        summary.Queue,
+			Status:       summary.Status,
+			RequestID:    summary.RequestID,
+			ReceivedAtMs: summary.ReceivedAtMs,
+			EnteredAtMs:  summary.StatusTimestampMs,
+		}
+		if err := records.Put(ctx, record); err != nil {
+			return fmt.Errorf("failed to file request status record request_id=%s status=%s: %w", summary.RequestID, summary.Status, err)
+		}
+	}
+	if moved && previous != summary.Status && entity.IsRequestStatusInQueue(previous) {
+		if err := records.Delete(ctx, previous, summary.RequestID); err != nil {
+			return fmt.Errorf("failed to remove request status record request_id=%s status=%s: %w", summary.RequestID, previous, err)
+		}
+	}
+	return nil
 }
 
 // recordLifecycleTransition counts a request's public lifecycle milestones from

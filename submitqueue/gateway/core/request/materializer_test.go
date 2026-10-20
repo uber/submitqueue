@@ -162,6 +162,130 @@ func TestMaterializer_RecordsLifecycleMetrics(t *testing.T) {
 	}
 }
 
+func TestMaterializer_FilesStatusRecords(t *testing.T) {
+	summaryAt := func(status entity.RequestStatus, timestampMs int64) entity.RequestSummary {
+		summary := testRequestSummary()
+		summary.Status, summary.StatusTimestampMs = status, timestampMs
+		return summary
+	}
+	statusLog := func(status entity.RequestStatus, version int32, timestampMs int64) entity.RequestLog {
+		return entity.RequestLog{Queue: "q", RequestID: "1", Type: entity.RequestLogTypeStatus, Status: status, RequestVersion: version, TimestampMs: timestampMs}
+	}
+	record := func(status entity.RequestStatus, enteredAtMs int64) entity.QueueRequestStatus {
+		return entity.QueueRequestStatus{Queue: "q", Status: status, RequestID: "1", ReceivedAtMs: 10, EnteredAtMs: enteredAtMs}
+	}
+	landed := summaryAt(entity.RequestStatusLanded, 20)
+	landed.RequestVersion = 2
+
+	tests := []struct {
+		name       string
+		before     entity.RequestSummary
+		log        entity.RequestLog
+		wantUpdate bool
+		wantPut    *entity.QueueRequestStatus
+		wantDelete entity.RequestStatus
+	}{
+		{
+			name:       "accepting the request files its first record",
+			before:     testRequestSummary(),
+			log:        statusLog(entity.RequestStatusAccepted, 0, 20),
+			wantUpdate: true,
+			wantPut:    ptr(record(entity.RequestStatusAccepted, 20)),
+		},
+		{
+			name:       "a status change files the new record before removing the old one",
+			before:     summaryAt(entity.RequestStatusStarted, 15),
+			log:        statusLog(entity.RequestStatusValidating, 0, 20),
+			wantUpdate: true,
+			wantPut:    ptr(record(entity.RequestStatusValidating, 20)),
+			wantDelete: entity.RequestStatusStarted,
+		},
+		{
+			name:       "a terminal status removes the record and files none",
+			before:     summaryAt(entity.RequestStatusLanding, 15),
+			log:        statusLog(entity.RequestStatusLanded, 2, 20),
+			wantUpdate: true,
+			wantDelete: entity.RequestStatusLanding,
+		},
+		{
+			name:       "a newer log at the same status re-files without removing anything",
+			before:     summaryAt(entity.RequestStatusSpeculating, 15),
+			log:        statusLog(entity.RequestStatusSpeculating, 0, 20),
+			wantUpdate: true,
+			wantPut:    ptr(record(entity.RequestStatusSpeculating, 20)),
+		},
+		{
+			name:    "a redelivery that loses re-files the current record to repair an interrupted write",
+			before:  summaryAt(entity.RequestStatusBatched, 20),
+			log:     statusLog(entity.RequestStatusBatched, 0, 20),
+			wantPut: ptr(record(entity.RequestStatusBatched, 20)),
+		},
+		{
+			name:   "a finished request keeps no record on redelivery",
+			before: landed,
+			log:    statusLog(entity.RequestStatusLanded, 2, 20),
+		},
+		{
+			name:   "a request still accepting has no record",
+			before: testRequestSummary(),
+			log:    statusLog(entity.RequestStatusAccepting, 0, 20),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newStrictMaterializerFixture(gomock.NewController(t))
+			f.logs.EXPECT().Insert(gomock.Any(), tt.log).Return(nil)
+			f.summaries.EXPECT().Get(gomock.Any(), tt.before.RequestID).Return(tt.before, nil)
+			if tt.wantUpdate {
+				f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), tt.before.Version, tt.before.Version+1).Return(nil)
+			}
+			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			var calls []any
+			if tt.wantPut != nil {
+				calls = append(calls, f.statuses.EXPECT().Put(gomock.Any(), *tt.wantPut).Return(nil))
+			}
+			if tt.wantDelete != "" {
+				calls = append(calls, f.statuses.EXPECT().Delete(gomock.Any(), tt.wantDelete, "1").Return(nil))
+			}
+			gomock.InOrder(calls...)
+
+			require.NoError(t, f.materializer.PersistLog(context.Background(), tt.log))
+		})
+	}
+}
+
+func TestMaterializer_StatusRecordFailures(t *testing.T) {
+	writeErr := errors.New("storage unavailable")
+	tests := []struct {
+		name              string
+		putErr, deleteErr error
+		wantDeleteAttempt bool
+	}{
+		{name: "filing the new record", putErr: writeErr},
+		{name: "removing the old record", deleteErr: writeErr, wantDeleteAttempt: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newStrictMaterializerFixture(gomock.NewController(t))
+			before := testRequestSummary()
+			before.Status = entity.RequestStatusStarted
+			log := entity.RequestLog{Queue: "q", RequestID: "1", Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusValidating, TimestampMs: 20}
+			f.logs.EXPECT().Insert(gomock.Any(), log).Return(nil)
+			f.summaries.EXPECT().Get(gomock.Any(), "1").Return(before, nil)
+			f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.statuses.EXPECT().Put(gomock.Any(), gomock.Any()).Return(tt.putErr)
+			if tt.wantDeleteAttempt {
+				f.statuses.EXPECT().Delete(gomock.Any(), entity.RequestStatusStarted, "1").Return(tt.deleteErr)
+			}
+
+			require.ErrorIs(t, f.materializer.PersistLog(context.Background(), log), writeErr)
+		})
+	}
+}
+
 func TestMaterializer_PersistenceFailures(t *testing.T) {
 	writeErr := errors.New("storage unavailable")
 	tests := []struct {
@@ -335,3 +459,5 @@ func testRequestSummary() entity.RequestSummary {
 		Status: entity.RequestStatusAccepting, StatusTimestampMs: 10, Version: 1, Metadata: map[string]string{},
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

@@ -442,6 +442,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetQueueRequestStatusStore().Return(permissiveStatusRecords(ctrl)).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	materializer := requestcore.NewMaterializer(factory)

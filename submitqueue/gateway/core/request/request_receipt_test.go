@@ -34,14 +34,26 @@ type materializerReceiptFixture struct {
 	uris         *storagemock.MockRequestURIStore
 	logs         *storagemock.MockRequestLogStore
 	receipts     *storagemock.MockRequestReceiptStore
+	statuses     *storagemock.MockQueueRequestStatusStore
 	metrics      tally.TestScope
 }
 
+// newMaterializerReceiptFixture accepts every status record write, for tests that are not
+// about status records.
 func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptFixture {
+	f := newStrictMaterializerFixture(ctrl)
+	f.statuses.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	f.statuses.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return f
+}
+
+// newStrictMaterializerFixture expects every status record write to be declared.
+func newStrictMaterializerFixture(ctrl *gomock.Controller) materializerReceiptFixture {
 	f := materializerReceiptFixture{
 		summaries: storagemock.NewMockRequestSummaryStore(ctrl),
 		uris:      storagemock.NewMockRequestURIStore(ctrl), logs: storagemock.NewMockRequestLogStore(ctrl),
 		receipts: storagemock.NewMockRequestReceiptStore(ctrl),
+		statuses: storagemock.NewMockQueueRequestStatusStore(ctrl),
 		metrics:  tally.NewTestScope("", nil),
 	}
 	stores := gwstoragemock.NewMockStorage(ctrl)
@@ -49,6 +61,7 @@ func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptF
 	stores.EXPECT().GetRequestURIStore().Return(f.uris).AnyTimes()
 	stores.EXPECT().GetRequestLogStore().Return(f.logs).AnyTimes()
 	stores.EXPECT().GetRequestReceiptStore().Return(f.receipts).AnyTimes()
+	stores.EXPECT().GetQueueRequestStatusStore().Return(f.statuses).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(stores, nil).AnyTimes()
 	f.materializer = NewMaterializer(factory, WithMetricsScope(f.metrics))

@@ -146,6 +146,7 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetQueueRequestStatusStore().Return(permissiveStatusRecords(ctrl)).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	materializer := requestcore.NewMaterializer(factory)
@@ -171,4 +172,13 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 func newRequestLog(requestID string, status entity.RequestStatus, requestVersion int32, lastError string, metadata map[string]string) *entity.RequestLog {
 	log := entity.NewRequestStatusLog("test-queue", requestID, status, requestVersion, lastError, metadata)
 	return &log
+}
+
+// permissiveStatusRecords returns a QueueRequestStatusStore that accepts every record write;
+// these tests are not about status records.
+func permissiveStatusRecords(ctrl *gomock.Controller) *storagemock.MockQueueRequestStatusStore {
+	records := storagemock.NewMockQueueRequestStatusStore(ctrl)
+	records.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	records.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return records
 }
