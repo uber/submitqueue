@@ -111,6 +111,11 @@ func TestMySQLStorage(t *testing.T) {
 		suite.Run(t, testSuite)
 	})
 
+	t.Run("FixStores", func(t *testing.T) {
+		resetStorage(t, db)
+		testFixStores(t, ctx, backend)
+	})
+
 	t.Run("ValidationFactStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLValidationFactStoreSuite)
@@ -154,6 +159,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 
 	for _, statement := range []string{
 		"TRUNCATE TABLE open_issue",
+		"TRUNCATE TABLE fix",
 		"TRUNCATE TABLE queue_log",
 		"TRUNCATE TABLE queue_summary",
 		"TRUNCATE TABLE request_log",

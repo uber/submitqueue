@@ -153,6 +153,14 @@ func TestStorageForQueueMetrics(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name: "fix_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetFixStore().Get(context.Background(), "fix-id")
+				return err
+			},
+		},
 	}
 
 	for _, tt := range tests {

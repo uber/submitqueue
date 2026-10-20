@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build_issue_store.go",
         "build_store.go",
+        "fix_store.go",
         "open_issue_store.go",
         "queue_log_store.go",
         "queue_store.go",
@@ -33,6 +34,7 @@ go_test(
     srcs = [
         "build_issue_store_test.go",
         "build_store_test.go",
+        "fix_store_test.go",
         "open_issue_store_test.go",
         "queue_store_test.go",
         "queue_summary_store_test.go",
