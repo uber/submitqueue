@@ -1,6 +1,7 @@
-load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@aspect_rules_js//js:defs.bzl", "js_library", "js_test")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//web:vitest/package_json.bzl", vitest = "bin")
 load("@rules_python//python:defs.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -76,9 +77,13 @@ py_test(
     main = "pack_contents_test.py",
 )
 
-js_test(
+vitest.vitest_test(
     name = "consumer_runtime_test",
+    args = ["run", "--config", "vitest.config.mjs"],
+    chdir = "web/test/package",
     data = [
+        "consumer-runtime.test.mjs",
+        "vitest.config.mjs",
         ":node_modules/@submitqueue/web-platform",
         ":node_modules/@submitqueue/web-submitqueue",
         "//web:node_modules/@bufbuild/protobuf",
@@ -88,9 +93,37 @@ js_test(
         "//web:node_modules/react-dom",
         "//web:node_modules/styletron-engine-atomic",
         "//web:node_modules/styletron-react",
+        "//web:node_modules/vitest",
         "//web/submitqueue:node_modules",
     ],
-    entry_point = "consumer-runtime.mjs",
+)
+
+js_test(
+    name = "consumer_server_runtime_test",
+    data = [
+        ":node_modules/@submitqueue/web-platform",
+        ":node_modules/@submitqueue/web-stovepipe",
+        ":node_modules/@submitqueue/web-submitqueue",
+    ],
+    entry_point = "consumer-server-runtime.mjs",
+)
+
+js_library(
+    name = "vitest_config",
+    srcs = ["vitest.config.mjs"],
+    visibility = ["//web/test/package/react18:__pkg__"],
+)
+
+py_test(
+    name = "platform_pack_contents_test",
+    srcs = ["pack_contents_test.py"],
+    args = [
+        "$(rootpath //web/platform:pkg.pack)",
+        "platform",
+    ],
+    data = ["//web/platform:pkg.pack"],
+    legacy_create_init = 0,
+    main = "pack_contents_test.py",
 )
 
 py_test(

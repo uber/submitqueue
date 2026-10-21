@@ -3,15 +3,15 @@
 import { ErrorState } from "./error-state.js";
 import { useLastSuccessfulData } from "./last-successful-data.js";
 import { Fact, Table, Timestamp } from "@submitqueue/web-platform";
-import { styled } from "baseui/index.js";
-import { Block } from "baseui/block/index.js";
-import { Button, SIZE } from "baseui/button/index.js";
-import { Input } from "baseui/input/index.js";
-import { KIND, Notification } from "baseui/notification/index.js";
-import { Select, StyledInput } from "baseui/select/index.js";
-import { Tag } from "baseui/tag/index.js";
-import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic/index.js";
-import { HeadingLarge, HeadingSmall, LabelXSmall, ParagraphSmall, ParagraphXSmall } from "baseui/typography/index.js";
+import { styled } from "baseui";
+import { Block } from "baseui/block";
+import { Button, SIZE } from "baseui/button";
+import { Input } from "baseui/input";
+import { KIND, Notification } from "baseui/notification";
+import { Select, StyledInput } from "baseui/select";
+import { Tag } from "baseui/tag";
+import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
+import { HeadingLarge, HeadingSmall, LabelXSmall, ParagraphSmall, ParagraphXSmall } from "baseui/typography";
 import { useWebApp, WebLink } from "./web-app.js";
 import { forwardRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import type {

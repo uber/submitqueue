@@ -12,6 +12,8 @@ submitqueue           the SubmitQueue module: routes, controllers, pages, styles
 
 Dependencies only point down. The module never imports generated protos, a transport, or a web framework; only the host chooses implementations. A package test checks this against every file in the built package.
 
+UI entry points are ESM for the host's bundler, including server-side rendering. They import BaseUI through package entry points such as `baseui/block`, allowing hosts to supply BaseUI with their own package layout. The separate `/server` entry points run directly in Node without loading the UI or BaseUI.
+
 ## How a page is served
 
 1. Next.js routes every path to one catch-all page in the host.

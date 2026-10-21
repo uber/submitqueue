@@ -7,7 +7,7 @@ import {
   StyledTableHead,
   StyledTableHeadCell,
   StyledTableHeadRow,
-} from "baseui/table-semantic/index.js";
+} from "baseui/table-semantic";
 import type { ReactNode } from "react";
 
 export function Table({ label, headers, children }: {

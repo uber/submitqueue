@@ -1,8 +1,8 @@
 "use client";
 
 import type { WebError } from "../entity/index.js";
-import { KIND, Notification } from "baseui/notification/index.js";
-import { HeadingSmall, ParagraphSmall } from "baseui/typography/index.js";
+import { KIND, Notification } from "baseui/notification";
+import { HeadingSmall, ParagraphSmall } from "baseui/typography";
 
 export function ErrorState({ error, compact = false }: { error: WebError; compact?: boolean }) {
   return <Notification kind={KIND.negative} overrides={{ Body: {

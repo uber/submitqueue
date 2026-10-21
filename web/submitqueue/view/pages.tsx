@@ -3,8 +3,8 @@
 import { WebRefreshControl } from "./refresh-control.js";
 import { WebShell, type WebShellProps } from "./shell.js";
 import { Timestamp } from "@submitqueue/web-platform";
-import { Block } from "baseui/block/index.js";
-import { HeadingLarge, ParagraphSmall, ParagraphXSmall } from "baseui/typography/index.js";
+import { Block } from "baseui/block";
+import { HeadingLarge, ParagraphSmall, ParagraphXSmall } from "baseui/typography";
 import { WebLink } from "./web-app.js";
 import { ChangeSubmissions, LastSuccessfulData, QueueDirectory, RequestDetailView, RequestListView } from "./components.js";
 import type { SubmitQueuePageModel } from "../entity/index.js";

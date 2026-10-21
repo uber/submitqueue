@@ -1,6 +1,6 @@
-load("@aspect_rules_js//js:defs.bzl", "js_test")
 load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
 load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//web:vitest/package_json.bzl", vitest = "bin")
 
 npm_link_all_packages(name = "node_modules")
 
@@ -18,15 +18,19 @@ npm_link_all_packages(name = "node_modules")
 
 # Resolves react from this package's React 18 links; the workspace root's
 # React 19 must stay out of the runfiles or Node would find it first.
-js_test(
+vitest.vitest_test(
     name = "react18_runtime_test",
+    args = ["run", "--config", "../vitest.config.mjs"],
+    chdir = "web/test/package/react18",
     data = [
+        "react18-runtime.test.mjs",
         ":node_modules",
         ":node_modules/@submitqueue/web-platform",
         ":node_modules/@submitqueue/web-stovepipe",
         ":node_modules/@submitqueue/web-submitqueue",
         "//web:node_modules/@bufbuild/protobuf",
         "//web:node_modules/@connectrpc/connect",
+        "//web:node_modules/vitest",
+        "//web/test/package:vitest_config",
     ],
-    entry_point = "react18-runtime.mjs",
 )

@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Block } from "baseui/block/index.js";
-import { Button, SIZE } from "baseui/button/index.js";
-import { LabelXSmall } from "baseui/typography/index.js";
+import { Block } from "baseui/block";
+import { Button, SIZE } from "baseui/button";
+import { LabelXSmall } from "baseui/typography";
 
 export interface AutoRefreshProps {
   terminal?: boolean;

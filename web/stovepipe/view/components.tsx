@@ -3,9 +3,9 @@
 import { useState, type ReactNode } from "react";
 import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
 import type { ReadResult } from "../entity/index.js";
-import { Notification, KIND } from "baseui/notification/index.js";
-import { StyledLink } from "baseui/link/index.js";
-import { ParagraphSmall } from "baseui/typography/index.js";
+import { Notification, KIND } from "baseui/notification";
+import { StyledLink } from "baseui/link";
+import { ParagraphSmall } from "baseui/typography";
 
 export { Table } from "@submitqueue/web-platform";
 

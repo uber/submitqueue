@@ -3,7 +3,7 @@
 import { createContext, useContext, useMemo, useRef, type ComponentType } from "react";
 import type { WebPageModel } from "../entity/index.js";
 import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
-import { StyledLink } from "baseui/link/index.js";
+import { StyledLink } from "baseui/link";
 
 /** Client-side controls of the enclosing {@link WebApp}. */
 export interface WebAppControls {

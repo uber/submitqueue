@@ -1,10 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Block } from "baseui/block/index.js";
-import { StyledLink } from "baseui/link/index.js";
-import { Tag } from "baseui/tag/index.js";
-import { LabelMedium, LabelXSmall } from "baseui/typography/index.js";
+import { Block } from "baseui/block";
+import { StyledLink } from "baseui/link";
+import { Tag } from "baseui/tag";
+import { LabelMedium, LabelXSmall } from "baseui/typography";
 
 export interface WebShellProps {
   children: ReactNode;

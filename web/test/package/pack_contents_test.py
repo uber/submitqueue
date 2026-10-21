@@ -63,13 +63,15 @@ def main() -> int:
         raise RuntimeError("expected the module package archive")
 
     profile = sys.argv[2] if len(sys.argv) == 3 else "submitqueue"
-    if profile not in ("submitqueue", "stovepipe"):
+    if profile not in ("platform", "submitqueue", "stovepipe"):
         raise RuntimeError(f"unknown package profile: {profile}")
 
     with tarfile.open(Path(sys.argv[1])) as archive:
-        expected = _EXPECTED_FILES if profile == "submitqueue" else {
-            "package/dist/index.d.ts", "package/dist/server.d.ts", "package/README.md",
-        }
+        expected = {
+            "platform": {"package/dist/index.d.ts", "package/styles.css"},
+            "submitqueue": _EXPECTED_FILES,
+            "stovepipe": {"package/dist/index.d.ts", "package/dist/server.d.ts", "package/README.md"},
+        }[profile]
         missing = sorted(expected - {member.name for member in archive.getmembers()})
         if missing:
             print(f"The package is missing: {', '.join(missing)}", file=sys.stderr)
@@ -83,7 +85,8 @@ def main() -> int:
             print("The core module must not require framework, transport, logging, or telemetry-backend dependencies.", file=sys.stderr)
             return 1
         stylesheet = package.get("exports", {}).get("./styles.css")
-        if stylesheet != "./view/styles.css" or stylesheet not in package.get("sideEffects", []):
+        expected_stylesheet = "./styles.css" if profile == "platform" else "./view/styles.css"
+        if stylesheet != expected_stylesheet or stylesheet not in package.get("sideEffects", []):
             print("The module must export and preserve its default stylesheet.", file=sys.stderr)
             return 1
         if violations := _client_entry_violations(archive):
@@ -93,6 +96,9 @@ def main() -> int:
             if member.name.endswith((".js", ".d.ts")):
                 source = archive.extractfile(member).read().decode("utf-8")
                 for specifier in _IMPORT_PATTERN.findall(source):
+                    if specifier.startswith("baseui/") and specifier.endswith("/index.js"):
+                        print(f"{member.name} imports {specifier}; use BaseUI's package entrypoints so hosts can supply their own package layout.", file=sys.stderr)
+                        return 1
                     if _imports_forbidden(specifier):
                         print(f"{member.name} imports {specifier}, which the host owns.", file=sys.stderr)
                         return 1

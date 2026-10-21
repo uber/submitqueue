@@ -2,8 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { AutoRefresh, useWebNavigation } from "@submitqueue/web-platform";
-import { Checkbox } from "baseui/checkbox/index.js";
-import { ParagraphXSmall } from "baseui/typography/index.js";
+import { Checkbox } from "baseui/checkbox";
+import { ParagraphXSmall } from "baseui/typography";
 
 export function RefreshControls() {
   const navigation = useWebNavigation();

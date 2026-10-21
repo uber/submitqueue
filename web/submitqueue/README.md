@@ -13,6 +13,8 @@ The complete read-only SubmitQueue UI as a mountable module. Folders follow the 
 
 Entry points: the root is client-safe (`SubmitQueueApp`, page frames, `WebNavigationProvider`, model types); `./server` has `createSubmitQueueWeb`, the gateway contract, and `WebPaths`; `./extension/gateway/mock` has test fakes; `./styles.css` is the full stylesheet. Controllers and helpers stay internal.
 
+Process the UI entry with the host's bundler for both SSR and the browser. The `/server` entry runs directly in Node and does not load BaseUI. See the shared [package contract](../README.md#layers).
+
 **Hosting it.** Give `createSubmitQueueWeb` a gateway client (any client matching the structural contract, so the module ships no generated code) and optionally a mount path, authorization check, error classifier, or cached queue catalog. Route every page path to `handle`, render `SubmitQueueApp` with each page model, and wrap it in a `WebNavigationProvider` for client-side navigation. Load `./styles.css` for long-identifier wrapping and supply BaseUI's `BaseProvider` and Styletron's `Provider`. The host owns the theme and styling engine, including SSR stylesheet extraction and hydration; BaseUI, React, React DOM, and Styletron React are peers. `WebShell` follows the provider's theme rather than taking a separate theme prop.
 
 Pass `onLog` on each `handle` request to deliver severity, message, and structured metadata to the host's request-scoped logger. Errors retain their original value under `error`, and logs include the correlation `requestId` and page `path`. The callback must be synchronous; omitting it is silent, and callback exceptions do not change page results. The module has no logging-library dependency.

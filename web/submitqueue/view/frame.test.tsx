@@ -1,7 +1,7 @@
 import { render, screen } from "../../platform/test/rtl.js";
 import { render as renderUnwrapped } from "@testing-library/react";
 import { BaseProvider, DarkTheme, LightTheme } from "baseui";
-import { Button } from "baseui/button/index.js";
+import { Button } from "baseui/button";
 import { renderToString } from "react-dom/server";
 import { Server } from "styletron-engine-atomic";
 import { Provider } from "styletron-react";

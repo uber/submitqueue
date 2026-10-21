@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { styled } from "baseui/index.js";
-import { LabelXSmall, ParagraphSmall } from "baseui/typography/index.js";
+import { styled } from "baseui";
+import { LabelXSmall, ParagraphSmall } from "baseui/typography";
 
 const FactRow = styled("div", ({ $theme }) => ({
   paddingTop: $theme.sizing.scale500,

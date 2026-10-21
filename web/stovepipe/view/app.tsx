@@ -1,9 +1,9 @@
 "use client";
 
 import { Fact, Timestamp } from "@submitqueue/web-platform";
-import { Block } from "baseui/block/index.js";
-import { Tag } from "baseui/tag/index.js";
-import { HeadingLarge, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/typography/index.js";
+import { Block } from "baseui/block";
+import { Tag } from "baseui/tag";
+import { HeadingLarge, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/typography";
 import { RefreshControls } from "./refresh.js";
 import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";

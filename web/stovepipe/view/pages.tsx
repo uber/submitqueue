@@ -1,10 +1,10 @@
 "use client";
 
 import { Fact, Timestamp } from "@submitqueue/web-platform";
-import { Block } from "baseui/block/index.js";
-import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic/index.js";
-import { Tag } from "baseui/tag/index.js";
-import { ParagraphSmall } from "baseui/typography/index.js";
+import { Block } from "baseui/block";
+import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
+import { Tag } from "baseui/tag";
+import { ParagraphSmall } from "baseui/typography";
 import type {
   RequestSummaryModel,
   HistoryEventModel,
