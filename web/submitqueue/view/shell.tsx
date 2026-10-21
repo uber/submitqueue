@@ -1,6 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Block } from "baseui/block/index.js";
+import { StyledLink } from "baseui/link/index.js";
+import { Tag } from "baseui/tag/index.js";
+import { LabelMedium, LabelXSmall } from "baseui/typography/index.js";
 
 export interface WebShellProps {
   children: ReactNode;
@@ -12,22 +16,23 @@ export interface WebShellProps {
   brandMark?: string;
   environmentLabel?: string;
   footer?: ReactNode;
-  /** Color scheme: `system` follows the viewer's preference. */
-  theme?: "light" | "dark" | "system";
 }
 
 export function WebShell({
   children, homeHref = "/", homeLabel, brand, brandMark = "", environmentLabel = "Read-only",
-  footer = "Read-only · updates automatically", theme = "light",
+  footer = "Read-only · updates automatically",
 }: WebShellProps) {
-  return <div className="sq-app site-frame" data-theme={theme}>
-    <header className="site-header">
-      <a className="brand" href={homeHref} {...(homeLabel ? { "aria-label": homeLabel } : {})}>
-        {brandMark ? <span className="brand-mark" aria-hidden="true">{brandMark}</span> : null}<span>{brand}</span>
-      </a>
-      {environmentLabel ? <span className="environment-pill">{environmentLabel}</span> : null}
-    </header>
+  return <Block className="sq-app" backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
+    minHeight="100vh" display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows="auto 1fr auto"
+    paddingLeft="scale600" paddingRight="scale600">
+    <Block as="header" display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale600"
+      paddingTop="scale300" paddingBottom="scale300">
+      <Block as={StyledLink} display="inline-flex" alignItems="center" gridGap="scale300" href={homeHref} {...(homeLabel ? { "aria-label": homeLabel } : {})}>
+        {brandMark ? <Tag closeable={false} kind="neutral" size="small"><span aria-hidden="true">{brandMark}</span></Tag> : null}<LabelMedium as="span">{brand}</LabelMedium>
+      </Block>
+      {environmentLabel ? <LabelXSmall as="span" color="contentSecondary">{environmentLabel}</LabelXSmall> : null}
+    </Block>
     {children}
-    {footer ? <footer className="site-footer">{footer}</footer> : null}
-  </div>;
+    {footer ? <Block as="footer" paddingTop="scale300" paddingBottom="scale300" font="ParagraphXSmall" color="contentSecondary">{footer}</Block> : null}
+  </Block>;
 }

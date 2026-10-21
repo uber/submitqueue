@@ -4,7 +4,7 @@ import {
   fireEvent,
   render,
   screen,
-} from "@testing-library/react";
+} from "../../platform/test/rtl.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { RefreshControls } from "./refresh.js";

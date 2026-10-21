@@ -1,14 +1,1 @@
 @import "@submitqueue/web-platform/styles.css";
-
-.sq-app .sq-project-name { overflow-wrap: anywhere; }
-
-/* Stovepipe pages. */
-.sq-app .sq-stacked-sections {
-  display: grid;
-  gap: 38px;
-}
-@media (max-width: 680px) {
-  .sq-app .sq-stacked-sections {
-    gap: 20px;
-  }
-}

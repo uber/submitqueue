@@ -20,9 +20,12 @@ web_library(
         ":node_modules/@submitqueue/web-platform",
         ":node_modules/@types/node",
         ":node_modules/@types/react",
+        ":node_modules/baseui",
         ":node_modules/next",
         ":node_modules/pino",
         ":node_modules/react",
         ":node_modules/server-only",
+        ":node_modules/styletron-engine-atomic",
+        ":node_modules/styletron-react",
     ],
 )

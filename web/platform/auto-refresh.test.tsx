@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "./test/rtl.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AutoRefresh } from "./auto-refresh.js";

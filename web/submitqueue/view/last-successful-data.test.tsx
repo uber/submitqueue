@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { renderHook } from "../../platform/test/rtl.js";
 import { describe, expect, it } from "vitest";
 import type { LoadResult } from "../entity/index.js";
 import { useLastSuccessfulData } from "./last-successful-data.js";

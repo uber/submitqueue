@@ -39,9 +39,15 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
+    "baseui": ">=16 <19",
+    "react-dom": ">=18 <20",
+    "styletron-react": ">=6",
     "react": ">=18 <20"
   },
   "devDependencies": {
+    "baseui": "18.2.0",
+    "styletron-engine-atomic": "1.6.2",
+    "styletron-react": "6.1.1",
     "@connectrpc/connect": "^2.1.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
@@ -52,7 +58,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "typescript": "^5.8.3",
-    "vitest": "4.0.7"
+    "vitest": "4.1.11"
   },
   "dependencies": {
     "@submitqueue/web-platform": "0.0.0"

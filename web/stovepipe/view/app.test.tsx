@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it } from "vitest";
 import { StovepipeApp } from "./app.js";
 import type { StovepipePageModel } from "../entity/index.js";
@@ -89,7 +89,7 @@ it("links queue entries by request ID even when the change URI is missing", () =
   );
   expect(screen.getByText("Unknown URI")).toBeVisible();
 });
-it("retains the summary and history after a failed refresh", () => {
+it("retains the summary and history after a failed refresh", async () => {
   const { rerender } = render(<StovepipeApp model={model} />);
   rerender(
     <StovepipeApp model={{
@@ -101,7 +101,7 @@ it("retains the summary and history after a failed refresh", () => {
   expect(screen.getByText("git://repo/sha")).toBeVisible();
   expect(screen.getByText("all_targets_passed")).toBeVisible();
   expect(screen.getByText("accepted")).toBeVisible();
-  expect(screen.getAllByText("Showing the last successful result.")).toHaveLength(2);
+  await waitFor(() => expect(screen.getAllByText("Showing the last successful result.")).toHaveLength(2));
   expect(screen.getByText("green-project")).toBeVisible();
 });
 it("discards previous results when the request changes", () => {
@@ -124,7 +124,7 @@ it("discards previous results when the request changes", () => {
 it("renders recorded project results, completion and shareable pagination", () => {
   render(<StovepipeApp model={model} />);
   const projects = screen.getByRole("region", { name: "Project results" });
-  const table = within(projects).getByRole("table", { name: "Project results" });
+  const table = within(projects).getByRole("table", { name: "Recorded project results" });
   expect(within(table).getByRole("rowheader", { name: "Repository" })).toBeVisible();
   expect(within(projects).getByText("Green (0%)")).toBeVisible();
   expect(within(projects).getByText("Breakage (25%)")).toBeVisible();
@@ -160,7 +160,7 @@ it("shows complete empty results without inventing green or a continuation", () 
   expect(screen.getByText("Project result recording is complete.")).toBeVisible();
   expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
   expect(screen.queryByRole("link", { name: /Next projects/ })).toBeNull();
-  const table = screen.getByRole("table", { name: "Project results" });
+  const table = screen.getByRole("table", { name: "Recorded project results" });
   expect(within(table).getByRole("rowheader", { name: "Repository" })).toBeVisible();
   expect(within(table).getByText("No result recorded")).toBeVisible();
 });

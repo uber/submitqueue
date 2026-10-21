@@ -21,13 +21,18 @@ web_library(
         ":node_modules/@types/react-dom",
         ":node_modules/jsdom",
         ":node_modules/react-dom",
+        ":node_modules/styletron-engine-atomic",
+        ":node_modules/styletron-react",
         ":node_modules/vitest",
+        "//web/platform:test_support",
     ],
     vitest = vitest,
     deps = [
         ":node_modules/@submitqueue/web-platform",
         ":node_modules/@types/node",
         ":node_modules/@types/react",
+        ":node_modules/baseui",
         ":node_modules/react",
+        "//web:node_modules/@types/react",
     ],
 )

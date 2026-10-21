@@ -3,6 +3,7 @@
 import { createContext, useContext, useMemo, useRef, type ComponentType } from "react";
 import type { WebPageModel } from "../entity/index.js";
 import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
+import { StyledLink } from "baseui/link/index.js";
 
 /** Client-side controls of the enclosing {@link WebApp}. */
 export interface WebAppControls {
@@ -57,8 +58,8 @@ export function WebApp<Model extends WebPageModel>({ model, Page }: WebAppProps<
   return <AppContext.Provider value={controls}><Page key={model.key} model={model} /></AppContext.Provider>;
 }
 
-/** An in-app link: the host's `Link` when supplied, otherwise a plain anchor. */
-export function WebLink(props: WebLinkProps) {
+/** An in-app link styled by BaseUI, using the host's router when supplied. */
+export function WebLink({ className = "", ...props }: WebLinkProps) {
   const { Link } = useWebNavigation();
-  return Link ? <Link {...props} /> : <a {...props} />;
+  return <StyledLink $as={Link ?? "a"} className={className} {...props} />;
 }

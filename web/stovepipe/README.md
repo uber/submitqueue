@@ -8,7 +8,7 @@ Logging uses a synchronous `onLog` callback passed on each `handle` request. Bin
 
 Instrumentation belongs in the host: wrap `handle` to observe page results and instrument the concrete service client for RPC traces. A `render` result can contain a failed section, so check `requests.ok`, or both `history.ok` and `projectStatus.ok`, before reporting success. The reference host uses native OpenTelemetry spans, a page-load counter and a duration metric; other hosts can use their own telemetry without an adapter. The reusable module has no telemetry dependency or instrumentation API.
 
-Use the server entry's `createStovepipeWeb` to load a page and render its model with `StovepipeApp`. Mount beneath `WebNavigationProvider` when the host supplies client navigation and refresh. Without it, links and refresh use ordinary document navigation. Import `@submitqueue/web-stovepipe/styles.css`, which includes the common native styles from `@submitqueue/web-platform`.
+Use the server entry's `createStovepipeWeb` to load a page and render its model with `StovepipeApp`. Mount beneath `WebNavigationProvider` when the host supplies client navigation and refresh. Without it, links and refresh use ordinary document navigation. Import `@submitqueue/web-stovepipe/styles.css` for long-identifier wrapping, and supply BaseUI's `BaseProvider` and Styletron's `Provider`. The host owns the theme and styling engine, including SSR stylesheet extraction and hydration; the library creates neither. BaseUI, React, React DOM, and Styletron React are peer dependencies.
 
 ## Routes and data
 

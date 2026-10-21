@@ -10,11 +10,59 @@ const client = createClient(
     defaultTimeoutMs: 5_000,
   }),
 );
+test.describe("server-rendered styling", () => {
+  test.use({ javaScriptEnabled: false });
+  test("styles the queue before hydration", async ({ page }) => {
+    await page.goto("/web%2Fpagination");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
+  });
+  test("separates request status fields before hydration", async ({ page }) => {
+    await page.goto("/web%2Fpagination/request/51");
+    const rows = page.getByRole("region", { name: "Request status" }).locator("dl > div");
+    await expect(rows).toHaveCount(6);
+    const layout = await rows.evaluateAll(fields => fields.map(field => ({
+      height: field.getBoundingClientRect().height,
+      labelGap: field.querySelector("dd")!.getBoundingClientRect().top - field.querySelector("dt")!.getBoundingClientRect().bottom,
+      separator: parseFloat(getComputedStyle(field).borderBottomWidth),
+    })));
+    for (const row of layout) {
+      expect(row.height).toBeGreaterThanOrEqual(60);
+      expect(row.labelGap).toBeGreaterThanOrEqual(6);
+      expect(row.separator).toBeGreaterThan(0);
+    }
+  });
+  test("uses the available width on a wide screen", async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto("/web%2Fpagination");
+    const table = await page.getByRole("table", { name: "Requests", exact: true }).boundingBox();
+    expect(table?.width).toBeGreaterThan(1920 * 0.95);
+  });
+});
+test("keeps queue tables inside a narrow viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/web%2Fpagination");
+  await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("link", { name: "51", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Request 51", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  const history = page.getByRole("region", { name: "Request history", exact: true });
+  await history.focus();
+  await expect(history).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => history.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
 test("real ingestion, queue selection, cursors, request summaries, history, project results and refresh", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error" && /hydrat|did not match|Minified React error #(?:418|423|425)/iu.test(message.text())) errors.push(message.text());
+  });
   const id =
     await test.step("Ingest a real request and wait for its projection", async () => {
       const { id } = await client.ingest({ queue: "monorepo/main" });
@@ -110,7 +158,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
   });
   await test.step("Read recorded project results and reload their cursor", async () => {
     const section = page.getByRole("region", { name: "Project results", exact: true });
-    const projects = section.getByRole("table", { name: "Project results", exact: true });
+    const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(51);
     await expect(
       projects.getByRole("row").filter({
@@ -148,7 +196,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await page.goto("/web%2Fpagination/request/49");
     const section = page.getByRole("region", { name: "Project results", exact: true });
     await expect(section.getByText("No project results recorded on this page.", { exact: true })).toBeVisible();
-    const projects = section.getByRole("table", { name: "Project results", exact: true });
+    const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(1);
     await expect(projects.getByRole("rowheader", { name: "Repository", exact: true })).toBeVisible();
     await expect(projects.getByRole("cell", { name: "No result recorded", exact: true })).toBeVisible();

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "../../platform/test/rtl.js";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -25,11 +25,11 @@ function renderApp(model: WebPageModel, navigation: WebNavigation) {
 }
 
 describe("WebApp", () => {
-  it("refreshes through the host, moving a snapshot page to its refresh target", () => {
+  it("refreshes through the host, moving a snapshot page to its refresh target", async () => {
     const refresh = vi.fn(async () => undefined);
     renderApp(pageModel("Snapshot", "/latest"), { refresh });
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
 
     expect(refresh).toHaveBeenCalledWith("/latest");
   });
@@ -73,7 +73,7 @@ describe("WebLink", () => {
 
 describe("WebRefreshControl", () => {
   it("renders nothing outside a WebApp", () => {
-    const { container } = render(<WebRefreshControl refresh={pageModel("Alone").refresh} />);
-    expect(container.innerHTML).toBe("");
+    render(<WebRefreshControl refresh={pageModel("Alone").refresh} />);
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

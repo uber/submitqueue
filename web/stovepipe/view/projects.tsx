@@ -1,53 +1,57 @@
 "use client";
 
 import { Timestamp } from "@submitqueue/web-platform";
+import { Block } from "baseui/block/index.js";
+import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic/index.js";
+import { Tag } from "baseui/tag/index.js";
+import { ParagraphSmall } from "baseui/typography/index.js";
 import type { ProjectStatusModel } from "../entity/index.js";
 import { Link, Table } from "./components.js";
 
 function Result({ degree }: { degree: number | null }) {
   return (
-    <span className="sq-status" data-tone={
-      degree === null ? "neutral" : degree === 0 ? "success" : "danger"
+    <Tag closeable={false} size="small" kind={
+      degree === null ? "neutral" : degree === 0 ? "positive" : "negative"
     }>
       {degree === null ? "No result recorded" : (
         <>{degree === 0 ? "Green" : "Breakage"} ({
           (degree * 100).toLocaleString("en-US", { maximumSignificantDigits: 6 })
         }%)</>
       )}
-    </span>
+    </Tag>
   );
 }
 
 export function ProjectResults({ model }: { model: ProjectStatusModel }) {
   return (
     <>
-      <p className="sq-secondary">
+      <ParagraphSmall color="contentSecondary">
         Breakage ranges from 0% (green) to 100%; missing results are not green.
-      </p>
-      <Table label="Project results" headers={["Scope", "Recorded result"]}>
-        <tr>
-          <th scope="row">Repository</th>
-          <td><Result degree={model.repositoryBreakageDegree} /></td>
-        </tr>
+      </ParagraphSmall>
+      <Table label="Recorded project results" headers={["Scope", "Recorded result"]}>
+        <StyledTableBodyRow>
+          <StyledTableBodyCell $as="th" scope="row">Repository</StyledTableBodyCell>
+          <StyledTableBodyCell><Result degree={model.repositoryBreakageDegree} /></StyledTableBodyCell>
+        </StyledTableBodyRow>
         {model.projects.map((entry) => (
-          <tr key={entry.project}>
-            <td className="sq-project-name">{entry.project}</td>
-            <td><Result degree={entry.breakageDegree} /></td>
-          </tr>
+          <StyledTableBodyRow key={entry.project}>
+            <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
+            <StyledTableBodyCell><Result degree={entry.breakageDegree} /></StyledTableBodyCell>
+          </StyledTableBodyRow>
         ))}
       </Table>
-      {!model.projects.length && <p>No project results recorded on this page.</p>}
-      <p className="sq-secondary">{model.complete
+      {!model.projects.length && <ParagraphSmall>No project results recorded on this page.</ParagraphSmall>}
+      <ParagraphSmall color="contentSecondary">{model.complete
         ? "Project result recording is complete."
-        : "Project result recording is still in progress; more results may arrive."}</p>
+        : "Project result recording is still in progress; more results may arrive."}</ParagraphSmall>
       {(model.firstHref || model.nextHref) && (
-        <nav aria-label="Project pages" className="page-actions">
+        <Block as="nav" aria-label="Project pages" display="flex" flexWrap gridGap="scale500">
           {model.firstHref && <Link href={model.firstHref}>First projects</Link>}
           {model.nextHref && <Link href={model.nextHref}>Next projects →</Link>}
-        </nav>
+        </Block>
       )}
-      <p className="sq-secondary">Results updated: {model.updatedAtMs === "0"
-        ? "Unknown" : <Timestamp value={model.updatedAtMs} />}</p>
+      <ParagraphSmall color="contentSecondary">Results updated: {model.updatedAtMs === "0"
+        ? "Unknown" : <Timestamp value={model.updatedAtMs} />}</ParagraphSmall>
     </>
   );
 }

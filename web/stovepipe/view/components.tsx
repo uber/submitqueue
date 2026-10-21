@@ -3,34 +3,15 @@
 import { useState, type ReactNode } from "react";
 import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
 import type { ReadResult } from "../entity/index.js";
+import { Notification, KIND } from "baseui/notification/index.js";
+import { StyledLink } from "baseui/link/index.js";
+import { ParagraphSmall } from "baseui/typography/index.js";
 
-export function Link(props: WebLinkProps) {
+export { Table } from "@submitqueue/web-platform";
+
+export function Link({ className = "", ...props }: WebLinkProps) {
   const { Link: HostLink } = useWebNavigation();
-  return HostLink ? <HostLink {...props} /> : <a {...props} />;
-}
-export function Table({
-  label,
-  headers,
-  children,
-}: {
-  label: string;
-  headers: string[];
-  children: ReactNode;
-}) {
-  return (
-    <div className="sq-table-scroll">
-      <table aria-label={label}>
-        <thead>
-          <tr>
-            {headers.map((header) => (
-              <th key={header}>{header}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
-  );
+  return <StyledLink $as={HostLink ?? "a"} className={className} {...props} />;
 }
 export function Section<T>({
   result,
@@ -47,10 +28,10 @@ export function Section<T>({
   return (
     <>
       {!result.ok && (
-        <div role="alert" className="sq-error">
+        <Notification kind={KIND.negative} overrides={{ Body: { props: { role: "alert" }, style: { width: "auto" } } }}>
           {result.error}
-          {previous !== null && <p>Showing the last successful result.</p>}
-        </div>
+          {previous !== null && <ParagraphSmall>Showing the last successful result.</ParagraphSmall>}
+        </Notification>
       )}
       {data !== null ? children(data) : null}
     </>

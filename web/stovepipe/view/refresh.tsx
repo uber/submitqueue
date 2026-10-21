@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { AutoRefresh, useWebNavigation } from "@submitqueue/web-platform";
+import { Checkbox } from "baseui/checkbox/index.js";
+import { ParagraphXSmall } from "baseui/typography/index.js";
 
 export function RefreshControls() {
   const navigation = useWebNavigation();
@@ -30,16 +32,14 @@ export function RefreshControls() {
         maxBackoffMs={10_000}
       />
       {navigation.refresh && (
-        <label>
-          <input
-            type="checkbox"
-            checked={automatic}
-            onChange={(event) => setAutomatic(event.currentTarget.checked)}
-          />{" "}
+        <Checkbox
+          checked={automatic}
+          onChange={(event) => setAutomatic(event.currentTarget.checked)}
+        >
           Auto refresh every 10s
-        </label>
+        </Checkbox>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && <ParagraphXSmall role="alert" color="contentNegative">{error}</ParagraphXSmall>}
     </div>
   );
 }

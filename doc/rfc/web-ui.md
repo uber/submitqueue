@@ -33,11 +33,11 @@ The boundaries are enforced, not just documented. The module imports no generate
 | Module | Host |
 |---|---|
 | Routing in both directions, catalog validation, request and change lookup, receipt windows, pagination, internal links | One catch-all route that hands the still-encoded path to the host pipeline |
-| Serializable page models with titles, complete pages, shell, the stylesheet and theme tokens, status and error states | Authentication, the principal it produces, and optional per-route authorization |
+| Serializable page models with titles, complete BaseUI pages, shell, status and error states | Authentication, the principal it produces, optional per-route authorization, and BaseUI theme and Styletron providers |
 | Client navigation, refresh, and polling policy, expressed through a navigation adapter | The adapter: the framework's link, push, and refresh; the host owns the page model and history |
-| The gateway contract, default error classification, cursor format, and instrumentation points | Gateway transport and credentials, cursor signing keys, logger, meter, tracer, configuration, and deployment |
+| The gateway contract and default error classification | Gateway transport and credentials, logger, meter, tracer, configuration, and deployment |
 
-Components render serializable props and never fetch; sessions, gateway clients, and protobuf messages stay on the server. A host that supplies no navigation adapter gets ordinary document navigation and manual refresh. The host loads the module's one self-contained stylesheet, by importing it or by serving the file and linking to it. The module caches nothing unless the host configures a catalog cache keyed by viewer, and the host resolves the gateway per request when visibility depends on the viewer.
+Components render serializable props and never fetch; sessions, gateway clients, and protobuf messages stay on the server. A host that supplies no navigation adapter gets ordinary document navigation and manual refresh. The host loads the module's stylesheet for long-identifier wrapping, by importing it or by serving the file and linking to it. The module caches nothing unless the host configures a catalog cache keyed by viewer, and the host resolves the gateway per request when visibility depends on the viewer.
 
 ## URLs
 
@@ -68,7 +68,7 @@ Summary is the default request view, and `?view=history` makes History shareable
 
 **Errors and values.** Gateway failures map from gRPC status: invalid argument and resource exhausted are user errors, not found is a missing resource, unavailable and deadline exceeded are transient, and everything else is internal. A transport with another error shape supplies its own classifier. Raw gateway messages are logged, never rendered, and views keep the last good data on transient failures. Status values stay strings with a display table and an unknown fallback. `int64` values arrive as bigint, number, string, or `Long` and become milliseconds after a safe-range check.
 
-**Theme.** The `--sq-*` custom properties on `.sq-app` are the theming contract, with light, dark, and system themes built in. React 18 and 19 are both supported.
+**Theme.** Views use BaseUI components with host-supplied `BaseProvider` and Styletron `Provider`. BaseUI owns layout, responsive grids, colors and typography; the stylesheet only enables wrapping long identifiers. There is no independent library theme or styling engine. Hosts choose light, dark, custom, or system-driven themes and own SSR extraction and client hydration. The reference Next.js hosts share a request-scoped Styletron registry that streams new styles and hydrates them in the browser. BaseUI and Styletron React are peers alongside React and React DOM; React 18 and 19 are both supported.
 
 ## Observability and identity
 

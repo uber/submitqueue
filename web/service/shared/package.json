@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "baseui": "18.2.0",
+    "styletron-engine-atomic": "1.6.2",
+    "styletron-react": "6.1.1",
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-node": "^2.1.1",
     "next": ">=16.3.0 <17",
@@ -28,12 +31,16 @@
     "eslint": "^9.36.0",
     "eslint-config-next": ">=16.3.0 <17",
     "typescript": "5.9.3",
-    "vitest": "4.0.7"
+    "vitest": "4.1.11"
   },
   "files": [
     "dist"
   ],
   "exports": {
+    "./theme": {
+      "types": "./dist/theme.d.ts",
+      "import": "./dist/theme.js"
+    },
     "./navigation": {
       "types": "./dist/navigation.d.ts",
       "import": "./dist/navigation.js"

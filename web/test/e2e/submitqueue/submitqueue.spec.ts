@@ -100,6 +100,12 @@ test("shows newest requests and an accessible readable detail history", async ({
   const listAccessibility = await new AxeBuilder({ page }).analyze();
   expect(listAccessibility.violations).toEqual([]);
   await page.screenshot({ path: test.info().outputPath("queue.png"), fullPage: true });
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const table = await page.getByRole("table", { name: `Requests in ${queue}` }).boundingBox();
+  expect(table?.width).toBeGreaterThan(1920 * 0.95);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.getByRole("searchbox").fill("1111111111111111111111111111111111111111");
   await expect(requestLinks).toHaveCount(1);
@@ -120,10 +126,41 @@ test("shows newest requests and an accessible readable detail history", async ({
   expect(actionBoxes.every(box => box !== null)).toBe(true);
   expect(actionBoxes.map(box => box!.y)).toEqual([actionBoxes[0]!.y, actionBoxes[0]!.y, actionBoxes[0]!.y]);
   expect(actionBoxes.map(box => box!.height)).toEqual([actionBoxes[0]!.height, actionBoxes[0]!.height, actionBoxes[0]!.height]);
+  const facts = page.locator(".sq-request-detail dl").first().locator(":scope > div");
+  await expect(facts).toHaveCount(5);
+  const factLayout = await facts.evaluateAll(rows => rows.map(row => {
+    const label = row.querySelector("dt")!.getBoundingClientRect();
+    const value = row.querySelector("dd")!.getBoundingClientRect();
+    return {
+      height: row.getBoundingClientRect().height,
+      labelGap: value.top - label.bottom,
+      separator: parseFloat(getComputedStyle(row).borderBottomWidth),
+    };
+  }));
+  for (const row of factLayout) {
+    expect(row.height).toBeGreaterThanOrEqual(60);
+    expect(row.labelGap).toBeGreaterThanOrEqual(6);
+    expect(row.separator).toBeGreaterThan(0);
+  }
+  const lifecycle = page.getByRole("list", { name: "Observed lifecycle transitions" });
+  const firstSteps = await lifecycle.locator("li").evaluateAll(items => items.slice(0, 2).map(item => {
+    const { x, y } = item.getBoundingClientRect();
+    return { x, y };
+  }));
+  expect(firstSteps).toHaveLength(2);
+  expect(firstSteps[1]!.y).toBe(firstSteps[0]!.y);
+  expect(firstSteps[1]!.x).toBeGreaterThan(firstSteps[0]!.x);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.screenshot({ path: test.info().outputPath("request-summary.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole("link", { name: /^History/ }).click();
   await expect(page).toHaveURL(url => url.searchParams.get("view") === "history");
   await expect(page.getByRole("list", { name: "Request history" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("list", { name: "Request history" }).locator("summary").first().click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   const history = await page.locator(".sq-history__item").allTextContents();
   expectOrderedHistory(history, [
@@ -143,15 +180,36 @@ test("shows newest requests and an accessible readable detail history", async ({
   expect(detailAccessibility.violations).toEqual([]);
   await page.screenshot({ path: test.info().outputPath("request-history.png"), fullPage: true });
 
-  await page.getByRole("combobox").selectOption("event");
+  await page.getByRole("combobox").click();
+  await page.getByRole("option", { name: "Occurrence events", exact: true }).click();
   await expect(page.getByRole("list", { name: "Request history" }).getByText("Accepted")).toHaveCount(0);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  const historyFilter = page.getByRole("combobox", { name: /Show events/ });
+  await historyFilter.focus();
+  await historyFilter.press("ArrowDown");
+  await expect(historyFilter).toHaveAttribute("aria-expanded", "true");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await historyFilter.press("ArrowUp");
+  await expect.poll(() => historyFilter.evaluate(input => {
+    const activeId = input.getAttribute("aria-activedescendant");
+    return activeId ? document.getElementById(activeId)?.getAttribute("role") : null;
+  })).toBe("option");
+  await historyFilter.press("Enter");
+  await expect(historyFilter).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("list", { name: "Request history" }).getByText("Accepted")).toBeVisible();
+  await historyFilter.press("ArrowDown");
+  await expect(historyFilter).toHaveAttribute("aria-expanded", "true");
+  await historyFilter.press("Escape");
+  await expect(historyFilter).toHaveAttribute("aria-expanded", "false");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole("link", { name: "Summary", exact: true }).click();
   await page.getByRole("link", { name: "github://github.com/uber/submitqueue/pull/123/2222222222222222222222222222222222222222", exact: true }).click();
   await expect(page.getByRole("heading", { name: "PR #123" })).toBeVisible();
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(3);
   expect(new URL(page.url()).search).toBe("");
   await page.screenshot({ path: test.info().outputPath("change-submissions.png"), fullPage: true });
-  await page.getByRole("combobox", { name: "Filter submissions by version" }).selectOption({ label: "2222222222222222222222222222222222222222" });
+  await page.getByRole("combobox", { name: /Filter submissions by version/ }).click();
+  await page.getByRole("option", { name: "2222222222222222222222222222222222222222", exact: true }).click();
   await expect(page.getByText("Retained submissions for this exact version")).toBeVisible();
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(2);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -177,9 +235,8 @@ test("shows newest requests and an accessible readable detail history", async ({
   const logicalChangeUrl = page.url();
   await page.reload();
   await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "Filter submissions by version" }).selectOption({
-    label: "3333333333333333333333333333333333333333",
-  });
+  await page.getByRole("combobox", { name: /Filter submissions by version/ }).click();
+  await page.getByRole("option", { name: "3333333333333333333333333333333333333333", exact: true }).click();
   await expect(page.getByRole("heading", { name: "refs/heads/web-demo", exact: true })).toBeVisible();
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(1);
   await page.goto(logicalChangeUrl);

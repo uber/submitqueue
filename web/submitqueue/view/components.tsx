@@ -2,41 +2,86 @@
 
 import { ErrorState } from "./error-state.js";
 import { useLastSuccessfulData } from "./last-successful-data.js";
-import { Timestamp } from "@submitqueue/web-platform";
+import { Fact, Table, Timestamp } from "@submitqueue/web-platform";
+import { styled } from "baseui/index.js";
+import { Block } from "baseui/block/index.js";
+import { Button, SIZE } from "baseui/button/index.js";
+import { Input } from "baseui/input/index.js";
+import { KIND, Notification } from "baseui/notification/index.js";
+import { Select, StyledInput } from "baseui/select/index.js";
+import { Tag } from "baseui/tag/index.js";
+import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic/index.js";
+import { HeadingLarge, HeadingSmall, LabelXSmall, ParagraphSmall, ParagraphXSmall } from "baseui/typography/index.js";
 import { useWebApp, WebLink } from "./web-app.js";
-import { useState, type ReactNode } from "react";
+import { forwardRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import type {
   ChangeDetailModel, HistoryEventModel, LoadResult, QueueModel, RequestDetailModel, RequestListModel, RequestSummaryModel,
 } from "../entity/index.js";
 import { WebPaths } from "../core/paths.js";
 import { statusDisplay } from "../core/status.js";
 
+// Closing removes the options; suppress the old ID until the menu reports a new one.
+const SelectInput = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<typeof StyledInput>>((props, ref) => {
+  const activeDescendant = props["aria-activedescendant"];
+  const [closedActiveDescendant, setClosedActiveDescendant] = useState(activeDescendant);
+  if (!props.$isOpen && closedActiveDescendant !== activeDescendant) setClosedActiveDescendant(activeDescendant);
+  return <StyledInput {...props} ref={ref}
+    aria-activedescendant={props.$isOpen && activeDescendant !== closedActiveDescendant ? activeDescendant : undefined} />;
+});
+
+const selectOverrides = {
+  Input: { component: SelectInput },
+  // The enclosing option owns selection semantics; its label is a generic div.
+  OptionContent: { props: { "aria-selected": undefined, "aria-readonly": undefined } },
+};
+
+const MetadataRow = styled("div", ({ $theme }) => ({
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr)",
+  gap: $theme.sizing.scale200,
+  paddingTop: $theme.sizing.scale300,
+  paddingBottom: $theme.sizing.scale300,
+  [$theme.mediaQuery.medium]: {
+    gridTemplateColumns: "minmax(100px, .35fr) minmax(0, 1fr)",
+    gap: $theme.sizing.scale600,
+  },
+}));
+
+const RequestViewLink = styled<typeof WebLink, { $active: boolean }>(WebLink, ({ $theme, $active }) => ({
+  display: "inline-block",
+  paddingTop: $theme.sizing.scale400,
+  paddingBottom: $theme.sizing.scale400,
+  textDecoration: "none",
+  borderBottom: `2px solid ${$active ? $theme.colors.contentPrimary : "transparent"}`,
+}));
+
 function Metadata({ values }: { values: Record<string, string> }) {
-  return <dl className="sq-metadata">{Object.entries(values).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) =>
-    <div className="sq-metadata__entry" key={key}><dt>{key}</dt><dd>{value}</dd></div>
-  )}</dl>;
+  return <Block as="dl" marginTop="scale500" marginBottom="0">{Object.entries(values).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) =>
+    <MetadataRow key={key}><LabelXSmall as="dt" color="contentSecondary">{key}</LabelXSmall><ParagraphSmall as="dd" margin="0">{value}</ParagraphSmall></MetadataRow>
+  )}</Block>;
 }
 
 export function RequestStatus({ status }: { status: string }) {
   const display = statusDisplay(status);
-  return <span className="sq-status" data-status={status || "unknown"} data-tone={display.tone}>{display.label}</span>;
+  const kind = ({ neutral: "neutral", success: "positive", danger: "negative", warning: "warning", progress: "accent" } as const)[display.tone];
+  return <span className="sq-status" data-status={status || "unknown"} data-tone={display.tone}><Tag closeable={false} kind={kind} size="small">{display.label}</Tag></span>;
 }
 
 function RequestChanges({ request, links = {}, labels = {} }: {
   request: RequestSummaryModel; links?: Record<string, string>; labels?: Record<string, string>;
 }) {
-  return <ul className="sq-changes" aria-label="Changes">{request.changeUris.map(uri =>
-    <li key={uri}>{links[uri] ? <WebLink href={links[uri]}>{labels[uri] ?? uri}</WebLink> : <code>{labels[uri] ?? uri}</code>}</li>
-  )}</ul>;
+  return <Block as="ul" paddingLeft="scale600" margin="0" aria-label="Changes">{request.changeUris.map(uri =>
+    <Block as="li" key={uri} font="MonoParagraphXSmall">{links[uri] ? <WebLink href={links[uri]}>{labels[uri] ?? uri}</WebLink> : <Block as="code" font="MonoParagraphXSmall">{labels[uri] ?? uri}</Block>}</Block>
+  )}</Block>;
 }
 
 export function QueueDirectory({ queues, basePath }: { queues: readonly QueueModel[]; basePath?: string }) {
   const paths = new WebPaths(basePath === undefined ? {} : { basePath });
   return <section className="sq-directory">
-    <h1>Queues</h1><p className="sq-secondary">Available submit queues</p>
-    {queues.length === 0 ? <p>No queues are configured.</p> :
+    <HeadingLarge as="h1" marginTop="0" marginBottom="scale300">Queues</HeadingLarge><ParagraphXSmall color="contentSecondary">Available submit queues</ParagraphXSmall>
+    {queues.length === 0 ? <ParagraphSmall>No queues are configured.</ParagraphSmall> :
       <ul>{queues.map(queue => <li key={queue.name}>
-        <h2><WebLink href={paths.requests(queue.name)}>{queue.name}</WebLink></h2>{queue.description ? <p>{queue.description}</p> : null}
+        <HeadingSmall as="h2"><WebLink href={paths.requests(queue.name)}>{queue.name}</WebLink></HeadingSmall>{queue.description ? <ParagraphSmall color="contentSecondary">{queue.description}</ParagraphSmall> : null}
       </li>)}</ul>}
   </section>;
 }
@@ -57,24 +102,23 @@ export function RequestList({ model, basePath, empty, changeLinks, changeLabels 
       .some(value => value.toLowerCase().includes(search.toLowerCase()))
   );
   return <section className="sq-request-list">
-    <div className="sq-toolbar">
-      <label>Find in displayed requests<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
-      <span className="sq-secondary">Displayed page · UTC</span>
-    </div>
-    {model.requests.length === 0 ? <div className="sq-empty">{empty ?? "No requests were received in this window."}</div> :
-      requests.length === 0 ? <p className="sq-empty">No displayed requests match.</p> :
-        <div className="sq-table-scroll"><table aria-label={`Requests in ${model.queue}`}>
-          <thead><tr><th>Request ID</th><th>Status</th><th>Changes</th><th>Received · UTC</th></tr></thead>
-          <tbody>{requests.map(request => <tr className="sq-request-list__item" key={request.sqid}>
-            <td><WebLink href={paths.request(model.queue, request.sqid)}>{request.sqid}</WebLink></td>
-            <td><RequestStatus status={request.status} />{request.lastError ? <p className="sq-row-error">{request.lastError}</p> : null}</td>
-            <td><RequestChanges request={request} {...(changeLinks ? { links: changeLinks } : {})} {...(changeLabels ? { labels: changeLabels } : {})} /></td>
-            <td><Timestamp value={request.receivedAtMs} /></td>
-          </tr>)}</tbody>
-        </table></div>}
-    <div className="sq-table-footer"><span aria-live="polite">{requests.length} displayed requests · newest received first</span>
+    <Block display="flex" justifyContent="space-between" alignItems="center" flexWrap gridGap="scale600" marginBottom="scale600">
+      <Block as="label" width="320px" maxWidth="100%" font="LabelXSmall" color="contentSecondary">Find in displayed requests<Input type="search" size="compact" value={search} onChange={event => setSearch(event.currentTarget.value)} /></Block>
+      <LabelXSmall as="span" color="contentSecondary">Displayed page · UTC</LabelXSmall>
+    </Block>
+    {model.requests.length === 0 ? <Block paddingTop="scale600" paddingBottom="scale600" color="contentSecondary">{empty ?? "No requests were received in this window."}</Block> :
+      requests.length === 0 ? <ParagraphSmall color="contentSecondary">No displayed requests match.</ParagraphSmall> :
+        <Table label={`Requests in ${model.queue}`} headers={["Request ID", "Status", "Changes", "Received · UTC"]}>
+          {requests.map(request => <StyledTableBodyRow className="sq-request-list__item" key={request.sqid}>
+            <StyledTableBodyCell><WebLink href={paths.request(model.queue, request.sqid)}>{request.sqid}</WebLink></StyledTableBodyCell>
+            <StyledTableBodyCell><RequestStatus status={request.status} />{request.lastError ? <ParagraphXSmall color="contentNegative">{request.lastError}</ParagraphXSmall> : null}</StyledTableBodyCell>
+            <StyledTableBodyCell><RequestChanges request={request} {...(changeLinks ? { links: changeLinks } : {})} {...(changeLabels ? { labels: changeLabels } : {})} /></StyledTableBodyCell>
+            <StyledTableBodyCell><Timestamp value={request.receivedAtMs} /></StyledTableBodyCell>
+          </StyledTableBodyRow>)}
+        </Table>}
+    <Block display="flex" justifyContent="space-between" alignItems="center" flexWrap gridGap="scale600" marginTop="scale600" font="ParagraphXSmall" color="contentSecondary"><span aria-live="polite">{requests.length} displayed requests · newest received first</span>
       {model.nextPageToken ? <nav aria-label="Request pages"><WebLink href={paths.requests(model.queue, { pageToken: model.nextPageToken })}>Next page</WebLink></nav> : null}
-    </div>
+    </Block>
   </section>;
 }
 
@@ -82,28 +126,33 @@ function HistoryValue({ item }: { item: HistoryEventModel }) {
   if (item.type === "status" && item.status !== null) {
     return <RequestStatus status={item.status} />;
   }
-  return <span className="sq-event">{item.type === "event" && item.event !== null ? statusDisplay(item.event).label : "Unknown event"}</span>;
+  return <Tag closeable={false} kind="accent" size="small">{item.type === "event" && item.event !== null ? statusDisplay(item.event).label : "Unknown event"}</Tag>;
 }
 
 export function RequestHistory({ events }: { events: HistoryEventModel[] }) {
   const [filter, setFilter] = useState("all");
+  const [menuMountNode, setMenuMountNode] = useState<HTMLElement | null>(null);
+  const filters = [{ id: "all", label: "All events" }, { id: "status", label: "Lifecycle" }, { id: "event", label: "Occurrence events" }];
   const shown = events.filter(event => filter === "all" || event.type === filter);
-  return <section>
-    <div className="sq-toolbar"><h2>Request history</h2><label>Show<select value={filter} onChange={event => setFilter(event.target.value)}>
-      <option value="all">All events</option><option value="status">Lifecycle</option><option value="event">Occurrence events</option>
-    </select></label></div>
-    {events.length === 0 ? <p className="sq-empty">No history has been retained for this request.</p> :
-      <ol className="sq-history" aria-label="Request history">{shown.map((item, index) =>
-        <li className="sq-history__item" key={`${item.timestampMs}-${index}`}>
+  return <section ref={setMenuMountNode}>
+    <Block display="flex" justifyContent="space-between" alignItems="center" flexWrap gridGap="scale600" marginBottom="scale600"><HeadingSmall as="h2" marginTop="0">Request history</HeadingSmall><Block width="320px" maxWidth="100%" font="LabelXSmall" color="contentSecondary">Show<Select aria-label="Show events" size="compact" clearable={false} overrides={selectOverrides} {...(menuMountNode ? { mountNode: menuMountNode } : {})}
+      options={filters} value={filters.filter(option => option.id === filter)}
+      onChange={({ value }) => setFilter(String(value[0]?.id ?? "all"))} /></Block></Block>
+    {events.length === 0 ? <ParagraphSmall color="contentSecondary">No history has been retained for this request.</ParagraphSmall> :
+      <Block as="ol" padding="0" overrides={{ Block: { style: { listStyleType: "none" } } }} role="list" aria-label="Request history">{shown.map((item, index) =>
+        <Block as="li" className="sq-history__item" key={`${item.timestampMs}-${index}`} display="grid"
+          gridTemplateColumns={["minmax(0, 1fr)", "minmax(0, 1fr)", "auto minmax(0, 1fr) auto"]}
+          gridGap="scale600" paddingTop="scale600" paddingBottom="scale600"
+          overrides={{ Block: { style: ({ $theme }) => ({ borderBottom: `1px solid ${$theme.colors.borderOpaque}` }) } }}>
           <Timestamp value={item.timestampMs} />
           <details><summary><HistoryValue item={item} /></summary>
-            {Object.keys(item.metadata).length ? <Metadata values={item.metadata} /> : <p className="sq-secondary">No additional metadata.</p>}
+            {Object.keys(item.metadata).length ? <Metadata values={item.metadata} /> : <ParagraphXSmall color="contentSecondary">No additional metadata.</ParagraphXSmall>}
           </details>
-          <span className="sq-secondary">{item.type === "status" ? "Lifecycle" : item.type === "event" ? "Occurrence" : "Unknown"}</span>
-          {item.lastError ? <p className="sq-row-error" role="alert">{item.lastError}</p> : null}
-        </li>
-      )}</ol>}
-    <p className="sq-secondary" aria-live="polite">{shown.length} displayed events · oldest first · UTC</p>
+          <LabelXSmall as="span" color="contentSecondary">{item.type === "status" ? "Lifecycle" : item.type === "event" ? "Occurrence" : "Unknown"}</LabelXSmall>
+          {item.lastError ? <Block as={ParagraphXSmall} gridColumn={["1", "1", "2"]} color="contentNegative" role="alert">{item.lastError}</Block> : null}
+        </Block>
+      )}</Block>}
+    <ParagraphXSmall color="contentSecondary" aria-live="polite">{shown.length} displayed events · oldest first · UTC</ParagraphXSmall>
   </section>;
 }
 
@@ -116,7 +165,7 @@ export function LastSuccessfulData<T>({ result, fallback = null, children }: {
 }) {
   const data = useLastSuccessfulData(result);
   return <>
-    {!result.ok ? <><ErrorState compact={data !== undefined} error={result.error} />{data !== undefined ? <p className="sq-secondary">Showing the last successful snapshot; updates are unavailable.</p> : null}</> : null}
+    {!result.ok ? <><ErrorState compact={data !== undefined} error={result.error} />{data !== undefined ? <ParagraphXSmall color="contentSecondary">Showing the last successful snapshot; updates are unavailable.</ParagraphXSmall> : null}</> : null}
     {data !== undefined ? children(data) : fallback}
   </>;
 }
@@ -137,11 +186,11 @@ function CopyControls({ id }: { id: string }) {
       setMessage("Copy unavailable. Select the ID or copy the browser address.");
     }
   };
-  return <div className="sq-copy">
-    <button type="button" onClick={() => void copyValue(id, "ID")}>Copy ID</button>
-    <button type="button" onClick={() => void copyValue(window.location.href, "Link")}>Copy link</button>
-    <span role="status">{message}</span>
-  </div>;
+  return <Block display="flex" alignItems="center" flexWrap gridGap="scale500">
+    <Button size={SIZE.compact} onClick={() => void copyValue(id, "ID")}>Copy ID</Button>
+    <Button size={SIZE.compact} onClick={() => void copyValue(window.location.href, "Link")}>Copy link</Button>
+    <Block as="span" role="status" width="100%" display={message ? "block" : "none"} font="ParagraphXSmall" color="contentSecondary">{message}</Block>
+  </Block>;
 }
 
 export interface RequestDetailProps {
@@ -161,29 +210,37 @@ export function RequestDetail({ model, view = "summary", basePath, backHref, sum
   const paths = new WebPaths(basePath === undefined ? {} : { basePath });
   const latest = model.history.at(-1);
   return <article className="sq-request-detail">
-    <nav className="sq-breadcrumb" aria-label="Breadcrumb"><WebLink href={paths.directory()}>Queues</WebLink><span>›</span><WebLink href={backHref ?? paths.requests(request.queue)}>{request.queue}</WebLink><span>› Request</span></nav>
-    <header className="sq-detail-heading"><div><h1>{request.sqid}</h1><RequestStatus status={request.status} /></div><div className="sq-detail-actions"><CopyControls id={request.sqid} />{controls}</div></header>
-    {request.lastError ? <p className="sq-failure-banner" role="alert">{request.lastError}</p> : null}
-    <nav className="sq-tabs" aria-label="Request views">
-      <WebLink aria-current={view === "summary" ? "page" : undefined} href={summaryHref ?? paths.request(request.queue, request.sqid)}>Summary</WebLink>
-      <WebLink aria-current={view === "history" ? "page" : undefined} href={historyHref ?? paths.request(request.queue, request.sqid, { view: "history" })}>History{model.historyError ? "" : ` (${model.history.length})`}</WebLink>
-    </nav>
+    <Block as="nav" display="flex" alignItems="center" flexWrap gridGap="scale500" marginBottom="scale600" aria-label="Breadcrumb"><WebLink href={paths.directory()}>Queues</WebLink><span>›</span><WebLink href={backHref ?? paths.requests(request.queue)}>{request.queue}</WebLink><span>› Request</span></Block>
+    <Block as="header" display="flex" justifyContent="space-between" alignItems="flex-start" flexWrap gridGap="scale600" marginBottom="scale600"><div><HeadingLarge as="h1" marginTop="0" marginBottom="scale300">{request.sqid}</HeadingLarge><RequestStatus status={request.status} /></div><Block display="flex" alignItems="flex-start" flexWrap gridGap="scale500"><CopyControls id={request.sqid} />{controls}</Block></Block>
+    {request.lastError ? <Notification kind={KIND.negative} overrides={{ Body: { props: { role: "alert" }, style: { width: "auto" } } }}>{request.lastError}</Notification> : null}
+    <Block as="nav" display="flex" alignItems="center" flexWrap gridGap="scale700" marginBottom="scale600" aria-label="Request views"
+      overrides={{ Block: { style: ({ $theme }) => ({ borderBottom: `1px solid ${$theme.colors.borderOpaque}` }) } }}>
+      <RequestViewLink $active={view === "summary"} aria-current={view === "summary" ? "page" : undefined} href={summaryHref ?? paths.request(request.queue, request.sqid)}>
+        <Block as="span" font={view === "summary" ? "LabelMedium" : "ParagraphMedium"}>Summary</Block>
+      </RequestViewLink>
+      <RequestViewLink $active={view === "history"} aria-current={view === "history" ? "page" : undefined} href={historyHref ?? paths.request(request.queue, request.sqid, { view: "history" })}>
+        <Block as="span" font={view === "history" ? "LabelMedium" : "ParagraphMedium"}>History{model.historyError ? "" : ` (${model.history.length})`}</Block>
+      </RequestViewLink>
+    </Block>
     {view === "history" ? model.historyError ? <ErrorState error={model.historyError} /> : <RequestHistory events={model.history} /> :
-      <div className="sq-detail-columns"><dl className="sq-facts">
-        <div><dt>Queue</dt><dd>{request.queue}</dd></div><div><dt>Request ID</dt><dd>{request.sqid}</dd></div>
-        <div><dt>Received · UTC</dt><dd><Timestamp value={request.receivedAtMs} /></dd></div>
-        <div><dt>Last recorded event</dt><dd>{model.historyError ? "History unavailable" : latest ? <><HistoryValue item={latest} /> <Timestamp value={latest.timestampMs} /></> : "No retained events"}</dd></div>
-        <div><dt>Last error</dt><dd>{request.lastError ?? "None reported"}</dd></div>
-      </dl><div><section className="sq-soft-panel"><h2>Changes</h2><RequestChanges request={request} {...(changeLinks ? { links: changeLinks } : {})} {...(changeLabels ? { labels: changeLabels } : {})} /></section>
-        <details className="sq-soft-panel"><summary>Request metadata</summary>{Object.keys(request.metadata).length ? <Metadata values={request.metadata} /> : <p className="sq-secondary">No additional metadata.</p>}</details>
+      <Block display="grid" gridTemplateColumns={["minmax(0, 1fr)", "minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale700"><Block as="dl" margin="0" aria-label="Request details">
+        <Fact label="Queue">{request.queue}</Fact><Fact label="Request ID">{request.sqid}</Fact>
+        <Fact label="Received · UTC"><Timestamp value={request.receivedAtMs} /></Fact>
+        <Fact label="Last recorded event">{model.historyError ? "History unavailable" : latest ? <><HistoryValue item={latest} /> <Timestamp value={latest.timestampMs} /></> : "No retained events"}</Fact>
+        <Fact label="Last error">{request.lastError ?? "None reported"}</Fact>
+      </Block><div><Block as="section" padding="scale600" backgroundColor="backgroundSecondary" marginBottom="scale600"><HeadingSmall as="h2" marginTop="0">Changes</HeadingSmall><RequestChanges request={request} {...(changeLinks ? { links: changeLinks } : {})} {...(changeLabels ? { labels: changeLabels } : {})} /></Block>
+        <Block as="details" padding="scale600" backgroundColor="backgroundSecondary"><summary>Request metadata</summary>{Object.keys(request.metadata).length ? <Metadata values={request.metadata} /> : <ParagraphXSmall color="contentSecondary">No additional metadata.</ParagraphXSmall>}</Block>
         {model.historyError ? <ErrorState compact error={model.historyError} /> : null}
-      </div></div>}
+      </div></Block>}
     {view === "summary" && model.historyError === null ?
-      <ol className="sq-stage" aria-label="Observed lifecycle transitions">
+      <Block as="ol" display="flex" flexWrap gridGap="scale400" padding="0" marginTop="scale700" font="ParagraphXSmall" color="contentSecondary"
+        overrides={{ Block: { style: { listStyleType: "none" } } }} role="list" aria-label="Observed lifecycle transitions">
         {model.history.filter(event => event.type === "status" && event.status !== null).map((event, index) =>
-          <li key={`${event.timestampMs}-${index}`}>{statusDisplay(event.status!).label}</li>
+          <Block as="li" display="flex" alignItems="center" gridGap="scale400" key={`${event.timestampMs}-${index}`}>
+            {index > 0 ? <span aria-hidden="true">›</span> : null}{statusDisplay(event.status!).label}
+          </Block>
         )}
-      </ol> : null}
+      </Block> : null}
   </article>;
 }
 
@@ -200,37 +257,37 @@ export interface ChangeSubmissionsProps {
 
 export function ChangeSubmissions({ model, basePath }: ChangeSubmissionsProps) {
   const app = useWebApp();
+  const [menuMountNode, setMenuMountNode] = useState<HTMLElement | null>(null);
   const paths = new WebPaths(basePath === undefined ? {} : { basePath });
   const versions = [...new Map(model.submissions.map(item => [item.versionHref, item.version])).entries()];
   const selectedVersion = model.pinnedVersion === null ? model.logicalHref :
     model.submissions.find(item => item.version === model.pinnedVersion)?.versionHref;
-  return <section className="sq-change-detail">
-    <nav className="sq-breadcrumb" aria-label="Breadcrumb"><WebLink href={paths.directory()}>Queues</WebLink><span>›</span><WebLink href={paths.requests(model.queue)}>{model.queue}</WebLink><span>› Change</span></nav>
-    <h1>{model.review}</h1><p className="sq-secondary">{model.pinnedVersion ? `Submitted version: ${model.pinnedVersion}` : "Submissions across versions"}</p>
-    {model.pagination ? <p className="sq-secondary" role="status">
+  const versionOptions = [{ id: model.logicalHref ?? "", label: "All submitted versions" }, ...versions.map(([href, version]) => ({ id: href, label: version }))];
+  return <section className="sq-change-detail" ref={setMenuMountNode}>
+    <Block as="nav" display="flex" alignItems="center" flexWrap gridGap="scale500" marginBottom="scale600" aria-label="Breadcrumb"><WebLink href={paths.directory()}>Queues</WebLink><span>›</span><WebLink href={paths.requests(model.queue)}>{model.queue}</WebLink><span>› Change</span></Block>
+    <HeadingLarge as="h1" marginTop="0" marginBottom="scale300">{model.review}</HeadingLarge><ParagraphXSmall color="contentSecondary">{model.pinnedVersion ? `Submitted version: ${model.pinnedVersion}` : "Submissions across versions"}</ParagraphXSmall>
+    {model.pagination ? <ParagraphXSmall color="contentSecondary" role="status">
       Showing matches from this page of queue requests only.
       {model.pagination.nextHref ? " More queue requests remain to be searched." : " The history scan is complete for this receipt window."}
-    </p> : null}
-    <dl className="sq-change-identity"><div><dt>Provider</dt><dd>{model.provider}</dd></div><div><dt>Host</dt><dd>{model.host}</dd></div><div><dt>Repository</dt><dd>{model.repository || "—"}</dd></div><div><dt>Queue</dt><dd>{model.queue}</dd></div></dl>
-    <div className="sq-toolbar"><h2>Submission history</h2>
+    </ParagraphXSmall> : null}
+    <Block as="dl" display="flex" flexWrap gridGap="scale600" padding="scale600" backgroundColor="backgroundSecondary" marginTop="scale600" marginBottom="scale600"><div><LabelXSmall as="dt" color="contentSecondary">Provider</LabelXSmall><ParagraphSmall as="dd" marginLeft="0">{model.provider}</ParagraphSmall></div><div><LabelXSmall as="dt" color="contentSecondary">Host</LabelXSmall><ParagraphSmall as="dd" marginLeft="0">{model.host}</ParagraphSmall></div><div><LabelXSmall as="dt" color="contentSecondary">Repository</LabelXSmall><ParagraphSmall as="dd" marginLeft="0">{model.repository || "—"}</ParagraphSmall></div><div><LabelXSmall as="dt" color="contentSecondary">Queue</LabelXSmall><ParagraphSmall as="dd" marginLeft="0">{model.queue}</ParagraphSmall></div></Block>
+    <Block display="flex" justifyContent="space-between" alignItems="center" flexWrap gridGap="scale600" marginBottom="scale600"><HeadingSmall as="h2" marginTop="0">Submission history</HeadingSmall>
       {model.logicalHref && app && versions.length > 0 ?
-        <label>Submitted version<select aria-label="Filter submissions by version"
-          value={selectedVersion} onChange={event => void app.navigate(event.target.value)}>
-          <option value={model.logicalHref}>All submitted versions</option>
-          {versions.map(([href, version]) => <option key={href} value={href}>{version}</option>)}
-        </select></label> :
+        <Block width="320px" maxWidth="100%" font="LabelXSmall" color="contentSecondary">Submitted version<Select aria-label="Filter submissions by version" size="compact" clearable={false} overrides={selectOverrides} {...(menuMountNode ? { mountNode: menuMountNode } : {})}
+          options={versionOptions} value={versionOptions.filter(option => option.id === selectedVersion)}
+          onChange={({ value }) => { if (value[0]?.id) void app.navigate(String(value[0].id)); }} /></Block> :
         model.pinnedVersion !== null && model.logicalHref ? <WebLink href={model.logicalHref}>All submitted versions</WebLink> : null}
-    </div>
-    {model.window ? <p className="sq-secondary">Receipt window: <Timestamp value={model.window.fromMs} /> — <Timestamp value={model.window.toMs} />. This is not unlimited retained history.</p> : <p className="sq-secondary">Retained submissions for this exact version</p>}
-    {model.submissions.length === 0 ? <p className="sq-empty">{model.pagination ? "No submissions were found on this page." : "No submissions were found in this scope."}</p> :
-      <div className="sq-table-scroll"><table aria-label="Change submissions"><thead><tr><th>Request</th><th>Submitted version</th><th>Received · UTC</th><th>Status</th></tr></thead>
-        <tbody>{model.submissions.map(item => <tr key={item.request.sqid}><td><WebLink href={paths.request(model.queue, item.request.sqid)}>{item.request.sqid}</WebLink></td>
-          <td><WebLink className="sq-version" aria-label={item.version} title={item.version} href={item.versionHref}>{item.version.length > 20 ? `${item.version.slice(0, 8)}…${item.version.slice(-4)}` : item.version}</WebLink></td><td><Timestamp value={item.request.receivedAtMs} /></td>
-          <td><RequestStatus status={item.request.status} />{item.request.lastError ? <p className="sq-row-error">{item.request.lastError}</p> : null}</td></tr>)}</tbody></table></div>}
-    <p className="sq-secondary">{model.submissions.length} requests{model.pagination ? " on this page" : ""} · newest received first · repeated submissions remain separate</p>
-    {model.pagination ? <nav className="page-actions" aria-label="Change history pagination">
+    </Block>
+    {model.window ? <ParagraphXSmall color="contentSecondary">Receipt window: <Timestamp value={model.window.fromMs} /> — <Timestamp value={model.window.toMs} />. This is not unlimited retained history.</ParagraphXSmall> : <ParagraphXSmall color="contentSecondary">Retained submissions for this exact version</ParagraphXSmall>}
+    {model.submissions.length === 0 ? <ParagraphSmall color="contentSecondary">{model.pagination ? "No submissions were found on this page." : "No submissions were found in this scope."}</ParagraphSmall> :
+      <Table label="Change submissions" headers={["Request", "Submitted version", "Received · UTC", "Status"]}>
+        {model.submissions.map(item => <StyledTableBodyRow key={item.request.sqid}><StyledTableBodyCell><WebLink href={paths.request(model.queue, item.request.sqid)}>{item.request.sqid}</WebLink></StyledTableBodyCell>
+          <StyledTableBodyCell><WebLink aria-label={item.version} title={item.version} href={item.versionHref}>{item.version.length > 20 ? `${item.version.slice(0, 8)}…${item.version.slice(-4)}` : item.version}</WebLink></StyledTableBodyCell><StyledTableBodyCell><Timestamp value={item.request.receivedAtMs} /></StyledTableBodyCell>
+          <StyledTableBodyCell><RequestStatus status={item.request.status} />{item.request.lastError ? <ParagraphXSmall color="contentNegative">{item.request.lastError}</ParagraphXSmall> : null}</StyledTableBodyCell></StyledTableBodyRow>)}</Table>}
+    <ParagraphXSmall color="contentSecondary">{model.submissions.length} requests{model.pagination ? " on this page" : ""} · newest received first · repeated submissions remain separate</ParagraphXSmall>
+    {model.pagination ? <Block as="nav" display="flex" alignItems="center" flexWrap gridGap="scale500" marginTop="scale500" aria-label="Change history pagination">
       {model.pagination.nextHref ? <WebLink href={model.pagination.nextHref}>Continue history scan</WebLink> : null}
       {model.pagination.latestHref ? <WebLink href={model.pagination.latestHref}>Latest history</WebLink> : null}
-    </nav> : null}
+    </Block> : null}
   </section>;
 }

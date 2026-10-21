@@ -5,6 +5,7 @@ export default defineConfig({
     jsx: "automatic",
   },
   test: {
+    maxWorkers: 2,
     environment: "jsdom",
     globals: true,
     setupFiles: ["./test-setup.ts"],

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "../../platform/test/rtl.js";
 import { describe, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { SubmitQueueApp } from "./app.js";
@@ -45,7 +45,7 @@ describe("default reusable application views", () => {
       <SubmitQueueApp model={result.model} />
     </SubmitQueueShell></WebNavigationProvider>);
     expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
     expect(refresh).toHaveBeenCalledOnce();
     const queueLinks = screen.queryAllByRole("link", { name: "demo-queue" });
     queueLinks.forEach(link => expect(link.getAttribute("href")).toBe("/sq/demo-queue"));
@@ -78,7 +78,8 @@ describe("default reusable application views", () => {
     }
     const navigate = vi.fn();
     render(<WebNavigationProvider value={{ push: navigate }}><SubmitQueueApp model={result.model} /></WebNavigationProvider>);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: `/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}` } });
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByRole("option", { name: sha }));
     expect(navigate).toHaveBeenCalledWith(`/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}`);
   });
 

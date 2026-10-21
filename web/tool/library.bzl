@@ -40,9 +40,11 @@ def web_library(package, vitest, eslint, deps, test_deps = [], assets = []):
     )
     ts_project(
         name = "typecheck",
+        testonly = True,
         srcs = sources + tests + config,
         declaration = True,
         no_emit = True,
+        root_dir = "..",
         tsconfig = ":tsconfig",
         deps = deps + test_deps,
     )
@@ -56,14 +58,18 @@ def web_library(package, vitest, eslint, deps, test_deps = [], assets = []):
         name = "test",
         args = ["run", "--config", "vitest.config.ts"],
         chdir = native.package_name(),
-        data = sources + tests + config + [
+        data = depset(sources + tests + config + [
             ":node_modules",
             ":node_modules/vitest",
             "//web:node_modules/react",
             "//web:node_modules/react-dom",
             # jest-dom resolves its vitest peer from the workspace root.
             "//web:node_modules/vitest",
-        ] + deps,
+            "//web:node_modules/baseui",
+            "//web:node_modules/styletron-react",
+            "//web:node_modules/@types/react",
+            "//web:node_modules/@types/react-dom",
+        ] + deps + test_deps).to_list(),
     )
     eslint.eslint_test(
         name = "lint",

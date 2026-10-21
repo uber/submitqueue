@@ -1,6 +1,10 @@
 "use client";
 
-import { Timestamp } from "@submitqueue/web-platform";
+import { Fact, Timestamp } from "@submitqueue/web-platform";
+import { Block } from "baseui/block/index.js";
+import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic/index.js";
+import { Tag } from "baseui/tag/index.js";
+import { ParagraphSmall } from "baseui/typography/index.js";
 import type {
   RequestSummaryModel,
   HistoryEventModel,
@@ -22,7 +26,7 @@ export function RequestList({
   nextHref: string | null;
 }) {
   if (!requests.length)
-    return <p className="sq-empty">No retained requests on this queue.</p>;
+    return <ParagraphSmall color="contentSecondary">No retained requests on this queue.</ParagraphSmall>;
   return (
     <>
       <Table
@@ -37,78 +41,54 @@ export function RequestList({
         ]}
       >
         {requests.map((request) => (
-          <tr key={request.id}>
-            <td>
+          <StyledTableBodyRow key={request.id}>
+            <StyledTableBodyCell>
               <Link href={request.href}>{request.id}</Link>
-            </td>
-            <td>
-              <code>{request.changeUri || "Unknown URI"}</code>
-            </td>
-            <td>
-              <span className="sq-status" data-tone="neutral">
+            </StyledTableBodyCell>
+            <StyledTableBodyCell>
+              <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
+            </StyledTableBodyCell>
+            <StyledTableBodyCell>
+              <Tag closeable={false} kind="neutral" size="small">
                 {request.state || "Unknown"}
-              </span>
-            </td>
-            <td>
+              </Tag>
+            </StyledTableBodyCell>
+            <StyledTableBodyCell>
               <RequestTimestamp value={request.acceptedAtMs} />
-            </td>
-            <td>
+            </StyledTableBodyCell>
+            <StyledTableBodyCell>
               <RequestTimestamp value={request.updatedAtMs} />
-            </td>
-            <td>{request.outcomeReason || "—"}</td>
-          </tr>
+            </StyledTableBodyCell>
+            <StyledTableBodyCell>{request.outcomeReason || "—"}</StyledTableBodyCell>
+          </StyledTableBodyRow>
         ))}
       </Table>
       {nextHref && (
-        <p>
+        <ParagraphSmall>
           <Link href={nextHref}>Older requests →</Link>
-        </p>
+        </ParagraphSmall>
       )}
     </>
   );
 }
 export function RequestDetails({ request }: { request: RequestSummaryModel }) {
   return (
-    <>
-      <dl className="sq-facts">
-        <div>
-          <dt>State</dt>
-          <dd>
-            <span className="sq-status" data-tone="neutral">
-              {request.state || "Unknown"}
-            </span>
-          </dd>
-        </div>
-        <div>
-          <dt>Change URI</dt>
-          <dd>
-            <code>{request.changeUri || "Unknown URI"}</code>
-          </dd>
-        </div>
-        <div>
-          <dt>Base URI</dt>
-          <dd>
-            <code>{request.baseUri || "No baseline selected"}</code>
-          </dd>
-        </div>
-        <div>
-          <dt>Accepted</dt>
-          <dd>
-            <RequestTimestamp value={request.acceptedAtMs} />
-          </dd>
-        </div>
-        <div>
-          <dt>Updated</dt>
-          <dd>
-            <RequestTimestamp value={request.updatedAtMs} />
-          </dd>
-        </div>
-        <div>
-          <dt>Outcome</dt>
-          <dd>{request.outcomeReason || "—"}</dd>
-        </div>
-      </dl>
-    </>
+    <Block as="dl" margin="0">
+      <Fact label="State">
+        <Tag closeable={false} kind="neutral" size="small">
+          {request.state || "Unknown"}
+        </Tag>
+      </Fact>
+      <Fact label="Change URI">
+        <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
+      </Fact>
+      <Fact label="Base URI">
+        <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
+      </Fact>
+      <Fact label="Accepted"><RequestTimestamp value={request.acceptedAtMs} /></Fact>
+      <Fact label="Updated"><RequestTimestamp value={request.updatedAtMs} /></Fact>
+      <Fact label="Outcome">{request.outcomeReason || "—"}</Fact>
+    </Block>
   );
 }
 export function History({ events }: { events: HistoryEventModel[] }) {
@@ -118,23 +98,23 @@ export function History({ events }: { events: HistoryEventModel[] }) {
       headers={["Time", "Type", "State or event", "Outcome"]}
     >
       {events.map((event) => (
-        <tr key={event.id}>
-          <td>
+        <StyledTableBodyRow key={event.id}>
+          <StyledTableBodyCell>
             <RequestTimestamp value={event.timestampMs} />
-          </td>
-          <td>
+          </StyledTableBodyCell>
+          <StyledTableBodyCell>
             {event.kind === "requestState"
               ? "State"
               : event.kind === "event"
                 ? "Event"
                 : "Unknown"}
-          </td>
-          <td>{event.label}</td>
-          <td>{event.outcomeReason || "—"}</td>
-        </tr>
+          </StyledTableBodyCell>
+          <StyledTableBodyCell>{event.label}</StyledTableBodyCell>
+          <StyledTableBodyCell>{event.outcomeReason || "—"}</StyledTableBodyCell>
+        </StyledTableBodyRow>
       ))}
     </Table>
   ) : (
-    <p>No retained history yet.</p>
+    <ParagraphSmall color="contentSecondary">No retained history yet.</ParagraphSmall>
   );
 }

@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Block } from "baseui/block/index.js";
+import { Button, SIZE } from "baseui/button/index.js";
+import { LabelXSmall } from "baseui/typography/index.js";
 
 export interface AutoRefreshProps {
   terminal?: boolean;
@@ -96,14 +99,14 @@ export function AutoRefresh({
   }, [automatic, cycle, intervalMs, jitterMs, maxBackoffMs, paused, random, runRefresh, terminal, transientFailureCount]);
 
   return (
-    <div className="sq-refresh" data-paused={paused || terminal}>
-      <button disabled={refreshing || paused} onClick={() => void runRefresh()} type="button">
+    <Block display="flex" alignItems="center" flexWrap gridGap="scale500" data-paused={paused || terminal}>
+      <Button size={SIZE.compact} disabled={refreshing || paused} onClick={() => void runRefresh()} type="button">
         {refreshing ? "Refreshing…" : "Refresh"}
-      </button>
-      <span aria-live="polite">
+      </Button>
+      <LabelXSmall as="span" color="contentSecondary" aria-live="polite">
         {terminal ? "Automatic refresh stopped" : !automatic ? "Manual refresh" : paused ? "Automatic refresh paused" :
           transientFailureCount > 0 || localFailures.current > 0 ? "Updates unavailable · retrying" : "Live"}
-      </span>
-    </div>
+      </LabelXSmall>
+    </Block>
   );
 }
