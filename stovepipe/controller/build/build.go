@@ -15,7 +15,7 @@
 // Package build holds the build-stage queue controller. It consumes BuildRequest
 // messages (a request id), reloads the Request, triggers the build-runner for
 // the scope process already decided, persists a Build row, and publishes the
-// build id to buildsignal.
+// build id to buildsignal and buildanalysis.
 package build
 
 import (
@@ -39,7 +39,7 @@ import (
 
 // Controller consumes BuildRequest messages, reloads the referenced Request,
 // triggers a build for its already-decided scope, and publishes the resulting
-// build id to buildsignal. Implements consumer.Controller.
+// build id to status polling and analysis. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -50,9 +50,6 @@ type Controller struct {
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
-
-// Verify Controller implements consumer.Controller interface at compile time.
-var _ consumer.Controller = (*Controller)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "build"
@@ -155,8 +152,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return err
 	}
 
-	if err := c.publishBuildSignal(ctx, build.ID, request.Queue); err != nil {
-		return fmt.Errorf("failed to publish build signal for %s: %w", build.ID, err)
+	signalErr := c.publishBuildSignal(ctx, build.ID, request.Queue)
+	if signalErr != nil {
+		signalErr = fmt.Errorf("failed to publish build signal for %s: %w", build.ID, signalErr)
+	}
+
+	analysisErr := c.publishBuildAnalysis(ctx, build.ID, request.Queue)
+	if err := errs.Group(signalErr, analysisErr); err != nil {
+		return err
 	}
 
 	c.logger.Debugw("triggered build",
@@ -219,3 +222,23 @@ func (c *Controller) TopicKey() consumer.TopicKey {
 func (c *Controller) ConsumerGroup() string {
 	return c.consumerGroup
 }
+
+func (c *Controller) publishBuildAnalysis(ctx context.Context, buildID, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildAnalysis{Id: buildID, QueueName: queue})
+	if err != nil {
+		return fmt.Errorf("failed to serialize build analysis: %w", err)
+	}
+
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuildAnalysis, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(buildID, "started"),
+		Payload:      payload,
+		PartitionKey: buildID,
+	}); err != nil {
+		return fmt.Errorf("failed to publish build analysis for %s: %w", buildID, err)
+	}
+
+	return nil
+}
+
+var _ consumer.Controller = (*Controller)(nil)

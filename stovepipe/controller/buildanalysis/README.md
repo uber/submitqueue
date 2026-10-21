@@ -26,4 +26,6 @@ History identity is stable per build, so repeated recovery deliveries and separa
 
 State-read and history-write errors are returned for retry. Hosts must run recovery with the DLQ consumer's always-retryable processor and unlimited-retry subscription; only recovery work is retried, not analysis. Unusable payloads, invalid or unresolvable queues, missing Build or Request records, and queue mismatches are logged and acknowledged rather than retried indefinitely.
 
-The controllers are defined without runtime producers or consumer registration. Host integration and detector implementations are separate work.
+## Host integration
+
+The reference service supplies a no-op detector and publishes analysis notices at build start and completion. It registers the normal analysis controller with bounded retries and the recovery controller with the existing DLQ consumer. See [build issue observation](../../../doc/rfc/stovepipe/steps/buildanalysis.md) for the publication rules and retry configuration.

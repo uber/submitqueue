@@ -16,7 +16,7 @@
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
 // releases the queue's build slot, projects the outcome onto the request, and
-// publishes the request id to record. See
+// publishes directly to record plus terminal analysis. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
 
@@ -28,6 +28,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
@@ -68,9 +69,6 @@ type Controller struct {
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
-
-// Verify Controller implements consumer.Controller interface at compile time.
-var _ consumer.Controller = (*Controller)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "buildsignal"
@@ -183,8 +181,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
 			return err
 		}
-		if err := c.publishRecord(ctx, request.ID, request.Queue); err != nil {
-			return fmt.Errorf("failed to publish record for request %s: %w", request.ID, err)
+		recordErr := c.publishRecord(ctx, request.ID, request.Queue)
+		if recordErr != nil {
+			recordErr = fmt.Errorf("failed to publish record for request %s: %w", request.ID, recordErr)
+		}
+
+		analysisErr := c.publishBuildAnalysis(ctx, build.ID, request.Queue)
+		if err := errs.Group(recordErr, analysisErr); err != nil {
+			return err
 		}
 		c.logger.Infow("build reached terminal status",
 			"build_id", build.ID,
@@ -432,3 +436,23 @@ func (c *Controller) TopicKey() consumer.TopicKey {
 func (c *Controller) ConsumerGroup() string {
 	return c.consumerGroup
 }
+
+func (c *Controller) publishBuildAnalysis(ctx context.Context, buildID, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildAnalysis{Id: buildID, QueueName: queue})
+	if err != nil {
+		return fmt.Errorf("failed to serialize build analysis: %w", err)
+	}
+
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuildAnalysis, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(buildID, "finished"),
+		Payload:      payload,
+		PartitionKey: buildID,
+	}); err != nil {
+		return fmt.Errorf("failed to publish build analysis for %s: %w", buildID, err)
+	}
+
+	return nil
+}
+
+var _ consumer.Controller = (*Controller)(nil)

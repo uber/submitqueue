@@ -16,6 +16,8 @@ package build
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"testing"
 
@@ -26,8 +28,10 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
+	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
@@ -94,6 +98,8 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: stovepipemq.TopicKeyBuildSignal, Name: "buildsignal", Queue: queue},
+		{Key: stovepipemq.TopicKeyBuildAnalysis, Name: "buildanalysis", Queue: queue},
+		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
 	})
 	require.NoError(t, err)
 
@@ -223,6 +229,7 @@ func TestProcess(t *testing.T) {
 				createCall := m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
 				logCall := expectBuildTriggered(m).After(createCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -241,6 +248,7 @@ func TestProcess(t *testing.T) {
 				createCall := m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
 				logCall := expectBuildTriggered(m).After(createCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -379,6 +387,7 @@ func TestProcess(t *testing.T) {
 				createCall := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 				logCall := expectBuildTriggered(m).After(createCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(errors.New("queue down")).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -413,4 +422,89 @@ func TestProcess(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestProcessPublishesBothPollsAfterPersistence(t *testing.T) {
+	signalFailure := errors.New("status publish unavailable")
+	analysisFailure := errors.New("analysis publish unavailable")
+
+	for _, tt := range []struct {
+		name        string
+		signalErr   error
+		analysisErr error
+		wantRetry   bool
+	}{
+		{name: "both succeed"},
+		{name: "status publish fails", signalErr: signalFailure},
+		{name: "analysis publish fails", analysisErr: analysisFailure},
+		{name: "both fail", signalErr: signalFailure, analysisErr: analysisFailure},
+		{name: "transient status publish", signalErr: driver.ErrBadConn, wantRetry: true},
+		{name: "transient analysis publish", analysisErr: driver.ErrBadConn, wantRetry: true},
+		{name: "permanent status and transient analysis", signalErr: sql.ErrTxDone, analysisErr: driver.ErrBadConn, wantRetry: true},
+		{name: "transient status and permanent analysis", signalErr: driver.ErrBadConn, analysisErr: sql.ErrTxDone, wantRetry: true},
+		{name: "both permanent", signalErr: sql.ErrTxDone, analysisErr: sql.ErrTxDone},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(processingRequest(entity.BuildStrategyFull, ""), nil)
+
+			m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+			m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+
+			persisted := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			logged := expectBuildTriggered(m).After(persisted)
+
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(tt.signalErr).After(logged)
+
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+				var payload stovepipemq.BuildAnalysis
+				require.NoError(t, stovepipemq.Unmarshal(msg.Payload, &payload))
+				assert.Equal(t, testBuildID, payload.Id)
+				assert.Equal(t, testQueue, payload.QueueName)
+				assert.Equal(t, testBuildID, msg.PartitionKey)
+				assert.Equal(t, testQueue, msg.Tenant)
+				assert.Equal(t, testQueue, msg.Metadata[entityqueue.MetadataKeyQueueName])
+				assert.Equal(t, publish.IntentID(testBuildID, "started"), msg.ID)
+				return tt.analysisErr
+			}).After(logged)
+
+			err := c.Process(queueContext(), delivery(t, ctrl, buildPayload(t, testID)))
+			if tt.signalErr == nil && tt.analysisErr == nil {
+				require.NoError(t, err)
+			}
+
+			if tt.signalErr != nil {
+				require.ErrorIs(t, err, tt.signalErr)
+			}
+
+			if tt.analysisErr != nil {
+				require.ErrorIs(t, err, tt.analysisErr)
+			}
+
+			if err != nil {
+				processed := errs.NewClassifierProcessor(mysqlerrs.Classifier).Process(err)
+				assert.Equal(t, tt.wantRetry, errs.IsRetryable(processed))
+			}
+		})
+	}
+}
+
+func TestAnalysisPublishDeduplicatesRetriesOfTheSameOccasion(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	var ids []string
+
+	m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		ids = append(ids, msg.ID)
+		return nil
+	}).Times(2)
+
+	require.NoError(t, c.publishBuildAnalysis(queueContext(), testBuildID, testQueue))
+	require.NoError(t, c.publishBuildAnalysis(queueContext(), testBuildID, testQueue))
+
+	assert.Equal(t, ids[0], ids[1])
+	assert.NotEqual(t, publish.IntentID(testBuildID, "finished"), ids[0])
 }

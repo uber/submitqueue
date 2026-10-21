@@ -16,8 +16,12 @@ package buildsignal
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"testing"
+
+	"github.com/uber/submitqueue/platform/publish"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
+	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -96,6 +101,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: stovepipemq.TopicKeyBuildSignal, Name: "buildsignal", Queue: queue},
+		{Key: stovepipemq.TopicKeyBuildAnalysis, Name: "buildanalysis", Queue: queue},
 		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
 	})
 	require.NoError(t, err)
@@ -335,6 +341,7 @@ func TestProcess(t *testing.T) {
 				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusSucceeded, 2), int32(2), int32(3)).Return(nil)
 				logCall := expectFinish(m, entity.RequestStateSucceeded)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -347,6 +354,7 @@ func TestProcess(t *testing.T) {
 				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusFailed, 2), int32(2), int32(3)).Return(nil)
 				logCall := expectFinish(m, entity.RequestStateFailed)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -359,6 +367,7 @@ func TestProcess(t *testing.T) {
 				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusCancelled, 2), int32(2), int32(3)).Return(nil)
 				logCall := expectFinish(m, entity.RequestStateCancelled)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -375,6 +384,7 @@ func TestProcess(t *testing.T) {
 				eventCall := expectBuildFinished(m)
 				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2).After(eventCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -429,6 +439,7 @@ func TestProcess(t *testing.T) {
 				// status, not the poll, decides the request's outcome.
 				logCall := expectFinish(m, entity.RequestStateSucceeded)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -518,6 +529,7 @@ func TestProcess(t *testing.T) {
 				m.buildStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(2), int32(3)).Return(nil)
 				logCall := expectFinish(m, entity.RequestStateSucceeded)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(errors.New("queue down")).After(logCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -600,4 +612,88 @@ func TestOutcomeState(t *testing.T) {
 			assert.Equal(t, tt.expected, outcomeState(tt.status))
 		})
 	}
+}
+
+func TestTerminalAnalysisPublicationDoesNotGateRecordPublication(t *testing.T) {
+	recordFailure := errors.New("record publish unavailable")
+	analysisFailure := errors.New("analysis publish unavailable")
+
+	for _, tt := range []struct {
+		name        string
+		recordErr   error
+		analysisErr error
+		wantRetry   bool
+	}{
+		{name: "both succeed"},
+		{name: "record publish fails", recordErr: recordFailure},
+		{name: "analysis publish fails", analysisErr: analysisFailure},
+		{name: "both fail", recordErr: recordFailure, analysisErr: analysisFailure},
+		{name: "transient record publish", recordErr: driver.ErrBadConn, wantRetry: true},
+		{name: "transient analysis publish", analysisErr: driver.ErrBadConn, wantRetry: true},
+		{name: "permanent record and transient analysis", recordErr: sql.ErrTxDone, analysisErr: driver.ErrBadConn, wantRetry: true},
+		{name: "transient record and permanent analysis", recordErr: driver.ErrBadConn, analysisErr: sql.ErrTxDone, wantRetry: true},
+		{name: "both permanent", recordErr: sql.ErrTxDone, analysisErr: sql.ErrTxDone},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusFailed, 2), nil)
+			request := requestWithState(entity.RequestStateFailed)
+
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+
+			m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+			m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
+
+			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).Times(2)
+
+			m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(tt.recordErr)
+
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+				var payload stovepipemq.BuildAnalysis
+				require.NoError(t, stovepipemq.Unmarshal(msg.Payload, &payload))
+				assert.Equal(t, testBuildID, payload.Id)
+				assert.Equal(t, testQueue, payload.QueueName)
+				assert.Equal(t, testBuildID, msg.PartitionKey)
+				assert.Equal(t, testQueue, msg.Tenant)
+				assert.Equal(t, publish.IntentID(testBuildID, "finished"), msg.ID)
+				assert.NotEqual(t, publish.IntentID(testBuildID, "started"), msg.ID)
+				return tt.analysisErr
+			})
+
+			err := c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID)))
+			if tt.recordErr == nil && tt.analysisErr == nil {
+				require.NoError(t, err)
+			}
+
+			if tt.recordErr != nil {
+				require.ErrorIs(t, err, tt.recordErr)
+			}
+
+			if tt.analysisErr != nil {
+				require.ErrorIs(t, err, tt.analysisErr)
+			}
+
+			if err != nil {
+				processed := errs.NewClassifierProcessor(mysqlerrs.Classifier).Process(err)
+				assert.Equal(t, tt.wantRetry, errs.IsRetryable(processed))
+			}
+		})
+	}
+}
+
+func TestNonterminalPollDoesNotPublishTerminalAnalysis(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+	m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusRunning, nil, nil)
+
+	d := delivery(t, ctrl, buildSignalPayload(t, testBuildID))
+	d.EXPECT().Hold(PollDelayRunningMs)
+
+	require.NoError(t, c.Process(queueContext(), d))
 }

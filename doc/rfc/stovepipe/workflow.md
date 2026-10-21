@@ -6,6 +6,8 @@ The pipeline is a queue-driven chain of small, single-purpose controllers, in th
 
 > **poll for a new head → ingest → process the build strategy → build → buildsignal → record whole-repo greenness (and any project results the resolver returns) → hook.**
 
+The [build issue observation](steps/buildanalysis.md) branch runs alongside this chain. It accumulates issues while builds run and attempts final analysis after build completion. Record does not wait for analysis to succeed. The reference host wires a no-op detector; deployments supply a real detector factory.
+
 There is no `analyze` controller and no `analyze` topic. A later project-analysis stage that would map a target graph onto another `build` pass is design only, described under [Designed, not built](#designed-not-built-project-analysis). `record` resolves project results inline on the same delivery that writes the repository fact.
 
 ## What Stovepipe is agnostic about
