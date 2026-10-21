@@ -419,6 +419,60 @@ func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
 	assert.ElementsMatch(t, []entity.QueueBatchState{otherQueue}, got)
 }
 
+// TestStorage_QueueRequestStatusRecordLifecycle exercises the QueueRequestStatusStore
+// contract: records list by exact (queue, status) bucket, re-putting keeps the first
+// entered_at_ms, a move is a put followed by a delete, and deletes of absent records succeed.
+func (s *StorageContractSuite) TestStorage_QueueRequestStatusRecordLifecycle() {
+	t := s.T()
+	ctx := s.ctx
+	storeA := s.forGatewayQueue("qrs-gw-queue-a").GetQueueRequestStatusStore()
+	storeB := s.forGatewayQueue("qrs-gw-queue-b").GetQueueRequestStatusStore()
+
+	started1 := entity.QueueRequestStatus{Queue: "qrs-gw-queue-a", Status: entity.RequestStatusStarted, RequestID: "1", ReceivedAtMs: 10, EnteredAtMs: 20}
+	started2 := entity.QueueRequestStatus{Queue: "qrs-gw-queue-a", Status: entity.RequestStatusStarted, RequestID: "2", ReceivedAtMs: 11, EnteredAtMs: 21}
+	landing := entity.QueueRequestStatus{Queue: "qrs-gw-queue-a", Status: entity.RequestStatusLanding, RequestID: "3", ReceivedAtMs: 12, EnteredAtMs: 22}
+	otherQueue := entity.QueueRequestStatus{Queue: "qrs-gw-queue-b", Status: entity.RequestStatusStarted, RequestID: "1", ReceivedAtMs: 10, EnteredAtMs: 20}
+
+	require.NoError(t, storeA.Put(ctx, started1))
+	require.NoError(t, storeA.Put(ctx, started2))
+	require.NoError(t, storeA.Put(ctx, landing))
+	require.NoError(t, storeB.Put(ctx, otherQueue))
+
+	// Re-putting an existing record is a no-op success that keeps the first entered_at_ms.
+	refiled := started1
+	refiled.EnteredAtMs = 99
+	require.NoError(t, storeA.Put(ctx, refiled))
+
+	got, err := storeA.List(ctx, entity.RequestStatusStarted)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueRequestStatus{started1, started2}, got)
+
+	// An empty bucket lists empty, not an error.
+	got, err = storeA.List(ctx, entity.RequestStatusSpeculating)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	// A record move: file under the new status, then remove the old bucket's record.
+	moved := entity.QueueRequestStatus{Queue: started1.Queue, Status: entity.RequestStatusValidating, RequestID: started1.RequestID, ReceivedAtMs: 10, EnteredAtMs: 30}
+	require.NoError(t, storeA.Put(ctx, moved))
+	require.NoError(t, storeA.Delete(ctx, started1.Status, started1.RequestID))
+
+	got, err = storeA.List(ctx, entity.RequestStatusStarted)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueRequestStatus{started2}, got)
+	got, err = storeA.List(ctx, entity.RequestStatusValidating)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueRequestStatus{moved}, got)
+
+	// Deleting an absent record is a no-op success.
+	require.NoError(t, storeA.Delete(ctx, started1.Status, started1.RequestID))
+
+	// The other queue is untouched by all of the above.
+	got, err = storeB.List(ctx, entity.RequestStatusStarted)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueRequestStatus{otherQueue}, got)
+}
+
 // TestStorage_QueueIsolation verifies a store aggregate bound to one queue can
 // neither read nor write another queue's records: cross-queue reads miss, and
 // writes whose entity queue disagrees with the binding are rejected.

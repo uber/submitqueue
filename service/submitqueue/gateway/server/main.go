@@ -358,7 +358,7 @@ func run() error {
 	// read materialized views, and request-history controllers read retained
 	// logs. Normal log-topic persistence and terminal DLQ repair both use the
 	// materializer.
-	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
+	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"), mysqlstorage.WithQueueRequestStatusRecords())
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}

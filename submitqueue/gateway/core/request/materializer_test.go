@@ -138,6 +138,9 @@ func TestMaterializer_RecordsLifecycleMetrics(t *testing.T) {
 			f.summaries.EXPECT().Get(gomock.Any(), tt.before.RequestID).Return(tt.before, nil)
 			if tt.wantUpdate {
 				f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), tt.before.Version, tt.before.Version+1).Return(nil)
+				if entity.IsRequestStatusInQueue(tt.log.Status) {
+					f.expectRecheck(tt.log.Status)
+				}
 			}
 			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -158,6 +161,221 @@ func TestMaterializer_RecordsLifecycleMetrics(t *testing.T) {
 				histograms = append(histograms, key)
 			}
 			assert.ElementsMatch(t, tt.wantHistograms, histograms)
+		})
+	}
+}
+
+// recordCall is one expected status-record write, in order: a put (followed by the summary
+// re-read when recheck is set) or a delete.
+type recordCall struct {
+	put     bool
+	status  entity.RequestStatus
+	entered int64
+	// recheck is the status the summary re-read after a put reports.
+	recheck entity.RequestStatus
+}
+
+func putRecord(status entity.RequestStatus, entered int64, recheck entity.RequestStatus) recordCall {
+	return recordCall{put: true, status: status, entered: entered, recheck: recheck}
+}
+
+func deleteRecord(status entity.RequestStatus) recordCall {
+	return recordCall{status: status}
+}
+
+// sweepRecords is the terminal sweep: a delete under every in-queue status.
+func sweepRecords() []recordCall {
+	var calls []recordCall
+	for _, status := range entity.InQueueRequestStatuses() {
+		calls = append(calls, deleteRecord(status))
+	}
+	return calls
+}
+
+// expectRecordCalls declares calls in order, each put followed by its summary re-read. The
+// call at failAt returns err, and nothing after it is expected.
+func (f materializerReceiptFixture) expectRecordCalls(calls []recordCall, failAt int, err error) {
+	var ordered []any
+	for i, call := range calls {
+		failed := i == failAt
+		var callErr error
+		if failed {
+			callErr = err
+		}
+		if call.put {
+			record := entity.QueueRequestStatus{Queue: "q", Status: call.status, RequestID: "1", ReceivedAtMs: 10, EnteredAtMs: call.entered}
+			ordered = append(ordered, f.statuses.EXPECT().Put(gomock.Any(), record).Return(callErr))
+			if !failed {
+				ordered = append(ordered, f.expectRecheck(call.recheck))
+			}
+		} else {
+			ordered = append(ordered, f.statuses.EXPECT().Delete(gomock.Any(), call.status, "1").Return(callErr))
+		}
+		if failed {
+			break
+		}
+	}
+	gomock.InOrder(ordered...)
+}
+
+func TestMaterializer_FilesStatusRecords(t *testing.T) {
+	summaryAt := func(status entity.RequestStatus, timestampMs int64) entity.RequestSummary {
+		summary := testRequestSummary()
+		summary.Status, summary.StatusTimestampMs = status, timestampMs
+		return summary
+	}
+	statusLog := func(status entity.RequestStatus, version int32, timestampMs int64) entity.RequestLog {
+		return entity.RequestLog{Queue: "q", RequestID: "1", Type: entity.RequestLogTypeStatus, Status: status, RequestVersion: version, TimestampMs: timestampMs}
+	}
+	landed := summaryAt(entity.RequestStatusLanded, 20)
+	landed.RequestVersion = 2
+
+	tests := []struct {
+		name       string
+		before     entity.RequestSummary
+		log        entity.RequestLog
+		wantUpdate bool
+		wantCalls  []recordCall
+	}{
+		{
+			name:       "accepting the request files its first record",
+			before:     testRequestSummary(),
+			log:        statusLog(entity.RequestStatusAccepted, 0, 20),
+			wantUpdate: true,
+			wantCalls:  []recordCall{putRecord(entity.RequestStatusAccepted, 20, entity.RequestStatusAccepted)},
+		},
+		{
+			name:       "a status change files the new record before removing the old one",
+			before:     summaryAt(entity.RequestStatusStarted, 15),
+			log:        statusLog(entity.RequestStatusValidating, 0, 20),
+			wantUpdate: true,
+			wantCalls: []recordCall{
+				putRecord(entity.RequestStatusValidating, 20, entity.RequestStatusValidating),
+				deleteRecord(entity.RequestStatusStarted),
+			},
+		},
+		{
+			name:       "a newer log at the same status re-files without removing anything",
+			before:     summaryAt(entity.RequestStatusSpeculating, 15),
+			log:        statusLog(entity.RequestStatusSpeculating, 0, 20),
+			wantUpdate: true,
+			wantCalls:  []recordCall{putRecord(entity.RequestStatusSpeculating, 20, entity.RequestStatusSpeculating)},
+		},
+		{
+			name:      "a redelivery that loses re-files the current record to repair an interrupted write",
+			before:    summaryAt(entity.RequestStatusBatched, 20),
+			log:       statusLog(entity.RequestStatusBatched, 0, 20),
+			wantCalls: []recordCall{putRecord(entity.RequestStatusBatched, 20, entity.RequestStatusBatched)},
+		},
+		{
+			name:       "a record filed after another writer moved the summary on is removed again",
+			before:     testRequestSummary(),
+			log:        statusLog(entity.RequestStatusAccepted, 0, 20),
+			wantUpdate: true,
+			wantCalls: []recordCall{
+				putRecord(entity.RequestStatusAccepted, 20, entity.RequestStatusStarted),
+				deleteRecord(entity.RequestStatusAccepted),
+			},
+		},
+		{
+			name:       "a cancel overtaken by its terminal log removes both its own and the previous record",
+			before:     summaryAt(entity.RequestStatusSpeculating, 15),
+			log:        statusLog(entity.RequestStatusCancelling, 0, 20),
+			wantUpdate: true,
+			wantCalls: []recordCall{
+				putRecord(entity.RequestStatusCancelling, 20, entity.RequestStatusCancelled),
+				deleteRecord(entity.RequestStatusCancelling),
+				deleteRecord(entity.RequestStatusSpeculating),
+			},
+		},
+		{
+			name:       "a terminal status sweeps every in-queue record and files none",
+			before:     summaryAt(entity.RequestStatusLanding, 15),
+			log:        statusLog(entity.RequestStatusLanded, 2, 20),
+			wantUpdate: true,
+			wantCalls:  sweepRecords(),
+		},
+		{
+			name:      "a terminal redelivery sweeps again to retry a failed removal",
+			before:    landed,
+			log:       statusLog(entity.RequestStatusLanded, 2, 20),
+			wantCalls: sweepRecords(),
+		},
+		{
+			name:   "an event log leaves the record alone",
+			before: summaryAt(entity.RequestStatusSpeculating, 15),
+			log:    entity.RequestLog{Queue: "q", RequestID: "1", Type: entity.RequestLogTypeEvent, Event: entity.RequestEventBuilding, TimestampMs: 20},
+		},
+		{
+			name:   "a request still accepting has no record",
+			before: testRequestSummary(),
+			log:    statusLog(entity.RequestStatusAccepting, 0, 20),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newStrictMaterializerFixture(gomock.NewController(t))
+			f.logs.EXPECT().Insert(gomock.Any(), tt.log).Return(nil)
+			f.summaries.EXPECT().Get(gomock.Any(), tt.before.RequestID).Return(tt.before, nil)
+			if tt.wantUpdate {
+				f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), tt.before.Version, tt.before.Version+1).Return(nil)
+			}
+			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.expectRecordCalls(tt.wantCalls, -1, nil)
+
+			require.NoError(t, f.materializer.PersistLog(context.Background(), tt.log))
+		})
+	}
+}
+
+// TestMaterializer_StatusRecordFailures covers every record write and the re-read failing:
+// each is returned so the delivery is retried, and nothing after it runs.
+func TestMaterializer_StatusRecordFailures(t *testing.T) {
+	writeErr := errors.New("storage unavailable")
+	moving := []recordCall{
+		putRecord(entity.RequestStatusValidating, 20, entity.RequestStatusValidating),
+		deleteRecord(entity.RequestStatusStarted),
+	}
+	superseded := []recordCall{
+		putRecord(entity.RequestStatusValidating, 20, entity.RequestStatusValidated),
+		deleteRecord(entity.RequestStatusValidating),
+	}
+	tests := []struct {
+		name       string
+		log        entity.RequestStatus
+		calls      []recordCall
+		failAt     int
+		recheckErr bool
+	}{
+		{name: "filing the new record", log: entity.RequestStatusValidating, calls: moving, failAt: 0},
+		{name: "removing the previous record", log: entity.RequestStatusValidating, calls: moving, failAt: 1},
+		{name: "removing a superseded record", log: entity.RequestStatusValidating, calls: superseded, failAt: 1},
+		{name: "sweeping a finished request", log: entity.RequestStatusError, calls: sweepRecords()[:3], failAt: 2},
+		{name: "re-reading the summary", log: entity.RequestStatusValidating, recheckErr: true, failAt: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newStrictMaterializerFixture(gomock.NewController(t))
+			before := testRequestSummary()
+			before.Status = entity.RequestStatusStarted
+			log := entity.RequestLog{Queue: "q", RequestID: "1", Type: entity.RequestLogTypeStatus, Status: tt.log, TimestampMs: 20}
+			f.logs.EXPECT().Insert(gomock.Any(), log).Return(nil)
+			f.summaries.EXPECT().Get(gomock.Any(), "1").Return(before, nil)
+			f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			if tt.recheckErr {
+				record := entity.QueueRequestStatus{Queue: "q", Status: tt.log, RequestID: "1", ReceivedAtMs: 10, EnteredAtMs: 20}
+				gomock.InOrder(
+					f.statuses.EXPECT().Put(gomock.Any(), record).Return(nil),
+					f.summaries.EXPECT().Get(gomock.Any(), "1").Return(entity.RequestSummary{}, writeErr),
+				)
+			} else {
+				f.expectRecordCalls(tt.calls, tt.failAt, writeErr)
+			}
+
+			require.ErrorIs(t, f.materializer.PersistLog(context.Background(), log), writeErr)
 		})
 	}
 }
@@ -335,3 +553,5 @@ func testRequestSummary() entity.RequestSummary {
 		Status: entity.RequestStatusAccepting, StatusTimestampMs: 10, Version: 1, Metadata: map[string]string{},
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
