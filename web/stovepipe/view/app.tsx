@@ -1,6 +1,6 @@
 "use client";
 
-import { Timestamp } from "@submitqueue/web-platform";
+import { Fact, Timestamp } from "@submitqueue/web-platform";
 import { Block } from "baseui/block/index.js";
 import { Tag } from "baseui/tag/index.js";
 import { HeadingLarge, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/typography/index.js";
@@ -8,7 +8,7 @@ import { RefreshControls } from "./refresh.js";
 import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestList, RequestDetails, History } from "./pages.js";
-import { ProjectResults } from "./projects.js";
+import { ProjectResults, RecordedResult } from "./projects.js";
 
 function Page({ model }: { model: StovepipePageModel }) {
   return (
@@ -59,31 +59,38 @@ function Page({ model }: { model: StovepipePageModel }) {
         )}
         {model.kind === "queue" ? (
           <Section result={model.requests}>
-            {(data) => <RequestList {...data} />}
+            {(data) => data && <RequestList {...data} />}
           </Section>
         ) : (
-          <Block display="grid" gridTemplateColumns="minmax(0, 1fr)" gridGap="scale600">
-            <Section result={model.history}>
-            {({ request, events }) => (
-              <>
-                <section aria-label="Request status">
-                  <HeadingSmall as="h2" marginTop="0">Request status</HeadingSmall>
-                  <RequestDetails request={request} />
-                </section>
-                <section aria-label="History">
-                  <HeadingSmall as="h2" marginTop="0">History</HeadingSmall>
-                  <History events={events} />
-                </section>
-              </>
-            )}
-            </Section>
-            <section aria-label="Project results">
-              <HeadingSmall as="h2" marginTop="0">Project results</HeadingSmall>
+          <Section result={model.history}>
+            {(history) => (
               <Section result={model.projectStatus}>
-                {(data) => <ProjectResults model={data} />}
+                {(projects) => (
+                  <Block display="grid" gridTemplateColumns="minmax(0, 1fr)" gridGap="scale600">
+                    <section aria-label="Request status">
+                      <HeadingSmall as="h2" marginTop="0">Request status</HeadingSmall>
+                      {history && <RequestDetails request={history.request} />}
+                      {projects && (
+                        <Block as="dl" margin="0">
+                          <Fact label="Repository result">
+                            <RecordedResult degree={projects.repositoryBreakageDegree} />
+                          </Fact>
+                        </Block>
+                      )}
+                    </section>
+                    <section aria-label="History">
+                      <HeadingSmall as="h2" marginTop="0">History</HeadingSmall>
+                      {history && <History events={history.events} />}
+                    </section>
+                    <section aria-label="Project results">
+                      <HeadingSmall as="h2" marginTop="0">Project results</HeadingSmall>
+                      {projects && <ProjectResults model={projects} />}
+                    </section>
+                  </Block>
+                )}
               </Section>
-            </section>
-          </Block>
+            )}
+          </Section>
         )}
       </Block>
       <Block as="footer" paddingTop="scale300" paddingBottom="scale300" font="ParagraphXSmall" color="contentSecondary">

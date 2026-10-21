@@ -62,8 +62,11 @@ it("displays the backend summary above the retained history", () => {
   expect(within(status).getByText("all_targets_passed")).toBeVisible();
   expect(within(status).getByText("Accepted")).toBeVisible();
   expect(within(status).getByText("Updated")).toBeVisible();
+  expect(within(status).getByText("Repository result")).toBeVisible();
+  expect(within(status).getByText("No result recorded")).toBeVisible();
   const history = screen.getByRole("region", { name: "History" });
   expect(within(history).getByText("accepted")).toBeVisible();
+  expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(
     screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
   ).toEqual(["Request status", "History", "Project results"]);
@@ -103,6 +106,8 @@ it("retains the summary and history after a failed refresh", async () => {
   expect(screen.getByText("accepted")).toBeVisible();
   await waitFor(() => expect(screen.getAllByText("Showing the last successful result.")).toHaveLength(2));
   expect(screen.getByText("green-project")).toBeVisible();
+  expect(within(screen.getByRole("region", { name: "Request status" }))
+    .getByText("No result recorded")).toBeVisible();
 });
 it("discards previous results when the request changes", () => {
   const { rerender } = render(<StovepipeApp model={model} />);
@@ -125,10 +130,12 @@ it("renders recorded project results, completion and shareable pagination", () =
   render(<StovepipeApp model={model} />);
   const projects = screen.getByRole("region", { name: "Project results" });
   const table = within(projects).getByRole("table", { name: "Recorded project results" });
-  expect(within(table).getByRole("rowheader", { name: "Repository" })).toBeVisible();
-  expect(within(projects).getByText("Green (0%)")).toBeVisible();
-  expect(within(projects).getByText("Breakage (25%)")).toBeVisible();
-  expect(within(projects).getAllByText("No result recorded")).toHaveLength(2);
+  expect(within(table).queryByText(/Repository/)).toBeNull();
+  expect(within(table).getByRole("columnheader", { name: "Project" })).toBeVisible();
+  expect(within(projects).getByText("Green")).toBeVisible();
+  expect(within(projects).getByText("Breakage")).toBeVisible();
+  expect(within(projects).getByText("No result recorded")).toBeVisible();
+  expect(within(projects).queryByText(/%/)).toBeNull();
   expect(within(projects).getByText(/still in progress/)).toBeVisible();
   expect(within(projects).getByRole("link", { name: /Next projects/ })).toHaveAttribute(
     "href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D",
@@ -161,6 +168,44 @@ it("shows complete empty results without inventing green or a continuation", () 
   expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
   expect(screen.queryByRole("link", { name: /Next projects/ })).toBeNull();
   const table = screen.getByRole("table", { name: "Recorded project results" });
-  expect(within(table).getByRole("rowheader", { name: "Repository" })).toBeVisible();
-  expect(within(table).getByText("No result recorded")).toBeVisible();
+  expect(within(table).getAllByRole("row")).toHaveLength(1);
+  expect(within(screen.getByRole("region", { name: "Request status" }))
+    .getByText("No result recorded")).toBeVisible();
+});
+
+it.each([
+  [0, "Green"],
+  [0.25, "Breakage"],
+  [null, "No result recorded"],
+] as const)("shows repository result %s above history as %s", (degree, label) => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  render(<StovepipeApp model={{
+    ...model,
+    projectStatus: { ok: true, data: {
+      ...model.projectStatus.data, repositoryBreakageDegree: degree,
+    } },
+  }} />);
+  const status = screen.getByRole("region", { name: "Request status" });
+  expect(within(status).getByText(label)).toBeVisible();
+  expect(within(status).queryByText(/%/)).toBeNull();
+});
+
+it("shows repository and project results when history is unavailable", async () => {
+  render(<StovepipeApp model={{
+    ...model, history: { ok: false, error: "History unavailable" },
+  }} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
+  expect(within(screen.getByRole("region", { name: "Request status" }))
+    .getByText("No result recorded")).toBeVisible();
+  expect(screen.getByText("green-project")).toBeVisible();
+});
+
+it("shows history when repository and project results are unavailable", async () => {
+  render(<StovepipeApp model={{
+    ...model, projectStatus: { ok: false, error: "Projects unavailable" },
+  }} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Projects unavailable");
+  expect(screen.getByText("accepted")).toBeVisible();
+  expect(screen.getByText("git://repo/sha")).toBeVisible();
+  expect(screen.queryByText("Repository result")).toBeNull();
 });

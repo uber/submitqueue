@@ -20,8 +20,11 @@ test.describe("server-rendered styling", () => {
   });
   test("separates request status fields before hydration", async ({ page }) => {
     await page.goto("/web%2Fpagination/request/51");
-    const rows = page.getByRole("region", { name: "Request status" }).locator("dl > div");
-    await expect(rows).toHaveCount(6);
+    const status = page.getByRole("region", { name: "Request status" });
+    const rows = status.locator("dl > div");
+    await expect(rows).toHaveCount(7);
+    await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
+    await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
     const layout = await rows.evaluateAll(fields => fields.map(field => ({
       height: field.getBoundingClientRect().height,
       labelGap: field.querySelector("dd")!.getBoundingClientRect().top - field.querySelector("dt")!.getBoundingClientRect().bottom,
@@ -157,38 +160,38 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     });
   });
   await test.step("Read recorded project results and reload their cursor", async () => {
+    const status = page.getByRole("region", { name: "Request status", exact: true });
     const section = page.getByRole("region", { name: "Project results", exact: true });
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
-    await expect(projects.locator("tbody tr")).toHaveCount(51);
-    await expect(
-      projects.getByRole("row").filter({
-        has: page.getByRole("rowheader", { name: "Repository", exact: true }),
-      }),
-    ).toContainText("Breakage (25%)");
+    await expect(projects.locator("tbody tr")).toHaveCount(50);
+    await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
+    await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
+    await expect(projects.getByText(/Repository|%/)).toHaveCount(0);
     await expect(
       projects.getByRole("row").filter({
         has: page.getByRole("cell", { name: "project-01", exact: true }),
-      }),
-    ).toContainText("Breakage (25%)");
+      }).getByRole("cell", { name: "Breakage", exact: true }),
+    ).toBeVisible();
     await expect(
       projects.getByRole("row").filter({
         has: page.getByRole("cell", { name: "project-02", exact: true }),
-      }),
-    ).toContainText("Green (0%)");
+      }).getByRole("cell", { name: "Green", exact: true }),
+    ).toBeVisible();
     await refresh.click();
     await expect(refresh).toBeEnabled();
-    await expect(projects.locator("tbody tr")).toHaveCount(51);
+    await expect(projects.locator("tbody tr")).toHaveCount(50);
     await section.getByRole("link", { name: "Next projects →", exact: true }).click();
-    await expect(projects.locator("tbody tr")).toHaveCount(2);
+    await expect(projects.locator("tbody tr")).toHaveCount(1);
     await expect(projects.getByRole("cell", { name: "project-51", exact: true })).toBeVisible();
     const cursor = new URL(page.url()).searchParams.get("projects");
     expect(cursor).toBeTruthy();
     await page.reload();
-    await expect(projects.locator("tbody tr")).toHaveCount(2);
+    await expect(projects.locator("tbody tr")).toHaveCount(1);
+    await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
     await expect(section.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
     await section.getByRole("link", { name: "First projects", exact: true }).click();
-    await expect(projects.locator("tbody tr")).toHaveCount(51);
+    await expect(projects.locator("tbody tr")).toHaveCount(50);
     expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   });
@@ -197,10 +200,11 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     const section = page.getByRole("region", { name: "Project results", exact: true });
     await expect(section.getByText("No project results recorded on this page.", { exact: true })).toBeVisible();
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
-    await expect(projects.locator("tbody tr")).toHaveCount(1);
-    await expect(projects.getByRole("rowheader", { name: "Repository", exact: true })).toBeVisible();
-    await expect(projects.getByRole("cell", { name: "No result recorded", exact: true })).toBeVisible();
-    await expect(section.getByText("Green (0%)", { exact: true })).toHaveCount(0);
+    await expect(projects.locator("tbody tr")).toHaveCount(0);
+    const status = page.getByRole("region", { name: "Request status", exact: true });
+    await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
+    await expect(status.getByText("No result recorded", { exact: true })).toBeVisible();
+    await expect(page.getByText("Green", { exact: true })).toHaveCount(0);
   });
   await test.step("Follow and reload the queue cursor, then select an empty queue", async () => {
     await page.getByRole("link", { name: "← Queue requests" }).click();

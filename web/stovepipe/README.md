@@ -20,6 +20,8 @@ projects; `?projects=<opaque-token>` carries its continuation and can be shared.
 First-page navigation removes the cursor. Pages are live rather than a snapshot;
 return to the first page to see newly recorded projects.
 
+The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green or Breakage without percentages.
+
 Repository breakage, per-project breakage, and recording completion are separate.
 Zero breakage is green; absent results are never treated as green. Completion
 describes result production, not whether all pages have been displayed. Project

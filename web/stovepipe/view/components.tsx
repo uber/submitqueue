@@ -18,7 +18,7 @@ export function Section<T>({
   children,
 }: {
   result: ReadResult<T>;
-  children(data: T): ReactNode;
+  children(data: T | null): ReactNode;
 }) {
   const [previous, setPrevious] = useState<T | null>(
     result.ok ? result.data : null,
@@ -33,7 +33,7 @@ export function Section<T>({
           {previous !== null && <ParagraphSmall>Showing the last successful result.</ParagraphSmall>}
         </Notification>
       )}
-      {data !== null ? children(data) : null}
+      {children(data)}
     </>
   );
 }
