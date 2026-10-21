@@ -164,7 +164,7 @@ var Stages = []pipeline.Stage[Deps]{
 			return dependencyanalysis.NewController(d.Logger, d.Scope, d.Storage, d.Analyzer, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQDependencyAnalysisController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
