@@ -102,4 +102,6 @@ type Storage interface {
 
 	// GetValidationFactStore returns the ValidationFactStore instance.
 	GetValidationFactStore() ValidationFactStore
+
+	GetProjectFactByDegreeStore() ProjectFactByDegreeStore
 }

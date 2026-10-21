@@ -120,6 +120,11 @@ func TestMySQLStorage(t *testing.T) {
 		suite.Run(t, testSuite)
 	})
 
+	t.Run("ProjectFactByDegree", func(t *testing.T) {
+		resetStorage(t, db)
+		testProjectFactByDegree(t, ctx, backend)
+	})
+
 	t.Run("RequestLogStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLRequestLogStoreSuite)
@@ -165,6 +170,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE build_issue",
 		"TRUNCATE TABLE queue",
 		"TRUNCATE TABLE validation_fact",
+		"TRUNCATE TABLE project_fact_by_degree",
 	} {
 		_, err := db.ExecContext(context.Background(), statement)
 		require.NoError(t, err)

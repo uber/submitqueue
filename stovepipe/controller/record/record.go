@@ -197,7 +197,7 @@ func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Stora
 		return err
 	}
 	for _, result := range results {
-		_, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
+		fact, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:       request.URI,
 			Project:   result.Project,
 			Degree:    result.Degree,
@@ -206,6 +206,15 @@ func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Stora
 		})
 		if err != nil {
 			return err
+		}
+
+		entry, err := entity.NewProjectFactByDegree(fact)
+		if err != nil {
+			return err
+		}
+
+		if err := store.GetProjectFactByDegreeStore().Create(ctx, entry); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+			return fmt.Errorf("failed to index project fact for request %q and project %q: %w", request.ID, fact.Project, err)
 		}
 	}
 	if len(results) == 0 {

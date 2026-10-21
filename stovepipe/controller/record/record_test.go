@@ -74,6 +74,7 @@ type recordMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	queueStore    *storagemock.MockQueueStore
 	factStore     *storagemock.MockValidationFactStore
+	indexStore    *storagemock.MockProjectFactByDegreeStore
 	store         *storagemock.MockStorage
 	materializer  *requestlogmock.MockMaterializer
 	sourceControl *sourcecontrolmock.MockSourceControl
@@ -148,6 +149,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		factStore:     storagemock.NewMockValidationFactStore(ctrl),
+		indexStore:    storagemock.NewMockProjectFactByDegreeStore(ctrl),
 		store:         storagemock.NewMockStorage(ctrl),
 		materializer:  requestlogmock.NewMockMaterializer(ctrl),
 		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
@@ -158,6 +160,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	m.store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
+	m.store.EXPECT().GetProjectFactByDegreeStore().Return(m.indexStore).AnyTimes()
 	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
 			assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
@@ -402,6 +405,13 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 		}).
 		Times(3)
 
+	var indexes []entity.ProjectFactByDegree
+	m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, entry entity.ProjectFactByDegree) error {
+			indexes = append(indexes, entry)
+			return nil
+		}).Times(2)
+
 	var logs []entity.RequestLog
 	eventMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
@@ -412,6 +422,12 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	require.Len(t, facts, 3)
+	require.Len(t, indexes, 2)
+	for i, fact := range facts[1:] {
+		entry, err := entity.NewProjectFactByDegree(fact)
+		require.NoError(t, err)
+		assert.Equal(t, entry, indexes[i])
+	}
 	assert.Equal(t, []string{"", "project-a", "project-b"}, []string{facts[0].Project, facts[1].Project, facts[2].Project})
 	for _, fact := range facts {
 		assert.Equal(t, testURI, fact.URI)
@@ -1216,4 +1232,44 @@ func TestProcess_QueueMismatchFails(t *testing.T) {
 	d.EXPECT().Message().Return(msg).AnyTimes()
 
 	require.Error(t, c.Process(queueContext(), d))
+}
+
+func TestRecordProjectFactsRepairsIndexOnRetry(t *testing.T) {
+	for _, retryErr := range []error{nil, storage.ErrAlreadyExists} {
+		name := "index repaired"
+		if retryErr != nil {
+			name = "index already repaired"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			resolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
+			resolver := projectstatusmock.NewMockResolver(ctrl)
+			c.projectStatusResolverFactory = resolverFactory
+			resolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil).Times(2)
+			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: 0.25, RequestID: request.ID, CreatedAt: 10}
+			entry, err := entity.NewProjectFactByDegree(stored)
+			require.NoError(t, err)
+			writeErr := errors.New("index write unavailable")
+			materializer := requestlogmock.NewMockMaterializer(ctrl)
+			c.materializer = materializer
+
+			gomock.InOrder(
+				resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return([]projectstatus.Result{{Project: "p", Degree: 0.25}}, nil),
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil),
+				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(writeErr),
+				resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return([]projectstatus.Result{{Project: "p", Degree: 0.75}}, nil),
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists),
+				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil),
+				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(retryErr),
+				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+					assert.Equal(t, entity.RequestEventProjectFactsRecorded, log.Event)
+					return nil
+				}),
+			)
+			require.ErrorIs(t, c.recordProjectFacts(queueContext(), m.store, request), writeErr)
+			require.NoError(t, c.recordProjectFacts(queueContext(), m.store, request))
+		})
+	}
 }

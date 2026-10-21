@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
@@ -150,6 +151,14 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			op:   "get",
 			read: func(bound storage.Storage, _ string) error {
 				_, err := bound.GetValidationFactStore().Get(context.Background(), "change-uri", "project")
+				return err
+			},
+		},
+		{
+			name: "project_fact_by_degree_store",
+			op:   "list",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetProjectFactByDegreeStore().List(context.Background(), "change-uri", entity.ProjectFactByDegree{}, 1)
 				return err
 			},
 		},

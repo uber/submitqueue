@@ -46,18 +46,19 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 	}
 	queueScope := s.scope.Tagged(map[string]string{"queue": queueName})
 	return &mysqlStorage{
-		requestStore:           NewRequestStore(s.db, queueScope.SubScope("request_store"), queueName),
-		requestURIStore:        NewRequestURIStore(s.db, queueScope.SubScope("request_uri_store"), queueName),
-		requestLogStore:        NewRequestLogStore(s.db, queueScope.SubScope("request_log_store"), queueName),
-		requestSummaryStore:    NewRequestSummaryStore(s.db, queueScope.SubScope("request_summary_store"), queueName),
-		requestAcceptanceStore: NewRequestAcceptanceStore(s.db, queueScope.SubScope("request_acceptance_store"), queueName),
-		queueSummaryStore:      NewQueueSummaryStore(s.db, queueScope.SubScope("queue_summary_store"), queueName),
-		queueLogStore:          NewQueueLogStore(s.db, queueScope.SubScope("queue_log_store"), queueName),
-		queueStore:             NewQueueStore(s.db, queueScope.SubScope("queue_store"), queueName),
-		buildStore:             NewBuildStore(s.db, queueScope.SubScope("build_store"), queueName),
-		buildIssueStore:        NewBuildIssueStore(s.db, queueScope.SubScope("build_issue_store"), queueName),
-		openIssueStore:         NewOpenIssueStore(s.db, queueScope.SubScope("open_issue_store"), queueName),
-		validationFactStore:    NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
+		requestStore:             NewRequestStore(s.db, queueScope.SubScope("request_store"), queueName),
+		requestURIStore:          NewRequestURIStore(s.db, queueScope.SubScope("request_uri_store"), queueName),
+		requestLogStore:          NewRequestLogStore(s.db, queueScope.SubScope("request_log_store"), queueName),
+		requestSummaryStore:      NewRequestSummaryStore(s.db, queueScope.SubScope("request_summary_store"), queueName),
+		requestAcceptanceStore:   NewRequestAcceptanceStore(s.db, queueScope.SubScope("request_acceptance_store"), queueName),
+		queueSummaryStore:        NewQueueSummaryStore(s.db, queueScope.SubScope("queue_summary_store"), queueName),
+		queueLogStore:            NewQueueLogStore(s.db, queueScope.SubScope("queue_log_store"), queueName),
+		queueStore:               NewQueueStore(s.db, queueScope.SubScope("queue_store"), queueName),
+		buildStore:               NewBuildStore(s.db, queueScope.SubScope("build_store"), queueName),
+		buildIssueStore:          NewBuildIssueStore(s.db, queueScope.SubScope("build_issue_store"), queueName),
+		openIssueStore:           NewOpenIssueStore(s.db, queueScope.SubScope("open_issue_store"), queueName),
+		validationFactStore:      NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
+		projectFactByDegreeStore: NewProjectFactByDegreeStore(s.db, queueScope.SubScope("project_fact_by_degree_store"), queueName),
 	}, nil
 }
 
@@ -68,18 +69,19 @@ func (s *Storage) Close() error {
 
 // mysqlStorage is the queue-scoped store aggregate returned by For.
 type mysqlStorage struct {
-	requestStore           storage.RequestStore
-	requestURIStore        storage.RequestURIStore
-	requestLogStore        storage.RequestLogStore
-	requestSummaryStore    storage.RequestSummaryStore
-	requestAcceptanceStore storage.RequestAcceptanceStore
-	queueStore             storage.QueueStore
-	queueSummaryStore      storage.QueueSummaryStore
-	queueLogStore          storage.QueueLogStore
-	buildStore             storage.BuildStore
-	buildIssueStore        storage.BuildIssueStore
-	openIssueStore         storage.OpenIssueStore
-	validationFactStore    storage.ValidationFactStore
+	requestStore             storage.RequestStore
+	requestURIStore          storage.RequestURIStore
+	requestLogStore          storage.RequestLogStore
+	requestSummaryStore      storage.RequestSummaryStore
+	requestAcceptanceStore   storage.RequestAcceptanceStore
+	queueStore               storage.QueueStore
+	queueSummaryStore        storage.QueueSummaryStore
+	queueLogStore            storage.QueueLogStore
+	buildStore               storage.BuildStore
+	buildIssueStore          storage.BuildIssueStore
+	openIssueStore           storage.OpenIssueStore
+	validationFactStore      storage.ValidationFactStore
+	projectFactByDegreeStore storage.ProjectFactByDegreeStore
 }
 
 // Verify mysqlStorage implements the queue-scoped aggregate at compile time.
@@ -123,6 +125,10 @@ func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 // GetValidationFactStore returns the MySQL-backed ValidationFactStore.
 func (f *mysqlStorage) GetValidationFactStore() storage.ValidationFactStore {
 	return f.validationFactStore
+}
+
+func (f *mysqlStorage) GetProjectFactByDegreeStore() storage.ProjectFactByDegreeStore {
+	return f.projectFactByDegreeStore
 }
 
 func (f *mysqlStorage) GetQueueSummaryStore() storage.QueueSummaryStore { return f.queueSummaryStore }

@@ -5,6 +5,7 @@ go_test(
     srcs = [
         "build_issue_test.go",
         "open_issue_test.go",
+        "project_fact_by_degree_test.go",
         "queue_state_transitions_test.go",
         "queue_summary_test.go",
         "request_acceptance_test.go",
@@ -30,6 +31,7 @@ go_test(
         "//test/integration/stovepipe/extension/storage:go_default_library",
         "//test/testutil:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_stretchr_testify//suite:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",

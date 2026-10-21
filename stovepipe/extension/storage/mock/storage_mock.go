@@ -121,6 +121,20 @@ func (mr *MockStorageMockRecorder) GetOpenIssueStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOpenIssueStore", reflect.TypeOf((*MockStorage)(nil).GetOpenIssueStore))
 }
 
+// GetProjectFactByDegreeStore mocks base method.
+func (m *MockStorage) GetProjectFactByDegreeStore() storage.ProjectFactByDegreeStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetProjectFactByDegreeStore")
+	ret0, _ := ret[0].(storage.ProjectFactByDegreeStore)
+	return ret0
+}
+
+// GetProjectFactByDegreeStore indicates an expected call of GetProjectFactByDegreeStore.
+func (mr *MockStorageMockRecorder) GetProjectFactByDegreeStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProjectFactByDegreeStore", reflect.TypeOf((*MockStorage)(nil).GetProjectFactByDegreeStore))
+}
+
 // GetQueueLogStore mocks base method.
 func (m *MockStorage) GetQueueLogStore() storage.QueueLogStore {
 	m.ctrl.T.Helper()

@@ -49,6 +49,9 @@ def _pagination_fixture_sql() -> str:
         statements.append(
             f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
         )
+        statements.append(
+            f"INSERT INTO project_fact_by_degree VALUES ('web/pagination','{uri}',{degree},'project-{i:02d}');"
+        )
     return "\n".join(statements)
 
 
