@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "build.pb.go",
+        "buildanalysis.pb.go",
         "buildsignal.pb.go",
         "process.pb.go",
         "record.pb.go",

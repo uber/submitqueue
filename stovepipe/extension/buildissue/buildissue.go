@@ -33,13 +33,13 @@ type Detector interface {
 	Detect(ctx context.Context, buildID entity.BuildID) ([]entity.BuildIssue, error)
 }
 
-// Config identifies the queue whose issue detector is requested.
-type Config struct {
+// DetectorConfig identifies the queue whose issue detector is requested.
+type DetectorConfig struct {
 	// QueueName identifies the queue.
 	QueueName string
 }
 
-// Factory resolves a queue's detector; implementations and routing belong to host wiring.
-type Factory interface {
-	For(cfg Config) (Detector, error)
+// DetectorFactory resolves a detector for a validation queue.
+type DetectorFactory interface {
+	For(cfg DetectorConfig) (Detector, error)
 }

@@ -42,6 +42,9 @@ const (
 	// partition.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 
+	// TopicKeyBuildAnalysis carries build IDs for issue detection, partitioned by build ID.
+	TopicKeyBuildAnalysis TopicKey = "buildanalysis"
+
 	// TopicKeyRecord carries a request whose build reached a terminal status from
 	// buildsignal to the record stage. The buildsignal controller publishes a
 	// Record (the request id) here once, and only once, a build reaches a
