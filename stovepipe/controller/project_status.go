@@ -161,7 +161,11 @@ func (c *projectStatusController) GetProjectStatus(ctx context.Context, req enti
 		}
 	}
 
-	page, err := loadProjectStatusPage(ctx, req, requestSummary, factStore)
+	var indexStore storage.ProjectFactByDegreeStore
+	if len(req.Projects) == 0 {
+		indexStore = store.GetProjectFactByDegreeStore()
+	}
+	page, err := loadProjectStatusPage(ctx, req, requestSummary, factStore, indexStore)
 	if err != nil {
 		return entity.GetProjectStatusResult{}, err
 	}
@@ -221,6 +225,7 @@ func loadProjectStatusPage(
 	req entity.GetProjectStatusRequest,
 	summary entity.RequestSummary,
 	store storage.ValidationFactStore,
+	indexStore storage.ProjectFactByDegreeStore,
 ) (projectStatusPage, error) {
 	token, err := parseProjectStatusPageToken(req, summary)
 	if err != nil {
@@ -233,7 +238,7 @@ func loadProjectStatusPage(
 	}
 
 	if len(req.Projects) == 0 {
-		return listProjectStatusPage(ctx, summary, store, token, pageSize)
+		return listProjectStatusPage(ctx, summary, store, indexStore, token, pageSize)
 	}
 
 	return getRequestedProjectStatusPage(ctx, summary, store, token, pageSize)
@@ -282,32 +287,61 @@ func listProjectStatusPage(
 	ctx context.Context,
 	summary entity.RequestSummary,
 	store storage.ValidationFactStore,
+	indexStore storage.ProjectFactByDegreeStore,
 	token projectStatusPageToken,
 	pageSize int,
 ) (projectStatusPage, error) {
-	facts, err := store.ListProjects(ctx, summary.URI, token.AfterProject, pageSize+1)
-	if err != nil {
-		return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to list project facts for request %q: %w", summary.RequestID, err)
-	}
+	var after entity.ProjectFactByDegree
+	if token.AfterProject != "" {
+		fact, err := store.Get(ctx, summary.URI, token.AfterProject)
+		if err != nil {
+			return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to load cursor project %q: %w", token.AfterProject, err)
+		}
 
-	for _, fact := range facts {
-		if err := validateProjectFact(fact, summary, fact.Project); err != nil {
+		if err := validateProjectFact(fact, summary, token.AfterProject); err != nil {
 			return projectStatusPage{}, err
 		}
 
-		if fact.Project == "" {
-			return projectStatusPage{}, &ProjectStatusConsistencyError{message: "project listing contains a repository fact"}
+		after, err = entity.NewProjectFactByDegree(fact)
+		if err != nil {
+			return projectStatusPage{}, err
 		}
 	}
 
-	page := projectStatusPage{facts: facts}
-	if len(facts) > pageSize {
-		page.facts = facts[:pageSize]
-		token.AfterProject = page.facts[pageSize-1].Project
-		page.nextToken, err = encodeProjectStatusPageToken(token)
+	entries, err := indexStore.List(ctx, summary.URI, after, pageSize+1)
+	if err != nil {
+		return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to list validation facts by degree for request %q: %w", summary.RequestID, err)
 	}
 
-	return page, err
+	var page projectStatusPage
+	if len(entries) > pageSize {
+		entries = entries[:pageSize]
+		token.AfterProject = entries[pageSize-1].Project
+		page.nextToken, err = encodeProjectStatusPageToken(token)
+		if err != nil {
+			return projectStatusPage{}, err
+		}
+	}
+
+	for _, entry := range entries {
+		fact, err := store.Get(ctx, summary.URI, entry.Project)
+		if err != nil {
+			return projectStatusPage{}, fmt.Errorf("GetProjectStatus failed to load indexed project %q: %w", entry.Project, err)
+		}
+
+		if err := validateProjectFact(fact, summary, entry.Project); err != nil {
+			return projectStatusPage{}, err
+		}
+
+		expected, err := entity.NewProjectFactByDegree(fact)
+		if err != nil || entry != expected {
+			return projectStatusPage{}, &ProjectStatusConsistencyError{message: "degree-ordered fact lookup disagrees with stored fact"}
+		}
+
+		page.facts = append(page.facts, fact)
+	}
+
+	return page, nil
 }
 
 func encodeProjectStatusPageToken(token projectStatusPageToken) (string, error) {

@@ -45,7 +45,7 @@ def _pagination_fixture_sql() -> str:
         f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','',0.25,'51',2000);"
     )
     for i in range(1, 52):
-        degree = 0.25 if i == 1 else 0
+        degree = 1.0 if i == 50 else 0.25 if i == 1 else 0
         statements.append(
             f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
         )

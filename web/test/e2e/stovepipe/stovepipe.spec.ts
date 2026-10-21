@@ -164,6 +164,9 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     const section = page.getByRole("region", { name: "Project results", exact: true });
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(50);
+    await expect(projects.locator("tbody tr").nth(0).getByRole("cell", { name: "project-50", exact: true })).toBeVisible();
+    await expect(projects.locator("tbody tr").nth(1).getByRole("cell", { name: "project-01", exact: true })).toBeVisible();
+    await expect(projects.locator("tbody tr").nth(2).getByRole("cell", { name: "project-02", exact: true })).toBeVisible();
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
     await expect(projects.getByText(/Repository|%/)).toHaveCount(0);
