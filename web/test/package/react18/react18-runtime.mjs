@@ -110,7 +110,9 @@ for (const { route, page, theme, html, stylesheets } of pages) {
   expected.remove();
   if (route === "/repo%2Fmain/request/1") {
     assert.match(container.textContent, /example-project/u);
-    assert.match(container.textContent, /Breakage \(25%\)/u);
+    assert.match(container.textContent, /Repository resultBreakage/u);
+    assert.match(container.textContent, /example-projectGreen/u);
+    assert.doesNotMatch(container.textContent, /%/u);
   }
   await act(async () => root.unmount());
   container.remove();
