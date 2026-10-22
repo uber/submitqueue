@@ -259,6 +259,30 @@ Three changes, one more ref update than before.
 
 The sandbox survives `make local-submitqueue-stop`, so what landed is still there to look at. `make local-submitqueue-clean` removes it.
 
+## Decide conflicts with Tango
+
+`PROVIDER=git` decides that two changes conflict by comparing the directories they touch. An analyzer built on a build graph can see more: a change to a library conflicts with a change to anything built on it, though their paths never overlap. `ANALYZER=tango` swaps the analyzer for one that asks a Tango server which build targets each batch affects, and runs a fake Tango server beside the stack so it needs no build system.
+
+```bash
+make local-submitqueue-stop
+make local-submitqueue-start PROVIDER=git ANALYZER=tango
+make demo-requests
+make local-submitqueue-stop PROVIDER=git ANALYZER=tango
+```
+
+Starting with `ANALYZER=tango` also commits a `TARGET` file into each `demo/NN` folder of the sandbox, on top of whatever is already there. `demo/00` and `demo/01` are libraries, and every other folder depends on one of them: even folders on `demo/00`, odd folders on `demo/01`. Pass the same `ANALYZER` when stopping, so the fake server is stopped with the rest. Only the folders `demo/00` to `demo/09` have targets, so `make demo-requests` refuses a `FOLDERS` above 10 against a sandbox seeded this way, because changes in a folder without a target would never conflict.
+
+Look at what the analyzer recorded, the same way as in the speculation section above:
+
+```bash
+docker exec submitqueue-mysql-app-1 mysql -uroot -proot submitqueue \
+  -N -e "select batch_id, dependents from batch_dependent where dependents != '[]'"
+docker exec submitqueue-mysql-app-1 mysql -uroot -proot submitqueue \
+  -N -e "select count(*) from target_signature"
+```
+
+The second count has a row for every batch analyzed, which shows the orchestrator really asked the fake server. Dependencies between batches can now join different folders, where under path overlap they only join batches sharing one.
+
 ## Land against GitHub
 
 The last rung is the only one that needs credentials, and the only one where a change is a pull request that a person can review.

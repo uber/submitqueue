@@ -19,6 +19,8 @@ Pick one with `make local-submitqueue-start PROVIDER=<name>`, which bind-mounts 
 
 The three are a ladder, and the rung is the only thing that changes: the same commands land against all of them. `git/` is worth reading first of the two real ones. It is proof that neither half needs a provider — change metadata comes from reading the repository and the merge is the same Runway code path, both against a bare repository addressed by path, with no credential and no API — and it is what the hermetic git E2E (`make e2e-git-test`) runs against.
 
+The conflict analyzer is a separate choice from the provider. `make local-submitqueue-start PROVIDER=git ANALYZER=tango` keeps everything about `git/` and swaps `demo-queue`'s analyzer for Tango, answered by the fake server in [`service/tangofake`](../../../tangofake). It reads [`git/profiles.tango.yaml`](git/profiles.tango.yaml) instead of `profiles.yaml`, and the sandbox gains a `TARGET` file per `demo/NN` folder. Only `PROVIDER=git` supports it, because the fake reads targets from that provider's repository.
+
 Note that the orchestrator and Runway each keep their **own** copy of a queue's repository and configure their own remote for it: the change provider's copy is in `profiles.yaml`, the merger's checkout in `merge.yaml`, and they are independent even when they name the same remote. That is the same shape a deployment has when both point at a remote host.
 
 ## Adding a provider

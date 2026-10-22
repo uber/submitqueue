@@ -86,7 +86,7 @@ func TestResolveFolders(t *testing.T) {
 		for minute := range 60 {
 			folders := resolveFolders(fmt.Sprintf("0810-12%02d", minute), 0)
 			assert.GreaterOrEqual(t, folders, minShardDirs)
-			assert.LessOrEqual(t, folders, maxShardDirs)
+			assert.LessOrEqual(t, folders, MaxShardDirs)
 			seen[folders] = struct{}{}
 		}
 		assert.Greater(t, len(seen), 1, "runs must not all pick the same number")
