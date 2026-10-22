@@ -7,6 +7,7 @@ Each domain has its own subdirectory with a dedicated README:
 - [`submitqueue/`](submitqueue/README.md) — the multi-service SubmitQueue domain (Gateway + Orchestrator).
 - [`stovepipe/`](stovepipe/README.md) — the single-service Stovepipe domain (ingest → process → build → buildsignal → record).
 - [`runway/`](runway/README.md) — the single-service Runway merge execution service.
+- [`tangofake/`](tangofake/README.md) — a fake Tango server for running the Tango conflict analyzer without a build system.
 
 ## Services
 
@@ -16,6 +17,7 @@ Each domain has its own subdirectory with a dedicated README:
 | **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes start, cancel, validate, merge-conflict-check-signal, batch, dependency-analysis, speculate, build, buildsignal, submitqueue-land, merge-signal, conclude, submitqueue-hook, and paired DLQ topics) | MySQL app + queue |
 | **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes process, build, buildsignal, record, stovepipe-hook, and paired DLQ topics) | MySQL storage + queue |
 | **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & runway-merge topics) | MySQL queue |
+| **Fake Tango** | free port, logged | none | Tango's `GetChangedTargets` | a git repository of `TARGET` files |
 
 Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port. `make local-submitqueue-ps` is the only status target, and it prints the SubmitQueue mappings. `make local-stovepipe-start` and `make local-runway-start` print their ports when those stacks come up.
 
@@ -37,9 +39,11 @@ service/
 │   ├── docker-compose.debug.yml        # Debug variant with delve
 │   ├── server/                         # Stovepipe gRPC server + Dockerfile + compose
 │   └── client/                         # Stovepipe ping client
-└── runway/
-    ├── server/                         # Runway gRPC server + Dockerfile + compose
-    └── client/                         # Runway ping client
+├── runway/
+│   ├── server/                         # Runway gRPC server + Dockerfile + compose
+│   └── client/                         # Runway ping client
+└── tangofake/
+    └── server/                         # Fake Tango gRPC server + Dockerfile + compose
 ```
 
 ## Running

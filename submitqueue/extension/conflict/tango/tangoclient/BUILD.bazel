@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient",
     visibility = [
         "//service/submitqueue/orchestrator:__subpackages__",
+        "//service/tangofake:__pkg__",
         "//submitqueue/extension/conflict/tango:__subpackages__",
         "//test/integration/submitqueue/extension/conflict/tango:__subpackages__",
     ],
