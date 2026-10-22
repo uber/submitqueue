@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package tangoclient implements tango.ChangedTargetsClient over the Tango
-// service's YARPC client. It is the only package that imports Tango's
-// generated types.
+// service's YARPC client. It is the only production package that imports
+// Tango's generated types.
 package tangoclient
 
 import (
