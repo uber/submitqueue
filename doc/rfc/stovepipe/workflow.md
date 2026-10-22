@@ -169,6 +169,8 @@ Per-stage design detail lives under `steps/` so this doc stays a pipeline overvi
 - [buildsignal.md](steps/buildsignal.md) — the poll loop: hold-based re-poll cadence, per-build partitioning, and the fail-closed handoff to record
 - [record.md](steps/record.md) — turning a terminal build outcome into an immutable validation fact, monotonic last-green advancement and ref promotion, and the hook event announcing the outcome. Project analysis already runs inline through `projectstatus.Resolver` and may later use results calculated by build analysis
 
+For repair decisions, execution, and recovery, see the [repair RFC](fixer.md).
+
 ## Dedup, idempotency, and history rewrites
 
 Ingestion is idempotent on `(Queue, head URI)`, so duplicate poller reports — and any future webhook producer racing the poller — converge on one Request. The pipeline persists the Queue's last-green URI and per-URI greenness, so it must tolerate a **history rewrite**: when `SourceControl` reports that the last-green URI is no longer an ancestor of the current head, `process` falls back to a full-monorepo build rather than trusting a baseline that no longer exists on the branch. The system converges to a correct greenness rather than wedging on a stale pointer.

@@ -41,3 +41,9 @@ An open row is immutable. Its first-seen build identifies the current opening, n
 Deletion matches the task, unit, and first-seen build within the bound queue. It is safe to repeat: an absent opening is a no-op, and a stale deletion never removes a different opening of the same condition. Database failures are returned for retry.
 
 MySQL identifiers use the same binary byte limits as per-build observations. Build IDs are opaque context, not ordering tokens. The store does not choose resolution, enumerate issues, write lifecycle history, or reconcile analysis responses. History and source-order reconciliation belong to later controllers, not this membership store.
+
+## Repair submissions
+
+`FixStore` retains versioned repair submissions by queue and fix ID. The initial submission uses the detecting BuildID as its ID, so create-if-absent selects one issue per build without modifying the Build or OpenIssue records. Its issue references use `OpenIssue`, including the immutable `FirstSeenBuildID` of each opening.
+
+The [repair RFC](../../../doc/rfc/stovepipe/fixer.md) defines one-shot dispatch and request-history recording. Failure and recovery evidence remain owned by build analysis.

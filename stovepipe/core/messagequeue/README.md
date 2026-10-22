@@ -11,3 +11,9 @@ Payloads are defined in proto3 (`proto/`, generated into `protopb/`) and seriali
 - **buildsignal** (`TopicKeyBuildSignal`, `BuildSignal`) — build publishes the build id here after triggering; buildsignal holds the delivery between polls until the build reaches a terminal status. Partitioned by build id, so each build's poll loop is an independent partition.
 - **buildanalysis** (`TopicKeyBuildAnalysis`, `BuildAnalysis`) — identifies a persisted build for issue detection, partitioned by build id. Build publishes a start notice and buildsignal publishes a completion notice with a distinct message id. See [build analysis](../../controller/buildanalysis/README.md) for polling and persistence behavior.
 - **record** (`TopicKeyRecord`, `Record`) — buildsignal publishes the request id after persisting the terminal outcome; record reloads the request and records its validation fact. Partitioned by request id.
+
+## Repair stage contract
+
+**fix** (`TopicKeyFix`, [`FixRequest`](proto/fix.proto)) identifies a persisted observation and issue opening using queue, detecting build, task, unit, and first-seen build. Partition by detecting build ID. The `consumer.Controller` selects the first eligible failed unit by creating a Fix keyed by the detecting BuildID, persists a submitting marker, and calls `RepairExecutor.Submit` once. Later deliveries reconcile the selected submission and its request history.
+
+Persist observations and their current opening before publishing a request. Replay publication after duplicate observation writes so a crash between persistence and handoff can recover. Redelivery can complete preparation, but a durable submitting marker suppresses any further outbound call. Execution monitoring and verified recovery are follow-up work.

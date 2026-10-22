@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build.go",
         "build_issue.go",
+        "fix.go",
         "ingest.go",
         "list.go",
         "open_issue.go",
