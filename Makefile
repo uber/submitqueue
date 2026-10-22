@@ -427,6 +427,11 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
+	@echo "Applying Tango conflict analyzer schema to mysql-app..."
+	@for file in submitqueue/extension/conflict/tango/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
 	@echo "Applying queue schema to mysql-queue..."
 	@for file in platform/extension/messagequeue/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
