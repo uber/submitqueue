@@ -15,6 +15,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	nethttp "net/http"
 
@@ -28,6 +29,9 @@ import (
 	"context"
 
 	platformbuildkite "github.com/uber/submitqueue/platform/buildkite"
+	"github.com/uber/submitqueue/platform/extension/gitworkspace"
+	gitworkspacelocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
+	gitrepo "github.com/uber/submitqueue/platform/git/repo"
 	platformgithubactions "github.com/uber/submitqueue/platform/githubactions"
 	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
@@ -47,6 +51,10 @@ import (
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/pathoverlap"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/baserevision"
+	tangomysql "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/mysql"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
@@ -213,6 +221,7 @@ func newProfiles(
 	scope tally.Scope,
 	resolver changeset.Resolver,
 	stores orchstorage.Factory,
+	tangoDeps tangoDeps,
 	cfg profilesConfig,
 ) (Profiles, error) {
 	b := &profileBuilder{
@@ -221,7 +230,9 @@ func newProfiles(
 		scope:    scope,
 		resolver: resolver,
 		stores:   stores,
+		tango:    tangoDeps,
 		built:    make(map[string]any),
+		repos:    make(map[string]*gitrepo.Repo),
 	}
 
 	defaultProfile, err := b.build(cfg.Defaults, "defaults")
@@ -267,7 +278,19 @@ type profileBuilder struct {
 	scope    tally.Scope
 	resolver changeset.Resolver
 	stores   orchstorage.Factory
+	tango    tangoDeps
 	built    map[string]any
+	// repos are the provisioned clones by directory, so the tango analyzer
+	// locks the same Repo as the git change provider that owns the clone.
+	repos map[string]*gitrepo.Repo
+}
+
+// tangoDeps are the process-level pieces the tango analyzer shares across
+// queues. They are zero when no queue uses it.
+type tangoDeps struct {
+	DB         *sql.DB
+	Connection *tangoclient.Connection
+	Cache      *tango.SignatureCache
 }
 
 func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, error) {
@@ -283,7 +306,12 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	if err != nil {
 		return Profile{}, err
 	}
-	analyzer, err := reuse(b, cfg.Analyzer, where, b.newAnalyzerFactory)
+	var analyzer conflict.Factory
+	if cfg.Analyzer.Type == analyzerTypeTango {
+		analyzer, err = reuse(b, tangoAnalyzerKey{Analyzer: cfg.Analyzer, Git: *cfg.ChangeProvider.Git}, where, b.newTangoAnalyzerFactory)
+	} else {
+		analyzer, err = reuse(b, cfg.Analyzer, where, b.newAnalyzerFactory)
+	}
 	if err != nil {
 		return Profile{}, err
 	}
@@ -442,6 +470,7 @@ func (b *profileBuilder) newChangeProviderFactory(cfg changeProviderConfig, wher
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", where, err)
 		}
+		b.repos[cfg.Git.RepoPath] = repo
 		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 			return gitprovider.New(gitprovider.Params{
 				Config:       c,
@@ -703,6 +732,56 @@ func (b *profileBuilder) newAnalyzerFactory(cfg analyzerConfig, where string) (c
 		}
 		return conflictfake.New(c, delegate, nil), nil
 	}), nil
+}
+
+// tangoAnalyzerKey keys the tango analyzer on both the analyzer block and the
+// git block of its queue, because the base revision comes from that clone.
+type tangoAnalyzerKey struct {
+	Analyzer analyzerConfig
+	Git      gitProviderConfig
+}
+
+// newTangoAnalyzerFactory builds a factory for tango analyzers that read the
+// base revision from the queue's own clone. Validation guarantees the queue
+// uses the git change provider and that the process-level pieces are set.
+func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where string) (conflict.Factory, error) {
+	if b.tango.Connection == nil || b.tango.Cache == nil || b.tango.DB == nil {
+		return nil, fmt.Errorf("%s: the tango analyzer needs a tango connection, signature cache and database", where)
+	}
+	client, err := b.tango.Connection.ChangedTargetsClient(key.Analyzer.Tango.Remote, key.Analyzer.Tango.Strategy)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", where, err)
+	}
+
+	repo, ok := b.repos[key.Git.RepoPath]
+	if !ok {
+		return nil, fmt.Errorf("%s: no change repository provisioned at %q", where, key.Git.RepoPath)
+	}
+	workspaces := cloneWorkspaces{}
+	target := baserevision.Target{Repo: key.Git.RepoPath, Remote: key.Git.Remote, Branch: key.Git.Target}
+
+	return analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
+		fromGit := baserevision.FromGit(workspaces, map[string]baserevision.Target{c.QueueName: target})
+		return tango.New(tango.Params{
+			Signatures: tangomysql.NewSignatureStore(b.tango.DB, b.scope.SubScope("tango"), c.QueueName),
+			Cache:      b.tango.Cache,
+			Client:     client,
+			BaseRevision: func(ctx context.Context, queue string) (string, error) {
+				repo.Lock()
+				defer repo.Unlock()
+				return fromGit(ctx, queue)
+			},
+			Changes: b.resolver,
+		}), nil
+	}), nil
+}
+
+// cloneWorkspaces serves each repo, named by its clone directory, as a local
+// git workspace.
+type cloneWorkspaces struct{}
+
+func (cloneWorkspaces) For(ctx context.Context, repo string) (gitworkspace.Workspace, error) {
+	return gitworkspacelocal.NewFactory(gitworkspacelocal.Params{Dir: repo}).For(ctx, repo)
 }
 
 // pathOverlapKey maps the configured granularity onto the projection the
