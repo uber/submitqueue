@@ -14,7 +14,8 @@
 
 // Package process holds the process-stage queue controller. It consumes request
 // ids from ingest, reloads the Request from storage, coalesces older heads, and
-// admits the latest head when a build slot is open.
+// admits the latest head when a build slot is open. Build queue publish lands in
+// a follow-up PR.
 package process
 
 import (
@@ -355,7 +356,11 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 	return entity.BuildStrategyFull, "", nil
 }
 
-// markProcessing preserves a concurrent transition and its pinned build strategy.
+// markProcessing CAS-marks request accepted→processing and persists the strategy chosen after the
+// build slot was claimed. It reapplies the values after a request reload so an accepted concurrent
+// update cannot discard them. transitioned is true only when this call performed the CAS; false
+// means a concurrent writer already advanced the request past accepted, so the caller completes
+// the shared reservation only if the request is terminal.
 func (c *Controller) markProcessing(ctx context.Context, store storage.Storage, request *entity.Request, strategy entity.BuildStrategy, baseURI string) (transitioned bool, err error) {
 	reqStore := store.GetRequestStore()
 

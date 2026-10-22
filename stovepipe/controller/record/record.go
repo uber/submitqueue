@@ -16,8 +16,11 @@
 // messages (a request id) published by buildsignal once a build reaches a
 // terminal status, and turns that outcome into durable validation state.
 //
-// Repository and project facts are persisted before promotion. Build completion
-// owns the stored incremental baseline, which can precede these facts.
+// The durable state is a ValidationFact per validated commit and project. Build
+// completion owns the queue's last-green bookmark, which process reads to choose
+// an incremental build baseline. A green commit is also promoted after its facts
+// are persisted, moving the queue's promotion ref so downstream systems can pull
+// the latest green commit by name.
 //
 // The outcome is then announced as a hook event, so integrations outside the
 // pipeline learn that a commit is green or broken. See
@@ -285,8 +288,10 @@ func (c *Controller) persistValidationFactRecordedLog(
 	return nil
 }
 
-// applyFactToDerivedCaches promotes a finalized green fact only while its request
-// owns the build baseline. Build completion owns the baseline itself.
+// applyFactToDerivedCaches follows the persisted fact: a green fact promotes the
+// commit when this request holds the queue's bookmark, set by build completion.
+// A broken fact skips promotion, and instead reports how long the break it names
+// went undetected.
 func (c *Controller) applyFactToDerivedCaches(
 	ctx context.Context,
 	store storage.Storage,
@@ -316,13 +321,22 @@ func (c *Controller) applyFactToDerivedCaches(
 		}
 	}
 	if queue.LastGreenRequestID != request.ID || queue.LastGreenURI != request.URI {
+		// Only the current baseline owner can promote: promoting an older commit
+		// would move the ref backwards.
 		return nil
 	}
 	c.emitLastGreenTimestamp(ctx, request)
 	return c.promote(ctx, request)
 }
 
-// recordFact adopts the stored fact on replay; immutable facts remain authoritative.
+// recordFact writes the request's outcome as an immutable whole-repository fact and
+// returns the fact that is actually stored, which is not always the one just built:
+// facts are first-writer-wins, so an identity already claimed by this same request —
+// a redelivery after the write but before promotion — yields the stored
+// fact instead. Every decision downstream reads that stored fact rather than the
+// request, so a redelivery cannot reach a different verdict than the original. The
+// second return reports whether this call is the one that wrote the fact, which is
+// how a caller tells the original delivery from a redelivery.
 func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) (entity.ValidationFact, bool, error) {
 	return c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
 		URI:       request.URI,
@@ -439,6 +453,8 @@ func (c *Controller) failureDetectionUnobserved(ctx context.Context, request ent
 	)
 }
 
+// degreeFor maps a request's build outcome onto a whole-repository degree.
+// A failed build with project results has a partial degree.
 func degreeFor(state entity.RequestState, results []projectstatus.Result) float64 {
 	if state == entity.RequestStateSucceeded {
 		return entity.DegreeGreen
@@ -504,7 +520,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 // the queue has one at all — is source-control configuration, so this stage names
 // only the commit.
 //
-// Like the bookmark, the ref is a cache of the facts, so it moves only after the
+// The ref is a cache of the facts, so it moves only after the
 // green fact is durable. Promotion is idempotent, so a redelivery repeats it
 // harmlessly. A commit that a rewritten history dropped from the ref cannot be
 // promoted by any retry, so that case is counted and skipped rather than failed.

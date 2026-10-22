@@ -55,7 +55,11 @@ var (
 	PollDelayRunningMs int64 = 2000
 )
 
-// Controller polls builds and completes request outcomes before publishing to record.
+// Controller consumes BuildSignal messages, polls the build-runner toward a
+// terminal status, persists the result, and either holds the delivery until
+// the next poll or projects the outcome onto the request, completes the queue's
+// build slot and baseline, and publishes the request id to record. Implements
+// consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -93,7 +97,12 @@ func NewController(
 	}
 }
 
-// Process polls a build, completes its terminal outcome and baseline, and publishes downstream work.
+// Process reloads the build referenced by the delivery, polls its runner for
+// the latest status, persists a real transition, and either holds the delivery
+// until the next poll or, once terminal, projects the outcome onto the request,
+// completes the queue's build slot and baseline, and publishes the request id to
+// record. Returns nil to ack (success) or an error to nack (retry) / reject
+// (DLQ).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
@@ -132,6 +141,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", sig.GetQueueName(), request.Queue, request.ID)
 	}
 
+	// A request only reaches the poll loop after process admitted it, so it is
+	// `processing` — or it already carries this build's outcome, on a redelivery
+	// after the outcome was stamped but before record was published. Both cases
+	// proceed: the redelivery re-publishes to record rather than dropping the
+	// signal, and repeats any unfinished slot and baseline completion.
 	if request.State != entity.RequestStateProcessing && !request.State.HasBuildOutcome() {
 		return nil
 	}

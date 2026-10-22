@@ -700,7 +700,8 @@ func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			c, m := newController(t, ctrl)
 
-			// A stored fact controls promotion even if the current Request suggests another degree.
+			// A redelivery after the fact was written but before promotion:
+			// the write loses, and the stored fact decides.
 			m.reqStore.EXPECT().Get(gomock.Any(), testID).
 				Return(requestWithState(entity.RequestStateSucceeded), nil)
 			m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
@@ -763,7 +764,7 @@ func TestProcessPromotesOnlyCurrentBaselineOwner(t *testing.T) {
 			var fact entity.ValidationFact
 			m.expectFactCreated(&fact)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(tt.stored, nil)
-			// Record reads the baseline without changing it.
+			// No Update: the bookmark only moves forward.
 
 			if tt.wantPromote {
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)

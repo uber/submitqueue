@@ -22,8 +22,15 @@
 // on greenness would see that indistinguishably from "not yet validated" (see
 // doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work).
 //
-// Reconciliation preserves the first terminal outcome, then completes the request-owned
-// build slot and successful baseline. Terminal requests remain repairable on replay.
+// Reconciliation strategy. Each DLQ topic carries the same payload as its originating
+// topic (the queue framework preserves the bytes verbatim under a new `{topic}_dlq`
+// name). The DLQ controller decodes that payload to recover the affected request, then
+// transitions it to RequestStateFailed — the conservative unsuccessful outcome, which
+// whatever records greenness treats as not-green for gating (see entity.RequestState) —
+// with an idempotent optimistic-locking write so
+// concurrent activity (a late successful pipeline transition) wins cleanly. If the request had
+// claimed a concurrency slot, the reconciler completes that reservation and any
+// successful baseline in one Queue update, including on terminal redeliveries.
 package dlq
 
 import (
