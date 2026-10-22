@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/service/submitqueue/demo/tangofake/server",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//platform/extension/gitworkspace/local:go_default_library",
+        "//service/submitqueue/demo/tangofake:go_default_library",
+        "@com_github_uber_tango//tangopb:go_default_library",
+        "@org_uber_go_yarpc//:go_default_library",
+        "@org_uber_go_yarpc//transport/grpc:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "server",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)
