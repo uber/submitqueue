@@ -8,7 +8,15 @@ filegroup(
     name = "config",
     srcs = [
         "merge.yaml",
+        "profiles.tango.yaml",
         "profiles.yaml",
     ],
     visibility = ["//test:__subpackages__"],
+)
+
+# Read by the orchestrator's config test, so the profile `ANALYZER=tango`
+# mounts is checked against the loader that will read it.
+exports_files(
+    ["profiles.tango.yaml"],
+    visibility = ["//service/submitqueue/orchestrator/server:__pkg__"],
 )

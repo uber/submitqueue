@@ -1,0 +1,28 @@
+# Compose overlay: answer conflict analysis with a fake Tango server.
+#
+# Layered over docker-compose.yml and docker-compose.git.yml, which it does not
+# modify; the Makefile adds it when ANALYZER=tango:
+#
+#   make local-submitqueue-start PROVIDER=git ANALYZER=tango
+#
+# The orchestrator reads profiles.tango.yaml instead of profiles.yaml, which
+# selects the Tango analyzer for demo-queue. The fake serves Tango's gRPC
+# protocol and derives changed targets from the TARGET files in the
+# orchestrator's own repository copy, mounted read-only.
+
+services:
+  orchestrator-service:
+    environment:
+      - PROFILES_CONFIG_PATH=/etc/submitqueue/profiles.tango.yaml
+
+  tangofake-service:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue}-tangofake-service:latest
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/tangofake/server/Dockerfile
+    user: "${SQ_CONTAINER_USER:-0:0}"
+    command: ["/app/tangofake", "-repo", "/var/submitqueue/changerepos/demo", "-address", "0.0.0.0:8080"]
+    volumes:
+      # The same copy docker-compose.git.yml gives the orchestrator, so the fake
+      # sees every commit the orchestrator has fetched.
+      - ${SQ_ORCHESTRATOR_REPO_DIR:-orchestrator-changerepos}:/var/submitqueue/changerepos:ro
