@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["publish.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/fixrequest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/consumer:go_default_library",
+        "//platform/publish:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
+        "//stovepipe/entity:go_default_library",
+    ],
+)
