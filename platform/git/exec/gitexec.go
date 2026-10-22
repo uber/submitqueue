@@ -135,12 +135,31 @@ func Env(opts EnvOptions) []string {
 
 // Command builds a git invocation in dir with the ambient environment removed.
 // An empty dir runs in the current working directory. PATH is passed so git can
-// find its helpers; nothing else the host sets reaches the command.
+// find its helpers, with git's own directory first; nothing else the host sets
+// reaches the command.
 func Command(ctx context.Context, git, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, git, args...)
 	cmd.Dir = dir
-	cmd.Env = Env(EnvOptions{Literal: []string{"PATH=" + os.Getenv("PATH")}})
+	cmd.Env = Env(EnvOptions{Literal: []string{"PATH=" + PathWithGitFirst(git)}})
 	return cmd
+}
+
+// PathWithGitFirst returns PATH with the directory of git in front, for a
+// command that builds its own environment instead of using Command. Git runs
+// some of its own commands by name, such as upload-pack and maintenance, and a
+// git built without a usable exec path finds them on PATH. Without this, a
+// newer pinned git can end up running an older one found elsewhere on PATH,
+// which fails on options it does not know. A git given without a directory is
+// found through PATH already, so it is left alone.
+func PathWithGitFirst(git string) string {
+	path := os.Getenv("PATH")
+	if !filepath.IsAbs(git) {
+		return path
+	}
+	if path == "" {
+		return filepath.Dir(git)
+	}
+	return filepath.Dir(git) + string(os.PathListSeparator) + path
 }
 
 // Run executes a git command and discards its output, reporting stderr in the
