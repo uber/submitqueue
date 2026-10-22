@@ -43,7 +43,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 
 	var savedBuild entity.Build
 	request := processingRequest(entity.BuildStrategyFull, "")
-	queue := entity.Queue{Name: testQueue, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 1}
+	queue := entity.Queue{Name: testQueue, InFlightCount: 1, Version: 1}
 
 	queueStore := storagemock.NewMockQueueStore(ctrl)
 	issueStore := storagemock.NewMockBuildIssueStore(ctrl)

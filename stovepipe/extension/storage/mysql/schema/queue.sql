@@ -11,6 +11,5 @@ CREATE TABLE IF NOT EXISTS queue (
     enablement_version     BIGINT       NOT NULL DEFAULT 0,
     effective_from_commit_uri VARCHAR(255) NOT NULL DEFAULT '',
     enablement_changed_at_ms BIGINT      NOT NULL DEFAULT 0,
-    in_flight_request_ids   JSON         DEFAULT NULL,
     PRIMARY KEY (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

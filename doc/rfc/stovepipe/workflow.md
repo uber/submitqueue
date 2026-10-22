@@ -100,29 +100,29 @@ What runs is one pass per Request. It establishes whole-repository greenness, an
                                    │ buildsignal                  │
                                    │ Poll until terminal; record  │
                                    │ status; release the slot;    │
-                                   │ project the outcome          │
+                                   │ save outcome; advance green  │
                                    └───────────────┬──────────────┘
                                                    │ RequestID
                                                    ▼
                                    ┌──────────────────────────────┐   Hooks
                                    │ record                       │┄┄┄┄┄►  "URI green,
-                                   │ Write whole-repo greenness;  │      not green, or
-                                   │ on green advance last-green  │      cancelled"
-                                   │ and the promotion ref;       │
-                                   │ resolve project results      │
-                                   │ inline                       │
+                                   │ Resolve project results;     │      not green, or
+                                   │ record facts; on green move  │      cancelled"
+                                   │ the promotion ref;           │
+                                   │ announce recorded outcome    │
+                                   │                              │
                                    └──────────────────────────────┘
 ```
 
 1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward.
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, publishes a **hook event** announcing that validation of the commit has begun, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
-4. **buildsignal** — polls until terminal, persists the winning Request outcome and terminal build id, then atomically completes its owned Queue slot and advances a newer successful-build baseline. It publishes the RequestID to record and a terminal build-analysis nudge.
-5. **record** — resolves project results, then records repository degree `0` for success, `0.5` for failure with project results, or `1` for failure without results. It persists project facts with their resolved degrees. After facts and history are durable, a green fact owning the current baseline promotes in Git; the repository recorded hook follows. A cancelled Request writes no fact and publishes `validation.repository.cancelled`.
+4. **buildsignal** — polls until terminal, records the status, releases the build slot, persists the winning Request outcome, and advances a successful-build baseline before publishing the RequestID to `record`. Slot release and baseline advancement are separate updates, so the next admission may still select the previous baseline.
+5. **record** — resolves project results, then records repository degree `0` for success, `0.5` for failure with project results, or `1` for failure without results. Project facts preserve their resolved degrees. Once facts and history are durable, a green fact holding the current baseline promotes in Git; the recorded hook follows. A cancelled Request writes no fact and publishes `validation.repository.cancelled`.
 
 ### Designed, not built: project analysis
 
-An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` has no analyze topic, and `stovepipe/controller` has no analyze package. The design, still only a design, is a stage that would take a build's target graph, map broken or at-risk targets to projects, and publish project-scoped builds back through `build` → `buildsignal` → `record`. That second pass and a per-project hook event are not what the controllers do. Record currently uses the fixed DegreePartial value when project results are available for a failed repository. Open questions for that design stay at the bottom of this doc.
+An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` has no analyze topic, and `stovepipe/controller` has no analyze package. The design, still only a design, is a stage that would take a build's target graph, map broken or at-risk targets to projects, and publish project-scoped builds back through `build` → `buildsignal` → `record`. That second pass, a per-project hook event, and intermediate greenness degrees are not what the controllers do. Open questions for that design stay at the bottom of this doc.
 
 ## Per-controller summary
 
@@ -131,8 +131,8 @@ An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` ha
 | **ingest** | Queue name (from poller) | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
 | **process** | RequestID | build, hook topic | Build strategy, concurrency gate, backlog coalescing; announce validation start on admit → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
-| **buildsignal** | BuildID | record, buildanalysis | Persist the winning outcome; complete slot ownership and successful baseline together; publish downstream work |
-| **record** | RequestID | hook topic | Resolve projects, record repository and project facts; promote a finalized green baseline owner; publish the repository hook |
+| **buildsignal** | BuildID | record, buildanalysis | Poll until terminal, release capacity, persist the outcome, advance a successful baseline, and publish downstream work |
+| **record** | RequestID | hook topic | Resolve projects, record repository and project facts, promote a green baseline holder, and publish the repository hook |
 | **hook** | HookEvent | — | Invoke the hooks the resolver returns. The example server resolves every event to noop |
 
 ## Step RFCs

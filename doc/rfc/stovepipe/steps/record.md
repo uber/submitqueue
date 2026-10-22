@@ -2,30 +2,82 @@
 
 `record` turns a terminal build outcome into a durable validation fact.
 
-`record` resolves optional project results before selecting the repository degree. It records the repository fact and project facts, then promotes a green repository fact while its Request still owns the successful-build baseline, and finally publishes the repository hook. See [record.go](../../../../stovepipe/controller/record/record.go).
+- Phase 1 records whole-repository greenness and optional project facts. On green it promotes the commit onto the Queue's promotion ref if the Request still holds the last-green bookmark, then announces the outcome as a hook event. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
+- Phase 2 records greenness per project instead of per repository. Sketched here, to be expanded before implementation.
 
 Notifying downstream systems rides the cross-domain hook framework rather than a Stovepipe-specific extension; see [Hooks](#hooks).
 
 See [workflow.md](../workflow.md) for the whole pipeline, [build.md](build.md) for how builds are created, and [buildsignal.md](buildsignal.md) for the terminal-only handoff into this stage.
 
-`record` owns validation facts and Git promotion. `buildsignal` owns the incremental-build baseline and build-slot completion. A successful build becomes available to the next build before project resolution finishes; external validation facts and promotion wait for resolution.
+`record` owns the validation facts and the promotion ref. `buildsignal` advances the last-green build baseline before handing off to this stage. `record` does not decide build scope, poll a build, release the Queue's build slot, interpret a target graph, or map targets to projects. Those belong to `process`, `buildsignal`, and `analyze`.
 
-## Record algorithm
+## Phase 1 algorithm
 
-1. Decode the request id and queue name, resolve storage, and load the Request. Reject a mismatched queue identity.
-2. A succeeded or failed Request proceeds. A cancelled Request publishes `validation.repository.cancelled` without a fact. A superseded Request is acknowledged without effects; a nonterminal Request is an invariant error.
-3. Resolve project results using the durable Request and its `TerminalBuildID`. Validate the entire result set before writing facts. Resolver errors leave facts and promotion untouched.
-4. Select the repository degree: succeeded → `DegreeGreen`; failed with nonempty project results → `DegreePartial`; failed without project results → `DegreeBroken`.
-5. Create the immutable repository fact and its history event. On `ErrAlreadyExists`, adopt the stored fact if it belongs to this Request; a different owner is an invariant error.
-6. Create each project fact with its resolver-provided degree, then retain the project-facts-recorded history event. A partial write is completed on replay; existing facts remain authoritative.
-7. For a green repository fact, read the Queue and promote only if both `LastGreenRequestID` and `LastGreenURI` still match the Request. Report the last-green timestamp when promotion is eligible. A non-green fact never promotes; the creator reports failure detection latency.
-8. Publish `validation.repository.recorded` and acknowledge. A failed operation returns its raw error for backend classification.
+For a delivery carrying a `Record` payload:
 
-The repository fact can become visible before the final project fact is durable; recording is not a transaction across facts. Promotion and the recorded hook occur after all project writes and history complete. Project resolution does not delay the stored baseline, which was already advanced by build completion.
+```
+1. Deserialize the payload into (request id R, queue name Q).
+   - malformed -> return raw; non-retryable.
+
+2. Resolve the queue's storage from Q.
+   - unresolvable -> return raw; non-retryable. A queue with no storage is a
+     malformed message or a config error, not a transient condition.
+
+3. Load Request R.
+   - ErrNotFound       -> return raw; non-retryable.
+   - other store error -> return raw; the classifier decides.
+
+4. If Q is non-empty and disagrees with R.Queue, return a non-retryable error.
+   The Request is the authoritative binding; Q is a routing hint, empty on
+   payloads written before the field existed.
+
+5. Inspect R.State.
+   - succeeded / failed -> continue. buildsignal stamps the outcome before it
+     publishes here, and both values are verdicts about the code.
+   - cancelled -> publish a validation.repository.cancelled HookEvent and ack, no
+     fact: the build decided nothing about the commit (see "When to record an outcome").
+   - superseded -> ack, no fact. Unreachable in practice.
+   - accepted / processing / anything else -> return a non-retryable invariant error.
+
+6. Resolve optional project results using R and its TerminalBuildID, and validate
+   the entire result set before writing facts. A resolver error returns raw.
+
+7. Map R.State and the project results to a whole-repository degree and create the
+   ValidationFact keyed by (R.URI, empty project) in the queue-bound fact store.
+   - succeeded -> DegreeGreen.
+   - failed with project results -> DegreePartial (0.5).
+   - failed without project results -> DegreeBroken.
+   - ErrAlreadyExists -> load and reconcile the existing immutable fact.
+   - other store error -> return raw.
+
+8. Record each project fact with its resolver-provided degree and persist history
+   for the repository fact and completed project facts. A failure returns raw;
+   replay completes missing writes without replacing immutable facts.
+
+9. If the persisted repository fact is not green, skip to step 11. Report how long
+   the break went undetected only if step 7 created the fact (see "Observability").
+   Otherwise load the Queue and check that both LastGreenRequestID and LastGreenURI
+   still match R. If they do not, skip promotion and continue to step 11.
+
+10. Ask SourceControl to point the promotion ref at R.URI.
+    - ErrNotFound -> count and skip. A rewritten history dropped the commit from the
+      ref, and no retry can promote it.
+    - other error -> return raw.
+
+11. Publish a validation.repository.recorded HookEvent naming the request whose fact
+    was persisted.
+    - publish failure -> return raw; non-retryable, so it dead-letters.
+
+12. ack.
+```
+
+Every decision after step 7 uses the persisted fact, not the outcome read from this delivery's Request. The first immutable fact controls the ref and the hook event.
+
+Project-status processing delays fact creation and promotion, while the build baseline is already available from `buildsignal`. All fact writes and history complete before promotion and the recorded notification. The fact writes, bookmark advancement, and ref promotion remain separate operations.
 
 ## Validation facts
 
-A fact answers "how broken was this scope at this Queue URI?" Its identity is `(queue, uri, project)`, where `project` is empty for whole-repository greenness and a stable project id.
+A fact answers "how broken was this scope at this Queue URI?" Its identity is `(queue, uri, project)`, where `project` is empty for whole-repository greenness and a stable project id in Phase 2.
 
 `queue` is the binding of the store the fact lives in, not a field on the entity. Storage is resolved per queue through `storage.Factory.For`, so a fact only ever exists inside one queue's store and does not need to name it. The column still leads the primary key, `PRIMARY KEY (queue, uri, project)`, because every domain table here has to be shardable by queue: the primary key leads with the queue column and no secondary index leads with anything else. That keeps one queue's rows unreachable through another queue's binding and makes every read a primary-key-prefix scan inside a single queue. It is an invariant rather than a per-table choice, and `make lint-queue-shard` enforces it. It is not MySQL table partitioning; no schema here uses `PARTITION BY`.
 
@@ -35,8 +87,8 @@ So `entity.ValidationFact` carries only the rest of the identity:
 | Field       | Meaning                                                                                                           |
 | ----------- | ----------------------------------------------------------------------------------------------------------------- |
 | `URI`       | Commit URI under validation                                                                                       |
-| `Project`   | Empty for the whole repository; stable project id                                                     |
-| `Degree`    | Health degree in the closed interval `[entity.DegreeGreen, entity.DegreeBroken]` — `0` is green, `0.5` is partial, `1` fully broken |
+| `Project`   | Empty for the whole repository; stable project id for Phase 2                                                     |
+| `Degree`    | Health degree in the closed interval `[entity.DegreeGreen, entity.DegreeBroken]` — `0` is green, `1` fully broken |
 | `RequestID` | Request that established the fact                                                                                 |
 | `CreatedAt` | Millisecond timestamp at which the fact was first recorded                                                        |
 
@@ -60,7 +112,7 @@ The fail-closed path is subtler than "no fact". A DLQ reconciler forces the Requ
 
 ### Phase 1 degree mapping
 
-Whole-repository builds use only the endpoints, mapped from the outcome `buildsignal` stamped on the Request:
+Whole-repository degree depends on the outcome `buildsignal` stamped on the Request and whether project results are available:
 
 
 | Request outcome | Result                        |
@@ -71,23 +123,33 @@ Whole-repository builds use only the endpoints, mapped from the outcome `buildsi
 | `cancelled`     | no fact                       |
 
 
-`DegreePartial` is hard coded to `0.5`; it records that project results are available for a failed repository, not the fraction of projects failing. Project degrees are preserved exactly as returned by the resolver.
+`DegreePartial` is hard coded to `0.5` for now; it does not measure the fraction of projects failing. Each project fact preserves the degree returned by the resolver.
 
 ## Last-green advancement (Queue bookmark)
 
-`buildsignal` advances `LastGreenURI` and `LastGreenRequestID` from the winning durable successful Request outcome, atomically with removal of its slot ownership. The bookmark moves only to a newer ingest id. It is a build baseline and may precede project results, validation facts, or Git promotion; absence of a fact remains fail-closed for deployment gating. Failed and cancelled outcomes never advance it. See [buildsignal.md](buildsignal.md).
+`buildsignal` advances the bookmark after releasing the build slot and persisting the successful Request outcome, before publishing to `record`. The bookmark only moves forward. `entity.Queue` carries `LastGreenURI` alongside `LastGreenRequestID`, the request id that owns the current URI, plus `InFlightCount` and `LatestRequestID`. The guard compares ids with `entity.CompareRequestID(R.Queue, …)`, the same ingest-order comparison `ingest` and `process` use for coalescing. It errors on an id that does not match the queue's format, which is non-retryable: re-parsing the same ids cannot start succeeding.
+
+The write goes through `QueueStore.Update(ctx, queue, oldVersion, newVersion)`, so version arithmetic stays in the controller: it computes `newVersion = oldVersion + 1` and the store does a pure conditional write. `ErrVersionMismatch` is absorbed by the loop rather than returned, since a concurrent writer moved the row and reloading converges.
+
+The bookmark is a successful-build baseline and can precede validation facts. Project resolution and Git promotion remain in `record`. Releasing capacity and advancing the bookmark are separate Queue updates, so a new build may be admitted with the previous baseline before the advance lands. A terminal redelivery retries the bookmark update without releasing the slot again.
+
+A failed or cancelled build never moves the bookmark, and so never promotes either.
 
 ## Promotion ref
 
-Promotion requires a finalized green repository fact, all resolved project facts and history, and ownership of the current build baseline. Equal Request id and URI permit retrying an idempotent promotion; a newer baseline causes an older record delivery to skip promotion. This read guard and the external Git write are separate operations, not an atomic transaction.
+A green commit is also promoted: `record` asks `SourceControl` to point the Queue's promotion ref, a stable branch name like `verified-main`, at that commit. This is the pull-shaped counterpart to the hook event's push, so a deploy gate or cache warmer can resolve a name and know nothing about Stovepipe, URIs, or degrees. See [Promotion ref](../workflow.md#promotion-ref--the-last-green-commit-by-name) in the pipeline overview. The stage names only the commit; which ref a Queue promotes to, and whether it has one at all, is integrator configuration injected into the `SourceControl` implementation alongside the endpoint and credentials, so a backend with no promotion target makes `Promote` a no-op.
 
-`SourceControl.Promote` returning `ErrNotFound` means a history rewrite removed the commit from the ref; count and skip it. Other failures return to the classifier.
+**Promotion is gated on holding the bookmark**, and only the holder promotes. Without that gate an older green commit recording late would drag the ref backwards: the ref has no version guard of its own, and `Promote` lands the URI it is given rather than refusing a non-descendant, so the caller has to enforce monotonicity. The stored Request id and URI must both match before promotion. The Queue read and external Git write remain separate operations.
+
+The equal case matters as much as the newer one. A redelivery that finds its own id on the bookmark reports that it *holds* it rather than skipping, so the promotion behind it is retried. That is what makes a crash between the bookmark write and the promotion recoverable, and it is safe because `Promote` is idempotent. Promotion follows the durable fact for the same reason the bookmark does: the ref is a cache of the facts and must not lead them.
+
+`ErrNotFound` from `Promote` means a rewritten history dropped the commit from the ref. It is counted and acked rather than retried, since no retry will put that commit back and the next green commit corrects the ref.
 
 ## Observability
 
 Two things are measured here, because this is where greenness becomes known. Both need a `SourceControl` lookup of a commit's creation time.
 
-- **Last-green age.** A gauge carrying the creation timestamp of the commit the bookmark now points at, emitted after facts are durable while the Request owns the baseline. It is a timestamp rather than an elapsed time so that subtracting it at scrape time gives the current age, and a queue that stops going green keeps reporting a staler value without the stage re-emitting anything.
+- **Last-green age.** A gauge carrying the creation timestamp of the commit the bookmark now points at, emitted once the bookmark write is durable. It is a timestamp rather than an elapsed time so that subtracting it at scrape time gives the current age, and a queue that stops going green keeps reporting a staler value without the stage re-emitting anything.
 - **Failure-detection latency.** A histogram of how long the break a build failed on went undetected, measured from the creation time of the base URI it validated against. A distribution rather than a gauge, because what matters is how long breaks typically survive, not how long the last one did. There is no later moment to sample it from, since an elapsed time only means something against the failure that just became known, so this lookup cannot move off the delivery path onto a clock.
 
 Only the delivery that *wrote* the fact reports the latency. That is why `recordFact` returns whether it created the fact and not just the fact itself: a redelivery adopts the stored fact, and a second sample would count one break twice. A full build pins no base URI, so its failures are counted as unmeasurable instead of timed; absent is the ordinary case there, not a fault.
@@ -96,7 +158,7 @@ Both are best-effort. Every way the lookup can fail is counted, logged, and swal
 
 ## Build slot release
 
-`buildsignal` first persists the winning Request outcome, then completes its slot and successful baseline in one Queue update, before publishing to record. The DLQ reconciler repairs the same completion even for an already-terminal Request. `record` never writes the Queue.
+`Queue.in_flight_count` is released by `buildsignal` before it stamps the outcome and publishes to the record step. The DLQ reconciler releases the slot on the fail-closed path for the same reason. `record`'s only Queue write is the bookmark.
 
 ## Hooks
 
@@ -111,10 +173,10 @@ The shared `HookEvent` contract at `api/base/hook/`, the hook extension at `plat
 Last thing before the ack, after the fact write and after both caches derived from it have moved:
 
 ```
-resolve projects → create repository fact and history → create project facts and history → promote (green baseline holder only) → publish HookEvent → ack
+create fact → advance bookmark (green only) → promote (bookmark holder only) → publish HookEvent → [Phase 2: publish to analyze] → ack
 ```
 
-Last because hooks resolve entities from stores and must find the facts already durable and any eligible promotion complete. A newer successful build may already own the baseline while its record work is pending. Inside the delivery rather than after it, because that is what makes the event lossless without an outbox — the state writes are recognize-and-skip on redelivery, so a crash before the ack replays the whole chain.
+Last because the payload names the Request rather than snapshotting it, and hooks resolve entities from stores: a hook reacting to "URI is green" by reading `LastGreenURI`, or by fetching the promotion ref, must not find either still pointing at the previous commit. Inside the delivery rather than after it, because that is what makes the event lossless without an outbox — the state writes are recognize-and-skip on redelivery, so a crash before the ack replays the whole chain.
 
 ### Event shape
 
@@ -158,7 +220,7 @@ Phase 2 broadens "complete" to "all planned facts recorded", which needs a marke
 `ValidationFactStore` is key/value-shaped, and queue-bound rather than queue-parameterized:
 
 - `Create(ctx, fact)` writes one immutable fact for the bound queue. It returns `ErrAlreadyExists` when the composite identity is already taken, leaving the stored fact untouched.
-- `Get(ctx, uri, project)` reads one fact by the rest of its identity, and returns `ErrNotFound` when none exists. The `project` argument is empty for the repository and otherwise names a resolved project.
+- `Get(ctx, uri, project)` reads one fact by the rest of its identity, and returns `ErrNotFound` when none exists. The `project` argument is reserved for Phase 2.
 
 There is no `Update`. The first fact written for an identity is the permanent answer, and a caller that needs to know whether it won the race reads `ErrAlreadyExists` and then loads the winner.
 
@@ -186,6 +248,7 @@ Partitioning by request id keeps completion bookkeeping single-writer per Reques
 | Request carrying no build outcome                  | non-retryable        | producer/state-machine invariant violation                                        |
 | Existing fact owned by a different Request         | non-retryable        | ingest dedup invariant violated; the stored fact is immutable                     |
 | Malformed request id at bookmark comparison        | non-retryable        | re-parsing the same ids cannot succeed                                            |
+| Queue CAS version mismatch                         | absorbed, not raised | `storage.ErrVersionMismatch` is handled by the bookmark loop: reload and re-apply |
 | Promotion target unknown to the ref                | absorbed, not raised | `sourcecontrol.ErrNotFound` means a rewritten history dropped the commit          |
 | SourceControl resolution or `Promote` failure      | raw error            | backend classifier has the required failure knowledge                             |
 | Commit-timestamp lookup for a metric               | swallowed            | counted and logged; observability must not retry a recorded outcome               |
@@ -205,9 +268,9 @@ Every effect is recognize-and-skip, so a redelivery after a complete run re-runs
 - **Green fact recorded out of order across Requests.** An older green commit can reach this stage after a newer one. Its fact is written as usual, since facts are per-URI and independent, but the bookmark guard skips it, and because it does not hold the bookmark it does not promote either. Neither cache moves backwards.
 - **Cancelled build.** Stovepipe never initiates cancellation, but a backend may still report it. No fact is written; the slot was already released and the Request already stamped `cancelled`. The fact identity stays unclaimed, and nothing can claim it today, since `cancelled` is terminal and re-validation does not exist. Recovery in practice is the next commit; the unclaimed identity only matters to a future re-run mechanism (see [Supporting re-run of the same URI](#supporting-re-run-of-the-same-uri)).
 - **History rewrite while a build runs.** The Request keeps the strategy and URI pinned at admission, and record stores the fact about that immutable URI. A later head is handled independently by `process`. If the rewrite dropped the commit from the ref, the fact and the bookmark still stand, since they describe a commit and not a ref, and only the promotion is skipped.
-- **A fail-closed terminal outranks a build that passed.** The degree derives from `R.State`, so a Request forced to `failed` by DLQ reconciliation records a non-green degree even when one of its builds reports success afterwards. Reachable today, and permanent once written; see [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
-- **Crash during fact persistence.** Redelivery resolves projects again, adopts existing immutable facts, and completes missing facts and history before promotion.
-- **Crash before promotion.** Redelivery retries promotion if the Request still owns the baseline.
+- **A fail-closed terminal outranks a build that passed.** The degree derives from `R.State`, so a Request forced to `failed` by DLQ reconciliation records `DegreeBroken` even when one of its builds reports success afterwards. Reachable today, and permanent once written; see [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
+- **Crash between the fact write and the bookmark advance.** Redelivery reloads the existing fact and re-applies the idempotent guard.
+- **Crash between the bookmark advance and the promotion.** Redelivery finds its own id on the bookmark, reports that it holds it, and retries the idempotent promotion.
 
 
 

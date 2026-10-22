@@ -9,7 +9,7 @@ It handles everything *before* the first build is triggered: it does not run bui
 Ingest publishes a `ProcessRequest` (request id only — producer and consumer share the store) to the process topic, **partitioned by Queue name**. Two consequences the design relies on:
 
 1. **One partition per Queue**, and `BatchSize = 1` (strict serialization; see [sql-queue-rfc.md](../../sql-queue-rfc.md#strict-serialization-opt-in)) — so at most one `process` invocation runs per Queue at a time. The read-modify-write on the Queue row (gate check, count increment) is therefore race-free **without** a transaction, the same property SubmitQueue's `validate` gets from per-queue partition leasing.
-2. **`process` is not the only Queue-row writer.** `ingest` stamps `latest_request_id` (the request id of the newest accepted head, not a URI; see [Backlog coalescing](#backlog-coalescing)) and `buildsignal` releases slots when a build goes terminal, and advances the successful `last_green_uri` baseline in that same write. They touch different fields under optimistic-locking CAS, so concurrent writes converge instead of clobbering.
+2. **`process` is not the only Queue-row writer.** `ingest` stamps `latest_request_id` (the request id of the newest accepted head, not a URI; see [Backlog coalescing](#backlog-coalescing)) and `buildsignal` releases slots when a build goes terminal, then advances the `last_green_uri` bookmark for a successful Request. They touch different fields under optimistic-locking CAS, so concurrent writes converge instead of clobbering.
 
 ## Process algorithm
 
@@ -19,19 +19,17 @@ For a delivery carrying request id `R`:
 1. Load Request R from the request store.
    - not found -> non-retryable (storage is read-after-write consistent; see [storage README](../../../../stovepipe/extension/storage/README.md)).
 2. If R.State is terminal (superseded / succeeded / failed / cancelled):
-   - complete any owned reservation using the durable outcome, retain supersession history if applicable, then ack.
+   - ack and return (idempotent no-op).
 3. If R.State is processing (strategy already recorded):
    - re-announce validation start and re-publish R to build (either prior publish may have failed), ack, return.
 4. R.State is accepted. Load the Queue row Q.
 5. Coalesce: if CompareRequestID(R.Queue, R.ID, Q.latest_request_id) < 0:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
-6. R is the latest head. Gate: if R does not already own a slot and Q.in_flight_count >= max_concurrent (from queue config; see below):
+6. R is the latest head. Gate: if Q.in_flight_count >= max_concurrent (from queue config; see below):
    - defer (hold the delivery) -> re-check on redelivery until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
 7. Admit R:
    a. Derive build strategy + baseline (see "Build-strategy decision").
-   b. CAS the Queue row: add R.ID to in_flight_request_ids once and recompute in_flight_count.
-      A preexisting reservation is reused even at capacity. A conflict reloads Q and
-      reruns coalescing, gate, and baseline derivation.
+   b. CAS the Queue row: in_flight_count += 1.
    c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
    d. Announce validation start on the hook topic (see "Hooks").
    e. Publish R to build.
@@ -61,15 +59,15 @@ Validation is expensive and shares a baseline, so heads arriving while an earlie
 
 | Source | Field | Meaning |
 |---|---|---|
-| Queue row | `last_green_uri` | Successful-build baseline advanced by buildsignal; empty until first successful build. |
-| Queue row | `in_flight_count` | Count of owned build reservations; always equal to the length of `in_flight_request_ids`. |
+| Queue row | `last_green_uri` | Bookmark `buildsignal` advances on a successful build; empty until first green. |
+| Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
 | Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
 
 A slot is held from admit until the build goes terminal (`process → build → buildsignal`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `buildsignal` recording the build's outcome, success *or* failure, or the DLQ reconciler forcing a terminal `failed` (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
 
 **Liveness — a stuck Request wedges the whole Queue.** The slot is shared per-Queue, so a Request admitted but never driven terminal holds the only slot and stalls the whole Queue. The fail-closed path in [workflow.md](../workflow.md#fail-closed-on-unprocessable-work) prevents this: every admitted Request terminates — `build`/`buildsignal` errors retry to `MaxAttempts`, then dead-letter, and the DLQ reconciler forces a conservative terminal `failed`, freeing the slot. Residual risk is operational: a **poison DLQ message** the reconciler can't process loops forever (it runs always-retryable), wedging that Queue until an operator removes it. The gate makes the blast radius the whole Queue, not one Request — monitor and alert on the DLQ.
 
-**Future alternative — time-bounded leases.** Reservations could gain expiry to bound recovery time for abandoned work. This needs a policy for still-running external builds and remains deferred; ownership and DLQ completion provide replay safety today.
+**Future alternative — time-bounded leases.** To self-heal instead of relying on operator cleanup, `in_flight_count` could become a set of `{owner, expires_at}` leases: the gate counts only unexpired leases, terminal transitions drop the owner's lease, and a leaked lease is reclaimed on expiry — bounding any stall to a `max_validation_ms`. A *list* of leases would also generalize to `max_concurrent > 1`. Deferred; `in_flight_count` plus the fail-closed path is enough for MVP.
 
 `max_concurrent` is a scalar, and `= 1` is an MVP simplicity choice, **not** a correctness requirement — see [Raising `max_concurrent`](#raising-max_concurrent-speculative-validation).
 
@@ -82,7 +80,7 @@ The scheme: each admit pins its baseline to last-green *at admit time*; a green 
 Correctness rests on four rules, all with MVP primitives already in place:
 
 1. **Pin to last-green at admit** — a known-green baseline, which `process` already reads.
-2. **Advance last-green by ingest order, monotonically** — `record` adopts the highest-counter green (per `CompareRequestID`) and never regresses. (Free at N=1, since verdicts land in order; explicit at N > 1.)
+2. **Advance last-green by ingest order, monotonically** — `buildsignal` adopts the highest-counter green (per `CompareRequestID`) and never regresses. (Free at N=1, since verdicts land in order; explicit at N > 1.)
 3. **Coalesce to the latest N** instead of the latest 1 — otherwise intermediates are superseded on sight and nothing overlaps.
 4. **Fall back to serial on a rewrite** — the linear/superset property is what makes "adopt highest green" sound; rewrites already force a full build with no baseline.
 
@@ -113,11 +111,11 @@ Superseded Requests reach an explicit terminal `superseded` state, so "not yet v
 
 ## Concurrency lifecycle
 
-The gate is **not** tied to `process` returning; a slot taken at admit is held until the build completes at `buildsignal` (or DLQ reconciliation).
+The gate is **not** tied to `process` returning; a slot taken at admit is held until Phase 1 terminates at `record` (or DLQ reconciliation).
 
 **Rules**
 
-1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `buildsignal` completes its owned reservation on terminal.
+1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `record` decrements on terminal.
 2. **No skip-ahead while in-flight.** The latest head waits for a slot until the running validation completes; it never preempts.
 3. **Intermediates are superseded on sight**, gate open or closed — no slot consumed (step 5).
 4. **Coalesce-to-latest on gate open.** When a slot frees, the waiting latest head is admitted.
@@ -128,7 +126,7 @@ The gate is **not** tied to `process` returning; a slot taken at admit is held u
 1. **A** admitted (`in_flight_count = 1`), published to `build`.
 2. While A runs, **B**, **C**, **D** are ingested (`latest_request_id = D.id`).
 3. B: older than D → **superseded** (acked), though A is still in flight. Same for **C**. D is latest but the gate is closed → **waits for slot** (held).
-4. A's build finishes → `buildsignal` persists A's outcome and atomically advances its successful baseline and frees its slot; `record` can finish later.
+4. A's build finishes → `record` records A's greenness, `in_flight_count → 0`.
 5. D's re-check → gate open, D still latest → **D admitted**, published to `build`.
 6. While D runs, **E**, **F** ingested (`latest_request_id = F.id`). E superseded on sight; F waits for slot.
 7. D completes → slot frees → **F admitted**.
@@ -137,7 +135,7 @@ A, D, F each get a full cycle; B, C, E end `superseded`. No intermediate is vali
 
 **What does not happen**
 
-- `process` returning does **not** free a slot — only build completion (or DLQ reconciliation) does.
+- `process` returning does **not** free a slot — only `record` (or DLQ reconciliation) does.
 - A newer head does **not** preempt an in-flight validation.
 - Deferred messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for a slot](#waiting-for-a-slot)).
 
@@ -161,16 +159,21 @@ Only an admit announces. A Request that coalescing supersedes never reaches step
 
 Every branch is safe under redelivery:
 
-- **accepted, no strategy** → full admit path. On a crash after incrementing `in_flight_count` but before persisting `processing`, redelivery reuses the reservation by Request id without incrementing the count again.
+- **accepted, no strategy** → full admit path. On a crash after incrementing `in_flight_count` but before persisting `processing`, redelivery re-reads `accepted` and re-runs; the increment re-applies only if the count CAS hasn't already moved (see integrity below).
 - **processing** → re-announce the start event, re-publish to `build`, ack. The `build` consumer is keyed on the request id and idempotent, so a duplicate publish is harmless, and the start event's id is derived from the transition rather than the clock, so a re-announce carries the id the first attempt would have and consumers dedupe on it. Re-announcing here is what makes the event at-least-once rather than at-most-once: this is the only branch a redelivery takes once `processing` is durable, so an admit that failed after the state write would otherwise lose the event for good.
-- **terminal** → finish any owned reservation from the durable outcome; never remove another owner.
+- **terminal** (superseded / recorded) → ack, no-op.
 - **deferred (waiting for slot)** → no state or count change; pure deferral (re-enters when the held delivery comes due).
+
+The window to handle is "count incremented, state not yet `processing`". Admit does the increment and the state transition as two ordered CAS writes, and the decrement is tied to the state transition, not a side counter (see integrity below).
 
 ## `in_flight_count` integrity
 
-The Queue owns a bounded list of `in_flight_request_ids`; `in_flight_count` must equal its length. Admission validates this invariant and reserves by Request id under CAS before writing `processing`. A duplicate delivery reuses its existing reservation, even at capacity. A failed or ambiguous Request write keeps the reservation for retry or DLQ recovery; a losing writer must not release the winner's shared reservation.
+`in_flight_count` is a cache; the source of truth is **the set of non-terminal Request rows for the Queue**. Two rules keep it from drifting:
 
-Completion first persists the winning terminal Request outcome. A single Queue CAS removes only that Request's reservation and, for a newer successful Request, advances its baseline. Replays with no reservation do nothing. A crash between the two entity writes temporarily holds capacity; buildsignal redelivery, a terminal process delivery, or DLQ reconciliation completes it. No cross-entity transaction or zero clamp is needed. See [buildslot](../../../../stovepipe/core/buildslot/README.md).
+1. **Decrement is bound to the terminal transition.** The single CAS that moves a Request non-terminal → terminal (in `record` or the DLQ reconciler) also decrements. Being CAS-guarded, it fires exactly once per Request even under redelivery.
+2. **Increment is bound to the admit transition.** `process` increments only on the `accepted → processing` CAS; a redelivery of an already-`processing` Request takes step 3 and does not increment again.
+
+On a crash between admit and `record`, the Request stays non-terminal; visibility-timeout redelivery drives it forward, and the fail-closed DLQ path eventually forces it terminal, decrementing as it does. The count can drift high only transiently and self-heals as stuck Requests terminate. A reconciler that recomputes the count from non-terminal rows can be added later if drift proves real, but isn't required for MVP.
 
 ## Edge cases
 
@@ -188,8 +191,8 @@ Runtime coordination only — fields the pipeline writes under CAS:
 | Field | Role | Written by |
 |---|---|---|
 | `name` | Stable logical id (`monorepo/main`); the string ingest accepts | ingest (create) |
-| `last_green_uri`, `last_green_request_id` | Successful-build baseline; may precede recorded facts | buildsignal / terminal completion |
-| `in_flight_count`, `in_flight_request_ids` | Count and owners of build reservations | process (reserve), completion (release) |
+| `last_green_uri` | Bookmark; empty until first green | buildsignal |
+| `in_flight_count` | Active Phase 1 validations | process (+1), record/DLQ (−1) |
 | `latest_request_id` | Request id of the newest head ingest accepted | ingest |
 | `version` | Optimistic-locking version | all writers |
 
@@ -219,7 +222,7 @@ Transitions use the repo's optimistic-locking pattern: compute `newVersion = old
 
 New key/value-shaped operations (single-key reads/writes, no server-side filtering or aggregation):
 
-- **`QueueStore`** (new): `Create(ctx, queue)`, `Get(ctx, name)`, and `Update(ctx, queue, oldVersion, newVersion)` (CAS). Callers orchestrate get-or-create; ingest CASes `latest_request_id`; `process` CASes slot ownership and count; build completion CASes the baseline and slot ownership together.
+- **`QueueStore`** (new): `Create(ctx, queue)`, `Get(ctx, name)`, and `Update(ctx, queue, oldVersion, newVersion)` (CAS). Callers orchestrate get-or-create; ingest CASes `latest_request_id`; `process` CASes `in_flight_count`; `record` CASes `last_green_uri` + `in_flight_count`.
 - **`RequestStore`**: no new methods — the added `Request` fields ride the existing `Create`/`Update` CAS.
 
 No "list requests by queue/state" query is introduced; coalescing uses the single-row `latest_request_id` pointer instead, keeping the contract satisfiable by a plain KV backend.

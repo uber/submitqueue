@@ -156,7 +156,6 @@ func requestWithState(state entity.RequestState) entity.Request {
 	request := entity.Request{
 		ID:      testID,
 		Queue:   testQueue,
-		URI:     "git://repo/main/green",
 		State:   state,
 		Version: 1,
 	}
@@ -178,28 +177,33 @@ func build(status entity.BuildStatus, version int32) entity.Build {
 
 // queueRow returns the testQueue's row holding inFlight admitted validations.
 func queueRow(inFlight, version int32) entity.Queue {
-	var owners []string
-	if inFlight > 0 {
-		owners = []string{testID}
-	}
 	return entity.Queue{
-		Name:               testQueue,
-		InFlightCount:      inFlight,
-		InFlightRequestIDs: owners,
-		Version:            version,
+		Name:          testQueue,
+		InFlightCount: inFlight,
+		Version:       version,
 	}
 }
 
 func expectFinishWrites(m buildsignalMocks, state entity.RequestState) *gomock.Call {
 	eventCall := expectBuildFinished(m)
-	outcomeCall := m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(state), int32(1), int32(2)).Return(nil).After(eventCall)
-	getCall := m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(outcomeCall)
-	updated := queueRow(0, 4)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall)
+	m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
+	outcomeCall := m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(state), int32(1), int32(2)).Return(nil)
 	if state == entity.RequestStateSucceeded {
-		updated.LastGreenURI = requestWithState(state).URI
-		updated.LastGreenRequestID = testID
+		return expectAdvanceLastGreen(m, outcomeCall)
 	}
-	return m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(4), int32(5)).Return(nil).After(getCall)
+	return outcomeCall
+}
+
+func expectAdvanceLastGreen(m buildsignalMocks, after *gomock.Call) *gomock.Call {
+	getCall := m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(0, 5), nil)
+	if after != nil {
+		getCall.After(after)
+	}
+	updated := queueRow(0, 5)
+	updated.LastGreenURI = requestWithState(entity.RequestStateSucceeded).URI
+	updated.LastGreenRequestID = testID
+	return m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(5), int32(6)).Return(nil).After(getCall)
 }
 
 func expectBuildFinished(m buildsignalMocks) *gomock.Call {
@@ -391,10 +395,13 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				// No build/queue/request write: the status is unchanged and the outcome
-				// is already recorded, so the slot must not be released a second time.
+				// and bookmark are already recorded, so the slot must not be released a second time.
 				eventCall := expectBuildFinished(m)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(0, 5), nil).After(eventCall)
-				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2).After(eventCall)
+				queue := queueRow(1, 6)
+				queue.LastGreenRequestID = testID
+				queue.LastGreenURI = request.URI
+				getCall := m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queue, nil).After(eventCall)
+				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2).After(getCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
@@ -431,14 +438,14 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				eventCall := expectBuildFinished(m)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(0, 5), nil).After(eventCall)
+				bookmarkCall := expectAdvanceLastGreen(m, eventCall)
 				log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded)
 				log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
 					log,
-				).Return(errors.New("db down")).After(eventCall)
+				).Return(errors.New("db down")).After(bookmarkCall)
 			},
 		},
 		{
@@ -489,11 +496,13 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				eventCall := expectBuildFinished(m)
-				m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(errors.New("db down")).After(eventCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall)
+				m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
+				m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(errors.New("db down"))
 			},
 		},
 		{
-			name:      "slot release failure preserves the terminal outcome for recovery",
+			name:      "slot release failure leaves the request non-terminal",
 			wantErr:   true,
 			wantRetry: false,
 			setup: func(m buildsignalMocks) {
@@ -502,8 +511,10 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				eventCall := expectBuildFinished(m)
-				m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(entity.RequestStateSucceeded), int32(1), int32(2)).Return(nil).After(eventCall)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, errors.New("db down")).After(eventCall)
+				// No request Update and no record publish: marking the request terminal
+				// while it still holds a slot would strand the slot, since a terminal
+				// request is skipped by both redelivery and the DLQ reconciler.
 			},
 		},
 		{
@@ -654,7 +665,6 @@ func TestTerminalAnalysisPublicationDoesNotGateRecordPublication(t *testing.T) {
 			m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 			m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
 
-			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(0, 5), nil)
 			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).Times(2)
 
 			m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(tt.recordErr)
@@ -708,25 +718,95 @@ func TestNonterminalPollDoesNotPublishTerminalAnalysis(t *testing.T) {
 	require.NoError(t, c.Process(queueContext(), d))
 }
 
-func TestFinishRequestRecoversDurableOutcomeBeforeQueueCompletion(t *testing.T) {
+func TestProcessRetriesBookmarkWithoutReleasingSlotAgain(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "write failed", true: "write committed but response lost"}[committed], func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateSucceeded)
+			m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil).Times(2)
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil).Times(2)
+			m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil).Times(2)
+			m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil).Times(2)
+			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).Times(3)
+			queue := queueRow(1, 5)
+			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+				return queue, nil
+			}).Times(2)
+			m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(5), int32(6)).DoAndReturn(
+				func(_ context.Context, updated entity.Queue, _, version int32) error {
+					assert.Equal(t, int32(1), updated.InFlightCount)
+					assert.Equal(t, request.ID, updated.LastGreenRequestID)
+					assert.Equal(t, request.URI, updated.LastGreenURI)
+					if committed {
+						queue = updated
+						queue.Version = version
+					}
+					return driver.ErrBadConn
+				})
+			require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))), driver.ErrBadConn)
+			if !committed {
+				updated := queue
+				updated.LastGreenRequestID = request.ID
+				updated.LastGreenURI = request.URI
+				m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(5), int32(6)).Return(nil)
+			}
+			m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil)
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+		})
+	}
+}
+
+func TestProcessBookmarkPreservesConcurrentQueueUpdates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
-	request := requestWithState(entity.RequestStateProcessing)
-	durable := requestWithState(entity.RequestStateSucceeded)
-	durable.Version = 2
-	queue := queueRow(1, 4)
+	request := requestWithState(entity.RequestStateSucceeded)
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+	m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).Times(2)
+	stale := queueRow(0, 5)
+	fresh := queueRow(1, 6)
+	fresh.LastGreenRequestID = "9"
+	fresh.LastGreenURI = "newer-commit"
+	gomock.InOrder(
+		m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(stale, nil),
+		m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(5), int32(6)).Return(storage.ErrVersionMismatch),
+		m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(fresh, nil),
+	)
+	m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
+	m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil)
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+}
 
-	outcome := m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(entity.RequestStateSucceeded), int32(1), int32(2)).Return(nil)
-	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, assert.AnError).After(outcome)
-	require.ErrorIs(t, c.finishRequest(queueContext(), m.store, &request, testBuildID, entity.BuildStatusSucceeded), assert.AnError)
-	assert.Equal(t, durable, request)
-
-	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queue, nil)
-	updated := queueRow(0, 4)
-	updated.LastGreenURI = durable.URI
-	updated.LastGreenRequestID = durable.ID
-	m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(4), int32(5)).Return(nil)
-	// A different delivery's failure cannot replace the durable successful outcome.
-	require.NoError(t, c.finishRequest(queueContext(), m.store, &request, "other-build", entity.BuildStatusFailed))
-	assert.Equal(t, durable, request)
+func TestProcessBookmarkUsesWinningRequestOutcome(t *testing.T) {
+	for _, state := range []entity.RequestState{entity.RequestStateSucceeded, entity.RequestStateFailed} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			status := entity.BuildStatusSucceeded
+			if state == entity.RequestStateSucceeded {
+				status = entity.BuildStatusFailed
+			}
+			m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(status, 3), nil)
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+			m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+			m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(status, nil, nil)
+			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).Times(2)
+			gomock.InOrder(
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil),
+				m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil),
+				m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(storage.ErrVersionMismatch),
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(state), nil),
+			)
+			if state == entity.RequestStateSucceeded {
+				expectAdvanceLastGreen(m, nil)
+			}
+			m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil)
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+		})
+	}
 }

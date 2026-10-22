@@ -56,7 +56,7 @@ import (
 )
 
 // Controller consumes Record messages, records the build's validation fact, and
-// when that fact is green advances the queue's last-green bookmark and promotes
+// when that fact is green and holds the queue's last-green bookmark promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
 	logger                       *zap.SugaredLogger
