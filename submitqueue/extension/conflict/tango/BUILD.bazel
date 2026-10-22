@@ -23,6 +23,7 @@ go_library(
         "//submitqueue/extension/conflict:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
 
@@ -45,5 +46,7 @@ go_test(
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+        "@org_uber_go_zap//zaptest/observer:go_default_library",
     ],
 )

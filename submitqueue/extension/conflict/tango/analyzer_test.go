@@ -17,11 +17,14 @@ package tango
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/uber/submitqueue/platform/base/change"
 	changesetmock "github.com/uber/submitqueue/submitqueue/core/changeset/mock"
@@ -40,8 +43,11 @@ var (
 
 type analyzerHarness struct {
 	signatures *MockSignatureStore
+	dictionary *MockDictionaryStore
+	logs       *observer.ObservedLogs
 	client     *MockChangedTargetsClient
 	baseErr    error
+	recorded   sync.WaitGroup
 	changes    *changesetmock.MockResolver
 	analyzer   conflict.Analyzer
 }
@@ -49,13 +55,19 @@ type analyzerHarness struct {
 func newAnalyzerHarness(t *testing.T) *analyzerHarness {
 	t.Helper()
 	ctrl := gomock.NewController(t)
+	core, logs := observer.New(zap.WarnLevel)
 	h := &analyzerHarness{
 		signatures: NewMockSignatureStore(ctrl),
+		dictionary: NewMockDictionaryStore(ctrl),
+		logs:       logs,
 		client:     NewMockChangedTargetsClient(ctrl),
 		changes:    changesetmock.NewMockResolver(ctrl),
 	}
+	t.Cleanup(h.recorded.Wait)
 	h.analyzer = New(Params{
 		Signatures:   h.signatures,
+		Dictionary:   h.dictionary,
+		Logger:       zap.New(core).Sugar(),
 		Cache:        NewSignatureCache(1 << 20),
 		Client:       h.client,
 		BaseRevision: func(context.Context, string) (string, error) { return analyzerTestBaseRevision, h.baseErr },
@@ -74,6 +86,11 @@ func analyzerTestNewSignature() TargetSignature {
 		BaseRevision: analyzerTestBaseRevision,
 		Targets:      targets,
 	}
+}
+
+func analyzerTestLabels() []hashedLabel {
+	_, labels := toSignatureTargets(analyzerTestAffected)
+	return labels
 }
 
 func analyzerTestSignature(batchID string, ids ...uint64) TargetSignature {
@@ -99,6 +116,14 @@ func (h *analyzerHarness) expectSigningNewBatch(createErr error) {
 		BaseRevision: analyzerTestBaseRevision,
 		ChangeURIs:   []string{"u1", "u2"},
 	}).Return(analyzerTestAffected, nil)
+	if createErr == nil {
+		for _, l := range analyzerTestLabels() {
+			h.recorded.Add(1)
+			h.dictionary.EXPECT().Create(gomock.Any(), gomock.Cond(func(got TargetLabel) bool {
+				return got.Queue == analyzerTestQueue && got.ID == l.id && got.Label == l.label && got.CreatedAt != 0
+			})).Do(func(context.Context, TargetLabel) { h.recorded.Done() }).Return(nil)
+		}
+	}
 	h.signatures.EXPECT().Create(gomock.Any(), gomock.Cond(func(got TargetSignature) bool {
 		stamped := got.CreatedAt != 0
 		got.CreatedAt = 0
@@ -237,6 +262,29 @@ func TestAnalyzer_Analyze(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantConflicts, got)
+		})
+	}
+}
+
+func TestAnalyzer_recordLabels(t *testing.T) {
+	tests := []struct {
+		name       string
+		createErr  error
+		wantLogged int
+	}{
+		{name: "recorded labels are not logged"},
+		{name: "already recorded labels are not logged", createErr: storage.ErrAlreadyExists},
+		{name: "failed writes are logged", createErr: analyzerTestFailure, wantLogged: len(analyzerTestAffected)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newAnalyzerHarness(t)
+			labels := analyzerTestLabels()
+			h.dictionary.EXPECT().Create(gomock.Any(), gomock.Any()).Return(tt.createErr).Times(len(labels))
+
+			h.analyzer.(*analyzer).recordLabels(context.Background(), analyzerTestQueue, labels)
+
+			assert.Equal(t, tt.wantLogged, h.logs.Len())
 		})
 	}
 }
