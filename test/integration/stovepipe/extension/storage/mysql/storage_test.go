@@ -90,6 +90,11 @@ func TestMySQLStorage(t *testing.T) {
 		suite.Run(t, testSuite)
 	})
 
+	t.Run("BuildIssueStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testBuildIssueStore(t, ctx, db, factory)
+	})
+
 	t.Run("BuildStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLBuildStoreSuite)
@@ -151,6 +156,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE request_uri",
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
+		"TRUNCATE TABLE build_issue",
 		"TRUNCATE TABLE queue",
 		"TRUNCATE TABLE validation_fact",
 	} {
