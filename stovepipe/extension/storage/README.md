@@ -1,6 +1,6 @@
 # Storage
 
-Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`). Implementations live under `extension/storage/<impl>/`.
+Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`). Implementations live under `extension/storage/<impl>/`.
 
 The aggregate is resolved per queue through a factory keyed by queue name, mirroring the extension contract and the [submitqueue storage seam](../../../submitqueue/extension/storage/README.md#queue-scoped-resolution): a resolved instance is bound to its queue, entity arguments whose queue disagrees with the binding are rejected, and reads never surface another queue's records. Stovepipe has no cross-queue read paths, so every store — including `QueueStore`, whose row key is the queue name itself — lives inside the queue-scoped aggregate; there is no global remainder.
 
@@ -31,3 +31,13 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 Each observation is stored separately, not in a serialized collection. Observations are historical evidence; they do not track whether an issue is currently open or resolved. No update, deletion, or absence-based recovery is implied by this store.
 
 The MySQL primary key contains the queue, build ID, task ID, and unit ID directly as binary strings, preserving byte-exact identity. Their limits are 255, 1020, 255, and 1024 bytes respectively, for a combined maximum of 2554 bytes. Creates and reads reject identifiers exceeding these limits before querying the database; identifiers are never truncated.
+
+## Currently open issues
+
+`OpenIssueStore` contains only currently open issues, keyed by task and unit within the bound queue. Removing an open row never removes immutable per-build observations. There is no open/resolved flag; a resolved issue has no row here.
+
+An open row is immutable. Its first-seen build identifies the current opening, not its latest observation. Repeated observations remain in the per-build store. Reopening after removal uses a different first-seen build ID; no last-observed build, version counter, or update operation is stored here.
+
+Deletion matches the task, unit, and first-seen build within the bound queue. It is safe to repeat: an absent opening is a no-op, and a stale deletion never removes a different opening of the same condition. Database failures are returned for retry.
+
+MySQL identifiers use the same binary byte limits as per-build observations. Build IDs are opaque context, not ordering tokens. The store does not choose resolution, enumerate issues, write lifecycle history, or reconcile analysis responses. History and source-order reconciliation belong to later controllers, not this membership store.

@@ -4,6 +4,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "build_issue_test.go",
+        "open_issue_test.go",
         "queue_state_transitions_test.go",
         "queue_summary_test.go",
         "request_acceptance_test.go",

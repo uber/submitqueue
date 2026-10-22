@@ -56,6 +56,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		queueStore:             NewQueueStore(s.db, queueScope.SubScope("queue_store"), queueName),
 		buildStore:             NewBuildStore(s.db, queueScope.SubScope("build_store"), queueName),
 		buildIssueStore:        NewBuildIssueStore(s.db, queueScope.SubScope("build_issue_store"), queueName),
+		openIssueStore:         NewOpenIssueStore(s.db, queueScope.SubScope("open_issue_store"), queueName),
 		validationFactStore:    NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
 	}, nil
 }
@@ -77,6 +78,7 @@ type mysqlStorage struct {
 	queueLogStore          storage.QueueLogStore
 	buildStore             storage.BuildStore
 	buildIssueStore        storage.BuildIssueStore
+	openIssueStore         storage.OpenIssueStore
 	validationFactStore    storage.ValidationFactStore
 }
 
@@ -131,4 +133,8 @@ func (f *mysqlStorage) GetQueueLogStore() storage.QueueLogStore {
 
 func (f *mysqlStorage) GetBuildIssueStore() storage.BuildIssueStore {
 	return f.buildIssueStore
+}
+
+func (f *mysqlStorage) GetOpenIssueStore() storage.OpenIssueStore {
+	return f.openIssueStore
 }

@@ -48,6 +48,7 @@ func TestNewStorage(t *testing.T) {
 	assert.NotNil(t, bound.GetQueueStore())
 	assert.NotNil(t, bound.GetBuildStore())
 	assert.NotNil(t, bound.GetBuildIssueStore())
+	assert.NotNil(t, bound.GetOpenIssueStore())
 
 	_, err = s.For("")
 	assert.Error(t, err, "resolving an empty queue name must fail")
@@ -133,6 +134,14 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			op:   "get",
 			read: func(bound storage.Storage, _ string) error {
 				_, err := bound.GetBuildIssueStore().Get(context.Background(), "build-id", "task", "unit")
+				return err
+			},
+		},
+		{
+			name: "open_issue_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetOpenIssueStore().Get(context.Background(), "task-id", "unit-id")
 				return err
 			},
 		},

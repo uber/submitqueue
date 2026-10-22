@@ -97,6 +97,9 @@ type Storage interface {
 	// GetBuildIssueStore returns the BuildIssueStore instance.
 	GetBuildIssueStore() BuildIssueStore
 
+	// GetOpenIssueStore returns the OpenIssueStore instance.
+	GetOpenIssueStore() OpenIssueStore
+
 	// GetValidationFactStore returns the ValidationFactStore instance.
 	GetValidationFactStore() ValidationFactStore
 }

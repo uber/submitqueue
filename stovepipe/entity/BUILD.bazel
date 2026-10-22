@@ -7,6 +7,7 @@ go_library(
         "build_issue.go",
         "ingest.go",
         "list.go",
+        "open_issue.go",
         "project_status.go",
         "queue.go",
         "queue_config.go",

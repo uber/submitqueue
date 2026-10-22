@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build_issue_store.go",
         "build_store.go",
+        "open_issue_store.go",
         "queue_log_store.go",
         "queue_store.go",
         "queue_summary_store.go",
