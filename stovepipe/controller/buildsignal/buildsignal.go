@@ -15,7 +15,7 @@
 // Package buildsignal holds the buildsignal-stage queue controller. It consumes
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
-// releases the queue's build slot, projects the outcome onto the request, and
+// persists the request outcome, completes its build slot and baseline, and
 // publishes directly to record plus terminal analysis. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	"github.com/uber/submitqueue/stovepipe/core/buildslot"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -54,11 +55,7 @@ var (
 	PollDelayRunningMs int64 = 2000
 )
 
-// Controller consumes BuildSignal messages, polls the build-runner toward a
-// terminal status, persists the result, and either holds the delivery until
-// the next poll or releases the queue's build slot, projects the outcome onto
-// the request, and publishes the request id to record. Implements
-// consumer.Controller.
+// Controller polls builds and completes request outcomes before publishing to record.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -96,12 +93,7 @@ func NewController(
 	}
 }
 
-// Process reloads the build referenced by the delivery, polls its runner for
-// the latest status, persists a real transition, and either holds the delivery
-// until the next poll or, once terminal, releases the queue's build slot,
-// projects the outcome onto the request, and publishes the request id to
-// record. Returns nil to ack (success) or an error to nack (retry) / reject
-// (DLQ).
+// Process polls a build, completes its terminal outcome and baseline, and publishes downstream work.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
@@ -140,17 +132,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", sig.GetQueueName(), request.Queue, request.ID)
 	}
 
-	// A request only reaches the poll loop after process admitted it, so it is
-	// `processing` — or it already carries this build's outcome, on a redelivery
-	// after the outcome was stamped but before record was published. Both cases
-	// proceed: the redelivery re-publishes to record rather than dropping the
-	// signal, and every write below is a no-op the second time.
-	//
-	// Anything else is terminal without a build outcome, which today means only
-	// `superseded` — and process supersedes solely from `accepted` (see
-	// supersedeRequest), so a superseded request can never reach this point. It
-	// is guarded rather than assumed away because finishRequest would otherwise
-	// release a build slot the request never claimed: superseding consumes none.
 	if request.State != entity.RequestStateProcessing && !request.State.HasBuildOutcome() {
 		return nil
 	}
@@ -225,34 +206,14 @@ func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.
 	return nil
 }
 
-// finishRequest releases the queue's build slot and projects the build's
-// terminal status and ID onto the request, leaving it terminal. It is a no-op
-// when the request already carries an outcome, so a redelivery neither
-// double-releases the slot nor rewrites the state.
-//
-// The slot is released *before* the terminal write, and a failed release aborts
-// the write, matching the DLQ reconciler (see stovepipe/controller/dlq/dlq.go).
-// Both rules exist for the same reason: the request must not go terminal while
-// still holding a slot, because a terminal request is skipped on redelivery and
-// by the reconciler, so nothing would ever decrement it. Failing this way leaves
-// the request non-terminal, so redelivery re-runs both steps and decrements again
-// — transiently over-admitting by one until releaseBuildSlot's zero clamp
-// reconverges, which is the failure mode this pipeline prefers.
+// finishRequest preserves the winning outcome before atomically releasing its slot
+// and advancing a successful baseline. Recovery can repeat both operations.
 func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, buildID string, status entity.BuildStatus) error {
-	if request.State.HasBuildOutcome() {
-		return nil
-	}
-
-	if err := c.releaseBuildSlot(ctx, store, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return err
-	}
-
 	if err := c.markOutcome(ctx, store, request, buildID, outcomeState(status)); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
-	return nil
+	return buildslot.Complete(ctx, store, *request)
 }
 
 func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) error {
@@ -325,37 +286,6 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 		metrics.NamedCounter(c.metricsScope, _opName, "outcomes", 1,
 			metrics.TagsFromContext(ctx, metrics.NewTag("state", string(state)))...,
 		)
-		return nil
-	}
-}
-
-// releaseBuildSlot CAS-decrements the queue's in_flight_count, reopening the process
-// concurrency gate now that this request's build is over. It decrements relatively
-// (preserving concurrent updates), clamps at zero, and retries on version conflicts.
-// Unlike process's unwind-path release this is not best-effort: the caller must not
-// mark the request terminal if the slot was not freed, so a hard failure is returned.
-func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) error {
-	queueStore := store.GetQueueStore()
-
-	for {
-		queueRow, err := queueStore.Get(ctx, queueName)
-		if err != nil {
-			return fmt.Errorf("failed to load queue %s to release build slot: %w", queueName, err)
-		}
-		if queueRow.InFlightCount <= 0 {
-			return nil
-		}
-
-		updated := queueRow
-		updated.InFlightCount = queueRow.InFlightCount - 1
-		newVersion := queueRow.Version + 1
-		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
-				continue
-			}
-			return fmt.Errorf("failed to release build slot for queue %s: %w", queueName, err)
-		}
-		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 }

@@ -14,6 +14,11 @@
 
 package entity
 
+import (
+	"fmt"
+	"slices"
+)
+
 // Queue holds per-queue pipeline coordination state for a named repo+ref (e.g. "monorepo/main").
 type Queue struct {
 	// ****************
@@ -27,8 +32,8 @@ type Queue struct {
 	// Following fields could be changed throughout the lifecycle of the queue
 	// ****************
 
-	// LastGreenURI is the queue's last-known-good commit: the most recent head at which
-	// whole-repo validation recorded green (health degree 0). Empty until the first such outcome.
+	// LastGreenURI is the newest head with a successful build outcome, usable as an
+	// incremental baseline before validation facts and Git promotion are complete.
 	LastGreenURI string `json:"last_green_uri"`
 
 	// LastGreenRequestID is the request that established LastGreenURI. The bookmark only
@@ -36,8 +41,10 @@ type Queue struct {
 	// than the candidate's, compared by ingest order via CompareRequestID.
 	LastGreenRequestID string `json:"last_green_request_id"`
 
-	// InFlightCount is the number of trunk validations admitted by process but not yet terminal.
+	// InFlightCount is the number of reserved build slots, equal to len(InFlightRequestIDs).
 	InFlightCount int32 `json:"in_flight_count"`
+	// InFlightRequestIDs identifies the requests holding reserved build slots.
+	InFlightRequestIDs []string `json:"in_flight_request_ids"`
 
 	// LatestRequestID is the request id of the newest head ingest accepted for this queue.
 	// Empty until the first request is created. Coalescing compares IDs via CompareRequestID.
@@ -59,6 +66,29 @@ type Queue struct {
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`
+}
+
+// HasBuildSlot reports whether requestID owns a reserved build slot.
+func (q Queue) HasBuildSlot(requestID string) bool {
+	return slices.Contains(q.InFlightRequestIDs, requestID)
+}
+
+// ValidateBuildSlots checks that the slot count and ownership agree.
+func (q Queue) ValidateBuildSlots() error {
+	if q.InFlightCount != int32(len(q.InFlightRequestIDs)) {
+		return fmt.Errorf("queue %q has %d slots but %d owners", q.Name, q.InFlightCount, len(q.InFlightRequestIDs))
+	}
+	seen := make(map[string]struct{}, len(q.InFlightRequestIDs))
+	for _, id := range q.InFlightRequestIDs {
+		if id == "" {
+			return fmt.Errorf("queue %q has an empty slot owner", q.Name)
+		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("queue %q has duplicate slot owner %q", q.Name, id)
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
 }
 
 func (q Queue) EnablementState() QueueState {

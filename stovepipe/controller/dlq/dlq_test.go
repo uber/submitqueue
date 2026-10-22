@@ -134,8 +134,6 @@ func TestProcess(t *testing.T) {
 		wantMetric string
 	}{
 		{
-			// No queue expectations: an accepted request never claimed a slot,
-			// so releasing one here would over-admit against MaxConcurrent.
 			name: "accepted request is marked failed without releasing a slot",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
@@ -143,14 +141,15 @@ func TestProcess(t *testing.T) {
 				updated.State = entity.RequestStateFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
-			name: "processing request releases the queue slot before marking failed",
+			name: "processing request marks failed before releasing its queue slot",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, InFlightCount: 1, Version: 5,
+					Name: testQueue, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 5,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, InFlightCount: 0, Version: 5,
@@ -162,9 +161,11 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "already superseded is a no-op",
+			name: "already superseded repairs its state log",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSuperseded), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
+				m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, requestlog.NewRequestStateLog(requestWithState(entity.RequestStateSuperseded), entity.RequestOutcomeReasonSupersededByNewerHead)).Return(nil)
 			},
 		},
 		{
@@ -172,6 +173,7 @@ func TestProcess(t *testing.T) {
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 2)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -187,21 +189,23 @@ func TestProcess(t *testing.T) {
 				updated := requestWithState(entity.RequestStateAccepted)
 				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(storage.ErrVersionMismatch)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 2)
 			},
-			wantErr: true,
 		},
 		{
 			name: "queue update retries on version mismatch then succeeds",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, InFlightCount: 1, Version: 5,
+					Name: testQueue, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 5,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, InFlightCount: 0, Version: 5,
 				}, int32(5), int32(6)).Return(storage.ErrVersionMismatch)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, InFlightCount: 1, Version: 6,
+					Name: testQueue, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 6,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, InFlightCount: 0, Version: 6,
@@ -240,6 +244,7 @@ func TestProcess(t *testing.T) {
 					m.store,
 					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonProcessingFailed),
 				).Return(errors.New("db down")).After(updateCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -293,4 +298,33 @@ func TestProcess(t *testing.T) {
 
 func TestTopicKey(t *testing.T) {
 	assert.Equal(t, consumer.TopicKey("process_dlq"), TopicKey(stovepipemq.TopicKeyProcess))
+}
+
+func TestDLQCompletesPersistedSuccessWithoutReleasingAnotherRequestsSlot(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := requestWithState(entity.RequestStateSucceeded)
+	request.URI = "git://repo/main/green"
+	request.TerminalBuildID = "build-7"
+	queue := entity.Queue{Name: testQueue, Version: 5, InFlightCount: 2, InFlightRequestIDs: []string{testID, "8"}}
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil).Times(2)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		return queue, nil
+	}).Times(2)
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(5), int32(6)).DoAndReturn(
+		func(_ context.Context, updated entity.Queue, _, next int32) error {
+			queue = updated
+			queue.Version = next
+			return nil
+		})
+	log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded)
+	log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
+	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, log).Return(nil).Times(2)
+	for range 2 {
+		require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, processPayload(t, testID))))
+	}
+	assert.Equal(t, request.URI, queue.LastGreenURI)
+	assert.Equal(t, request.ID, queue.LastGreenRequestID)
+	assert.Equal(t, []string{"8"}, queue.InFlightRequestIDs)
+	assert.EqualValues(t, 1, queue.InFlightCount)
 }

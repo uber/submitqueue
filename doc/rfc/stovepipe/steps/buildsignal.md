@@ -1,6 +1,6 @@
 # Buildsignal stage
 
-`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, and publishes the **request id** to `record`. See [workflow.md](../workflow.md) for where it sits in the pipeline and [build.md](build.md) for how the build it polls was triggered.
+`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — persists the winning `Request` outcome, completes its build slot and successful baseline in one Queue update, and publishes the **request id** to `record`. See [workflow.md](../workflow.md) for where it sits in the pipeline and [build.md](build.md) for how the build it polls was triggered.
 
 It handles only the poll loop: it does not decide build strategy, write greenness, or map targets to projects — those are `process`'s, `record`'s, and `analyze`'s jobs. It reports the *fact* (this request's build ended succeeded, failed, or cancelled); `record` derives what that fact *means* for greenness.
 
@@ -16,7 +16,7 @@ Its logic does not branch on phase: it loads the `Build`, polls it toward termin
 
 Its early-exit guard is deliberately narrower than `State.IsTerminal()`: it proceeds when the request is `processing` **or** already carries a build outcome. The second case matters because a redelivery after the outcome was stamped but before the `record` publish landed must re-publish rather than drop the signal; everything it re-runs is a no-op (the status is unchanged, the outcome is already recorded, the slot is not released twice) and the `record` publish is idempotent.
 
-The states the guard actually rejects are terminal-without-an-outcome — today `superseded` alone, which `process` sets only from `accepted`, so it cannot reach the poll loop at all. The guard is kept rather than dropped because the slot release in step 7a is conditioned on *not* already having an outcome, so a superseded request arriving here would decrement a slot that superseding never claimed.
+A superseded Request has no build outcome and is ignored. Slot release is keyed by Request ownership, so duplicate deliveries cannot release another Request’s capacity.
 
 ## Algorithm
 
@@ -35,9 +35,7 @@ For a delivery carrying build id `B`:
    - a request reaches the poll loop only after process admitted it, so it is processing —
      or already carries this build's outcome on a redelivery, which falls through so the
      signal is re-published to record instead of dropped.
-   - the only other terminal-without-an-outcome state is superseded, and process supersedes
-     solely from accepted, so it cannot occur here. Guarded anyway: step 7a would otherwise
-     release a build slot the request never claimed, since superseding consumes none.
+   - superseded requests have no build outcome and do not enter the poll loop.
    - mirrors submitqueue's halted-batch short-circuit in buildsignal.go.
 
 4. Resolve the build-runner: buildRunner = Factory.For(Config{QueueName: R.Queue}).
@@ -60,19 +58,21 @@ For a delivery carrying build id `B`:
      - with the write-once rule, accepted -> running -> {succeeded|failed|cancelled} is monotonic
        by mechanism, not by assumption about the backend.
 
-7. If the stored status is terminal, and R does not already carry an outcome:
-   a. Release the queue's build slot: CAS-decrement Queue.in_flight_count, clamped at zero.
-      - failure here aborts the step: R must not go terminal while still holding a slot.
-   b. CAS R from processing to the outcome the stored status projects onto it and persist B as R's terminal build id:
-      succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
-   Then publish R.ID to the record topic, partitioned by request id; ack, return.
-   No re-publish to buildsignal.
-   - record loads the Request directly by this key, derives greenness from its outcome, and
-     supplies its terminal build id to project-result resolution; it never reaches a Build.
-   - the message id is the request id, so a redelivery republishing the same terminal signal
-     dedups into the original message; record is idempotent regardless.
-   - publish failure -> return raw (non-retryable); the outcome is persisted, operational
-     republish recovers.
+7. If the stored status is terminal:
+   a. Retain the build-finished history event.
+   b. CAS R from processing to the projected outcome, persisting B as TerminalBuildID:
+      succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First terminal writer wins.
+      Adopt a concurrent terminal winner rather than replacing its State or TerminalBuildID.
+   c. Complete R's owned slot with a Queue CAS loop:
+      - if R.ID is absent from in_flight_request_ids, completion is already done; no write.
+      - remove only R.ID and recompute in_flight_count from the remaining owners.
+      - if R succeeded and is newer than LastGreenRequestID, advance LastGreenURI and
+        LastGreenRequestID in the SAME Queue write, before capacity becomes available.
+      - on version conflict, reload and retry. Other errors fail the delivery.
+   d. Retain outcome history, then publish R.ID to record and a terminal build-analysis nudge.
+      Both publications are attempted independently and errors are combined with errs.Group.
+      The record message id and partition key are R.ID; record reloads the durable outcome.
+   e. Ack; no re-publish to buildsignal.
 
 8. Else hold the delivery for delayMs (postpone: the same message redelivers after the delay):
    - delayMs = pollDelay(status): shorter while running, longer while accepted.
@@ -82,9 +82,9 @@ For a delivery carrying build id `B`:
      exactly one poll chain; no message ids are minted and no new rows are written per tick.
 ```
 
-**Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever decrement it. Failing this way leaves the request non-terminal: redelivery re-runs both steps and decrements again, transiently over-admitting by one slot until the zero clamp reconverges. Over-admission is the failure mode this pipeline already prefers, for the same reason and in the same words as the DLQ reconciler (see [process.md](process.md#in_flight_count-integrity)).
+**Why the outcome is persisted first:** Queue and Request are separate entities. A durable outcome lets retries and DLQ reconciliation finish the same completion after a crash without guessing which build won. Slot ownership makes removal idempotent, including when a Queue write commits but its response is lost. Completion must run for terminal Requests as well as newly finished ones.
 
-**Why `buildsignal` releases the slot rather than `record`**: the gate `process` claims is a *build* slot — it exists to bound concurrent builds per Queue — and once the build is terminal the build is over. Releasing here also keeps the invariant *a terminal `Request` has already released its slot*, which is what makes the DLQ reconciler's early-return on terminal requests safe.
+**Why baseline advancement and slot release share a Queue write:** the next admitted build must see the successful baseline as soon as it sees freed capacity. Project resolution, immutable validation facts, history, and Git promotion belong to `record` and may finish later. A baseline is evidence of build success; deployments continue to gate on validation facts.
 
 **Why `record` hears only terminal signals**: `record` has no non-terminal work — by its own contract a non-terminal signal would be a pure no-op — and step 7 already branches on terminality to decide whether to keep polling, so gating the publish costs nothing and spares `record` a no-op delivery on every poll tick of every running build. Crash-safety is unaffected: a crash between the terminal `Update` and the publish redelivers the message; step 5 re-polls (the runner reports the same terminal status), step 6 no-ops, step 7 publishes. This is a deliberate divergence from SubmitQueue, whose buildsignal republishes to `speculate` on every tick — sound there because speculate is a state machine that may act on any signal; stovepipe has no such consumer.
 

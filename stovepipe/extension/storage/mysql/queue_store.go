@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -47,10 +48,14 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 	if queue.Name != q.queue {
 		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
 	}
+	owners, err := json.Marshal(queue.InFlightRequestIDs)
+	if err != nil {
+		return fmt.Errorf("encode build slot owners: %w", err)
+	}
 
-	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = q.db.ExecContext(ctx,
+		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms, in_flight_request_ids)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		queue.Name,
 		queue.LastGreenURI,
 		queue.InFlightCount,
@@ -58,6 +63,7 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 		queue.Version,
 		queue.LastGreenRequestID,
 		queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs,
+		owners,
 	)
 	if err != nil {
 		if isDuplicateEntry(err) {
@@ -78,8 +84,9 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 	}
 
 	var queue entity.Queue
+	var owners []byte
 	err := q.db.QueryRowContext(ctx,
-		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue WHERE name = ?",
+		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms, in_flight_request_ids FROM queue WHERE name = ?",
 		name,
 	).Scan(
 		&queue.Name,
@@ -89,6 +96,7 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 		&queue.Version,
 		&queue.LastGreenRequestID,
 		&queue.Enablement, &queue.EnablementVersion, &queue.EffectiveFromCommitURI, &queue.EnablementChangedAtMs,
+		&owners,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -96,6 +104,11 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 	}
 	if err != nil {
 		return entity.Queue{}, fmt.Errorf("failed to get queue name=%s from the database: %w", name, err)
+	}
+	if len(owners) > 0 {
+		if err := json.Unmarshal(owners, &queue.InFlightRequestIDs); err != nil {
+			return entity.Queue{}, fmt.Errorf("decode build slot owners for queue %q: %w", name, err)
+		}
 	}
 
 	return queue, nil
@@ -110,10 +123,14 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 	if queue.Name != q.queue {
 		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
 	}
+	owners, err := json.Marshal(queue.InFlightRequestIDs)
+	if err != nil {
+		return fmt.Errorf("encode build slot owners: %w", err)
+	}
 
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue
-		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?, last_green_request_id = ?, enablement = ?, enablement_version = ?, effective_from_commit_uri = ?, enablement_changed_at_ms = ?
+		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?, last_green_request_id = ?, enablement = ?, enablement_version = ?, effective_from_commit_uri = ?, enablement_changed_at_ms = ?, in_flight_request_ids = ?
 		 WHERE name = ? AND version = ?`,
 		queue.LastGreenURI,
 		queue.InFlightCount,
@@ -121,6 +138,7 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 		newVersion,
 		queue.LastGreenRequestID,
 		queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs,
+		owners,
 		queue.Name,
 		oldVersion,
 	)

@@ -149,10 +149,6 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	// Every request reachable from a build row is either still processing, and holding
-	// the slot failRequest releases, or already terminal, and past releasing it: build
-	// triggers only once process has written the strategy, which lands in the same CAS
-	// as accepted→processing, and processing exits only to a terminal outcome.
 	if err := failRequest(ctx, store, c.materializer, c.logger, build.RequestID, entity.RequestOutcomeReasonBuildPollingExhausted); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err

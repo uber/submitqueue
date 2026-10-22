@@ -90,6 +90,8 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 		Name:               name,
 		LastGreenURI:       "git://remote/monorepo/main/green-bbbb",
 		LastGreenRequestID: "98",
+		InFlightCount:      2,
+		InFlightRequestIDs: []string{"99", "100"},
 		LatestRequestID:    "99",
 		Version:            1,
 	}
@@ -142,6 +144,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	updated.LastGreenRequestID = "41"
 	updated.LatestRequestID = "42"
 	updated.InFlightCount = 1
+	updated.InFlightRequestIDs = []string{"42"}
 	require.NoError(t, s.storeFor(name).Update(s.ctx, updated, 1, 2))
 
 	got, err := s.storeFor(name).Get(s.ctx, name)
@@ -150,6 +153,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	assert.Equal(t, "41", got.LastGreenRequestID)
 	assert.Equal(t, "42", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
+	assert.Len(t, got.InFlightRequestIDs, 1)
 	assert.Equal(t, int32(2), got.Version)
 
 	err = s.storeFor(name).Update(s.ctx, updated, 1, 2)
@@ -174,13 +178,14 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 	v2 := entity.Queue{Name: name, LatestRequestID: "10", Version: 1}
 	require.NoError(t, s.storeFor(name).Update(s.ctx, v2, 1, 2))
 
-	v3 := entity.Queue{Name: name, LatestRequestID: "10", InFlightCount: 1, Version: 2}
+	v3 := entity.Queue{Name: name, LatestRequestID: "10", InFlightCount: 1, InFlightRequestIDs: []string{"10"}, Version: 2}
 	require.NoError(t, s.storeFor(name).Update(s.ctx, v3, 2, 3))
 
 	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, "10", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
+	assert.Len(t, got.InFlightRequestIDs, 1)
 	assert.Equal(t, int32(3), got.Version)
 }
 

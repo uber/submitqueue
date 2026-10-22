@@ -98,12 +98,12 @@ func TestBuildSignalProcess(t *testing.T) {
 		{
 			// The case this reconciler exists for: a poll message that
 			// dead-lettered while its request was holding a build slot.
-			name: "processing request releases the queue slot before marking failed",
+			name: "processing request marks failed before releasing its queue slot",
 			setup: func(m buildSignalDLQMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, InFlightCount: 1, Version: 5,
+					Name: testQueue, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 5,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, InFlightCount: 0, Version: 5,
@@ -121,10 +121,12 @@ func TestBuildSignalProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "already terminal request is a no-op",
+			name: "already terminal request repairs its outcome log",
 			setup: func(m buildSignalDLQMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
+				m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, requestlog.NewRequestStateLog(requestWithState(entity.RequestStateSucceeded), entity.RequestOutcomeReasonBuildSucceeded)).Return(nil)
 			},
 		},
 		{
@@ -149,10 +151,12 @@ func TestBuildSignalProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "slot release failure aborts the terminal write",
+			name: "slot release failure retains terminal outcome for retry",
 			setup: func(m buildSignalDLQMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				updated := requestWithState(entity.RequestStateFailed)
+				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, assert.AnError)
 			},
 			wantErr: true,

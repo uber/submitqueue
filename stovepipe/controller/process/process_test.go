@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/buildslot"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -176,10 +177,11 @@ func expectAdmit(t *testing.T, m processMocks, id string) {
 	t.Helper()
 
 	updatedQueue := entity.Queue{
-		Name:            testQueue,
-		LatestRequestID: id,
-		InFlightCount:   1,
-		Version:         1,
+		Name:               testQueue,
+		LatestRequestID:    id,
+		InFlightCount:      1,
+		InFlightRequestIDs: []string{id},
+		Version:            1,
 	}
 	m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
 
@@ -467,8 +469,10 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 			}
 			initialClaim := initialQueue
 			initialClaim.InFlightCount = 1
+			initialClaim.InFlightRequestIDs = []string{testID}
 			claimedQueue := reloadedQueue
 			claimedQueue.InFlightCount = 1
+			claimedQueue.InFlightRequestIDs = []string{testID}
 
 			updatedRequest := request
 			updatedRequest.State = entity.RequestStateProcessing
@@ -515,6 +519,7 @@ func TestProcess(t *testing.T) {
 				}
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
 				expectStateLog(t, m, request, entity.RequestOutcomeReasonSupersededByNewerHead)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -530,6 +535,7 @@ func TestProcess(t *testing.T) {
 					m.store,
 					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead),
 				).Return(errors.New("db down"))
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -538,6 +544,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateSucceeded, Version: 2,
 				}, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -546,6 +553,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateFailed, Version: 2,
 				}, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -554,6 +562,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateCancelled, Version: 2,
 				}, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -612,10 +621,11 @@ func TestProcess(t *testing.T) {
 					Version:         1,
 				}, nil)
 				updatedQueue := entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
+					Name:               testQueue,
+					LatestRequestID:    testID,
+					InFlightCount:      1,
+					InFlightRequestIDs: []string{testID},
+					Version:            1,
 				}
 				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
 				updatedRequest := acceptedRequest(testID)
@@ -642,10 +652,11 @@ func TestProcess(t *testing.T) {
 					Version:         1,
 				}, nil)
 				updatedQueue := entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
+					Name:               testQueue,
+					LatestRequestID:    testID,
+					InFlightCount:      1,
+					InFlightRequestIDs: []string{testID},
+					Version:            1,
 				}
 				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
 				updatedRequest := acceptedRequest(testID)
@@ -674,10 +685,11 @@ func TestProcess(t *testing.T) {
 					Version:         1,
 				}, nil)
 				updatedQueue := entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
+					Name:               testQueue,
+					LatestRequestID:    testID,
+					InFlightCount:      1,
+					InFlightRequestIDs: []string{testID},
+					Version:            1,
 				}
 				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
 				updatedRequest := acceptedRequest(testID)
@@ -725,11 +737,12 @@ func TestProcess(t *testing.T) {
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					LastGreenURI:    "git://repo/monorepo/main/green",
-					Version:         1,
+					Name:               testQueue,
+					LatestRequestID:    testID,
+					InFlightCount:      1,
+					InFlightRequestIDs: []string{"other"},
+					LastGreenURI:       "git://repo/monorepo/main/green",
+					Version:            1,
 				}, nil)
 			},
 		},
@@ -744,16 +757,18 @@ func TestProcess(t *testing.T) {
 					Version:         1,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
+					Name:               testQueue,
+					LatestRequestID:    testID,
+					InFlightCount:      1,
+					InFlightRequestIDs: []string{testID},
+					Version:            1,
 				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         2,
+					Name:               testQueue,
+					LatestRequestID:    testID,
+					InFlightCount:      1,
+					InFlightRequestIDs: []string{"other"},
+					Version:            2,
 				}, nil)
 			},
 		},
@@ -766,7 +781,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				// First claim CAS loses to a concurrent writer.
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 1,
 				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 				// Reload: still latest, slot still free (version advanced by an unrelated field).
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -774,7 +789,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				// Retry claim succeeds, then admit.
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 2,
 				}, int32(2), int32(3)).Return(nil)
 				updatedReq := acceptedRequest(testID)
 				updatedReq.State = entity.RequestStateProcessing
@@ -793,7 +808,7 @@ func TestProcess(t *testing.T) {
 					Name: testQueue, LatestRequestID: testID, Version: 1,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 1,
 				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 				// Reload: ingest stamped a newer head — our head is no longer latest.
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -805,6 +820,7 @@ func TestProcess(t *testing.T) {
 				loggedRequest := superseded
 				loggedRequest.Version = 2
 				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -819,7 +835,7 @@ func TestProcess(t *testing.T) {
 				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(true, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, LastGreenURI: lastGreenURI, Version: 1,
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, InFlightRequestIDs: []string{testID}, LastGreenURI: lastGreenURI, Version: 1,
 				}, int32(1), int32(2)).Return(nil)
 
 				firstAttempt := acceptedRequest(testID)
@@ -843,7 +859,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "mark processing lost race releases slot and skips admit",
+			name: "mark processing duplicate preserves the winning reservation",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -851,7 +867,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				// Claim succeeds.
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 1,
 				}, int32(1), int32(2)).Return(nil)
 				// markProcessing CAS loses, reload shows a concurrent writer already advanced it.
 				updatedReq := acceptedRequest(testID)
@@ -861,17 +877,10 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 				}, nil)
-				// Compensating decrement of the spurious slot.
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
-				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 0, Version: 2,
-				}, int32(2), int32(3)).Return(nil)
 			},
 		},
 		{
-			name:    "mark processing error releases slot and returns error",
+			name:    "mark processing error retains reservation for retry",
 			wantErr: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
@@ -879,19 +888,12 @@ func TestProcess(t *testing.T) {
 					Name: testQueue, LatestRequestID: testID, Version: 1,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, InFlightRequestIDs: []string{testID}, Version: 1,
 				}, int32(1), int32(2)).Return(nil)
 				updatedReq := acceptedRequest(testID)
 				updatedReq.State = entity.RequestStateProcessing
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(errors.New("db down"))
-				// Best-effort compensating decrement before the error propagates.
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
-				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 0, Version: 2,
-				}, int32(2), int32(3)).Return(nil)
 			},
 		},
 		{
@@ -910,6 +912,7 @@ func TestProcess(t *testing.T) {
 				loggedRequest := updated
 				loggedRequest.Version = 2
 				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -934,6 +937,7 @@ func TestProcess(t *testing.T) {
 					m.store,
 					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead),
 				).Return(errors.New("db down")).After(updateCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -954,6 +958,7 @@ func TestProcess(t *testing.T) {
 				}
 				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(reloaded, nil)
 				expectStateLog(t, m, reloaded, entity.RequestOutcomeReasonSupersededByNewerHead).After(reloadCall)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue}, nil)
 			},
 		},
 		{
@@ -1051,4 +1056,56 @@ func TestHoldForBuildSlotRequiresPositiveDelay(t *testing.T) {
 
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
+}
+
+func TestAdmissionUsesCompletedBuildBaselineBeforeFactsAreRecorded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	previous := acceptedRequest("6")
+	previous.State = entity.RequestStateSucceeded
+	queue := entity.Queue{Name: testQueue, LatestRequestID: testID, Version: 1,
+		InFlightCount: 1, InFlightRequestIDs: []string{previous.ID}}
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		return queue, nil
+	}).Times(2)
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, updated entity.Queue, old, next int32) error {
+			require.Equal(t, queue.Version, old)
+			queue = updated
+			queue.Version = next
+			return nil
+		}).Times(2)
+	require.NoError(t, buildslot.Complete(queueContext(testQueue), m.store, previous))
+	assert.Zero(t, queue.InFlightCount)
+	assert.Equal(t, previous.URI, queue.LastGreenURI)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+	m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+	m.sourceControl.EXPECT().IsAncestor(gomock.Any(), previous.URI, testURI).Return(true, nil)
+	processing := acceptedRequest(testID)
+	processing.State = entity.RequestStateProcessing
+	processing.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
+	processing.BaseURI = previous.URI
+	m.reqStore.EXPECT().Update(gomock.Any(), processing, int32(1), int32(2)).Return(nil)
+	processing.Version = 2
+	expectStartAnnounceAndBuildPublish(t, m, processing)
+
+	require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
+	assert.Equal(t, []string{testID}, queue.InFlightRequestIDs)
+}
+
+func TestAdmissionReusesReservationAfterRequestWriteFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	queue := entity.Queue{Name: testQueue, LatestRequestID: testID, Version: 2,
+		InFlightCount: 1, InFlightRequestIDs: []string{testID}}
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queue, nil)
+	processing := acceptedRequest(testID)
+	processing.State = entity.RequestStateProcessing
+	processing.BuildStrategy = entity.BuildStrategyFull
+	m.reqStore.EXPECT().Update(gomock.Any(), processing, int32(1), int32(2)).Return(nil)
+	processing.Version = 2
+	expectStartAnnounceAndBuildPublish(t, m, processing)
+	require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
 }

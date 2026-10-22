@@ -70,6 +70,7 @@ func TestGetProjectStatus(t *testing.T) {
 		wantConsistency bool
 	}{
 		{name: "in progress without fact", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, factErr: storage.ErrNotFound},
+		{name: "recorded partial repository fact", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI}, fact: entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Degree: entity.DegreePartial}, wantFact: true},
 		{name: "recorded green fact", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, fact: entity.ValidationFact{URI: projectStatusURI, RequestID: projectStatusID, Degree: entity.DegreeGreen}, wantFact: true},
 		{name: "missing uri", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, uriErr: storage.ErrNotFound, wantNotFound: true},
 		{name: "request summary visibility gap", request: entity.GetProjectStatusRequest{Queue: projectStatusQueue, ChangeURI: projectStatusURI, Projects: []string{"project-a"}}, summaryErr: storage.ErrNotFound, wantRetryable: true},

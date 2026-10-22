@@ -28,7 +28,8 @@ func TestValidationFact_IsGreen(t *testing.T) {
 	}{
 		{name: "green degree is green", degree: DegreeGreen, expected: true},
 		{name: "broken degree is not green", degree: DegreeBroken, expected: false},
-		{name: "partial breakage is not green", degree: 0.25, expected: false},
+		{name: "partial repository is not green", degree: DegreePartial, expected: false},
+		{name: "partial project breakage is not green", degree: 0.25, expected: false},
 		{name: "zero value is green", degree: 0, expected: true},
 	}
 

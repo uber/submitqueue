@@ -11,6 +11,7 @@ go_library(
         "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
         "//platform/publish:go_default_library",
+        "//stovepipe/core/buildslot:go_default_library",
         "//stovepipe/core/loader:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",

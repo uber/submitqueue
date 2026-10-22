@@ -22,16 +22,8 @@
 // on greenness would see that indistinguishably from "not yet validated" (see
 // doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work).
 //
-// Reconciliation strategy. Each DLQ topic carries the same payload as its originating
-// topic (the queue framework preserves the bytes verbatim under a new `{topic}_dlq`
-// name). The DLQ controller decodes that payload to recover the affected request, then
-// transitions it to RequestStateFailed — the conservative unsuccessful outcome, which
-// whatever records greenness treats as not-green for gating (see entity.RequestState) —
-// with an idempotent optimistic-locking write so
-// concurrent activity (a late successful pipeline transition) wins cleanly. If the request had
-// already been admitted (processing) and was holding a concurrency slot, the
-// reconciler also releases it by CAS-decrementing the queue's in_flight_count, per
-// doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity.
+// Reconciliation preserves the first terminal outcome, then completes the request-owned
+// build slot and successful baseline. Terminal requests remain repairable on replay.
 package dlq
 
 import (
@@ -40,6 +32,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/stovepipe/core/buildslot"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -59,32 +52,7 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
-// failRequest transitions request to RequestStateFailed if it is not already
-// in a terminal state. If the request had reached RequestStateProcessing — meaning process's
-// admit step already CAS-incremented the queue's in_flight_count for it and no terminal
-// outcome has released it yet — the queue's
-// slot is released first.
-//
-// Processing is the only non-terminal state that can own a slot, so the condition is not a
-// narrowing of some broader set: process claims the slot and CAS-marks accepted→processing,
-// releasing its own claim if that CAS never lands, and the exits from processing are the
-// terminal outcomes, which release the slot themselves. Widening the release to accepted
-// would decrement for the far more common request that never claimed a slot, over-admitting
-// against MaxConcurrent. The one case that escapes both this reconciler and process's
-// compensation is a hard crash between the two admit writes, which leaves an accepted
-// request holding a slot that nothing here can tell apart from a request that never
-// claimed one; distinguishing them needs per-request slot ownership on the row.
-//
-// Queue and Request are separate entities with no cross-entity
-// transaction, so the two writes cannot be atomic and the ordering picks which crash
-// failure mode we accept: a crash between the writes leaves the request non-terminal,
-// redelivery re-runs reconciliation, and releaseSlot (which tracks no per-request slot
-// ownership) decrements again — transiently over-admitting by one slot until the
-// under-count re-converges at releaseSlot's zero clamp. The reverse order would leak
-// the slot instead: redelivery skips terminal requests, permanently shrinking the
-// queue's capacity toward a wedge. Over-admission is the failure mode we prefer. See
-// doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity for the broader
-// counter-drift story.
+// failRequest preserves a concurrent terminal outcome and completes its owned slot.
 func failRequest(
 	ctx context.Context,
 	store storage.Storage,
@@ -104,43 +72,42 @@ func failRequest(
 		return fmt.Errorf("failed to get request %s: %w", requestID, err)
 	}
 
-	if request.State.IsTerminal() {
-		if request.State == entity.RequestStateFailed {
-			// The originating DLQ remains the retry trigger after the state write. Its stage-specific
-			// reason repairs that write's missing log; PersistLog rejects an already-retained conflict.
-			return persistFailureLog(ctx, store, materializer, request, reason)
+	for !request.State.IsTerminal() {
+		updated := request
+		updated.State = entity.RequestStateFailed
+		newVersion := request.Version + 1
+		if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				request, err = store.GetRequestStore().Get(ctx, requestID)
+				if err != nil {
+					return fmt.Errorf("reload request %s during dlq completion: %w", requestID, err)
+				}
+				continue
+			}
+			return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
 		}
-		logger.Infow("dlq reconcile: request already terminal, skipping",
-			"request_id", requestID,
-			"state", string(request.State),
-		)
-		return nil
+		updated.Version = newVersion
+		request = updated
 	}
-
-	if request.State == entity.RequestStateProcessing {
-		if err := releaseSlot(ctx, store, logger, request.Queue); err != nil {
-			return fmt.Errorf("failed to release queue slot for request %s: %w", requestID, err)
-		}
-	}
-
-	updated := request
-	updated.State = entity.RequestStateFailed
-	newVersion := request.Version + 1
-	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
-		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
-	}
-	updated.Version = newVersion
-	if err := persistFailureLog(ctx, store, materializer, updated, reason); err != nil {
+	if err := buildslot.Complete(ctx, store, request); err != nil {
 		return err
 	}
-	logger.Infow("dlq reconcile: request forced terminal failed",
-		"request_id", requestID,
-		"previous_state", string(request.State),
-	)
-	return nil
+	switch request.State {
+	case entity.RequestStateSucceeded:
+		reason = entity.RequestOutcomeReasonBuildSucceeded
+	case entity.RequestStateCancelled:
+		reason = entity.RequestOutcomeReasonBuildCancelled
+	case entity.RequestStateSuperseded:
+		reason = entity.RequestOutcomeReasonSupersededByNewerHead
+	case entity.RequestStateFailed:
+		if request.TerminalBuildID != "" {
+			reason = entity.RequestOutcomeReasonBuildFailed
+		}
+	}
+	return persistOutcomeLog(ctx, store, materializer, request, reason)
 }
 
-func persistFailureLog(
+func persistOutcomeLog(
 	ctx context.Context,
 	store storage.Storage,
 	materializer requestlog.Materializer,
@@ -148,49 +115,11 @@ func persistFailureLog(
 	reason entity.RequestOutcomeReason,
 ) error {
 	log := requestlog.NewRequestStateLog(request, reason)
+	if request.TerminalBuildID != "" {
+		log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
+	}
 	if err := materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("failed to record failed state for request %s: %w", request.ID, err)
+		return fmt.Errorf("failed to record terminal state for request %s: %w", request.ID, err)
 	}
 	return nil
-}
-
-// releaseSlot CAS-decrements the queue's in_flight_count, retrying on version
-// conflicts, mirroring process.Controller's own CAS-retry loop for queue updates.
-func releaseSlot(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, queueName string) error {
-	queueStore := store.GetQueueStore()
-
-	for {
-		queueRow, err := queueStore.Get(ctx, queueName)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				logger.Warnw("dlq reconcile: queue not found, skipping slot release",
-					"queue", queueName,
-				)
-				return nil
-			}
-			return fmt.Errorf("failed to get queue %s: %w", queueName, err)
-		}
-
-		if queueRow.InFlightCount <= 0 {
-			logger.Warnw("dlq reconcile: queue in_flight_count already at zero, skipping slot release",
-				"queue", queueName,
-			)
-			return nil
-		}
-
-		updated := queueRow
-		updated.InFlightCount--
-		newVersion := queueRow.Version + 1
-		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
-				continue
-			}
-			return fmt.Errorf("failed to release slot for queue %s: %w", queueName, err)
-		}
-		logger.Infow("dlq reconcile: released queue slot",
-			"queue", queueName,
-			"in_flight_count", updated.InFlightCount,
-		)
-		return nil
-	}
 }

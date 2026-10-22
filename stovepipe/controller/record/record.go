@@ -16,10 +16,8 @@
 // messages (a request id) published by buildsignal once a build reaches a
 // terminal status, and turns that outcome into durable validation state.
 //
-// The durable state is a ValidationFact per validated commit, plus the queue's
-// last-green bookmark, which process reads to choose an incremental build
-// baseline. A green commit is also promoted, moving the queue's promotion ref so
-// downstream systems can pull the latest green commit by name.
+// Repository and project facts are persisted before promotion. Build completion
+// owns the stored incremental baseline, which can precede these facts.
 //
 // The outcome is then announced as a hook event, so integrations outside the
 // pipeline learn that a commit is green or broken. See
@@ -147,17 +145,21 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
-		fact, created, err := c.recordFact(ctx, store, request)
+		results, err := c.resolveProjectResults(ctx, request)
+		if err != nil {
+			return err
+		}
+		fact, created, err := c.recordFact(ctx, store, request, results)
 		if err != nil {
 			return err
 		}
 		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
 			return err
 		}
-		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
+		if err := c.persistProjectFacts(ctx, store, request, results); err != nil {
 			return err
 		}
-		if err := c.recordProjectFacts(ctx, store, request); err != nil {
+		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
 		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryRecorded(request))
@@ -183,19 +185,23 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 }
 
-func (c *Controller) recordProjectFacts(ctx context.Context, store storage.Storage, request entity.Request) error {
+func (c *Controller) resolveProjectResults(ctx context.Context, request entity.Request) ([]projectstatus.Result, error) {
 	resolver, err := c.projectStatusResolverFactory.For(projectstatus.ResolverConfig{QueueName: request.Queue})
 	if err != nil {
-		return fmt.Errorf("resolve project status resolver for queue %q: %w", request.Queue, err)
+		return nil, fmt.Errorf("resolve project status resolver for queue %q: %w", request.Queue, err)
 	}
 	results, err := resolver.Resolve(ctx, request, request.TerminalBuildID)
 	if err != nil {
-		return fmt.Errorf("resolve project status results for request %q: %w", request.ID, err)
+		return nil, fmt.Errorf("resolve project status results for request %q: %w", request.ID, err)
 	}
 
 	if err := validateProjectStatusResults(request, results); err != nil {
-		return err
+		return nil, err
 	}
+	return results, nil
+}
+
+func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) error {
 	for _, result := range results {
 		fact, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:       request.URI,
@@ -279,10 +285,8 @@ func (c *Controller) persistValidationFactRecordedLog(
 	return nil
 }
 
-// applyFactToDerivedCaches moves the two caches that follow the persisted fact: a
-// green fact advances the queue's bookmark and, when this request ends up holding
-// it, promotes the commit. A broken fact moves neither, and instead reports how
-// long the break it names went undetected.
+// applyFactToDerivedCaches promotes a finalized green fact only while its request
+// owns the build baseline. Build completion owns the baseline itself.
 func (c *Controller) applyFactToDerivedCaches(
 	ctx context.Context,
 	store storage.Storage,
@@ -301,32 +305,29 @@ func (c *Controller) applyFactToDerivedCaches(
 		return nil
 	}
 
-	holdsBookmark, err := c.advanceLastGreen(ctx, store, request)
+	queue, err := store.GetQueueStore().Get(ctx, request.Queue)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
-	if !holdsBookmark {
-		// A later green commit already holds the bookmark, so it also owns the
-		// promotion ref: promoting this older commit would move the ref backwards.
+	if queue.LastGreenRequestID != "" {
+		if _, err := entity.CompareRequestID(request.ID, queue.LastGreenRequestID); err != nil {
+			return err
+		}
+	}
+	if queue.LastGreenRequestID != request.ID || queue.LastGreenURI != request.URI {
 		return nil
 	}
+	c.emitLastGreenTimestamp(ctx, request)
 	return c.promote(ctx, request)
 }
 
-// recordFact writes the request's outcome as an immutable whole-repository fact and
-// returns the fact that is actually stored, which is not always the one just built:
-// facts are first-writer-wins, so an identity already claimed by this same request —
-// a redelivery after the write but before the bookmark advanced — yields the stored
-// fact instead. Every decision downstream reads that stored fact rather than the
-// request, so a redelivery cannot reach a different verdict than the original. The
-// second return reports whether this call is the one that wrote the fact, which is
-// how a caller tells the original delivery from a redelivery.
-func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, bool, error) {
+// recordFact adopts the stored fact on replay; immutable facts remain authoritative.
+func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) (entity.ValidationFact, bool, error) {
 	return c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
 		URI:       request.URI,
 		Project:   wholeRepositoryProject,
-		Degree:    degreeFor(request.State),
+		Degree:    degreeFor(request.State, results),
 		RequestID: request.ID,
 		CreatedAt: time.Now().UnixMilli(),
 	})
@@ -438,67 +439,14 @@ func (c *Controller) failureDetectionUnobserved(ctx context.Context, request ent
 	)
 }
 
-// degreeFor maps a request's build outcome onto a whole-repository degree. Only the
-// endpoints are produced: a whole-repository build is either clean or it is not, and
-// intermediate degrees need per-project attribution that this stage does not do.
-func degreeFor(state entity.RequestState) float64 {
+func degreeFor(state entity.RequestState, results []projectstatus.Result) float64 {
 	if state == entity.RequestStateSucceeded {
 		return entity.DegreeGreen
 	}
-	return entity.DegreeBroken
-}
-
-// advanceLastGreen points the queue's bookmark at request, retrying on version
-// conflicts, and reports whether request holds the bookmark afterwards. The
-// bookmark only moves forward: an older candidate is skipped without a write and
-// does not hold it, while a redelivery of the request that already set it holds it
-// without a write, so the promotion that follows is retried.
-//
-// The bookmark is a cache of "newest green URI" derived from the facts, so it is
-// advanced only after the green fact is durable. Losing the advance to a crash is
-// recoverable — the redelivery reloads the same fact and retries — whereas a
-// bookmark with no fact behind it would point at greenness nothing recorded.
-func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) (bool, error) {
-	queueStore := store.GetQueueStore()
-
-	for {
-		queueRow, err := queueStore.Get(ctx, request.Queue)
-		if err != nil {
-			return false, fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
-		}
-
-		cmp, err := compareToBookmark(request.Queue, request.ID, queueRow.LastGreenRequestID)
-		if err != nil {
-			// Non-retryable: re-parsing the same ids cannot start succeeding.
-			return false, err
-		}
-		if cmp < 0 {
-			return false, nil
-		}
-		if cmp == 0 {
-			return true, nil
-		}
-
-		updated := queueRow
-		updated.LastGreenURI = request.URI
-		updated.LastGreenRequestID = request.ID
-		newVersion := queueRow.Version + 1
-		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
-				continue
-			}
-			return false, fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
-		}
-
-		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("advanced last green bookmark",
-			"queue", request.Queue,
-			"request_id", request.ID,
-			"last_green_uri", request.URI,
-		)
-		c.emitLastGreenTimestamp(ctx, request)
-		return true, nil
+	if len(results) > 0 {
+		return entity.DegreePartial
 	}
+	return entity.DegreeBroken
 }
 
 // emitLastGreenTimestamp emits the creation time of the change the bookmark now
@@ -623,20 +571,6 @@ func (c *Controller) publishHookEvent(ctx context.Context, request entity.Reques
 		"event_id", event.GetId(),
 	)
 	return nil
-}
-
-// compareToBookmark orders candidate against the request id currently holding the
-// bookmark, by ingest order, using the sign convention of entity.CompareRequestID.
-// An empty current means the bookmark has never been set, so any candidate is newer.
-func compareToBookmark(queue, candidate, current string) (int, error) {
-	if current == "" {
-		return 1, nil
-	}
-	cmp, err := entity.CompareRequestID(candidate, current)
-	if err != nil {
-		return 0, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
-	}
-	return cmp, nil
 }
 
 // loadRequest loads the request by id.
