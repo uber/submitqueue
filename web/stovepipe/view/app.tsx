@@ -7,7 +7,8 @@ import { HeadingLarge, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/
 import { RefreshControls } from "./refresh.js";
 import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
-import { RequestList, RequestDetails, History } from "./pages.js";
+import { RequestDetails, History } from "./pages.js";
+import { QueueRequests } from "./queue.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
 
 function Page({ model }: { model: StovepipePageModel }) {
@@ -59,7 +60,7 @@ function Page({ model }: { model: StovepipePageModel }) {
         )}
         {model.kind === "queue" ? (
           <Section result={model.requests}>
-            {(data) => data && <RequestList {...data} />}
+            {(data) => data && <QueueRequests initial={data} routeKey={model.key} />}
           </Section>
         ) : (
           <Section result={model.history}>

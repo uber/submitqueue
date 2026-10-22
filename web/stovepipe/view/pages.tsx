@@ -20,10 +20,8 @@ function RequestTimestamp({ value }: { value: string }) {
 
 export function RequestList({
   requests,
-  nextHref,
 }: {
   requests: RequestSummaryModel[];
-  nextHref: string | null;
 }) {
   if (!requests.length)
     return <ParagraphSmall color="contentSecondary">No retained requests on this queue.</ParagraphSmall>;
@@ -63,11 +61,6 @@ export function RequestList({
           </StyledTableBodyRow>
         ))}
       </Table>
-      {nextHref && (
-        <ParagraphSmall>
-          <Link href={nextHref}>Older requests →</Link>
-        </ParagraphSmall>
-      )}
     </>
   );
 }
