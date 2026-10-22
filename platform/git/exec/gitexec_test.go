@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -227,4 +228,36 @@ func TestCommandFailure(t *testing.T) {
 		require.ErrorAs(t, err, &commandErr)
 		assert.Empty(t, commandErr.Operation())
 	})
+}
+
+// A git that runs another git by name has to get itself, not whichever git is
+// first on the caller's PATH.
+func TestCommand_RunsHelpersFromGitsOwnDirectory(t *testing.T) {
+	dir := t.TempDir()
+	fakeGit := filepath.Join(dir, "git")
+	require.NoError(t, os.WriteFile(fakeGit, []byte("#!/bin/sh\ncommand -v git\n"), 0o755))
+
+	t.Setenv("PATH", t.TempDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := Output(context.Background(), fakeGit, "")
+	require.NoError(t, err)
+	assert.Equal(t, fakeGit, got)
+}
+
+func TestPathWithGitFirst(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	tests := []struct {
+		name string
+		git  string
+		want string
+	}{
+		{name: "an absolute git goes first", git: "/opt/pinned/git", want: "/opt/pinned:/usr/bin:/bin"},
+		{name: "a bare name is found through PATH already", git: "git", want: "/usr/bin:/bin"},
+		{name: "a relative path is left alone", git: "../pinned/git", want: "/usr/bin:/bin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, PathWithGitFirst(tt.git))
+		})
+	}
 }
