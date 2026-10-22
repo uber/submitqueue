@@ -47,6 +47,7 @@ go_test(
         "//platform/base/change/git:go_default_library",
         "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
+        "//service/submitqueue/demo:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

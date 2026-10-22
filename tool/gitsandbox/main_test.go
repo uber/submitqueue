@@ -167,14 +167,14 @@ func TestProvision_AppliesSettingsToAnExistingSandbox(t *testing.T) {
 }
 
 func TestRun_RequiresASandboxDirectory(t *testing.T) {
-	err := run(context.Background(), gitexectest.Git(t), "", "", "sandbox", "main")
+	err := run(context.Background(), gitexectest.Git(t), "", "", "sandbox", "main", false)
 	require.Error(t, err)
 }
 
 func TestRun_CreatesTheCheckoutDirectory(t *testing.T) {
 	checkout := filepath.Join(t.TempDir(), "checkouts")
 
-	err := run(context.Background(), gitexectest.Git(t), t.TempDir(), checkout, "sandbox", "main")
+	err := run(context.Background(), gitexectest.Git(t), t.TempDir(), checkout, "sandbox", "main", false)
 	require.NoError(t, err)
 
 	info, err := os.Stat(checkout)
@@ -214,4 +214,38 @@ func TestProvision_SucceedsAfterAFailedAttempt(t *testing.T) {
 
 	_, err = gitexec.Output(ctx, git, bare, "rev-parse", "refs/heads/main")
 	assert.NoError(t, err)
+}
+
+func TestAddTargets(t *testing.T) {
+	git := gitexectest.Git(t)
+	ctx := context.Background()
+	bare := filepath.Join(t.TempDir(), "sandbox.git")
+	_, err := provision(ctx, git, bare, "main")
+	require.NoError(t, err)
+	seeded, err := gitexec.Output(ctx, git, bare, "rev-parse", "refs/heads/main")
+	require.NoError(t, err)
+
+	require.NoError(t, addTargets(ctx, git, bare, "main"))
+	added, err := gitexec.Output(ctx, git, bare, "rev-parse", "refs/heads/main")
+	require.NoError(t, err)
+
+	parent, err := gitexec.Output(ctx, git, bare, "rev-parse", "refs/heads/main^")
+	require.NoError(t, err)
+	assert.Equal(t, seeded, parent, "the graph is committed on top of the existing history")
+
+	for file, want := range map[string]string{
+		"demo/00/TARGET": "",
+		"demo/01/TARGET": "",
+		"demo/04/TARGET": "//demo/00\n",
+		"demo/09/TARGET": "//demo/01\n",
+	} {
+		got, err := gitexec.Output(ctx, git, bare, "show", "refs/heads/main:"+file)
+		require.NoError(t, err, file)
+		assert.Equal(t, strings.TrimSpace(want), got, file)
+	}
+
+	require.NoError(t, addTargets(ctx, git, bare, "main"))
+	again, err := gitexec.Output(ctx, git, bare, "rev-parse", "refs/heads/main")
+	require.NoError(t, err)
+	assert.Equal(t, added, again, "a sandbox that already has the graph is left as it is")
 }

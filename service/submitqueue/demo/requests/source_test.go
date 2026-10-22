@@ -28,6 +28,7 @@ import (
 	gitchange "github.com/uber/submitqueue/platform/base/change/git"
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
+	"github.com/uber/submitqueue/service/submitqueue/demo"
 )
 
 // quietSpec is a changeSpec whose progress notes go nowhere, for tests that
@@ -244,4 +245,41 @@ func TestNewChangeSource_GitRejectsAMissingSandbox(t *testing.T) {
 		sandboxDir: filepath.Join(t.TempDir(), "nothing-here"),
 	})
 	require.Error(t, err, "a missing sandbox must say so rather than fail later mid-run")
+}
+
+func TestCheckFoldersHaveTargets(t *testing.T) {
+	git := gitexectest.Git(t)
+	ctx := context.Background()
+	plain := sandbox(t, git)
+	withTargets := sandbox(t, git)
+	seed := t.TempDir()
+	require.NoError(t, gitexec.Run(ctx, git, "", "clone", withTargets, seed))
+	require.NoError(t, gitexec.Run(ctx, git, seed, "config", "user.name", "Test"))
+	require.NoError(t, gitexec.Run(ctx, git, seed, "config", "user.email", "test@example.invalid"))
+	require.NoError(t, os.MkdirAll(filepath.Join(seed, "demo", "00"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(seed, targetsMarker), nil, 0o644))
+	require.NoError(t, gitexec.Run(ctx, git, seed, "add", "."))
+	require.NoError(t, gitexec.Run(ctx, git, seed, "commit", "-m", "targets"))
+	require.NoError(t, gitexec.Run(ctx, git, seed, "push", "origin", "main"))
+
+	tests := []struct {
+		name    string
+		bare    string
+		folders int
+		wantErr bool
+	}{
+		{name: "targets cover the folders", bare: withTargets, folders: demo.MaxShardDirs},
+		{name: "targets do not cover the folders", bare: withTargets, folders: demo.MaxShardDirs + 1, wantErr: true},
+		{name: "no targets, any folder count", bare: plain, folders: 50},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkFoldersHaveTargets(ctx, git, tt.bare, "main", tt.folders)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }

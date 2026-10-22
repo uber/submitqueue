@@ -23,7 +23,8 @@ import (
 // Five to ten shards produce both shared-directory and independent changes.
 const (
 	minShardDirs = 5
-	maxShardDirs = 10
+	// MaxShardDirs is also how many shard folders have TARGET files in the Tango demo sandbox.
+	MaxShardDirs = 10
 )
 
 func resolveFolders(tag string, configured int) int {
@@ -31,7 +32,7 @@ func resolveFolders(tag string, configured int) int {
 		return configured
 	}
 	sum := sha256.Sum256([]byte("folders#" + tag))
-	return minShardDirs + int(sum[0])%(maxShardDirs-minShardDirs+1)
+	return minShardDirs + int(sum[0])%(MaxShardDirs-minShardDirs+1)
 }
 
 func changeShard(tag string, folders, change int) string {

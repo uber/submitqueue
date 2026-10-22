@@ -51,15 +51,16 @@ func main() {
 	checkoutDir := flag.String("checkout-dir", "", "directory Runway provisions its working trees in")
 	repoName := flag.String("repo-name", "sandbox", "bare repository name, without the .git suffix")
 	branch := flag.String("branch", "main", "target branch created by the seed commit")
+	targets := flag.Bool("targets", false, "commit the demo's TARGET files on the target branch if they are not there yet")
 	flag.Parse()
 
-	if err := run(context.Background(), *git, *sandboxDir, *checkoutDir, *repoName, *branch); err != nil {
+	if err := run(context.Background(), *git, *sandboxDir, *checkoutDir, *repoName, *branch, *targets); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, git, sandboxDir, checkoutDir, repoName, branch string) error {
+func run(ctx context.Context, git, sandboxDir, checkoutDir, repoName, branch string, targets bool) error {
 	if sandboxDir == "" {
 		return fmt.Errorf("-sandbox-dir is required")
 	}
@@ -73,6 +74,12 @@ func run(ctx context.Context, git, sandboxDir, checkoutDir, repoName, branch str
 	created, err := provision(ctx, resolved, bare, branch)
 	if err != nil {
 		return err
+	}
+
+	if targets {
+		if err := addTargets(ctx, resolved, bare, branch); err != nil {
+			return err
+		}
 	}
 
 	// Docker creates a missing bind-mount source itself, owned by root, which
@@ -164,9 +171,45 @@ func configure(ctx context.Context, git, bare string) error {
 	return nil
 }
 
-// seed commits an initial file on the target branch, through a throwaway clone
-// because a bare repository has no working tree to commit from.
+// seed commits an initial file on the target branch.
 func seed(ctx context.Context, git, bare, branch string) error {
+	return commitFiles(ctx, git, bare, branch, "seed the sandbox", map[string]string{seedFile: seedContents})
+}
+
+// targetsMarker is the file whose presence on the target branch means the
+// targets have already been committed.
+const targetsMarker = "demo/00/TARGET"
+
+// targetFiles is the target graph the Tango demo runs against: one target per
+// shard folder the demo workload can create (demo.MaxShardDirs of them), as TARGET files in the form the
+// fake Tango server reads. demo/00 and demo/01 are libraries that the other
+// folders depend on, so a change to a library conflicts with a change to any
+// folder built on it, though their paths never overlap.
+func targetFiles() map[string]string {
+	files := make(map[string]string, 10)
+	for shard := 0; shard < 10; shard++ {
+		deps := ""
+		if shard >= 2 {
+			deps = fmt.Sprintf("//demo/%02d\n", shard%2)
+		}
+		files[fmt.Sprintf("demo/%02d/TARGET", shard)] = deps
+	}
+	return files
+}
+
+// addTargets commits the demo's target graph on top of the target branch unless
+// it is already there, so an existing sandbox keeps its history and gains the
+// graph without being thrown away.
+func addTargets(ctx context.Context, git, bare, branch string) error {
+	if err := gitexec.Run(ctx, git, bare, "cat-file", "-e", branch+":"+targetsMarker); err == nil {
+		return nil
+	}
+	return commitFiles(ctx, git, bare, branch, "add the demo target graph", targetFiles())
+}
+
+// commitFiles commits files on the target branch, through a throwaway clone
+// because a bare repository has no working tree to commit from.
+func commitFiles(ctx context.Context, git, bare, branch, message string, files map[string]string) error {
 	work, err := os.MkdirTemp("", "sq-sandbox-seed-")
 	if err != nil {
 		return fmt.Errorf("could not create a working clone: %w", err)
@@ -188,13 +231,19 @@ func seed(ctx context.Context, git, bare, branch string) error {
 		}
 	}
 
-	if err := os.WriteFile(filepath.Join(work, seedFile), []byte(seedContents), 0o644); err != nil {
-		return fmt.Errorf("could not write the seed file: %w", err)
+	for name, contents := range files {
+		full := filepath.Join(work, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return fmt.Errorf("could not create the directory for %s: %w", name, err)
+		}
+		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+			return fmt.Errorf("could not write %s: %w", name, err)
+		}
 	}
-	if err := gitexec.Run(ctx, git, work, "add", seedFile); err != nil {
+	if err := gitexec.Run(ctx, git, work, "add", "-A"); err != nil {
 		return err
 	}
-	if err := gitexec.Run(ctx, git, work, "commit", "-m", "seed the sandbox"); err != nil {
+	if err := gitexec.Run(ctx, git, work, "commit", "-m", message); err != nil {
 		return err
 	}
 	return gitexec.Run(ctx, git, work, "push", "origin", branch)

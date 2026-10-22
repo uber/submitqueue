@@ -1,0 +1,43 @@
+# Extension profiles for the "git" example with the Tango conflict analyzer:
+# `make local-submitqueue-start PROVIDER=git ANALYZER=tango`.
+#
+# The same repository, change provider and build runner as profiles.yaml; the
+# only difference is how demo-queue decides that two batches conflict. Instead
+# of comparing paths, it asks a Tango server which build targets each batch
+# affects, so batches conflict when their targets overlap. The server here is the
+# fake in service/tangofake, which reads the TARGET files that tool/gitsandbox
+# commits into the sandbox.
+
+tango:
+  address: tangofake-service:8080
+  # Shared by every queue's analyzer.
+  signatureCacheBytes: 67108864
+
+defaults:
+  changeProvider: {type: fake}
+  buildRunner: {type: fake}
+  analyzer: {type: all}
+  # Same example factors as ../fake/profiles.yaml.
+  scorer:
+    type: evidence
+    factors:
+      pathPassed: 10
+      pathFailed: 0.3
+      landing: 12
+      cancelling: 0.1
+    base:
+      type: heuristic
+
+queues:
+  - name: demo-queue
+    changeProvider:
+      type: git
+      git:
+        remoteUrl: file:///srv/git/sandbox.git
+        target: main
+        repoPath: /var/submitqueue/changerepos/demo
+    analyzer:
+      type: tango
+      tango:
+        # The fake serves one repository and ignores the remote.
+        remote: sandbox
