@@ -107,6 +107,20 @@ func (mr *MockStorageMockRecorder) GetBuildStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBuildStore", reflect.TypeOf((*MockStorage)(nil).GetBuildStore))
 }
 
+// GetFixStore mocks base method.
+func (m *MockStorage) GetFixStore() storage.FixStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetFixStore")
+	ret0, _ := ret[0].(storage.FixStore)
+	return ret0
+}
+
+// GetFixStore indicates an expected call of GetFixStore.
+func (mr *MockStorageMockRecorder) GetFixStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFixStore", reflect.TypeOf((*MockStorage)(nil).GetFixStore))
+}
+
 // GetOpenIssueStore mocks base method.
 func (m *MockStorage) GetOpenIssueStore() storage.OpenIssueStore {
 	m.ctrl.T.Helper()

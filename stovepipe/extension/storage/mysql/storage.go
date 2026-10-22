@@ -58,6 +58,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		buildIssueStore:        NewBuildIssueStore(s.db, queueScope.SubScope("build_issue_store"), queueName),
 		openIssueStore:         NewOpenIssueStore(s.db, queueScope.SubScope("open_issue_store"), queueName),
 		validationFactStore:    NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
+		fixStore:               NewFixStore(s.db, queueScope.SubScope("fix_store"), queueName),
 	}, nil
 }
 
@@ -80,6 +81,7 @@ type mysqlStorage struct {
 	buildIssueStore        storage.BuildIssueStore
 	openIssueStore         storage.OpenIssueStore
 	validationFactStore    storage.ValidationFactStore
+	fixStore               storage.FixStore
 }
 
 // Verify mysqlStorage implements the queue-scoped aggregate at compile time.
@@ -123,6 +125,10 @@ func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 // GetValidationFactStore returns the MySQL-backed ValidationFactStore.
 func (f *mysqlStorage) GetValidationFactStore() storage.ValidationFactStore {
 	return f.validationFactStore
+}
+
+func (f *mysqlStorage) GetFixStore() storage.FixStore {
+	return f.fixStore
 }
 
 func (f *mysqlStorage) GetQueueSummaryStore() storage.QueueSummaryStore { return f.queueSummaryStore }
