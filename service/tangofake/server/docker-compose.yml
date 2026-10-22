@@ -1,0 +1,21 @@
+# Docker Compose for the fake Tango server on its own.
+#
+# IMPORTANT: Before running compose, build the Linux binary:
+#   make build-tangofake-linux
+#
+# Quick start, pointing it at a git repository that holds TARGET files:
+#   SQ_TANGOFAKE_REPO_DIR=/path/to/repo REPO_ROOT=$PWD \
+#     docker compose -f service/tangofake/server/docker-compose.yml up --build
+
+services:
+  tangofake-service:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue}-tangofake-service:latest
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/tangofake/server/Dockerfile
+    user: "${SQ_CONTAINER_USER:-0:0}"
+    command: ["/app/tangofake", "-repo", "/var/tangofake/repo", "-address", "0.0.0.0:8080"]
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    volumes:
+      - ${SQ_TANGOFAKE_REPO_DIR:?set SQ_TANGOFAKE_REPO_DIR to the repository holding the TARGET files}:/var/tangofake/repo:ro
