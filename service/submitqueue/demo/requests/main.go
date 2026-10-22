@@ -221,7 +221,11 @@ func newChangeSource(ctx context.Context, cfg config) (changeSource, func(), err
 		if err != nil {
 			return nil, nil, err
 		}
-		src, err := newGitSource(ctx, git, filepath.Join(cfg.sandboxDir, sandboxRepo+".git"), sandboxRepo)
+		bare := filepath.Join(cfg.sandboxDir, sandboxRepo+".git")
+		if err := checkFoldersHaveTargets(ctx, git, bare, cfg.base, cfg.folders); err != nil {
+			return nil, nil, err
+		}
+		src, err := newGitSource(ctx, git, bare, sandboxRepo)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -233,6 +237,22 @@ func newChangeSource(ctx context.Context, cfg config) (changeSource, func(), err
 	}
 	// validate has already rejected anything else.
 	return nil, nil, fmt.Errorf("unknown provider %q", cfg.provider)
+}
+
+// targetsMarker is the file tool/gitsandbox -targets commits first; it is on
+// the base branch only when the stack runs the Tango analyzer.
+const targetsMarker = "demo/00/TARGET"
+
+// checkFoldersHaveTargets rejects a folder count the sandbox's targets do not
+// cover, since changes in a folder without a target never conflict.
+func checkFoldersHaveTargets(ctx context.Context, git, bare, base string, folders int) error {
+	if folders <= demo.MaxShardDirs {
+		return nil
+	}
+	if err := gitexec.Run(ctx, git, bare, "cat-file", "-e", base+":"+targetsMarker); err != nil {
+		return nil
+	}
+	return fmt.Errorf("-folders %d is above %d, the folders with targets in this sandbox", folders, demo.MaxShardDirs)
 }
 
 // sandboxRepo is the repository the git provider's sandbox holds, matching what
