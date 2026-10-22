@@ -31,7 +31,7 @@ import (
 	"go.uber.org/yarpc/transport/grpc"
 
 	"github.com/uber/submitqueue/platform/extension/gitworkspace/local"
-	"github.com/uber/submitqueue/service/submitqueue/demo/tangofake"
+	"github.com/uber/submitqueue/service/tangofake"
 )
 
 func main() {

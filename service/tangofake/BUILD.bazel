@@ -3,9 +3,9 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["tangofake.go"],
-    importpath = "github.com/uber/submitqueue/service/submitqueue/demo/tangofake",
+    importpath = "github.com/uber/submitqueue/service/tangofake",
     visibility = [
-        "//service/submitqueue:__subpackages__",
+        "//service/tangofake:__subpackages__",
         "//test:__subpackages__",
     ],
     deps = [
