@@ -80,7 +80,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &Record{}} {
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &FixRequest{}, &Record{}} {
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -94,6 +94,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 		TopicKeyBuildSignal,
 		TopicKeyBuildAnalysis,
 		TopicKeyIssueTrack,
+		TopicKeyFix,
 		TopicKeyRecord,
 	}
 
@@ -145,4 +146,16 @@ func TestIssueTrackToleratesUnknownFields(t *testing.T) {
 	got := &IssueTrack{}
 	require.NoError(t, Unmarshal([]byte(`{"build_id":"build/42","queue_name":"validation/main","finalize":true,"future_field":42}`), got))
 	assert.True(t, proto.Equal(&IssueTrack{BuildId: "build/42", QueueName: "validation/main", Finalize: true}, got))
+}
+
+func TestFixRequestRoundTrip(t *testing.T) {
+	request := &FixRequest{Id: "Build/42 ", QueueName: "validation/main"}
+	data, err := Marshal(request)
+	require.NoError(t, err)
+
+	got := &FixRequest{}
+	require.NoError(t, Unmarshal(data, got))
+
+	assert.True(t, proto.Equal(request, got))
+	assert.JSONEq(t, `{"id":"Build/42 ","queue_name":"validation/main"}`, string(data))
 }
