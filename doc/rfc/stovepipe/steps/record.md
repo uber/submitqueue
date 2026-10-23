@@ -301,7 +301,7 @@ Neither fits `ValidationFactStore`. Facts are looked up by exact identity and UR
 
 ### Completion across independent project builds
 
-`record` retains `project_facts_recorded` after all resolved project facts and ordering mappings are durable, including an empty batch, and before publishing its terminal hook. The project status APIs use this event as their completion marker. If a future pipeline fans a request out into independent project builds, completion must cover that entire planned set before emitting the marker. Request terminality alone is insufficient because it precedes project recording.
+`record` retains `project_facts_recorded` after all resolved project facts and ordering mappings are durable, including an empty batch, and before publishing its terminal hook. The materializer projects its original timestamp into the request summary before the stage continues, and project status APIs read completion from that summary. A projection failure fails the delivery; replay repairs the summary before the terminal hook. If a future pipeline fans a request out into independent project builds, completion must cover that entire planned set before emitting the marker. Request terminality alone is insufficient because it precedes project recording.
 
 ### Supporting re-run of the same URI
 

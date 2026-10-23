@@ -206,6 +206,8 @@ For a Request transition, the controller:
 
 Request creation, Build changes, and fact creation use the same source-write, log-write, dependent-publish ordering. A request-log outage can leave a source update visible, but it cannot allow dependent processing to move past an unrecorded transition.
 
+The `project_facts_recorded` event also projects its retained timestamp into `RequestSummary.ProjectResultsCompletedAtMs`. This immutable fact is independent of lifecycle state and request version; state updates preserve it, and optimistic locking retries concurrent projection updates. Completion requires an existing lifecycle summary rather than fabricating state from the event. A failed projection fails persistence, and redelivery reconciles the retained occurrence before retrying the summary update. Other non-state events do not update the summary.
+
 ### Controller ownership
 
 | Owner | Source operation and retained log | Retry repair |

@@ -41,7 +41,7 @@ Repository and project breakage degrees are independent projections. A degree is
 | Request identity, baseline, and lifecycle | Durable request summary |
 | Repository breakage degree | Repository validation fact |
 | Project results | Implementation-defined project-result records |
-| Project completion and pagination | Project-result completion record and cursor |
+| Project completion and pagination | Completion timestamp in the durable request summary and cursor |
 
 ## Request Selection
 
@@ -72,7 +72,7 @@ Callers use `project_results_complete`, rather than the presence or absence of a
 
 ## Implementation
 
-Both endpoints return durable lifecycle summaries, the whole-repository fact when present, and recorded facts for requested projects in paginated request order, or recorded project results by descending breakage degree then ascending project ID when none are requested. `project_results_complete` is true when the request’s durable `project_facts_recorded` event exists. The record stage writes that event after all project facts and ordering mappings, including a successfully resolved empty set, and before publishing its terminal hook. The API reads completion before loading facts and includes its timestamp in `updated_at_ms`. Missing completion remains false, including for older requests without the event. Missing facts are omitted; an explicitly recorded zero degree remains present. `updated_at_ms` is the maximum timestamp of the summary and the facts represented on the page.
+Both endpoints return durable lifecycle summaries, the whole-repository fact when present, and recorded facts for requested projects in paginated request order, or recorded project results by descending breakage degree then ascending project ID when none are requested. `project_results_complete` is true when the durable request summary has a positive `project_results_completed_at_ms`, projected from the retained `project_facts_recorded` event. The record stage writes that event after all project facts and ordering mappings, including a successfully resolved empty set, and before publishing its terminal hook. The materializer persists the completion timestamp before the record stage continues, without changing lifecycle state or request version. Duplicate delivery repairs a failed projection using the original event timestamp, and subsequent state projections preserve completion. The API reads the summary before loading facts and includes its completion timestamp in `updated_at_ms`, without an additional event lookup. Missing completion remains false. Existing events require the [summary backfill](../../../stovepipe/extension/storage/mysql/migrations/README.md); older empty batches without an event remain incomplete. Missing facts are omitted; an explicitly recorded zero degree remains present. `updated_at_ms` is the maximum timestamp of the summary and the facts represented on the page.
 
 A dedicated ordering mapping makes listing a bounded primary-key range read, not a sort over all facts. Listing reads at most `page_size + 1` ordering mappings and hydrates only the returned facts, plus the cursor fact on continuations. The continuation token identifies the last project; its immutable fact supplies the degree needed to resume this ordering.
 

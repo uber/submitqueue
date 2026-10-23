@@ -383,3 +383,20 @@ func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
 	require.True(t, ok)
 	assert.EqualValues(t, 1, counter.Value())
 }
+
+func TestMaterializerRetainsOtherEventsWithoutProjectingSummary(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventBuildTriggered,
+		entity.RequestEventBuildFinished,
+		entity.RequestEventValidationFactRecorded,
+		entity.RequestEventRecordAbandoned,
+		entity.RequestEventBuildAnalysisAbandoned,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, _, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", nil)
+			logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+		})
+	}
+}

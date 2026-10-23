@@ -28,7 +28,6 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -144,21 +143,8 @@ func (c *projectStatusController) GetProjectStatus(ctx context.Context, req enti
 		return entity.GetProjectStatusResult{}, &ProjectStatusConsistencyError{message: "project status selector disagrees with stored request summary"}
 	}
 	result.RequestSummary = requestSummary
-	result.UpdatedAtMs = requestSummary.StateTimestampMs
-	// Completion must be observed before facts so a concurrent writer cannot complete a partial page.
-	completionID := requestlog.RequestEventLogID(entity.RequestEventProjectFactsRecorded, "all")
-	completion, err := store.GetRequestLogStore().Get(ctx, requestID, completionID)
-	if err != nil {
-		if !storage.IsNotFound(err) {
-			return entity.GetProjectStatusResult{}, fmt.Errorf("GetProjectStatus failed to load project completion for request %q: %w", requestID, err)
-		}
-	} else {
-		if completion.ID != completionID || completion.Queue != req.Queue || completion.RequestID != requestID || completion.Event != entity.RequestEventProjectFactsRecorded || completion.TimestampMs <= 0 {
-			return entity.GetProjectStatusResult{}, &ProjectStatusConsistencyError{message: "project completion disagrees with stored request"}
-		}
-		result.ProjectResultsComplete = true
-		result.UpdatedAtMs = max(result.UpdatedAtMs, completion.TimestampMs)
-	}
+	result.ProjectResultsComplete = requestSummary.ProjectResultsCompletedAtMs > 0
+	result.UpdatedAtMs = max(requestSummary.StateTimestampMs, requestSummary.ProjectResultsCompletedAtMs)
 	factStore := store.GetValidationFactStore()
 	fact, err := factStore.Get(ctx, requestSummary.URI, "")
 	if err != nil {

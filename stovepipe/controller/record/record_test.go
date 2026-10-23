@@ -485,7 +485,7 @@ func TestRecordProjectFactsEmptyCompletion(t *testing.T) {
 			if tt.resolveErr == nil {
 				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 					func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-						assert.Equal(t, requestlog.RequestEventLogID(entity.RequestEventProjectFactsRecorded, "all"), log.ID)
+						assert.Equal(t, "event/project_facts_recorded/all", log.ID)
 						assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
 						return tt.writeErr
 					})

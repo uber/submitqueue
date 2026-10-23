@@ -95,17 +95,12 @@ func NewRequestEventLog(
 	metadata map[string]string,
 ) entity.RequestLog {
 	return entity.RequestLog{
-		ID:        RequestEventLogID(event, occurrence),
+		ID:        publish.IntentID(_occurrenceKindEvent, string(event), occurrence),
 		Queue:     request.Queue,
 		RequestID: request.ID,
 		Event:     event,
 		Metadata:  metadata,
 	}
-}
-
-// RequestEventLogID returns the stable identity of an event occurrence within a request.
-func RequestEventLogID(event entity.RequestEvent, occurrence string) string {
-	return publish.IntentID(_occurrenceKindEvent, string(event), occurrence)
 }
 
 func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, log entity.RequestLog) error {
@@ -122,7 +117,7 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return err
 	}
 
-	if retained.State == entity.RequestStateUnknown {
+	if retained.State == entity.RequestStateUnknown && retained.Event != entity.RequestEventProjectFactsRecorded {
 		return nil
 	}
 	if err := materializeRequestProjections(ctx, stores, retained); err != nil {
