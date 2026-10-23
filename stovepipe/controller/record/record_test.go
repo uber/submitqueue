@@ -1202,6 +1202,11 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 					facts[fact.Project] = fact
 					return nil
 				}).Times(len(tt.results) + 1)
+			for _, result := range tt.results {
+				m.indexStore.EXPECT().Create(gomock.Any(), entity.ProjectFactByDegree{
+					URI: testURI, Degree: result.Degree, Project: result.Project,
+				}).Return(nil)
+			}
 			if tt.degree == entity.DegreeGreen {
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)
@@ -1253,6 +1258,9 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 		assert.Equal(t, entity.DegreeBroken, fact.Degree)
 		return nil
 	})
+	m.indexStore.EXPECT().Create(gomock.Any(), entity.ProjectFactByDegree{
+		URI: testURI, Degree: entity.DegreeBroken, Project: "a",
+	}).Return(nil)
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Len(t, m.hooks.events, 1)
 }
