@@ -104,11 +104,11 @@ export function RequestList({ model, basePath, empty, changeLinks, changeLabels 
   return <section className="sq-request-list">
     <Block display="flex" justifyContent="space-between" alignItems="center" flexWrap gridGap="scale600" marginBottom="scale600">
       <Block as="label" width="320px" maxWidth="100%" font="LabelXSmall" color="contentSecondary">Find in displayed requests<Input type="search" size="compact" value={search} onChange={event => setSearch(event.currentTarget.value)} /></Block>
-      <LabelXSmall as="span" color="contentSecondary">Displayed page · UTC</LabelXSmall>
+      <LabelXSmall as="span" color="contentSecondary">Displayed page</LabelXSmall>
     </Block>
     {model.requests.length === 0 ? <Block paddingTop="scale600" paddingBottom="scale600" color="contentSecondary">{empty ?? "No requests were received in this window."}</Block> :
       requests.length === 0 ? <ParagraphSmall color="contentSecondary">No displayed requests match.</ParagraphSmall> :
-        <Table label={`Requests in ${model.queue}`} headers={["Request ID", "Status", "Changes", "Received · UTC"]}>
+        <Table label={`Requests in ${model.queue}`} headers={["Request ID", "Status", "Changes", "Received"]}>
           {requests.map(request => <StyledTableBodyRow className="sq-request-list__item" key={request.sqid}>
             <StyledTableBodyCell><WebLink href={paths.request(model.queue, request.sqid)}>{request.sqid}</WebLink></StyledTableBodyCell>
             <StyledTableBodyCell><RequestStatus status={request.status} />{request.lastError ? <ParagraphXSmall color="contentNegative">{request.lastError}</ParagraphXSmall> : null}</StyledTableBodyCell>
@@ -152,7 +152,7 @@ export function RequestHistory({ events }: { events: HistoryEventModel[] }) {
           {item.lastError ? <Block as={ParagraphXSmall} gridColumn={["1", "1", "2"]} color="contentNegative" role="alert">{item.lastError}</Block> : null}
         </Block>
       )}</Block>}
-    <ParagraphXSmall color="contentSecondary" aria-live="polite">{shown.length} displayed events · oldest first · UTC</ParagraphXSmall>
+    <ParagraphXSmall color="contentSecondary" aria-live="polite">{shown.length} displayed events · oldest first</ParagraphXSmall>
   </section>;
 }
 
@@ -225,7 +225,7 @@ export function RequestDetail({ model, view = "summary", basePath, backHref, sum
     {view === "history" ? model.historyError ? <ErrorState error={model.historyError} /> : <RequestHistory events={model.history} /> :
       <Block display="grid" gridTemplateColumns={["minmax(0, 1fr)", "minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale700"><Block as="dl" margin="0" aria-label="Request details">
         <Fact label="Queue">{request.queue}</Fact><Fact label="Request ID">{request.sqid}</Fact>
-        <Fact label="Received · UTC"><Timestamp value={request.receivedAtMs} /></Fact>
+        <Fact label="Received"><Timestamp value={request.receivedAtMs} /></Fact>
         <Fact label="Last recorded event">{model.historyError ? "History unavailable" : latest ? <><HistoryValue item={latest} /> <Timestamp value={latest.timestampMs} /></> : "No retained events"}</Fact>
         <Fact label="Last error">{request.lastError ?? "None reported"}</Fact>
       </Block><div><Block as="section" padding="scale600" backgroundColor="backgroundSecondary" marginBottom="scale600"><HeadingSmall as="h2" marginTop="0">Changes</HeadingSmall><RequestChanges request={request} {...(changeLinks ? { links: changeLinks } : {})} {...(changeLabels ? { labels: changeLabels } : {})} /></Block>
@@ -280,7 +280,7 @@ export function ChangeSubmissions({ model, basePath }: ChangeSubmissionsProps) {
     </Block>
     {model.window ? <ParagraphXSmall color="contentSecondary">Receipt window: <Timestamp value={model.window.fromMs} /> — <Timestamp value={model.window.toMs} />. This is not unlimited retained history.</ParagraphXSmall> : <ParagraphXSmall color="contentSecondary">Retained submissions for this exact version</ParagraphXSmall>}
     {model.submissions.length === 0 ? <ParagraphSmall color="contentSecondary">{model.pagination ? "No submissions were found on this page." : "No submissions were found in this scope."}</ParagraphSmall> :
-      <Table label="Change submissions" headers={["Request", "Submitted version", "Received · UTC", "Status"]}>
+      <Table label="Change submissions" headers={["Request", "Submitted version", "Received", "Status"]}>
         {model.submissions.map(item => <StyledTableBodyRow key={item.request.sqid}><StyledTableBodyCell><WebLink href={paths.request(model.queue, item.request.sqid)}>{item.request.sqid}</WebLink></StyledTableBodyCell>
           <StyledTableBodyCell><WebLink aria-label={item.version} title={item.version} href={item.versionHref}>{item.version.length > 20 ? `${item.version.slice(0, 8)}…${item.version.slice(-4)}` : item.version}</WebLink></StyledTableBodyCell><StyledTableBodyCell><Timestamp value={item.request.receivedAtMs} /></StyledTableBodyCell>
           <StyledTableBodyCell><RequestStatus status={item.request.status} />{item.request.lastError ? <ParagraphXSmall color="contentNegative">{item.request.lastError}</ParagraphXSmall> : null}</StyledTableBodyCell></StyledTableBodyRow>)}</Table>}

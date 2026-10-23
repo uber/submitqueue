@@ -15,7 +15,7 @@ test.describe("server-rendered styling", () => {
   test("styles the queue before hydration", async ({ page }) => {
     await page.goto("/web%2Fpagination");
     await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
-    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    await expect(page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
     await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
     await expect(page.getByRole("status")).toContainText("More requests available");
   });
@@ -158,6 +158,77 @@ test("challenges anonymous continuation requests", async () => {
   expect(response.status).toBe(401);
   expect(response.headers.get("www-authenticate")).toContain("Basic");
 });
+test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
+  await page.goto("/web%2Fpagination");
+  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
+  await expect(automatic).not.toBeChecked();
+  const now = new Date();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
+  let refreshRequests = 0;
+  const isRefresh = (request: import("@playwright/test").Request) =>
+    request.headers()["rsc"] === "1" && new URL(request.url()).pathname === new URL(page.url()).pathname;
+  page.on("request", request => { if (isRefresh(request)) refreshRequests++; });
+  await page.clock.fastForward(30_000);
+  expect(refreshRequests).toBe(0);
+  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await page.clock.runFor(9_999);
+  expect(refreshRequests).toBe(0);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const response = page.waitForResponse(response => isRefresh(response.request()));
+    await page.clock.runFor(cycle === 0 ? 1 : 10_000);
+    expect((await response).ok()).toBe(true);
+    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+    await expect(automatic).toBeChecked();
+  }
+  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await expect(automatic).not.toBeChecked();
+  await page.clock.fastForward(30_000);
+  expect(refreshRequests).toBe(2);
+});
+
+test.describe("time zone selection", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+  test("defaults to browser time, switches all timestamps, and retains UTC across navigation", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    page.on("console", message => {
+      if (message.type() === "error" && /hydrat|did not match|Minified React error #(?:418|423|425)/iu.test(message.text())) errors.push(message.text());
+    });
+    const expectTimeZone = async (zone: string) => {
+      await expect.poll(() => page.locator("time[datetime]").evaluateAll((times, timeZone) => {
+        const formatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "long", timeZone });
+        return times.length > 0 && times.every(time => time.textContent === formatter.format(new Date(time.getAttribute("datetime")!)));
+      }, zone)).toBe(true);
+    };
+    const timeZones = page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true });
+    await page.goto("/web%2Fpagination");
+    await expect(timeZones.getByRole("option", { name: "Browser", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("America/Los_Angeles");
+    await timeZones.getByRole("option", { name: "UTC", exact: true }).click();
+    await expectTimeZone("UTC");
+    await page.getByRole("link", { name: "51", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Request 51", exact: true })).toBeVisible();
+    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("UTC");
+    await timeZones.getByRole("option", { name: "Browser", exact: true }).click();
+    await expectTimeZone("America/Los_Angeles");
+    const browser = timeZones.getByRole("option", { name: "Browser", exact: true });
+    await browser.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("UTC");
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await page.reload();
+    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("UTC");
+    await browser.click();
+    await page.reload();
+    await expect(browser).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("America/Los_Angeles");
+    expect(errors).toEqual([]);
+  });
+});
 test("real ingestion, queue selection, cursors, request summaries, history, project results and refresh", async ({
   page,
 }) => {
@@ -182,7 +253,6 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     });
   const requests = page.getByRole("table", { name: "Requests", exact: true });
   const queues = page.getByRole("navigation", { name: "Queues" });
-  const refresh = page.getByRole("button", { name: "Refresh", exact: true });
 
   await test.step("Open the ingested request, read history and refresh", async () => {
     await page.goto("/monorepo%2Fmain");
@@ -205,8 +275,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await expect(
       page.getByRole("region", { name: "Request status" }),
     ).toBeVisible();
-    await refresh.click();
-    await expect(refresh).toBeEnabled();
+    await page.reload();
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   });
   await test.step("Select the populated queue", async () => {
@@ -280,8 +349,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
         has: page.getByRole("cell", { name: "project-02", exact: true }),
       }).getByRole("cell", { name: "Green", exact: true }),
     ).toBeVisible();
-    await refresh.click();
-    await expect(refresh).toBeEnabled();
+    await page.reload();
     await expect(projects.locator("tbody tr")).toHaveCount(50);
     await section.getByRole("link", { name: "Next projects →", exact: true }).click();
     await expect(projects.locator("tbody tr")).toHaveCount(1);

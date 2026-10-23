@@ -26,7 +26,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("refreshes manually until polling is enabled, then stops when disabled", async () => {
+it("refreshes only after polling is enabled, then stops when disabled", async () => {
   const refresh = vi.fn(async () => undefined);
   render(
     <WebNavigationProvider value={{ refresh }}>
@@ -35,19 +35,15 @@ it("refreshes manually until polling is enabled, then stops when disabled", asyn
   );
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(refresh).not.toHaveBeenCalled();
-  await act(async () =>
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" })),
-  );
-  expect(refresh).toHaveBeenCalledWith(null);
-
   fireEvent.click(screen.getByRole("checkbox"));
   await act(async () => vi.advanceTimersByTime(9_999));
-  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(refresh).not.toHaveBeenCalled();
   await act(async () => vi.advanceTimersByTime(1));
-  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(refresh).toHaveBeenCalledWith(null);
+  expect(refresh).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("checkbox"));
   await act(async () => vi.advanceTimersByTime(30_000));
-  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(refresh).toHaveBeenCalledTimes(1);
 });
 
 it("reports a failed refresh and recovers on the next ten-second poll", async () => {
@@ -63,7 +59,7 @@ it("reports a failed refresh and recovers on the next ten-second poll", async ()
   fireEvent.click(screen.getByRole("checkbox"));
   await act(async () => vi.advanceTimersByTime(10_000));
   expect(screen.getByRole("alert")).toHaveTextContent("Refresh failed");
-  expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  expect(screen.getByRole("checkbox")).toBeChecked();
   await act(async () => vi.advanceTimersByTime(10_000));
   expect(refresh).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();

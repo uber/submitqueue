@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { forbidden, notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import { cache } from "react";
-import { SubmitQueueApp } from "@submitqueue/web-submitqueue";
+import { SubmitQueueApp, type SubmitQueueShellProps } from "@submitqueue/web-submitqueue";
 import type { SubmitQueueWeb, SubmitQueueWebRequest, WebSearchParams } from "@submitqueue/web-submitqueue/server";
 import { NextNavigationProvider } from "@submitqueue/web-service-shared/navigation";
 
@@ -12,6 +12,7 @@ export interface NextPageProps {
 }
 
 export interface NextPageOptions {
+  shell?: Omit<SubmitQueueShellProps, "children" | "controls">;
   /** The web UI, or a resolver called per request so configuration is read at runtime rather than build time. */
   web: SubmitQueueWeb | (() => SubmitQueueWeb);
   /**
@@ -61,7 +62,7 @@ export function createNextPage(options: NextPageOptions) {
       case "redirect":
         redirect(result.href);
       case "render":
-        return <NextNavigationProvider><SubmitQueueApp model={result.model} /></NextNavigationProvider>;
+        return <NextNavigationProvider><SubmitQueueApp model={result.model} shell={options.shell} /></NextNavigationProvider>;
     }
   }
 
