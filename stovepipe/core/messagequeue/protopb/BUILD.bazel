@@ -6,6 +6,7 @@ go_library(
         "build.pb.go",
         "buildanalysis.pb.go",
         "buildsignal.pb.go",
+        "issuetrack.pb.go",
         "process.pb.go",
         "record.pb.go",
     ],

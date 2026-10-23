@@ -80,7 +80,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &Record{}} {
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &Record{}} {
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -93,6 +93,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 		TopicKeyBuild,
 		TopicKeyBuildSignal,
 		TopicKeyBuildAnalysis,
+		TopicKeyIssueTrack,
 		TopicKeyRecord,
 	}
 
@@ -116,4 +117,32 @@ func TestBuildAnalysisRoundTrip(t *testing.T) {
 
 	assert.True(t, proto.Equal(analysis, got))
 	assert.JSONEq(t, `{"id":"build/42","queue_name":"validation/main"}`, string(data))
+}
+
+func TestIssueTrackRoundTrip(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		finalize bool
+		wire     string
+	}{
+		{name: "observations", wire: `{"build_id":"build/42","queue_name":"validation/main"}`},
+		{name: "final analysis", finalize: true, wire: `{"build_id":"build/42","queue_name":"validation/main","finalize":true}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			notification := &IssueTrack{BuildId: "build/42", QueueName: "validation/main", Finalize: tt.finalize}
+			data, err := Marshal(notification)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.wire, string(data))
+
+			got := &IssueTrack{}
+			require.NoError(t, Unmarshal(data, got))
+			assert.True(t, proto.Equal(notification, got))
+		})
+	}
+}
+
+func TestIssueTrackToleratesUnknownFields(t *testing.T) {
+	got := &IssueTrack{}
+	require.NoError(t, Unmarshal([]byte(`{"build_id":"build/42","queue_name":"validation/main","finalize":true,"future_field":42}`), got))
+	assert.True(t, proto.Equal(&IssueTrack{BuildId: "build/42", QueueName: "validation/main", Finalize: true}, got))
 }

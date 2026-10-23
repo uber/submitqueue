@@ -27,6 +27,17 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
+const listBuildIssuesQuery = `
+	SELECT task_id, unit_id
+	FROM build_issue WHERE queue = ? AND build_id = ?
+	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
+
+const listBuildIssuesAfterCursorQuery = `
+	SELECT task_id, unit_id
+	FROM build_issue WHERE queue = ? AND build_id = ?
+		AND (task_id > ? OR (task_id = ? AND unit_id > ?))
+	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
+
 type buildIssueStore struct {
 	db    *sql.DB
 	scope tally.Scope
@@ -42,7 +53,7 @@ func (s *buildIssueStore) Create(ctx context.Context, buildID string, issue enti
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := validateBuildIssueKey(s.queue, buildID, issue.TaskID, issue.UnitID); err != nil {
+	if err := s.validateKey(buildID, issue.TaskID, issue.UnitID); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,
@@ -65,7 +76,7 @@ func (s *buildIssueStore) Get(ctx context.Context, buildID, taskID, unitID strin
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := validateBuildIssueKey(s.queue, buildID, taskID, unitID); err != nil {
+	if err := s.validateKey(buildID, taskID, unitID); err != nil {
 		return entity.BuildIssue{}, err
 	}
 
@@ -84,6 +95,58 @@ func (s *buildIssueStore) Get(ctx context.Context, buildID, taskID, unitID strin
 	}
 
 	return issue, nil
+}
+
+func (s *buildIssueStore) List(ctx context.Context, buildID string, bounds storage.BuildIssueRange) (ret []entity.BuildIssue, retErr error) {
+	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	if buildID == "" || bounds.Limit <= 0 {
+		return nil, fmt.Errorf("build issue range requires a build ID and positive limit")
+	}
+	cursor := bounds.After
+	if cursor.TaskID == "" && cursor.UnitID != "" {
+		return nil, fmt.Errorf("build issue cursor requires a task ID when a unit ID is supplied")
+	}
+	if err := validateBuildIssueKey(s.queue, buildID, cursor.TaskID, cursor.UnitID); err != nil {
+		return nil, err
+	}
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if cursor.TaskID == "" {
+		rows, err = s.db.QueryContext(ctx, listBuildIssuesQuery, s.queue, buildID, bounds.Limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, listBuildIssuesAfterCursorQuery,
+			s.queue, buildID, cursor.TaskID, cursor.TaskID, cursor.UnitID, bounds.Limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list build issues: %w", err)
+	}
+	defer rows.Close()
+
+	issues := make([]entity.BuildIssue, 0)
+	for rows.Next() {
+		var issue entity.BuildIssue
+		if err := rows.Scan(&issue.TaskID, &issue.UnitID); err != nil {
+			return nil, fmt.Errorf("failed to scan build issue: %w", err)
+		}
+		issues = append(issues, issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate build issues: %w", err)
+	}
+
+	return issues, nil
+}
+
+func (s *buildIssueStore) validateKey(buildID, taskID, unitID string) error {
+	if buildID == "" || taskID == "" {
+		return fmt.Errorf("build issue requires nonempty build and task IDs")
+	}
+	return validateBuildIssueKey(s.queue, buildID, taskID, unitID)
 }
 
 func validateBuildIssueKey(queue, buildID, taskID, unitID string) error {

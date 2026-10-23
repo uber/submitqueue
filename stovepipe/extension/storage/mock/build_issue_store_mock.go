@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	entity "github.com/uber/submitqueue/stovepipe/entity"
+	storage "github.com/uber/submitqueue/stovepipe/extension/storage"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -68,4 +69,19 @@ func (m *MockBuildIssueStore) Get(ctx context.Context, buildID, taskID, unitID s
 func (mr *MockBuildIssueStoreMockRecorder) Get(ctx, buildID, taskID, unitID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockBuildIssueStore)(nil).Get), ctx, buildID, taskID, unitID)
+}
+
+// List mocks base method.
+func (m *MockBuildIssueStore) List(ctx context.Context, buildID string, bounds storage.BuildIssueRange) ([]entity.BuildIssue, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "List", ctx, buildID, bounds)
+	ret0, _ := ret[0].([]entity.BuildIssue)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// List indicates an expected call of List.
+func (mr *MockBuildIssueStoreMockRecorder) List(ctx, buildID, bounds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockBuildIssueStore)(nil).List), ctx, buildID, bounds)
 }

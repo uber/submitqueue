@@ -3,6 +3,7 @@ exports_files(
         "build.proto",
         "buildanalysis.proto",
         "buildsignal.proto",
+        "issuetrack.proto",
         "process.proto",
         "record.proto",
     ],

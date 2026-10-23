@@ -53,6 +53,9 @@ type (
 	// BuildAnalysis identifies the build whose issue observations are polled.
 	BuildAnalysis = protopb.BuildAnalysis
 
+	// IssueTrack identifies persisted build observations for queue-scoped reconciliation.
+	IssueTrack = protopb.IssueTrack
+
 	// Record is the payload buildsignal publishes to the record stage once a
 	// build reaches a terminal status: the build id to record.
 	Record = protopb.Record

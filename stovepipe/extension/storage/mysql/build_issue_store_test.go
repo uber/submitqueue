@@ -162,3 +162,28 @@ func TestBuildIssueStoreRejectsOversizedIdentifiers(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildIssueStoreRejectsMissingIdentifiers(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		buildID string
+		taskID  string
+	}{
+		{name: "missing build", taskID: "task"},
+		{name: "missing task", buildID: "build/1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			store := NewBuildIssueStore(db, testMetrics(), "queue")
+			mock.MatchExpectationsInOrder(false)
+			mock.ExpectExec("INSERT INTO build_issue").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id"}).AddRow(tt.taskID, "unit"))
+
+			require.Error(t, store.Create(context.Background(), tt.buildID, entity.BuildIssue{TaskID: tt.taskID, UnitID: "unit"}))
+			_, err = store.Get(context.Background(), tt.buildID, tt.taskID, "unit")
+			require.Error(t, err)
+		})
+	}
+}

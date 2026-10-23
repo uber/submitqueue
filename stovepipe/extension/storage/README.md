@@ -28,7 +28,9 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 
 ## Build issue observations
 
-`BuildIssueStore` accumulates immutable observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Empty unit IDs represent task-wide observations.
+`BuildIssueStore` accumulates immutable observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.
+
+Listing fixes the queue/build primary-key prefix and returns bounded pages in ascending bytewise task/unit order. A task/unit cursor continues after the last returned key; the zero cursor starts the range, and a unit without a task is invalid. Pages are not a snapshot across calls: concurrent observations can affect membership. Empty pages represent no observations in that range, not build success or completed analysis.
 
 Each observation is stored separately, not in a serialized collection. Observations are historical evidence; they do not track whether an issue is currently open or resolved. No update, deletion, or absence-based recovery is implied by this store.
 

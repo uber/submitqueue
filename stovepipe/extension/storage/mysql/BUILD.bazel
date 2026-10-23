@@ -33,6 +33,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "build_issue_list_test.go",
         "build_issue_store_test.go",
         "build_store_test.go",
         "issue_log_store_test.go",

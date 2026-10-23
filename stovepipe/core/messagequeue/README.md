@@ -11,3 +11,13 @@ Payloads are defined in proto3 (`proto/`, generated into `protopb/`) and seriali
 - **buildsignal** (`TopicKeyBuildSignal`, `BuildSignal`) — build publishes the build id here after triggering; buildsignal holds the delivery between polls until the build reaches a terminal status. Partitioned by build id, so each build's poll loop is an independent partition.
 - **buildanalysis** (`TopicKeyBuildAnalysis`, `BuildAnalysis`) — identifies a persisted build for issue detection, partitioned by build id. Build publishes a start notice and buildsignal publishes a completion notice with a distinct message id. See [build analysis](../../controller/buildanalysis/README.md) for polling and persistence behavior.
 - **record** (`TopicKeyRecord`, `Record`) — buildsignal publishes the request id after persisting the terminal outcome; record reloads the request and records its validation fact. Partitioned by request id.
+
+## Issue tracking handoff
+
+`IssueTrack` binds to `TopicKeyIssueTrack` and identifies a persisted build and its queue. Notifications are partitioned by queue so both running and final issue-state updates share one serialized path, independently of build-partitioned analysis polling. The message carries identifiers rather than a failure collection; per-build observations are read through `BuildIssueStore.List`.
+
+Publish only after detection and observation persistence succeed. With `finalize` unset, the notification permits opening newly detected issues, not resolution by absence. With `finalize` set, it requests final reconciliation after a successful terminal analysis. Publish that notification even when no failures were detected; terminal Build status alone does not replace the handoff. Publication retries must also follow duplicate observation writes so a crash between persistence and publication does not strand work.
+
+Per-build observations accumulate historical evidence; finalization does not turn them into a replacement snapshot or override the detector's absence semantics. The reconciler must establish the authoritative final failure set and applicable validation scope before resolving issues, reject older requests, and ignore running notifications after finalization. Notification identity must distinguish new observations from finalization while remaining stable on publication retries. Business behavior follows the payload, not a parsed message ID.
+
+Only the handoff contract is defined. No publisher, consumer, topic registration, reconciliation progress, or writes to open issues and lifecycle history are enabled.
