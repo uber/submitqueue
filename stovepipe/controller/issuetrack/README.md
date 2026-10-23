@@ -8,6 +8,10 @@ Each delivery processes at most 100 distinct task/unit keys, including a resumed
 
 Before changing an issue, planning reads its current version and saves the cursor and intended transition together using progress CAS. No issue write happens if that save loses a race. With a planned change, the cursor identifies the issue to finish; without one, scans continue after the cursor. The planned change retains its original expected version and history timestamp. Final handoff requires successful complete detection and persistence, and the request's recorded winning terminal build. Finalization uses accumulated per-build issues, not just the latest detector response.
 
+## Analysis handoff
+
+Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the request's recorded winning build. Build issues accumulate, so omitting an earlier issue from a later detection does not remove it. The reference host registers the publication route but does not enable issue-tracking consumption or recovery.
+
 ## Applying a planned change
 
 The controller applies one `PlannedIssueChange` already saved in the queue's progress record. The cursor identifies the issue; the change holds only its write details. Expected issue version zero means create-if-absent. A positive version means update that exact version. A retry never adopts a newly loaded version to execute old instructions.
