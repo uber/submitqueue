@@ -28,12 +28,12 @@ import (
 )
 
 const listBuildIssuesQuery = `
-	SELECT task_id, unit_id
+	SELECT task_id, unit_id, fix_id, version
 	FROM build_issue WHERE queue = ? AND build_id = ?
 	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
 
 const listBuildIssuesAfterCursorQuery = `
-	SELECT task_id, unit_id
+	SELECT task_id, unit_id, fix_id, version
 	FROM build_issue WHERE queue = ? AND build_id = ?
 		AND (task_id > ? OR (task_id = ? AND unit_id > ?))
 	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
@@ -57,9 +57,9 @@ func (s *buildIssueStore) Create(ctx context.Context, buildID string, issue enti
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO build_issue (queue, build_id, task_id, unit_id)
-         VALUES (?, ?, ?, ?)`,
-		s.queue, buildID, issue.TaskID, issue.UnitID,
+		`INSERT INTO build_issue (queue, build_id, task_id, unit_id, fix_id, version)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+		s.queue, buildID, issue.TaskID, issue.UnitID, issue.FixID, issue.Version,
 	)
 	if err != nil {
 		if isDuplicateEntry(err) {
@@ -82,10 +82,10 @@ func (s *buildIssueStore) Get(ctx context.Context, buildID, taskID, unitID strin
 
 	var issue entity.BuildIssue
 	err := s.db.QueryRowContext(ctx,
-		`SELECT task_id, unit_id FROM build_issue
+		`SELECT task_id, unit_id, fix_id, version FROM build_issue
          WHERE queue = ? AND build_id = ? AND task_id = ? AND unit_id = ?`,
 		s.queue, buildID, taskID, unitID,
-	).Scan(&issue.TaskID, &issue.UnitID)
+	).Scan(&issue.TaskID, &issue.UnitID, &issue.FixID, &issue.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.BuildIssue{}, storage.WrapNotFound(err)
 	}
@@ -130,7 +130,7 @@ func (s *buildIssueStore) List(ctx context.Context, buildID string, bounds stora
 	issues := make([]entity.BuildIssue, 0)
 	for rows.Next() {
 		var issue entity.BuildIssue
-		if err := rows.Scan(&issue.TaskID, &issue.UnitID); err != nil {
+		if err := rows.Scan(&issue.TaskID, &issue.UnitID, &issue.FixID, &issue.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan build issue: %w", err)
 		}
 		issues = append(issues, issue)
@@ -140,6 +140,31 @@ func (s *buildIssueStore) List(ctx context.Context, buildID string, bounds stora
 	}
 
 	return issues, nil
+}
+
+func (s *buildIssueStore) Update(ctx context.Context, buildID string, issue entity.BuildIssue, oldVersion, newVersion int32) (retErr error) {
+	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	if err := s.validateKey(buildID, issue.TaskID, issue.UnitID); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE build_issue SET fix_id = ?, version = ?
+         WHERE queue = ? AND build_id = ? AND task_id = ? AND unit_id = ? AND version = ?`,
+		issue.FixID, newVersion, s.queue, buildID, issue.TaskID, issue.UnitID, oldVersion)
+	if err != nil {
+		return fmt.Errorf("failed to update build issue: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get build issue rows affected: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("build issue build=%q task=%q unit=%q expected_version=%d: %w",
+			buildID, issue.TaskID, issue.UnitID, oldVersion, storage.ErrVersionMismatch)
+	}
+	return nil
 }
 
 func (s *buildIssueStore) validateKey(buildID, taskID, unitID string) error {

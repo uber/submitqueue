@@ -100,6 +100,11 @@ func TestMySQLStorage(t *testing.T) {
 		testBuildIssueList(t, ctx, factory)
 	})
 
+	t.Run("BuildIssueUpdate", func(t *testing.T) {
+		resetStorage(t, db)
+		testBuildIssueUpdate(t, ctx, db, factory)
+	})
+
 	t.Run("OpenIssueStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testOpenIssueStore(t, ctx, factory)

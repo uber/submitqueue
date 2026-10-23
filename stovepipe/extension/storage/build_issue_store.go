@@ -38,7 +38,7 @@ type BuildIssueRange struct {
 	Limit int
 }
 
-// BuildIssueStore retains immutable observations keyed by build, task, and unit
+// BuildIssueStore retains observations and their repair association keyed by build, task, and unit
 // within the bound queue. Presence records an observation, not a currently open issue.
 // Observation keys require nonempty build and task IDs; an empty unit is task-wide.
 type BuildIssueStore interface {
@@ -53,4 +53,9 @@ type BuildIssueStore interface {
 	// An empty slice ends the range; invalid bounds or an empty build ID return an error.
 	// Pages are not a snapshot: concurrent observations may change membership.
 	List(ctx context.Context, buildID string, bounds BuildIssueRange) ([]entity.BuildIssue, error)
+
+	// Update persists the mutable fields if the stored version matches oldVersion,
+	// writing newVersion. Returns ErrVersionMismatch on a stale or missing record.
+	// The caller owns version arithmetic; the store does not read issue.Version.
+	Update(ctx context.Context, buildID string, issue entity.BuildIssue, oldVersion, newVersion int32) error
 }
