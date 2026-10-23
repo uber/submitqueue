@@ -15,8 +15,9 @@
 // Package buildsignal holds the buildsignal-stage queue controller. It consumes
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
-// releases the queue's build slot, projects the outcome onto the request, and
-// publishes directly to record plus terminal analysis. See
+// releases the queue's build slot, projects the outcome onto the request,
+// advances the successful-build bookmark, and publishes directly to record plus
+// terminal analysis. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
 
@@ -177,6 +178,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		if err := c.finishRequest(ctx, store, &request, build.ID, effective); err != nil {
 			return err
+		}
+		if request.State == entity.RequestStateSucceeded {
+			if err := c.advanceLastGreen(ctx, store, request); err != nil {
+				metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+				return err
+			}
 		}
 		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
 			return err
@@ -358,6 +365,62 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
+}
+
+// advanceLastGreen points the queue's bookmark at the successful request, retrying
+// on version conflicts. The bookmark only moves forward and can precede facts.
+// Capacity is already released, so another admission may use the prior baseline.
+func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) error {
+	queueStore := store.GetQueueStore()
+
+	for {
+		queueRow, err := queueStore.Get(ctx, request.Queue)
+		if err != nil {
+			return fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
+		}
+
+		cmp, err := compareToBookmark(request.Queue, request.ID, queueRow.LastGreenRequestID)
+		if err != nil {
+			// Non-retryable: re-parsing the same ids cannot start succeeding.
+			return err
+		}
+		if cmp <= 0 {
+			return nil
+		}
+
+		updated := queueRow
+		updated.LastGreenURI = request.URI
+		updated.LastGreenRequestID = request.ID
+		newVersion := queueRow.Version + 1
+		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			return fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
+		}
+
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Infow("advanced last green bookmark",
+			"queue", request.Queue,
+			"request_id", request.ID,
+			"last_green_uri", request.URI,
+		)
+		return nil
+	}
+}
+
+// compareToBookmark orders candidate against the request id currently holding the
+// bookmark, by ingest order, using the sign convention of entity.CompareRequestID.
+// An empty current means the bookmark has never been set, so any candidate is newer.
+func compareToBookmark(queue, candidate, current string) (int, error) {
+	if current == "" {
+		return 1, nil
+	}
+	cmp, err := entity.CompareRequestID(candidate, current)
+	if err != nil {
+		return 0, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
+	}
+	return cmp, nil
 }
 
 // reconcile persists a real status transition and returns the status that

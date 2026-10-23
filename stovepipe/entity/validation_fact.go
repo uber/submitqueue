@@ -19,6 +19,8 @@ package entity
 const (
 	// DegreeGreen is a fully healthy scope: nothing broken.
 	DegreeGreen = 0.0
+	// DegreePartial is a broken scope with individual project results available.
+	DegreePartial = 0.5
 	// DegreeBroken is a fully broken scope.
 	DegreeBroken = 1.0
 )
@@ -41,10 +43,8 @@ type ValidationFact struct {
 	// repository; named projects narrow the fact to part of it.
 	Project string `json:"project"`
 	// Degree is how broken the scope was, on the closed interval
-	// [DegreeGreen, DegreeBroken]. A whole-repository scope only ever takes an
-	// endpoint: the build either passed or it did not. Intermediate values
-	// belong to project-level scopes, whose analysis defines how a partial
-	// degree is derived.
+	// [DegreeGreen, DegreeBroken]. A failed repository with project results has
+	// DegreePartial; without project results it has DegreeBroken.
 	Degree float64 `json:"degree"`
 	// RequestID is the request that established the fact.
 	RequestID string `json:"request_id"`
