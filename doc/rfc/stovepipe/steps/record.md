@@ -2,16 +2,15 @@
 
 `record` turns a terminal build outcome into a durable validation fact.
 
-- Phase 1 records whole-repository greenness. On green it also advances the Queue's last-green bookmark and promotes the commit onto the Queue's promotion ref, then announces the outcome as a hook event. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
-- Phase 2 records greenness per project instead of per repository. Sketched here, to be expanded before implementation.
+It records whole-repository greenness and already performs project analysis through [`projectstatus.Resolver`](../../../../stovepipe/extension/projectstatus/projectstatus.go), persisting one validation fact per returned project. On repository green it also advances the Queue's last-green bookmark and promotion ref, then announces the outcome as a repository hook event. See [`record.Controller`](../../../../stovepipe/controller/record/record.go).
 
 Notifying downstream systems rides the cross-domain hook framework rather than a Stovepipe-specific extension; see [Hooks](#hooks).
 
 See [workflow.md](../workflow.md) for the whole pipeline, [build.md](build.md) for how builds are created, and [buildsignal.md](buildsignal.md) for the terminal-only handoff into this stage.
 
-`record` owns the validation facts and the two caches derived from them, the last-green bookmark and the promotion ref. It does not decide build scope, poll a build, release the Queue's build slot, interpret a target graph, or map targets to projects. Those belong to `process`, `buildsignal`, and `analyze`.
+`record` owns validation facts, the last-green bookmark, and the promotion ref. It delegates project analysis to the Queue's `projectstatus.Resolver`; that implementation determines project identities and degrees. Build scope belongs to `process`, while status polling and slot release belong to `buildsignal`.
 
-## Phase 1 algorithm
+## Algorithm
 
 For a delivery carrying a `Record` payload:
 
@@ -76,9 +75,17 @@ Every decision after step 6 uses the persisted fact, not the outcome read from t
 
 Project-status processing does not delay baseline advancement or promotion. It still completes before the recorded notification. Bookmark advancement and ref promotion remain separate operations; this ordering does not make them atomic.
 
+## Project analysis
+
+[`recordProjectFacts`](../../../../stovepipe/controller/record/record.go) obtains a resolver through `projectstatus.ResolverFactory.For(ResolverConfig{QueueName: request.Queue})`, then calls `Resolve(ctx, request, request.TerminalBuildID)`. The resolver performs repository-specific analysis and returns project identities and health degrees; an empty result is valid. The example server wires a noop resolver.
+
+Before writing project facts, `record` validates that project identities are nonempty and unique, and that degrees are finite and within `[0, 1]`. It creates each fact under `(queue, request.URI, project)` using the same immutable, idempotent write path as the repository fact. For nonempty results it also retains a `project_facts_recorded` request-history event. Resolver or persistence failures return an error; the repository fact and cache updates already made remain durable.
+
+As the planned [build-analysis step](../workflow.md#build-analysis) is implemented, artifact extraction and project-result calculation may move there to share observations with failure-episode tracking. In that arrangement, `record` would wait for final analysis results to be persisted for the relevant scope before writing immutable project facts. The runner guarantees artifact availability at build completion; this wait coordinates analysis persistence with recording. `record` would retain fact persistence, cache updates, and the repository hook.
+
 ## Validation facts
 
-A fact answers "how broken was this scope at this Queue URI?" Its identity is `(queue, uri, project)`, where `project` is empty for whole-repository greenness and a stable project id in Phase 2.
+A fact answers "how broken was this scope at this Queue URI?" Its identity is `(queue, uri, project)`, where `project` is empty for whole-repository greenness and a stable project id for a project result.
 
 `queue` is the binding of the store the fact lives in, not a field on the entity. Storage is resolved per queue through `storage.Factory.For`, so a fact only ever exists inside one queue's store and does not need to name it. The column still leads the primary key, `PRIMARY KEY (queue, uri, project)`, because every domain table here has to be shardable by queue: the primary key leads with the queue column and no secondary index leads with anything else. That keeps one queue's rows unreachable through another queue's binding and makes every read a primary-key-prefix scan inside a single queue. It is an invariant rather than a per-table choice, and `make lint-queue-shard` enforces it. It is not MySQL table partitioning; no schema here uses `PARTITION BY`.
 
@@ -88,7 +95,7 @@ So `entity.ValidationFact` carries only the rest of the identity:
 | Field       | Meaning                                                                                                           |
 | ----------- | ----------------------------------------------------------------------------------------------------------------- |
 | `URI`       | Commit URI under validation                                                                                       |
-| `Project`   | Empty for the whole repository; stable project id for Phase 2                                                     |
+| `Project`   | Empty for the whole repository; stable project id returned by the resolver                                               |
 | `Degree`    | Health degree in the closed interval `[entity.DegreeGreen, entity.DegreeBroken]` — `0` is green, `1` fully broken |
 | `RequestID` | Request that established the fact                                                                                 |
 | `CreatedAt` | Millisecond timestamp at which the fact was first recorded                                                        |
@@ -111,7 +118,7 @@ A fact is written only when the Request reaches `succeeded` or `failed`. A `canc
 
 The fail-closed path is subtler than "no fact". A DLQ reconciler forces the Request to `failed` and does not itself publish here, so reconciliation on its own records nothing. That is not the same as nothing being recorded: a `buildsignal` delivery still in flight can reach this stage afterwards, and it will write `DegreeBroken` from the forced state. See [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
 
-### Phase 1 degree mapping
+### Whole-repository degree mapping
 
 Whole-repository builds use only the endpoints, mapped from the outcome `buildsignal` stamped on the Request:
 
@@ -123,7 +130,7 @@ Whole-repository builds use only the endpoints, mapped from the outcome `buildsi
 | `cancelled`     | no fact                       |
 
 
-Intermediate degrees are reserved for project analysis and deferred with the project mapping contract. Phase 1 does not manufacture fractional values.
+Whole-repository facts use these endpoints. Project facts use the degree returned by `projectstatus.Resolver`, validated to be finite and within `[0, 1]`.
 
 ## Last-green advancement (Queue bookmark)
 
@@ -173,7 +180,7 @@ The shared `HookEvent` contract at `api/base/hook/`, the hook extension at `plat
 Last thing before the ack, after the fact write and after both caches derived from it have moved:
 
 ```
-create fact → advance bookmark (green only) → promote (bookmark holder only) → publish HookEvent → [Phase 2: publish to analyze] → ack
+create repository fact → advance bookmark (green only) → promote (bookmark holder only) → resolve and record project facts → publish repository HookEvent → ack
 ```
 
 Last because the payload names the Request rather than snapshotting it, and hooks resolve entities from stores: a hook reacting to "URI is green" by reading `LastGreenURI`, or by fetching the promotion ref, must not find either still pointing at the previous commit. Inside the delivery rather than after it, because that is what makes the event lossless without an outbox — the state writes are recognize-and-skip on redelivery, so a crash before the ack replays the whole chain.
@@ -198,7 +205,7 @@ So a hook reads state as it is when the hook runs, not as it was when the event 
 
 ### What the `type` carries
 
-Data belongs in `type` when consumers need to avoid receiving the event, and in the payload when they need to interpret it. The type names the scope, `validation.repository.recorded`, with `validation.project.recorded` beside it in Phase 2.
+Data belongs in `type` when consumers need to avoid receiving the event, and in the payload when they need to interpret it. The type names the scope, `validation.repository.recorded`. Project facts are already stored; publishing a per-project hook event is a separate future addition.
 
 `validation.repository.cancelled` is a separate type rather than a `state` on the recorded one, because the two differ in what a consumer can do with them: a recorded event carries a verdict to act on, a cancelled event only says to stop waiting. A sink that gates on greenness subscribes to one and ignores the other, and naming a cancellation "recorded" would claim a fact that was never written.
 ### What a consumer can and cannot assume
@@ -211,16 +218,16 @@ Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describe
 
 ## Request lifecycle
 
-Phase 1 uses the states in [stovepipe/entity/request.go](../../../../stovepipe/entity/request.go). `record` runs *after* the Request is terminal: `buildsignal` projects the build's terminal status onto it as `succeeded`, `failed`, or `cancelled` (`RequestState.HasBuildOutcome()`), and only then publishes. So `record` reads an outcome and writes no state. `superseded` is terminal without an outcome.
+The stage uses the states in [stovepipe/entity/request.go](../../../../stovepipe/entity/request.go). `record` runs *after* the Request is terminal: `buildsignal` projects the build's terminal status onto it as `succeeded`, `failed`, or `cancelled` (`RequestState.HasBuildOutcome()`), and only then publishes. So `record` reads an outcome and writes no state. `superseded` is terminal without an outcome.
 
-Phase 2 broadens "complete" to "all planned facts recorded", which needs a marker this stage does not own; see [Completion marker: open](#completion-marker-open).
+Request terminal state describes the build outcome; recording completion is tracked separately. See [Completion marker: open](#completion-marker-open).
 
 ## Storage and queue contract
 
 `ValidationFactStore` is key/value-shaped, and queue-bound rather than queue-parameterized:
 
 - `Create(ctx, fact)` writes one immutable fact for the bound queue. It returns `ErrAlreadyExists` when the composite identity is already taken, leaving the stored fact untouched.
-- `Get(ctx, uri, project)` reads one fact by the rest of its identity, and returns `ErrNotFound` when none exists. The `project` argument is reserved for Phase 2.
+- `Get(ctx, uri, project)` reads one fact by the rest of its identity, and returns `ErrNotFound` when none exists. The `project` argument is empty for the repository fact or identifies a project returned by the resolver.
 
 There is no `Update`. The first fact written for an identity is the permanent answer, and a caller that needs to know whether it won the race reads `ErrAlreadyExists` and then loads the winner.
 
@@ -301,15 +308,12 @@ Neither fits `ValidationFactStore`. Facts are looked up by exact identity and UR
 
 ### Completion marker: open
 
-`record` makes no `Request` write in Phase 1, so the stage has no durable marker saying it finished. `buildsignal` drives the Request terminal before `record` ever runs, leaving no non-terminal window to occupy.
+`record` retains a `project_facts_recorded` request-history event when project results are nonempty. That event covers project facts; the stage has no single durable marker saying all recording and notification work finished. `buildsignal` drives the Request terminal before `record` ever runs, leaving no non-terminal window to occupy.
 
 ### Supporting re-run of the same URI
 
 Widen the key with the `RequestID` the facts already record, so each attempt is its own immutable row, and add a pointer store from `(queue, uri, project)` to the authoritative attempt. Advance to a newer attempt unless the current one is green, since a green build proved the code passed and a later failure only proves the build is non-deterministic.
 
-### Phase 2
+### Per-project hooks
 
-- **Pipeline**: `record` publishes the request id onward to `analyze`, for green and not-green facts alike, because a failed build is when project attribution matters most. An earlier draft had `record` retarget the Request from `processing` to `analyzing`, with `analyze` owning the terminal transition. That no longer fits, because the Request is already terminal before `record` runs, so tracking "all facts recorded" belongs to the `analyze` design (see [Completion marker: open](#completion-marker-open)). The message onward carries the request id and queue name, exactly as `record`'s own does, and the consumer stays idempotent.
-- **Project facts**: `record` runs the same create-fact-then-notify flow. The fact is keyed by the stable project id carried on the per-project signal, and one `validation.project.recorded` event is published per project identity (see [What the](#what-the-type-carries) `type` [carries](#what-the-type-carries)). Each per-project signal needs its own message id (see [Storage and queue contract](#storage-and-queue-contract)). The Queue's `last_green_uri` describes the whole repository and stays untouched.
-
-Deciding project identity, retrieving the target graph, tracking completion, and defining intermediate degrees belong to `analyze.md`.
+Project facts are already persisted. A future `validation.project.recorded` hook would announce each stable project identity with its own event ID. The Queue's last-green bookmark would continue to describe whole-repository greenness.
