@@ -32,7 +32,10 @@ def _pagination_fixture_sql() -> str:
         )
         state = "failed" if i == 51 else "succeeded"
         statements.append(
-            f"INSERT INTO request_summary VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'');"
+            "INSERT INTO request_summary "
+            "(queue,request_id,uri,base_uri,state,request_version,"
+            "state_timestamp_ms,version,accepted_at_ms,outcome_reason) "
+            f"VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'');"
         )
         statements.append(
             f"INSERT INTO request_acceptance VALUES ('web/pagination',{1000+i},'{i}');"

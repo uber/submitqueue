@@ -405,7 +405,7 @@ func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRecordProjectFactsEmptyCompletion(t *testing.T) {
+func TestProcessRecordsEmptyProjectCompletion(t *testing.T) {
 	resolveErr := errors.New("project resolution unavailable")
 	writeErr := errors.New("completion write unavailable")
 	for _, tt := range []struct {
@@ -423,6 +423,7 @@ func TestRecordProjectFactsEmptyCompletion(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			c, m := newController(t, ctrl)
 			request := requestWithState(entity.RequestStateFailed)
+			m.reqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 			factory := projectstatusmock.NewMockResolverFactory(ctrl)
 			resolver := projectstatusmock.NewMockResolver(ctrl)
 			c.projectStatusResolverFactory = factory
@@ -431,21 +432,32 @@ func TestRecordProjectFactsEmptyCompletion(t *testing.T) {
 			materializer := requestlogmock.NewMockMaterializer(ctrl)
 			c.materializer = materializer
 			if tt.resolveErr == nil {
-				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
-					func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-						assert.Equal(t, "event/project_facts_recorded/all", log.ID)
-						assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
-						return tt.writeErr
-					})
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+				gomock.InOrder(
+					materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+							assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
+							return nil
+						}),
+					materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+							assert.Equal(t, "event/project_facts_recorded/all", log.ID)
+							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
+							return tt.writeErr
+						}),
+				)
 			}
-			err := c.recordProjectFacts(queueContext(), m.store, request)
+			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, request.ID)))
 			switch {
 			case tt.resolveErr != nil:
 				require.ErrorIs(t, err, tt.resolveErr)
+				assert.Empty(t, m.hooks.events)
 			case tt.writeErr != nil:
 				require.ErrorIs(t, err, tt.writeErr)
+				assert.Empty(t, m.hooks.events)
 			default:
 				require.NoError(t, err)
+				assert.Len(t, m.hooks.events, 1)
 			}
 		})
 	}
