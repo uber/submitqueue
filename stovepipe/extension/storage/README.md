@@ -1,6 +1,6 @@
 # Storage
 
-Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`, `IssueLogStore`). Implementations live under `extension/storage/<impl>/`.
+Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`, `IssueLogStore`, `IssueTrackingStore`). Implementations live under `extension/storage/<impl>/`.
 
 The aggregate is resolved per queue through a factory keyed by queue name, mirroring the extension contract and the [submitqueue storage seam](../../../submitqueue/extension/storage/README.md#queue-scoped-resolution): a resolved instance is bound to its queue, entity arguments whose queue disagrees with the binding are rejected, and reads never surface another queue's records. Stovepipe has no cross-queue read paths, so every store — including `QueueStore`, whose row key is the queue name itself — lives inside the queue-scoped aggregate; there is no global remainder.
 
@@ -59,3 +59,9 @@ The build ID identifies the build where the issue was first seen or confirmed re
 The MySQL key uses the same binary identifier limits as the issue stores, plus a 32-byte event field, for a maximum of 2586 bytes. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
 
 History persistence does not alter open-issue membership or validate transitions against it. No runtime writer is enabled here. A later reconciliation controller must own opening/resolution decisions, retry-safe writes to both stores, and protection against stale build analysis. History enumeration is outside this storage contract.
+
+## Issue reconciliation progress
+
+`IssueTrackingStore` retains one queue-scoped operational `IssueTrackingState`, independently of open-issue membership and user-facing summaries. It records the source request and build, whether observation or final writes are pending or complete, and its optimistic version. Keeping it after the last open row is removed preserves the source-order boundary. The MySQL table is keyed only by queue; creates, reads, and updates use complete primary keys with no secondary indexes or cross-table transaction.
+
+The store does not decide source ordering, apply issue transitions, or advance versions. Its caller supplies the guard version and replacement version. A later controller will own acceptance, resumption of pending writes, and completion; no runtime writer is enabled here.
