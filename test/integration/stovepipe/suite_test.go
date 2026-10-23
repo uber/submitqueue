@@ -38,6 +38,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	mysqlstorage "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
@@ -381,6 +382,23 @@ func (s *StovepipeIntegrationSuite) TestProjectStatusAPI() {
 	assert.Equal(t, int64(4000), remaining.GetUpdatedAtMs())
 	assert.Empty(t, remaining.NextPageToken)
 	assert.False(t, remaining.ProjectResultsComplete)
+	completion := requestlog.NewRequestEventLog(entity.Request{Queue: queue, ID: id}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{requestlog.MetadataKeyProjectFactCount: "3"})
+	completion.TimestampMs = 6000
+	require.NoError(t, mysqlstorage.NewRequestLogStore(s.db, tally.NoopScope, queue).Create(s.ctx, completion))
+	completed, err := s.client.GetProjectStatusByURI(s.ctx, &pb.GetProjectStatusByURIRequest{
+		Queue: queue, ChangeUri: uri, PageSize: 1,
+	})
+	require.NoError(t, err)
+	assert.True(t, completed.ProjectResultsComplete)
+	assert.Equal(t, int64(6000), completed.UpdatedAtMs)
+	assert.NotEmpty(t, completed.NextPageToken)
+	completedRemainder, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
+		Queue: queue, RequestId: id, PageToken: completed.NextPageToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, completedRemainder.ProjectResultsComplete)
+	assert.Equal(t, int64(6000), completedRemainder.UpdatedAtMs)
+	assert.Empty(t, completedRemainder.NextPageToken)
 
 	for _, selector := range []struct{ queue, id string }{{queue, "999"}, {"project-status-api/other", id}} {
 		_, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{

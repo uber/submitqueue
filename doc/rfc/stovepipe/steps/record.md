@@ -213,7 +213,7 @@ Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describe
 
 Phase 1 uses the states in [stovepipe/entity/request.go](../../../../stovepipe/entity/request.go). `record` runs *after* the Request is terminal: `buildsignal` projects the build's terminal status onto it as `succeeded`, `failed`, or `cancelled` (`RequestState.HasBuildOutcome()`), and only then publishes. So `record` reads an outcome and writes no state. `superseded` is terminal without an outcome.
 
-Phase 2 broadens "complete" to "all planned facts recorded", which needs a marker this stage does not own; see [Completion marker: open](#completion-marker-open).
+The `project_facts_recorded` event marks completion of the resolver’s result batch. A future pipeline with independent project builds would need to cover the entire planned set; see [Completion across independent project builds](#completion-across-independent-project-builds).
 
 ## Storage and queue contract
 
@@ -299,9 +299,9 @@ The rough idea is to track this with additional stores written during this stage
 
 Neither fits `ValidationFactStore`. Facts are looked up by exact identity and URIs do not sort, while previous/next-green needs an ordered seek over positions, a different key shape. A genuinely needed reverse lookup getting its own first-class store is the established pattern here; `RequestURIStore` is the existing example (see [storage README](../../../../stovepipe/extension/storage/README.md#key-value-contract)).
 
-### Completion marker: open
+### Completion across independent project builds
 
-`record` makes no `Request` write in Phase 1, so the stage has no durable marker saying it finished. `buildsignal` drives the Request terminal before `record` ever runs, leaving no non-terminal window to occupy.
+`record` retains `project_facts_recorded` after all resolved project facts and ordering mappings are durable, including an empty batch, and before publishing its terminal hook. The project status APIs use this event as their completion marker. If a future pipeline fans a request out into independent project builds, completion must cover that entire planned set before emitting the marker. Request terminality alone is insufficient because it precedes project recording.
 
 ### Supporting re-run of the same URI
 
@@ -309,7 +309,7 @@ Widen the key with the `RequestID` the facts already record, so each attempt is 
 
 ### Phase 2
 
-- **Pipeline**: `record` publishes the request id onward to `analyze`, for green and not-green facts alike, because a failed build is when project attribution matters most. An earlier draft had `record` retarget the Request from `processing` to `analyzing`, with `analyze` owning the terminal transition. That no longer fits, because the Request is already terminal before `record` runs, so tracking "all facts recorded" belongs to the `analyze` design (see [Completion marker: open](#completion-marker-open)). The message onward carries the request id and queue name, exactly as `record`'s own does, and the consumer stays idempotent.
+- **Pipeline**: `record` publishes the request id onward to `analyze`, for green and not-green facts alike, because a failed build is when project attribution matters most. An earlier draft had `record` retarget the Request from `processing` to `analyzing`, with `analyze` owning the terminal transition. That no longer fits, because the Request is already terminal before `record` runs, so tracking "all facts recorded" belongs to the `analyze` design (see [Completion across independent project builds](#completion-across-independent-project-builds)). The message onward carries the request id and queue name, exactly as `record`'s own does, and the consumer stays idempotent.
 - **Project facts**: `record` runs the same create-fact-then-notify flow. The fact is keyed by the stable project id carried on the per-project signal, and one `validation.project.recorded` event is published per project identity (see [What the](#what-the-type-carries) `type` [carries](#what-the-type-carries)). Each per-project signal needs its own message id (see [Storage and queue contract](#storage-and-queue-contract)). The Queue's `last_green_uri` describes the whole repository and stays untouched.
 
 Deciding project identity, retrieving the target graph, tracking completion, and defining intermediate degrees belong to `analyze.md`.

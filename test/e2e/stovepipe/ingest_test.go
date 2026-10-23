@@ -25,6 +25,15 @@ func (s *StovepipeE2ESuite) TestIngest_HappyPath_Processes() {
 	id := s.ingest(queue)
 	s.assertIngestPersisted(queue, id)
 	s.awaitProcessed(queue)
+	pollUntil(convergencePollInterval, func() bool {
+		status, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{Queue: queue, RequestId: id})
+		require.NoError(s.T(), err)
+		return status.ProjectResultsComplete
+	})
+	status, err := s.client.GetProjectStatusByURI(s.ctx, &pb.GetProjectStatusByURIRequest{Queue: queue, ChangeUri: "git://" + queue + "/HEAD"})
+	require.NoError(s.T(), err)
+	assert.True(s.T(), status.ProjectResultsComplete)
+	assert.Empty(s.T(), status.Projects)
 }
 
 func (s *StovepipeE2ESuite) TestIngest_Idempotent() {

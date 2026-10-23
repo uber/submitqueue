@@ -163,11 +163,11 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 	m.store.EXPECT().GetProjectFactByDegreeStore().Return(m.indexStore).AnyTimes()
 	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-			assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
+			assert.Contains(t, []entity.RequestEvent{entity.RequestEventValidationFactRecorded, entity.RequestEventProjectFactsRecorded}, log.Event)
 			assert.Empty(t, log.State)
 			assert.Zero(t, log.RequestVersion)
 			assert.Empty(t, log.OutcomeReason)
-			assert.NotEmpty(t, log.Metadata[requestlog.MetadataKeyFactDegree])
+			assert.NotEmpty(t, log.Metadata)
 			return nil
 		},
 	).AnyTimes()
@@ -457,6 +457,52 @@ func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRecordProjectFactsEmptyCompletion(t *testing.T) {
+	resolveErr := errors.New("project resolution unavailable")
+	writeErr := errors.New("completion write unavailable")
+	for _, tt := range []struct {
+		name       string
+		results    []projectstatus.Result
+		resolveErr error
+		writeErr   error
+	}{
+		{name: "nil results"},
+		{name: "empty results", results: []projectstatus.Result{}},
+		{name: "resolution failed", resolveErr: resolveErr},
+		{name: "completion write failed", writeErr: writeErr},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			factory := projectstatusmock.NewMockResolverFactory(ctrl)
+			resolver := projectstatusmock.NewMockResolver(ctrl)
+			c.projectStatusResolverFactory = factory
+			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
+			resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(tt.results, tt.resolveErr)
+			materializer := requestlogmock.NewMockMaterializer(ctrl)
+			c.materializer = materializer
+			if tt.resolveErr == nil {
+				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+					func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+						assert.Equal(t, requestlog.RequestEventLogID(entity.RequestEventProjectFactsRecorded, "all"), log.ID)
+						assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
+						return tt.writeErr
+					})
+			}
+			err := c.recordProjectFacts(queueContext(), m.store, request)
+			switch {
+			case tt.resolveErr != nil:
+				require.ErrorIs(t, err, tt.resolveErr)
+			case tt.writeErr != nil:
+				require.ErrorIs(t, err, tt.writeErr)
+			default:
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestProcess_RejectsInvalidProjectStatusResultsBeforeWritingFacts(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
@@ -596,6 +642,7 @@ func TestProcess_RecordsFactEventBeforeDerivedWork(t *testing.T) {
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+	eventMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
