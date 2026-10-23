@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { TimeZoneProvider, TimeZoneToggle } from "@submitqueue/web-platform";
 import { Block } from "baseui/block";
 import { StyledLink } from "baseui/link";
 import { Tag } from "baseui/tag";
@@ -16,13 +17,14 @@ export interface WebShellProps {
   brandMark?: string;
   environmentLabel?: string;
   footer?: ReactNode;
+  controls?: ReactNode;
 }
 
 export function WebShell({
   children, homeHref = "/", homeLabel, brand, brandMark = "", environmentLabel = "Read-only",
-  footer = "Read-only · updates automatically",
+  footer = "Read-only", controls,
 }: WebShellProps) {
-  return <Block className="sq-app" backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
+  return <TimeZoneProvider><Block className="sq-app" backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
     minHeight="100vh" display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows="auto 1fr auto"
     paddingLeft="scale600" paddingRight="scale600">
     <Block as="header" display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale600"
@@ -30,9 +32,13 @@ export function WebShell({
       <Block as={StyledLink} display="inline-flex" alignItems="center" gridGap="scale300" href={homeHref} {...(homeLabel ? { "aria-label": homeLabel } : {})}>
         {brandMark ? <Tag closeable={false} kind="neutral" size="small"><span aria-hidden="true">{brandMark}</span></Tag> : null}<LabelMedium as="span">{brand}</LabelMedium>
       </Block>
-      {environmentLabel ? <LabelXSmall as="span" color="contentSecondary">{environmentLabel}</LabelXSmall> : null}
+      <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
+        {environmentLabel ? <LabelXSmall as="span" color="contentSecondary">{environmentLabel}</LabelXSmall> : null}
+        <TimeZoneToggle />
+        {controls}
+      </Block>
     </Block>
     {children}
     {footer ? <Block as="footer" paddingTop="scale300" paddingBottom="scale300" font="ParagraphXSmall" color="contentSecondary">{footer}</Block> : null}
-  </Block>;
+  </Block></TimeZoneProvider>;
 }

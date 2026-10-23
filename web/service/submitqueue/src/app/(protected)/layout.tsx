@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { SubmitQueueShell } from "@submitqueue/web-submitqueue";
 
 import { requireAuthorization } from "../../next/authorize";
 
@@ -11,8 +10,5 @@ export default async function ProtectedLayout({
 }: Readonly<{ children: ReactNode }>) {
   await requireAuthorization();
 
-  return (
-    <SubmitQueueShell environmentLabel="Local demo · read-only"
-      footer="Read-only demo · updates automatically">{children}</SubmitQueueShell>
-  );
+  return children;
 }

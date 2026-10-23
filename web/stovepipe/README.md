@@ -35,6 +35,6 @@ in this package; hosts only adapt their transport representation.
 
 ## Refresh and presentation
 
-Refresh is manual by default, with optional ten-second polling. Failed refreshes retain successful results on the same route; request-detail results are scoped to their route. Timestamps use UTC. Lifecycle labels and outcome reasons come from the backend and are displayed verbatim.
+The header offers optional ten-second auto-refresh, off by default. Use browser reload for manual updates. Polling pauses while the page is hidden or offline. Failed refreshes retain successful results on the same route; request-detail results are scoped to their route. Timestamps default to the browser's time zone, with a Browser/UTC segmented control in the header. The browser remembers the selection across navigation and reloads when local storage is available. Server-rendered timestamps use UTC until the browser resolves its time zone and preference. Lifecycle labels and outcome reasons come from the backend and are displayed verbatim.
 
 Queue refreshes update the status of matching displayed requests while preserving their positions and loaded older pages. New arrivals appear behind a Show latest requests action that starts a fresh list. A full browser reload also starts a fresh list; older-page URLs retain their explicit cursor.
