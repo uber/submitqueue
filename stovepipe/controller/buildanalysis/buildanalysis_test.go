@@ -23,9 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
+	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
@@ -48,9 +51,11 @@ type analysisMocks struct {
 	store           *storagemock.MockStorage
 	builds          *storagemock.MockBuildStore
 	requests        *storagemock.MockRequestStore
+	requestRead     *gomock.Call
 	issues          *storagemock.MockBuildIssueStore
 	detectorFactory *buildissuemock.MockDetectorFactory
 	detector        *buildissuemock.MockDetector
+	publisher       *mqmock.MockPublisher
 	scope           tally.TestScope
 }
 
@@ -68,15 +73,23 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 		issues:          storagemock.NewMockBuildIssueStore(ctrl),
 		detectorFactory: buildissuemock.NewMockDetectorFactory(ctrl),
 		detector:        buildissuemock.NewMockDetector(ctrl),
+		publisher:       mqmock.NewMockPublisher(ctrl),
 		scope:           tally.NewTestScope("test", nil),
 	}
 
 	m.store.EXPECT().GetBuildStore().Return(m.builds).AnyTimes()
 	m.store.EXPECT().GetRequestStore().Return(m.requests).AnyTimes()
-	m.requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string) (entity.Request, error) { return *m.request, nil }).AnyTimes()
+	m.requestRead = m.requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string) (entity.Request, error) { return *m.request, nil }).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.issues).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.detectorFactory,
+	queue := mqmock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyIssueTrack, Name: "issue_track", Queue: queue},
+	})
+	require.NoError(t, err)
+
+	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.detectorFactory, registry,
 		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 
 	return c, m
@@ -102,11 +115,39 @@ func (m analysisMocks) delivery(t *testing.T) *consumermock.MockDelivery {
 }
 
 func (m analysisMocks) expectPass(status entity.BuildStatus, issues []entity.BuildIssue, err error) *gomock.Call {
+	if status.IsTerminal() {
+		m.request.TerminalBuildID = testBuildID
+	}
 	resolve := m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
 	load := m.builds.EXPECT().Get(gomock.Any(), testBuildID).
-		Return(entity.Build{ID: testBuildID, Status: status}, nil).After(resolve)
+		Return(entity.Build{ID: testBuildID, RequestID: m.request.ID, Status: status}, nil).After(resolve)
 	detector := m.detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(m.detector, nil).After(load)
 	return m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(issues, err).After(detector)
+}
+
+func (m analysisMocks) expectNotification(t *testing.T, finalize bool, after *gomock.Call) *gomock.Call {
+	t.Helper()
+	call := m.publisher.EXPECT().Publish(gomock.Any(), "issue_track", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			assert.Equal(t, testQueue, msg.Tenant)
+			assert.Equal(t, testQueue, msg.PartitionKey)
+			assert.Equal(t, testQueue, msg.Metadata[entityqueue.MetadataKeyQueueName])
+			notification := &stovepipemq.IssueTrack{}
+			require.NoError(t, stovepipemq.Unmarshal(msg.Payload, notification))
+			assert.Equal(t, testBuildID, notification.GetBuildId())
+			assert.Equal(t, testQueue, notification.GetQueueName())
+			assert.Equal(t, finalize, notification.GetFinalize())
+			if finalize {
+				assert.Equal(t, publish.IntentID(testBuildID, "finished"), msg.ID)
+			} else {
+				assert.NotEmpty(t, msg.ID)
+			}
+			return nil
+		})
+	if after != nil {
+		call.After(after)
+	}
+	return call
 }
 
 func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
@@ -128,6 +169,7 @@ func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
 				if !empty {
 					last = m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(last)
 				}
+				last = m.expectNotification(t, status.IsTerminal(), last)
 
 				d := m.delivery(t)
 				if !status.IsTerminal() {
@@ -148,6 +190,7 @@ func TestProcessAcceptsRepeatedAndTaskWideObservations(t *testing.T) {
 	last = m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(last)
 	last = m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).
 		Return(fmt.Errorf("already recorded: %w", storage.ErrAlreadyExists)).After(last)
+	last = m.expectNotification(t, false, last)
 
 	d := m.delivery(t)
 	d.EXPECT().Hold(PollDelayMs).After(last)
@@ -181,6 +224,7 @@ func TestProcessRetriesPartialPersistenceAndReloadsStatus(t *testing.T) {
 			require.ErrorIs(t, err, writeErr)
 			assert.True(t, errs.IsRetryable(err))
 		} else {
+			last = m.expectNotification(t, pass.status.IsTerminal(), last)
 			if !pass.status.IsTerminal() {
 				d.EXPECT().Hold(PollDelayMs).After(last)
 			}
@@ -211,10 +255,13 @@ func TestProcessRunsAgainWhenBuildCompletesDuringDetection(t *testing.T) {
 
 	first := m.delivery(t)
 	first.EXPECT().Hold(PollDelayMs)
+	m.expectNotification(t, false, nil)
 
 	require.NoError(t, c.Process(context.Background(), first))
 
 	m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil)
+	m.request.TerminalBuildID = testBuildID
+	m.expectNotification(t, true, nil)
 
 	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
 }
@@ -267,7 +314,7 @@ func TestProcessPropagatesDependencyErrors(t *testing.T) {
 }
 
 func TestProcessRejectsInvalidMessagesBeforeResolvingDependencies(t *testing.T) {
-	for _, kind := range []string{"malformed payload", "empty queue", "empty build ID", "empty tenant", "tenant mismatch", "metadata mismatch"} {
+	for _, kind := range []string{"malformed payload", "empty queue", "empty build ID", "empty tenant", "tenant mismatch", "metadata mismatch", "partition mismatch"} {
 		t.Run(kind, func(t *testing.T) {
 			c, m := newTestController(t)
 			msg := analysisMessage(t)
@@ -284,6 +331,8 @@ func TestProcessRejectsInvalidMessagesBeforeResolvingDependencies(t *testing.T) 
 				msg.Tenant = "other/main"
 			case "metadata mismatch":
 				msg.Metadata[entityqueue.MetadataKeyQueueName] = "other/main"
+			case "partition mismatch":
+				msg.PartitionKey = testQueue
 			}
 
 			d := consumermock.NewMockDelivery(m.ctrl)
@@ -356,7 +405,8 @@ func TestProcessStillAnalyzesTerminalBuildOfTerminalRequest(t *testing.T) {
 	issue := entity.BuildIssue{TaskID: "validation", UnitID: "unit"}
 
 	detected := m.expectPass(entity.BuildStatusFailed, []entity.BuildIssue{issue}, nil)
-	m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(detected)
+	persisted := m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(detected)
+	m.expectNotification(t, true, persisted)
 
 	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
 }
@@ -374,6 +424,7 @@ func TestProcessRejectsRequestFromDifferentQueue(t *testing.T) {
 func TestCompletionBetweenBuildAndRequestReadStillAnalyzes(t *testing.T) {
 	c, m := newTestController(t)
 	m.request.State = entity.RequestStateFailed
+	m.request.TerminalBuildID = testBuildID
 
 	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
 	gomock.InOrder(
@@ -384,7 +435,8 @@ func TestCompletionBetweenBuildAndRequestReadStillAnalyzes(t *testing.T) {
 	m.detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(m.detector, nil)
 	issue := entity.BuildIssue{TaskID: "validation", UnitID: "unit"}
 	detected := m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{issue}, nil)
-	m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(detected)
+	persisted := m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(detected)
+	m.expectNotification(t, true, persisted)
 
 	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
 }
@@ -419,6 +471,8 @@ func TestProcessRetriesErrorsAndReloadsStatus(t *testing.T) {
 	assert.True(t, errs.IsRetryable(err))
 
 	m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil)
+	m.request.TerminalBuildID = testBuildID
+	m.expectNotification(t, true, nil)
 
 	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
 }
@@ -463,4 +517,133 @@ func TestCancelledAnalysisDoesNotHold(t *testing.T) {
 			require.ErrorIs(t, c.Process(ctx, m.delivery(t)), context.Canceled)
 		})
 	}
+}
+
+func TestProcessRetriesPublicationAfterPersistence(t *testing.T) {
+	for _, status := range []entity.BuildStatus{entity.BuildStatusRunning, entity.BuildStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			c, m := newTestController(t)
+			issue := entity.BuildIssue{TaskID: "validation", UnitID: "unit"}
+			publishErr := errs.NewRetryableError(assert.AnError)
+			var failedMessageID string
+
+			detected := m.expectPass(status, []entity.BuildIssue{issue}, nil)
+			persisted := m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(detected)
+			m.publisher.EXPECT().Publish(gomock.Any(), "issue_track", gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+					failedMessageID = msg.ID
+					return publishErr
+				}).After(persisted)
+
+			require.ErrorIs(t, c.Process(context.Background(), m.delivery(t)), publishErr)
+
+			detected = m.expectPass(status, []entity.BuildIssue{issue}, nil)
+			persisted = m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).
+				Return(storage.ErrAlreadyExists).After(detected)
+			published := m.expectNotification(t, status.IsTerminal(), persisted).
+				Do(func(_ context.Context, _ string, msg entityqueue.Message) {
+					if status.IsTerminal() {
+						assert.Equal(t, failedMessageID, msg.ID)
+					} else {
+						assert.NotEqual(t, failedMessageID, msg.ID)
+					}
+				})
+			d := m.delivery(t)
+			if !status.IsTerminal() {
+				d.EXPECT().Hold(PollDelayMs).After(published)
+			}
+
+			require.NoError(t, c.Process(context.Background(), d))
+		})
+	}
+}
+
+func TestProcessPublishesDistinctRefreshesFromHeldMessage(t *testing.T) {
+	c, m := newTestController(t)
+	var messageIDs []string
+
+	for range 2 {
+		detected := m.expectPass(entity.BuildStatusRunning, nil, nil)
+		published := m.expectNotification(t, false, detected).
+			Do(func(_ context.Context, _ string, msg entityqueue.Message) {
+				messageIDs = append(messageIDs, msg.ID)
+			})
+		d := m.delivery(t)
+		d.EXPECT().Hold(PollDelayMs).After(published)
+
+		require.NoError(t, c.Process(context.Background(), d))
+	}
+
+	require.Len(t, messageIDs, 2)
+	assert.NotEqual(t, messageIDs[0], messageIDs[1])
+}
+
+func TestProcessWaitsForWinningBuildBeforeFinalizing(t *testing.T) {
+	for _, outcome := range []string{"pending", "recorded during detection", "abandoned", "another build wins"} {
+		t.Run(outcome, func(t *testing.T) {
+			c, m := newTestController(t)
+			detected := m.expectPass(entity.BuildStatusFailed, nil, nil)
+			m.request.TerminalBuildID = ""
+			if outcome == "abandoned" {
+				m.request.State = entity.RequestStateFailed
+			}
+			detected.Do(func(context.Context, entity.BuildID) {
+				switch outcome {
+				case "recorded during detection":
+					m.request.TerminalBuildID = testBuildID
+					m.request.State = entity.RequestStateFailed
+				case "another build wins":
+					m.request.TerminalBuildID = "other-build"
+					m.request.State = entity.RequestStateFailed
+				}
+			})
+
+			d := m.delivery(t)
+			if outcome != "another build wins" {
+				published := m.expectNotification(t, outcome == "recorded during detection", detected)
+				if outcome == "pending" {
+					d.EXPECT().Hold(PollDelayMs).After(published)
+				}
+			}
+
+			require.NoError(t, c.Process(context.Background(), d))
+
+			if outcome == "pending" {
+				next := m.expectPass(entity.BuildStatusFailed, nil, nil)
+				m.request.State = entity.RequestStateFailed
+				m.expectNotification(t, true, next)
+
+				require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+			}
+		})
+	}
+}
+
+func TestProcessIgnoresKnownLosingBuildBeforeDetection(t *testing.T) {
+	c, m := newTestController(t)
+	m.request.TerminalBuildID = "other-build"
+	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
+	m.builds.EXPECT().Get(gomock.Any(), testBuildID).
+		Return(entity.Build{ID: testBuildID, RequestID: m.request.ID, Status: entity.BuildStatusFailed}, nil)
+
+	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+}
+
+func TestProcessReturnsOutcomeReloadErrorsWithoutPublishing(t *testing.T) {
+	c, m := newTestController(t)
+	m.requestRead.Times(1)
+	detected := m.expectPass(entity.BuildStatusFailed, nil, nil)
+	m.requests.EXPECT().Get(gomock.Any(), m.request.ID).Return(entity.Request{}, assert.AnError).After(detected)
+
+	require.ErrorIs(t, c.Process(context.Background(), m.delivery(t)), assert.AnError)
+}
+
+func TestProcessRejectsQueueMismatchOnOutcomeReload(t *testing.T) {
+	c, m := newTestController(t)
+	detected := m.expectPass(entity.BuildStatusFailed, nil, nil)
+	detected.Do(func(context.Context, entity.BuildID) {
+		m.request.Queue = "other/main"
+	})
+
+	require.Error(t, c.Process(context.Background(), m.delivery(t)))
 }
