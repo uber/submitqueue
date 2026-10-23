@@ -22,8 +22,25 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
+// OpenIssueCursor is an exclusive position in ascending bytewise task/unit order.
+type OpenIssueCursor struct {
+	// TaskID is the task component; empty with an empty UnitID starts the range.
+	TaskID string
+	// UnitID is the unit component of the last returned key; empty is a task-wide issue.
+	UnitID string
+}
+
+// OpenIssueRange bounds a primary-key scan within the store's queue.
+type OpenIssueRange struct {
+	// After excludes this key and earlier keys; the zero cursor starts the range.
+	After OpenIssueCursor
+	// Limit is the positive maximum number of issues to return.
+	Limit int
+}
+
 // OpenIssueStore contains only currently open issues, keyed by task and unit
 // within the bound queue. A reopened issue must use a new first-seen build ID.
+// Issue keys require a nonempty task ID; an empty unit is a task-wide issue.
 type OpenIssueStore interface {
 	// Create requires a nonempty first-seen build ID.
 	// An existing task/unit returns ErrAlreadyExists.
@@ -31,6 +48,11 @@ type OpenIssueStore interface {
 
 	// Get returns ErrNotFound when the task/unit is not currently open.
 	Get(ctx context.Context, taskID, unitID string) (entity.OpenIssue, error)
+
+	// List returns at most Limit issues in ascending bytewise (task, unit) order.
+	// An empty slice ends the range; invalid bounds return an error.
+	// Pages are not a snapshot: concurrent creates/deletes may change membership.
+	List(ctx context.Context, bounds OpenIssueRange) ([]entity.OpenIssue, error)
 
 	// Delete removes only the matching opening. It succeeds if that opening is
 	// already absent and never removes a row with a different first-seen build.

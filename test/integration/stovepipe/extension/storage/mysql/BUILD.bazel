@@ -5,6 +5,7 @@ go_test(
     srcs = [
         "build_issue_test.go",
         "issue_log_test.go",
+        "open_issue_list_test.go",
         "open_issue_test.go",
         "project_fact_by_degree_test.go",
         "queue_state_transitions_test.go",

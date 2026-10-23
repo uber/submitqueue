@@ -166,7 +166,7 @@ func TestOpenIssueDelete(t *testing.T) {
 }
 
 func TestOpenIssueRejectsInvalidIdentifiers(t *testing.T) {
-	for _, kind := range []string{"queue", "task", "unit", "first build", "empty first build"} {
+	for _, kind := range []string{"queue", "task", "empty task", "unit", "first build", "empty first build"} {
 		t.Run(kind, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
@@ -179,6 +179,8 @@ func TestOpenIssueRejectsInvalidIdentifiers(t *testing.T) {
 				queue = strings.Repeat("q", 256)
 			case "task":
 				issue.TaskID = strings.Repeat("t", 256)
+			case "empty task":
+				issue.TaskID = ""
 			case "unit":
 				issue.UnitID = strings.Repeat("😀", 257)
 			case "first build":
@@ -200,7 +202,7 @@ func TestOpenIssueRejectsInvalidIdentifiers(t *testing.T) {
 			require.Error(t, store.Delete(context.Background(), issue))
 
 			switch kind {
-			case "queue", "task", "unit":
+			case "queue", "task", "empty task", "unit":
 				_, err = store.Get(context.Background(), issue.TaskID, issue.UnitID)
 				require.Error(t, err)
 			}

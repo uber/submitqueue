@@ -18,7 +18,7 @@ package entity
 // Its task and unit identify the condition; the first-seen build identifies
 // this opening and is immutable until removal.
 type OpenIssue struct {
-	// TaskID identifies the logical validation task.
+	// TaskID identifies the logical validation task and must be nonempty.
 	TaskID string `json:"task_id"`
 	// UnitID identifies the validation unit; empty for a task-wide issue.
 	UnitID string `json:"unit_id"`

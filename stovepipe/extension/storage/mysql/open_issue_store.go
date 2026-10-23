@@ -26,6 +26,17 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
+const listOpenIssuesQuery = `
+	SELECT task_id, unit_id, first_seen_build_id
+	FROM open_issue WHERE queue = ?
+	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
+
+const listOpenIssuesAfterCursorQuery = `
+	SELECT task_id, unit_id, first_seen_build_id
+	FROM open_issue WHERE queue = ?
+		AND (task_id > ? OR (task_id = ? AND unit_id > ?))
+	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
+
 type openIssueStore struct {
 	db    *sql.DB
 	scope tally.Scope
@@ -64,6 +75,9 @@ func (s *openIssueStore) Get(ctx context.Context, taskID, unitID string) (ret en
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if taskID == "" {
+		return entity.OpenIssue{}, fmt.Errorf("open issue task ID must not be empty")
+	}
 	if err := validateBuildIssueKey(s.queue, "", taskID, unitID); err != nil {
 		return entity.OpenIssue{}, err
 	}
@@ -82,6 +96,51 @@ func (s *openIssueStore) Get(ctx context.Context, taskID, unitID string) (ret en
 	}
 
 	return issue, nil
+}
+
+func (s *openIssueStore) List(ctx context.Context, bounds storage.OpenIssueRange) (ret []entity.OpenIssue, retErr error) {
+	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	cursor := bounds.After
+	if bounds.Limit <= 0 {
+		return nil, fmt.Errorf("open issue range requires a positive limit")
+	}
+	if cursor.TaskID == "" && cursor.UnitID != "" {
+		return nil, fmt.Errorf("open issue cursor requires a task ID when a unit ID is supplied")
+	}
+	if err := validateBuildIssueKey(s.queue, "", cursor.TaskID, cursor.UnitID); err != nil {
+		return nil, err
+	}
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if cursor.TaskID != "" {
+		rows, err = s.db.QueryContext(ctx, listOpenIssuesAfterCursorQuery,
+			s.queue, cursor.TaskID, cursor.TaskID, cursor.UnitID, bounds.Limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, listOpenIssuesQuery, s.queue, bounds.Limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list open issues: %w", err)
+	}
+	defer rows.Close()
+
+	issues := make([]entity.OpenIssue, 0)
+	for rows.Next() {
+		var issue entity.OpenIssue
+		if err := rows.Scan(&issue.TaskID, &issue.UnitID, &issue.FirstSeenBuildID); err != nil {
+			return nil, fmt.Errorf("failed to scan open issue: %w", err)
+		}
+		issues = append(issues, issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate open issues: %w", err)
+	}
+
+	return issues, nil
 }
 
 func (s *openIssueStore) Delete(ctx context.Context, issue entity.OpenIssue) (retErr error) {
@@ -104,6 +163,9 @@ func (s *openIssueStore) Delete(ctx context.Context, issue entity.OpenIssue) (re
 }
 
 func (s *openIssueStore) validateIssue(issue entity.OpenIssue) error {
+	if issue.TaskID == "" {
+		return fmt.Errorf("open issue task ID must not be empty")
+	}
 	if err := validateBuildIssueKey(s.queue, issue.FirstSeenBuildID, issue.TaskID, issue.UnitID); err != nil {
 		return err
 	}

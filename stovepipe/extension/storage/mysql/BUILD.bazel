@@ -36,6 +36,7 @@ go_test(
         "build_issue_store_test.go",
         "build_store_test.go",
         "issue_log_store_test.go",
+        "open_issue_list_test.go",
         "open_issue_store_test.go",
         "project_fact_by_degree_store_test.go",
         "queue_store_test.go",

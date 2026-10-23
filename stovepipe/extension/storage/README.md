@@ -36,13 +36,17 @@ The MySQL primary key contains the queue, build ID, task ID, and unit ID directl
 
 ## Currently open issues
 
-`OpenIssueStore` contains only currently open issues, keyed by task and unit within the bound queue. Removing an open row never removes immutable per-build observations. There is no open/resolved flag; a resolved issue has no row here.
+`OpenIssueStore` contains only currently open issues, keyed by task and unit within the bound queue. Removing an open row never removes immutable per-build observations. Task IDs must be nonempty; an empty unit identifies a task-wide issue. There is no open/resolved flag; a resolved issue has no row here.
 
 An open row is immutable. Its first-seen build identifies the current opening, not its latest observation. Repeated observations remain in the per-build store. Reopening after removal uses a different first-seen build ID; no last-observed build, version counter, or update operation is stored here.
 
+Listing scans the bound queue's primary-key prefix in ascending bytewise task/unit order, returning at most the requested positive limit. Continue after the last returned task/unit key; the zero cursor starts the range. A cursor with a unit but no task is invalid. Empty units remain task-wide issues and can be used as continuation boundaries. No secondary index or schema change is required.
+
+Pages are not a snapshot across calls. Concurrent changes can affect which rows appear, and the cursor row need not still exist. Readers must not treat listing as an atomic replacement or resolution decision; guarded deletion still protects a later opening.
+
 Deletion matches the task, unit, and first-seen build within the bound queue. It is safe to repeat: an absent opening is a no-op, and a stale deletion never removes a different opening of the same condition. Database failures are returned for retry.
 
-MySQL identifiers use the same binary byte limits as per-build observations. Build IDs are opaque context, not ordering tokens. The store does not choose resolution, enumerate issues, write lifecycle history, or reconcile analysis responses. Lifecycle occurrences are retained separately by `IssueLogStore`. Source-order reconciliation belongs to later controllers, not this membership store.
+MySQL identifiers use the same binary byte limits as per-build observations. Build IDs are opaque context, not ordering tokens. The store does not choose resolution, write lifecycle history, or reconcile analysis responses. Lifecycle occurrences are retained separately by `IssueLogStore`. Source-order reconciliation belongs to later controllers, not this membership store.
 
 ## Issue lifecycle history
 
