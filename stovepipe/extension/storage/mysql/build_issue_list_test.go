@@ -50,7 +50,7 @@ func TestBuildIssueList(t *testing.T) {
 			require.NoError(t, err)
 			defer db.Close()
 			store := NewBuildIssueStore(db, testMetrics(), "queue")
-			issue := entity.BuildIssue{TaskID: "task", UnitID: "unit"}
+			issue := entity.BuildIssue{TaskID: "task", UnitID: "unit", FixID: "Fix/1 ", Version: 3}
 			query := listBuildIssuesQuery
 			args := []driver.Value{"queue", "build/1", int64(2)}
 			if tt.after.TaskID != "" {
@@ -61,15 +61,15 @@ func TestBuildIssueList(t *testing.T) {
 			if tt.dbErr != nil {
 				expectation.WillReturnError(tt.dbErr)
 			} else {
-				rows := sqlmock.NewRows([]string{"task_id", "unit_id"})
+				rows := sqlmock.NewRows([]string{"task_id", "unit_id", "fix_id", "version"})
 				if !tt.empty {
 					var task any = issue.TaskID
 					if tt.scanError {
 						task = nil
 					}
-					rows.AddRow(task, issue.UnitID)
+					rows.AddRow(task, issue.UnitID, issue.FixID, issue.Version)
 					if tt.rowError {
-						rows.AddRow("task", "unit-2").RowError(1, assert.AnError)
+						rows.AddRow("task", "unit-2", "", 0).RowError(1, assert.AnError)
 					}
 				}
 				expectation.WillReturnRows(rows).RowsWillBeClosed()
@@ -128,7 +128,7 @@ func TestBuildIssueListRejectsInvalidRange(t *testing.T) {
 			}
 			buildID := tt.buildID
 			store := NewBuildIssueStore(db, testMetrics(), queue)
-			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id"}))
+			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "fix_id", "version"}))
 
 			got, err := store.List(context.Background(), buildID, tt.bounds)
 			require.Error(t, err)

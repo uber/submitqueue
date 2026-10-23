@@ -14,11 +14,15 @@
 
 package entity
 
-// BuildIssue identifies a validation failure by task and optional unit.
+// BuildIssue is a validation failure observed within a build, identified by task and optional unit.
 type BuildIssue struct {
 	// TaskID identifies the logical validation task, stable across builds and retries; it must be nonempty.
 	TaskID string `json:"task_id"`
 	// UnitID identifies the failed unit within the task; empty for a task-wide issue.
 	// Repeated observations of the same condition use the same TaskID and UnitID.
 	UnitID string `json:"unit_id"`
+	// FixID is the opaque executor-provided repair identifier; empty means none is recorded.
+	FixID string `json:"fix_id"`
+	// Version is the optimistic-lock version, initially zero.
+	Version int32 `json:"version"`
 }

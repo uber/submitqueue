@@ -5,6 +5,7 @@ go_test(
     srcs = [
         "build_issue_list_test.go",
         "build_issue_test.go",
+        "build_issue_update_test.go",
         "issue_log_test.go",
         "open_issue_list_test.go",
         "open_issue_test.go",

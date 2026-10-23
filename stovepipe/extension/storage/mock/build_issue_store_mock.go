@@ -85,3 +85,17 @@ func (mr *MockBuildIssueStoreMockRecorder) List(ctx, buildID, bounds any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockBuildIssueStore)(nil).List), ctx, buildID, bounds)
 }
+
+// Update mocks base method.
+func (m *MockBuildIssueStore) Update(ctx context.Context, buildID string, issue entity.BuildIssue, oldVersion, newVersion int32) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Update", ctx, buildID, issue, oldVersion, newVersion)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Update indicates an expected call of Update.
+func (mr *MockBuildIssueStoreMockRecorder) Update(ctx, buildID, issue, oldVersion, newVersion any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockBuildIssueStore)(nil).Update), ctx, buildID, issue, oldVersion, newVersion)
+}
