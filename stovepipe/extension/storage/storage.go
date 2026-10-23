@@ -100,6 +100,9 @@ type Storage interface {
 	// GetOpenIssueStore returns the OpenIssueStore instance.
 	GetOpenIssueStore() OpenIssueStore
 
+	// GetIssueLogStore returns the IssueLogStore instance.
+	GetIssueLogStore() IssueLogStore
+
 	// GetValidationFactStore returns the ValidationFactStore instance.
 	GetValidationFactStore() ValidationFactStore
 

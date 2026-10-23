@@ -1,6 +1,6 @@
 # Storage
 
-Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`). Implementations live under `extension/storage/<impl>/`.
+Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`, `IssueLogStore`). Implementations live under `extension/storage/<impl>/`.
 
 The aggregate is resolved per queue through a factory keyed by queue name, mirroring the extension contract and the [submitqueue storage seam](../../../submitqueue/extension/storage/README.md#queue-scoped-resolution): a resolved instance is bound to its queue, entity arguments whose queue disagrees with the binding are rejected, and reads never surface another queue's records. Stovepipe has no cross-queue read paths, so every store — including `QueueStore`, whose row key is the queue name itself — lives inside the queue-scoped aggregate; there is no global remainder.
 
@@ -42,4 +42,14 @@ An open row is immutable. Its first-seen build identifies the current opening, n
 
 Deletion matches the task, unit, and first-seen build within the bound queue. It is safe to repeat: an absent opening is a no-op, and a stale deletion never removes a different opening of the same condition. Database failures are returned for retry.
 
-MySQL identifiers use the same binary byte limits as per-build observations. Build IDs are opaque context, not ordering tokens. The store does not choose resolution, enumerate issues, write lifecycle history, or reconcile analysis responses. History and source-order reconciliation belong to later controllers, not this membership store.
+MySQL identifiers use the same binary byte limits as per-build observations. Build IDs are opaque context, not ordering tokens. The store does not choose resolution, enumerate issues, write lifecycle history, or reconcile analysis responses. Lifecycle occurrences are retained separately by `IssueLogStore`. Source-order reconciliation belongs to later controllers, not this membership store.
+
+## Issue lifecycle history
+
+`IssueLogStore` retains immutable opened and resolved transitions independently of current open-issue membership and per-build observations. Each transition is keyed by task, unit, build, and event within the bound queue. An empty unit identifies a task-wide issue. History remains after an open row is removed or recreated; transitions do not carry a separate reference to the opening they belong to.
+
+The build ID identifies the build where the issue was first seen or confirmed resolved. The application supplies a positive Unix-millisecond timestamp for when the transition was first recorded, not when the build finished. A duplicate identity returns `ErrAlreadyExists` without replacing the original timestamp. Callers can treat replay as success or read the original event. Build IDs are opaque and do not establish transition ordering.
+
+The MySQL key uses the same binary identifier limits as the issue stores, plus a 32-byte event field, for a maximum of 2586 bytes. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
+
+History persistence does not alter open-issue membership or validate transitions against it. No runtime writer is enabled here. A later reconciliation controller must own opening/resolution decisions, retry-safe writes to both stores, and protection against stale build analysis. History enumeration is outside this storage contract.
