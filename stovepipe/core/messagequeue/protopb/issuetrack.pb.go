@@ -47,6 +47,8 @@ type IssueTrack struct {
 	QueueName string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	// finalize requests final reconciliation after successful terminal detection
 	// and persistence, including when no failures were detected.
+	// Persisted observations must be the complete authoritative failure set for
+	// the queue's relevant validation scope before absence may imply resolution.
 	// Otherwise the notification permits opening issues, not resolution by absence.
 	Finalize      bool `protobuf:"varint,3,opt,name=finalize,proto3" json:"finalize,omitempty"`
 	unknownFields protoimpl.UnknownFields
