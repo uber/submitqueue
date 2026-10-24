@@ -6,7 +6,9 @@
 
 A refresh notification traverses its build's observations in bounded task/unit batches. A missing issue is opened using this build as its first-seen build. Repeated observations preserve existing openings and do not create another transition. Final reconciliation also traverses open issues and resolves those absent from the source build. Cancelled builds may add confirmed observations but never establish resolution. Final notifications must name the request's winning terminal build; duplicate-build losers are ignored.
 
-The final-notification contract is an input requirement, not something terminal status alone proves: detection must have succeeded, its persisted observations must be complete and authoritative for the queue's relevant validation scope, and in-flight analysis must not add unaccounted results after the final handoff. Accumulated observations are not automatically a current failure snapshot. A producer that cannot satisfy those requirements must not request absence-based resolution. No producer or consumer is wired by this implementation; the production handoff and recovery policy remain follow-up work.
+Final reconciliation uses the build's accumulated observations, not just its last detector response. An issue reported earlier remains associated with that build even if later calls omit it. Successful terminal detection must discover all remaining reportable issues and persist them before requesting finalization, making the accumulated set authoritative for the queue's relevant validation scope. Terminal status alone does not prove completeness. Build analysis serializes passes by build and publishes only after persistence, so an unfinished earlier pass cannot race the final handoff.
+
+Build analysis publishes refresh and final notifications, but the reference host does not yet register the issue-tracking consumer. Consumer registration and recovery policy remain follow-up work.
 
 ## Source ordering and interrupted passes
 

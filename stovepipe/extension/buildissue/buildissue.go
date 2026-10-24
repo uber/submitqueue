@@ -24,10 +24,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// Detector discovers confirmed issues without waiting for build completion.
-// Implementations own confirmation and retry rules and must be concurrency-safe.
-// Detection does not mark issues as handled.
-// An issue's absence from a detection result does not mean it is resolved.
+// Detector discovers issues retained in a build's accumulated results.
+// Calls may repeat or omit earlier issues; absence does not retract them.
+// A successful terminal call must discover all remaining reportable issues.
+// Implementations must be concurrency-safe and must not consume evidence.
 // Return plain dependency errors; issue results returned with an error must not be used.
 type Detector interface {
 	Detect(ctx context.Context, buildID entity.BuildID) ([]entity.BuildIssue, error)

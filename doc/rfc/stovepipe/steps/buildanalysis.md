@@ -1,6 +1,6 @@
 # Build issue observation
 
-Build analysis runs alongside status polling and recording. Hosts supply a queue-resolved detector factory. The reference service uses a no-op detector so the analysis stage is always wired without inspecting provider output; deployments replace the factory with their integration. No-op results do not establish build success or recovery.
+Build analysis runs alongside status polling and recording. Hosts supply a queue-resolved detector factory. The reference service uses a no-op detector so the analysis stage is always wired without inspecting provider output; deployments replace the factory with their integration. No-op results do not establish build success. The reference host registers an issue-tracking publication route but does not yet consume those notifications.
 
 ## Start and completion notices
 
@@ -12,7 +12,7 @@ Publication errors are returned through the producing stage's retry/DLQ policy. 
 
 ## Observations and polling
 
-The [analysis controller](../../../../stovepipe/controller/buildanalysis/README.md) owns detection, per-build observation persistence, polling, and the stop condition for Requests that end without a recorded build result. It only accumulates historical observations; it does not maintain open issues or infer recovery from absence.
+The [analysis controller](../../../../stovepipe/controller/buildanalysis/README.md) owns detection, per-build observation persistence, polling, and the stop condition for Requests that end without a recorded build result. It accumulates per-build observations and publishes queue-partitioned issue-tracking notifications after persistence; it does not maintain open issues itself. Successful terminal analysis requests final reconciliation only after the Request records that Build as its winning outcome. Final reconciliation uses the accumulated observations, including issues omitted from the last detector response. See the controller documentation for handoff and deduplication rules.
 
 Status-polling DLQ recovery does not publish a build-completion notice. The analysis polling loop observes the ended Request through storage instead.
 
