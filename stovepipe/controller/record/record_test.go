@@ -28,6 +28,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
@@ -1322,4 +1323,61 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 	}).Return(nil)
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Len(t, m.hooks.events, 1)
+}
+
+func TestProcessAttributesIncompleteRecordStage(t *testing.T) {
+	for _, stage := range []string{_recordStagePrepare, _recordStageProjectResults, _recordStageRepositoryFact, _recordStageRepositoryHistory, _recordStageProjectFacts, _recordStageDerivedCaches, _recordStageNotification} {
+		t.Run(stage, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			cause := errs.NewRetryableError(assert.AnError)
+			expectRecordStageFailure(ctrl, c, m, stage, cause)
+			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+			require.ErrorIs(t, err, cause)
+			assert.True(t, errs.IsRetryable(err))
+			assert.Equal(t, stage, errs.Attribution(err).Detail[requestlog.MetadataKeyRecordStage])
+		})
+	}
+}
+
+func expectRecordStageFailure(ctrl *gomock.Controller, c *Controller, m recordMocks, stage string, cause error) {
+	if stage == _recordStagePrepare {
+		m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, cause)
+		return
+	}
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+	if stage == _recordStageProjectResults {
+		factory := projectstatusmock.NewMockResolverFactory(ctrl)
+		c.projectStatusResolverFactory = factory
+		factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(nil, cause)
+		return
+	}
+	if stage == _recordStageRepositoryFact {
+		m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(cause)
+		return
+	}
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	logs := requestlogmock.NewMockMaterializer(ctrl)
+	c.materializer = logs
+	repositoryLog := logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Cond(func(log entity.RequestLog) bool { return log.Event == entity.RequestEventValidationFactRecorded }))
+	if stage == _recordStageRepositoryHistory {
+		repositoryLog.Return(cause)
+		return
+	}
+	repositoryLog.Return(nil)
+	projectLog := logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Cond(func(log entity.RequestLog) bool { return log.Event == entity.RequestEventProjectFactsRecorded })).After(repositoryLog)
+	if stage == _recordStageProjectFacts {
+		projectLog.Return(cause)
+		return
+	}
+	projectLog.Return(nil)
+	if stage == _recordStageDerivedCaches {
+		m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, cause)
+		return
+	}
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+	m.hooks.err = cause
 }

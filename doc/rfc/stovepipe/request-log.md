@@ -9,7 +9,9 @@ Stovepipe retains an append-only request log for each validation request. Its in
 - `validation_fact_recorded`;
 - `project_facts_recorded`;
 - `record_abandoned`;
-- `build_analysis_abandoned`.
+- `build_analysis_abandoned`;
+- `build_analysis_completed`;
+- `repair_submitted`.
 
 The model deliberately follows SubmitQueue's distinction between statuses describing where a request is and events describing important activity that does not move it. It remains a bounded request-lifecycle log rather than a generic event bus or an audit of every correlated operation.
 
@@ -34,7 +36,7 @@ The following remain with their owning entities, metrics, or structured logs:
 
 - Queue latest-request and last-green bookmarks;
 - source-control promotion;
-- project analysis and individual project facts;
+- individual issue observations and project facts;
 - hooks and downstream notifications;
 - build-slot claims, waits, and releases;
 - queue handoffs, delivery attempts, holds, nacks, and visibility timeouts;
@@ -103,7 +105,7 @@ The core column shape follows SubmitQueue's `RequestLog`, except Stovepipe omits
 
 Metadata is never used for occurrence identity, filtering, or control flow. Nil and empty maps are equivalent. The initial entity and storage contract treats the map as opaque JSON; writer and projection work may later define and enforce keys such as `superseded_by_request_id`, `build_id`, and `fact_degree`. Producers must not store credentials, raw dependency errors, stack traces, or unbounded payloads. The initial public history API does not expose the raw map.
 
-Immutable Request context such as URI, build strategy, base URI, and terminal build id remains on `Request` and is resolved there rather than copied into log records or history responses. Build status and version remain on `Build`; the triggered and finished event kinds plus the terminal Request state describe the lifecycle without duplicating Build snapshots. When a build established the terminal state, that state entry records its id as occurrence context. Diagnostic error codes remain in structured logs until a concrete public vocabulary is required.
+The URI, selected build strategy and baseline, and terminal build ID remain durable context on `Request`. State-log writers copy the relevant context into metadata so retries can reproduce the same occurrence. Build status and version remain on `Build`; the triggered and finished event kinds plus the terminal Request state describe the lifecycle without duplicating Build snapshots. When a build established the terminal state, that state entry records its id as occurrence context. Record failures carry a bounded `record_stage` in their structured failure attribution. The DLQ retains only recognized stage values in `record_abandoned` metadata; missing or unrecognized values become `unknown`. Raw error messages remain in structured logs.
 
 ## Vocabularies
 
@@ -126,8 +128,12 @@ Immutable Request context such as URI, build strategy, base URI, and terminal bu
 | `build_finished` | The Build first reached a write-once terminal status. | Build ID metadata and status-change time |
 | `validation_fact_recorded` | The immutable whole-repository fact became durable. | Degree metadata and fact creation time |
 | `project_facts_recorded` | All project validation facts returned for a request became durable. | Project-fact count metadata and completion time |
-| `record_abandoned` | Record-stage work stopped after exhausting primary retries. | Event retention time |
+| `record_abandoned` | Record-stage work stopped; earlier facts may already be durable. | Bounded `record_stage` metadata and event retention time |
 | `build_analysis_abandoned` | Build analysis could not complete; issue observations may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
+| `build_analysis_completed` | Final analysis of a terminal build completed and its issue observations are durable, including an empty result. | Build ID metadata and event retention time |
+| `repair_submitted` | A submitted repair ID was durably associated with a build issue. This does not assert repair completion. | Build ID, fix ID, task ID, unit ID metadata and event retention time |
+
+The bounded record stages are `prepare`, `resolve_project_results`, `record_validation_fact`, `retain_validation_fact`, `record_project_facts`, `apply_derived_caches`, and `publish_notification`. `record_abandoned` identifies the incomplete part of the stage without retracting facts already recorded. In particular, promotion or notification failure does not change the validation verdict.
 
 Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Individual project facts remain outside the vocabulary; one batch-completion event summarizes their durable recording.
 
@@ -162,8 +168,10 @@ SubmitQueue applies that identity to the message carrying a log to its materiali
 | Build finished | Request ID, event kind, and build ID |
 | Validation fact recorded | Request ID, event kind, and whole-repository fact identity |
 | Project facts recorded | Request ID, event kind, and the completed project-fact batch |
+| Build analysis completed | Request ID, event kind, and build ID |
+| Repair submitted | Request ID, event kind, and a bounded hash of the build, task, unit, and fix IDs |
 
-The controller passes the materializer the same queue-scoped storage aggregate used for the source write. The materializer preserves a supplied occurrence time or assigns the current time immediately before the first insertion attempt, then calls `RequestLogStore.Create`. If the ID already exists, it loads the stored record and compares the explicitly designated stable semantic fields. The first successfully retained timestamp is authoritative and is not compared with a later retry's newly sampled time. Metadata keys emitted by both records must agree, while a key present on only one record remains compatible so an additive metadata rollout does not turn retries of older occurrences into conflicts. Compatible content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten or enriched.
+The controller passes the materializer the same queue-scoped storage aggregate used for the source write. The materializer preserves a supplied occurrence time or assigns the current time immediately before the first insertion attempt, then calls `RequestLogStore.Create`. If the ID already exists, it loads the stored record and compares the explicitly designated stable semantic fields. The first successfully retained timestamp is authoritative and is not compared with a later retry's newly sampled time. Metadata keys emitted by both records must agree, except that `superseded_by_request_id` may identify different newer heads for the same superseded transition; the first retained value remains authoritative. A key present on only one record remains compatible so an additive metadata rollout does not turn retries of older occurrences into conflicts. Compatible content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten or enriched.
 
 ## Storage Contract
 
@@ -218,8 +226,12 @@ The `project_facts_recorded` event also projects its retained timestamp into `Re
 | Buildsignal | Persist terminal Build and retain `build_finished`; CAS the Request outcome and retain its terminal state. | Existing terminal Build and Request outcome each ensure their own entry before record publication. |
 | Record | Create or verify the whole-repository fact, then retain `validation_fact_recorded`; after recording project facts, retain one `project_facts_recorded` event. | An identical whole-repository fact and project-fact batch ensure their events before bookmark or promotion work. |
 | Record DLQ | Retain `record_abandoned`, then acknowledge the remaining record work. | The stable event ID makes history retention idempotent without replaying facts, bookmarks, promotion, or hooks. |
+| Build analysis | Persist final observations, then retain `build_analysis_completed` for a terminal build. | A repeated final pass verifies existing observations and retries the same history occurrence before acknowledgment. |
 | Build analysis DLQ | Retain `build_analysis_abandoned` without rerunning detection or changing validation state. | One stable event per build deduplicates recovery deliveries; only state reads and history retention retry. |
+| Fix | Persist the repair association, then retain `repair_submitted`. | An existing fix ID repairs history without calling the executor again; a concurrent association uses the stored winner. |
 | Reconciler | CAS an unrecoverable non-terminal Request to failed, then retain failed. | An existing terminal Request is repaired from its persisted outcome without relabeling it. |
+
+Supersession records an observed newer queue head as `superseded_by_request_id` history metadata. If retention fails, a retry may observe a later head: any newer head explains the same superseded transition. The first retained occurrence stays immutable, including its observed head. If the queue bookmark is empty or stale during repair, the metadata is omitted rather than inventing a replacement.
 
 Build running and unchanged polls create no entry. A failed runner trigger that creates no Build creates no event. Cancelled and superseded requests create no validation fact.
 
@@ -277,7 +289,7 @@ Rejected because bookmarks, promotion, project facts, hooks, and operational boo
 
 ### Use a generic versioned envelope
 
-Rejected for six request states and three explanatory events. Explicit fields are simpler to inspect, constrain, test, and expose. A future migration should be justified by actual vocabulary growth.
+Rejected for the bounded request-state and explanatory-event vocabulary. Explicit fields are simpler to inspect, constrain, test, and expose. A future migration should be justified by actual vocabulary growth.
 
 ### Copy SubmitQueue's log topic
 

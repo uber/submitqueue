@@ -124,7 +124,15 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		return fmt.Errorf("failed to load request %s for record dlq: %w", rec.GetId(), err)
 	}
 	originalFailure, hasFailure := delivery.Failure()
-	log := requestlog.NewRequestEventLog(request, entity.RequestEventRecordAbandoned, "repository", nil)
+	stage, _ := originalFailure.Detail[requestlog.MetadataKeyRecordStage].(string)
+	switch stage {
+	case _recordStagePrepare, _recordStageProjectResults, _recordStageRepositoryFact,
+		_recordStageRepositoryHistory, _recordStageProjectFacts, _recordStageDerivedCaches, _recordStageNotification:
+	default:
+		stage = _recordStageUnknown
+	}
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventRecordAbandoned, "repository",
+		map[string]string{requestlog.MetadataKeyRecordStage: stage})
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		metrics.NamedCounter(c.metricsScope, _dlqOpName, "history_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to retain abandoned record work for request %s: %w", request.ID, err)

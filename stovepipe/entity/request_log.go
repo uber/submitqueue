@@ -34,6 +34,10 @@ const (
 	RequestEventRecordAbandoned RequestEvent = "record_abandoned"
 	// RequestEventBuildAnalysisAbandoned records incomplete build analysis, not a validation outcome.
 	RequestEventBuildAnalysisAbandoned RequestEvent = "build_analysis_abandoned"
+	// RequestEventBuildAnalysisCompleted records that final build issue observations are durable.
+	RequestEventBuildAnalysisCompleted RequestEvent = "build_analysis_completed"
+	// RequestEventRepairSubmitted records a durable association between a build issue and a submitted repair.
+	RequestEventRepairSubmitted RequestEvent = "repair_submitted"
 )
 
 // RequestOutcomeReason identifies the durable domain reason for a terminal request state.
@@ -139,7 +143,7 @@ func (e RequestLog) validateEvent() error {
 		return fmt.Errorf("event log must not contain request-state context")
 	}
 	switch e.Event {
-	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded, RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned:
+	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded, RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventBuildAnalysisCompleted, RequestEventRepairSubmitted:
 	default:
 		return fmt.Errorf("unknown request event %q", e.Event)
 	}

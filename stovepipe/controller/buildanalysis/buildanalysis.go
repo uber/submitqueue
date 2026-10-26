@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -43,6 +44,7 @@ type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	stores          storage.Factory
+	materializer    requestlog.Materializer
 	detectorFactory buildissue.DetectorFactory
 	topicKey        consumer.TopicKey
 	consumerGroup   string
@@ -52,6 +54,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	detectorFactory buildissue.DetectorFactory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -60,6 +63,7 @@ func NewController(
 		logger:          logger.Named("buildanalysis_controller"),
 		metricsScope:    scope.SubScope("buildanalysis_controller"),
 		stores:          stores,
+		materializer:    materializer,
 		detectorFactory: detectorFactory,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
@@ -141,6 +145,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// even if the build finishes while detection is running.
 	if !build.Status.IsTerminal() {
 		delivery.Hold(PollDelayMs)
+	} else {
+		log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, build.ID,
+			map[string]string{requestlog.MetadataKeyBuildID: build.ID})
+		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+			return fmt.Errorf("failed to retain completed build analysis for request %s: %w", request.ID, err)
+		}
 	}
 
 	c.logger.Debugw("build analysis pass complete",

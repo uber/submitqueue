@@ -409,7 +409,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(logger, scope, store, materializer, detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
 	}

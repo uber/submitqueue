@@ -44,6 +44,16 @@ const (
 	MetadataKeyProjectFactCount = "project_fact_count"
 	// MetadataKeyBaseURI records the selected build baseline; an empty value means a full build.
 	MetadataKeyBaseURI = "base_uri"
+	// MetadataKeySupersededByRequestID identifies a newer head observed for a superseded request.
+	MetadataKeySupersededByRequestID = "superseded_by_request_id"
+	// MetadataKeyRecordStage identifies the incomplete part of abandoned record work.
+	MetadataKeyRecordStage = "record_stage"
+	// MetadataKeyFixID identifies the submitted repair associated with a build issue.
+	MetadataKeyFixID = "fix_id"
+	// MetadataKeyTaskID identifies the build task associated with a repair.
+	MetadataKeyTaskID = "task_id"
+	// MetadataKeyUnitID identifies the build unit associated with a repair.
+	MetadataKeyUnitID = "unit_id"
 )
 
 // Materializer retains request-log occurrences and advances their derived read models.
@@ -179,16 +189,21 @@ func sameSemanticOccurrence(stored, candidate entity.RequestLog) bool {
 		stored.Event == candidate.Event &&
 		stored.RequestVersion == candidate.RequestVersion &&
 		stored.OutcomeReason == candidate.OutcomeReason &&
-		metadataCompatible(stored.Metadata, candidate.Metadata)
+		metadataCompatible(stored, candidate)
 }
 
-func metadataCompatible(stored, candidate map[string]string) bool {
-	// Keys present on only one side permit additive rollout against older immutable rows. Values
-	// emitted by both versions must still agree.
-	for key, storedValue := range stored {
-		if candidateValue, ok := candidate[key]; ok && candidateValue != storedValue {
-			return false
+func metadataCompatible(stored, candidate entity.RequestLog) bool {
+	// Absent keys permit additive rollout. Producers validate superseding heads;
+	// retries can observe different heads, and the retained value wins.
+	for key, storedValue := range stored.Metadata {
+		candidateValue, ok := candidate.Metadata[key]
+		if !ok || candidateValue == storedValue {
+			continue
 		}
+		if key == MetadataKeySupersededByRequestID && stored.State == entity.RequestStateSuperseded {
+			continue
+		}
+		return false
 	}
 	return true
 }

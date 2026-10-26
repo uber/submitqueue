@@ -27,6 +27,8 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuemock "github.com/uber/submitqueue/stovepipe/extension/buildissue/mock"
@@ -76,7 +78,9 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m.requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string) (entity.Request, error) { return *m.request, nil }).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.issues).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.detectorFactory,
+	materializer := requestlogmock.NewMockMaterializer(ctrl)
+	materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).AnyTimes()
+	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, materializer, m.detectorFactory,
 		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 
 	return c, m
@@ -462,5 +466,35 @@ func TestCancelledAnalysisDoesNotHold(t *testing.T) {
 
 			require.ErrorIs(t, c.Process(ctx, m.delivery(t)), context.Canceled)
 		})
+	}
+}
+
+func TestProcessRetriesFinalAnalysisHistoryAfterPersistingIssues(t *testing.T) {
+	c, m := newTestController(t)
+	logs := requestlogmock.NewMockMaterializer(m.ctrl)
+	c.materializer = logs
+	issue := entity.BuildIssue{TaskID: "validation", UnitID: "unit"}
+	for i, logErr := range []error{assert.AnError, nil} {
+		detected := m.expectPass(entity.BuildStatusFailed, []entity.BuildIssue{issue}, nil)
+		writeErr := error(nil)
+		if i > 0 {
+			writeErr = storage.ErrAlreadyExists
+		}
+		saved := m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(writeErr).After(detected)
+		logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+				assert.Equal(t, "event/build_analysis_completed/"+testBuildID, log.ID)
+				assert.Equal(t, m.request.ID, log.RequestID)
+				assert.Equal(t, entity.RequestEventBuildAnalysisCompleted, log.Event)
+				assert.Equal(t, map[string]string{requestlog.MetadataKeyBuildID: testBuildID}, log.Metadata)
+				assert.Zero(t, log.RequestVersion)
+				return logErr
+			}).After(saved)
+		err := c.Process(context.Background(), m.delivery(t))
+		if logErr != nil {
+			require.ErrorIs(t, err, logErr)
+		} else {
+			require.NoError(t, err)
+		}
 	}
 }

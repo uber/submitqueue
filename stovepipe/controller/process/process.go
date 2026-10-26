@@ -141,7 +141,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		return nil
 	case entity.RequestStateSuperseded:
-		return c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonSupersededByNewerHead)
+		queueRow, err := c.loadQueue(ctx, store, request.Queue)
+		if err != nil {
+			return err
+		}
+		return c.persistSupersededLog(ctx, store, request, queueRow.LatestRequestID)
 	case entity.RequestStateSucceeded, entity.RequestStateFailed, entity.RequestStateCancelled:
 		// Terminal: a newer head preempted this request, or its build already finished.
 		// A stale redelivery has nothing left to do.
@@ -213,7 +217,7 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 	if request.State != entity.RequestStateSuperseded {
 		return true, nil
 	}
-	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonSupersededByNewerHead); err != nil {
+	if err := c.persistSupersededLog(ctx, store, request, latestRequestID); err != nil {
 		return false, err
 	}
 	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1, metrics.TagsFromContext(ctx)...)
@@ -313,6 +317,23 @@ func (c *Controller) persistStateLog(ctx context.Context, store storage.Storage,
 	log := requestlog.NewRequestStateLog(request, reason)
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("failed to record %s state for request %s: %w", request.State, request.ID, err)
+	}
+	return nil
+}
+
+func (c *Controller) persistSupersededLog(ctx context.Context, store storage.Storage, request entity.Request, latestRequestID string) error {
+	log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead)
+	if latestRequestID != "" {
+		comparison, err := entity.CompareRequestID(latestRequestID, request.ID)
+		if err != nil {
+			return fmt.Errorf("failed to compare request ids for queue %s: %w", request.Queue, err)
+		}
+		if comparison > 0 {
+			log.Metadata[requestlog.MetadataKeySupersededByRequestID] = latestRequestID
+		}
+	}
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record superseded state for request %s: %w", request.ID, err)
 	}
 	return nil
 }

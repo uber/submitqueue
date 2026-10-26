@@ -17,12 +17,15 @@ package fix
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -35,6 +38,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	executors     fixer.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -44,6 +48,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	executors fixer.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -52,6 +57,7 @@ func NewController(
 		logger:        logger.Named("fix_controller"),
 		metricsScope:  scope.SubScope("fix_controller"),
 		stores:        stores,
+		materializer:  materializer,
 		executors:     executors,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -63,12 +69,15 @@ func (c *Controller) processBuild(ctx context.Context, queueName, buildID string
 	if err != nil {
 		return fmt.Errorf("failed to resolve repair storage: %w", err)
 	}
-	observation, found, err := findIssueToFix(ctx, store.GetBuildIssueStore(), store.GetOpenIssueStore(), buildID)
+	observation, found, err := selectRepairObservation(ctx, store.GetBuildIssueStore(), store.GetOpenIssueStore(), buildID)
 	if err != nil {
 		return fmt.Errorf("failed to select an issue for build %q: %w", buildID, err)
 	}
 	if !found {
 		return nil
+	}
+	if observation.FixID != "" {
+		return c.persistRepairSubmittedLog(ctx, store, queueName, buildID, observation)
 	}
 
 	executor, err := c.executors.For(fixer.Config{QueueName: queueName})
@@ -112,12 +121,13 @@ func (c *Controller) processBuild(ctx context.Context, queueName, buildID string
 		if current.FixID == "" {
 			return err
 		}
+		updated = current
 		c.logger.Warnw("preserving previously recorded repair association",
 			"queue", queueName, "build_id", buildID,
 			"task_id", issue.TaskID, "unit_id", issue.UnitID,
 			"fix_id", current.FixID, "submitted_fix_id", fixID)
 	}
-	return nil
+	return c.persistRepairSubmittedLog(ctx, store, queueName, buildID, updated)
 }
 
 func (c *Controller) Name() string { return "fix" }
@@ -126,7 +136,7 @@ func (c *Controller) TopicKey() consumer.TopicKey { return c.topicKey }
 
 func (c *Controller) ConsumerGroup() string { return c.consumerGroup }
 
-func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, openIssues storage.OpenIssueStore, buildID string) (entity.BuildIssue, bool, error) {
+func selectRepairObservation(ctx context.Context, observations storage.BuildIssueStore, openIssues storage.OpenIssueStore, buildID string) (entity.BuildIssue, bool, error) {
 	bounds := storage.BuildIssueRange{Limit: buildIssuePageSize}
 	var candidate entity.BuildIssue
 	found := false
@@ -140,7 +150,7 @@ func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, o
 		}
 		for _, record := range page {
 			if record.FixID != "" {
-				return entity.BuildIssue{}, false, nil
+				return record, true, nil
 			}
 			if found {
 				continue
@@ -159,4 +169,31 @@ func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, o
 		last := page[len(page)-1]
 		bounds.After = storage.BuildIssueCursor{TaskID: last.TaskID, UnitID: last.UnitID}
 	}
+}
+
+func (c *Controller) persistRepairSubmittedLog(ctx context.Context, store storage.Storage, queueName, buildID string, observation entity.BuildIssue) error {
+	build, err := store.GetBuildStore().Get(ctx, buildID)
+	if err != nil {
+		return fmt.Errorf("failed to load repaired build %s: %w", buildID, err)
+	}
+	request, err := store.GetRequestStore().Get(ctx, build.RequestID)
+	if err != nil {
+		return fmt.Errorf("failed to load repaired request %s: %w", build.RequestID, err)
+	}
+	if request.Queue != queueName {
+		return fmt.Errorf("request queue %q does not match repair queue %q", request.Queue, queueName)
+	}
+	// Distinct repair associations need distinct occurrences; hashing bounds the composite ID.
+	identity := sha256.Sum256([]byte(fmt.Sprintf("%q/%q/%q/%q", buildID, observation.TaskID, observation.UnitID, observation.FixID)))
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventRepairSubmitted, hex.EncodeToString(identity[:]),
+		map[string]string{
+			requestlog.MetadataKeyBuildID: buildID,
+			requestlog.MetadataKeyFixID:   observation.FixID,
+			requestlog.MetadataKeyTaskID:  observation.TaskID,
+			requestlog.MetadataKeyUnitID:  observation.UnitID,
+		})
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to retain submitted repair for request %s: %w", request.ID, err)
+	}
+	return nil
 }
