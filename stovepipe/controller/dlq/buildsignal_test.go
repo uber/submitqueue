@@ -110,6 +110,7 @@ func TestBuildSignalProcess(t *testing.T) {
 				}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonBuildPollingExhausted
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				request := requestWithState(entity.RequestStateFailed)
 				request.Version = 3

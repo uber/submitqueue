@@ -161,6 +161,11 @@ func requestWithState(state entity.RequestState) entity.Request {
 	}
 	if state.HasBuildOutcome() {
 		request.TerminalBuildID = testBuildID
+		request.OutcomeReason = map[entity.RequestState]entity.RequestOutcomeReason{
+			entity.RequestStateSucceeded: entity.RequestOutcomeReasonBuildSucceeded,
+			entity.RequestStateFailed:    entity.RequestOutcomeReasonBuildFailed,
+			entity.RequestStateCancelled: entity.RequestOutcomeReasonBuildCancelled,
+		}[state]
 	}
 	return request
 }
@@ -225,14 +230,9 @@ func expectFinish(m buildsignalMocks, state entity.RequestState) *gomock.Call {
 }
 
 func expectOutcomeLog(m buildsignalMocks, state entity.RequestState, version int32) *gomock.Call {
-	reason := map[entity.RequestState]entity.RequestOutcomeReason{
-		entity.RequestStateSucceeded: entity.RequestOutcomeReasonBuildSucceeded,
-		entity.RequestStateFailed:    entity.RequestOutcomeReasonBuildFailed,
-		entity.RequestStateCancelled: entity.RequestOutcomeReasonBuildCancelled,
-	}[state]
 	request := requestWithState(state)
 	request.Version = version
-	log := requestlog.NewRequestStateLog(request, reason)
+	log := requestlog.NewRequestStateLog(request, request.OutcomeReason)
 	log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
