@@ -391,6 +391,7 @@ func TestMaterializerRetainsOtherEventsWithoutProjectingSummary(t *testing.T) {
 		entity.RequestEventValidationFactRecorded,
 		entity.RequestEventRecordAbandoned,
 		entity.RequestEventBuildAnalysisAbandoned,
+		entity.RequestEventIssueTrackingAbandoned,
 	} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, _, _ := newTestMaterializer(t)

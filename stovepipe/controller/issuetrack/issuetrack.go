@@ -105,6 +105,11 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 			return fmt.Errorf("load issue tracking progress: %w", err)
 		}
 
+		if progress.Phase == entity.IssueTrackingPhaseAbandoning {
+			delivery.Hold(_recoveryDelayMs)
+			return nil
+		}
+
 		if progress.Phase != entity.IssueTrackingPhaseRefreshing && progress.Phase != entity.IssueTrackingPhaseFinalizing {
 			if request.TerminalBuildID != "" && request.TerminalBuildID != build.ID {
 				return nil
@@ -117,7 +122,7 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 				if err != nil {
 					return err
 				}
-				if order < 0 || (order == 0 && progress.Phase == entity.IssueTrackingPhaseFinalized) {
+				if order < 0 || (order == 0 && progress.Finalize) {
 					c.logger.Debugw("ignoring superseded issue tracking notification",
 						"queue", queue, "build_id", build.ID, "request_id", request.ID, "current_request_id", progress.RequestID)
 					return nil

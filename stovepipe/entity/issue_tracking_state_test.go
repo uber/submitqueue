@@ -21,7 +21,7 @@ import (
 )
 
 func TestIssueTrackingState(t *testing.T) {
-	for _, phase := range []IssueTrackingPhase{IssueTrackingPhaseRefreshing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalizing, IssueTrackingPhaseFinalized} {
+	for _, phase := range []IssueTrackingPhase{IssueTrackingPhaseRefreshing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalizing, IssueTrackingPhaseFinalized, IssueTrackingPhaseAbandoning, IssueTrackingPhaseAbandoned} {
 		t.Run(string(phase), func(t *testing.T) {
 			state := IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: phase, Finalize: phase == IssueTrackingPhaseFinalizing || phase == IssueTrackingPhaseFinalized, Version: 1}
 			require.NoError(t, state.Validate())

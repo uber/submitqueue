@@ -92,6 +92,30 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		require.Equal(t, state, got)
 	})
 
+	t.Run("recovery retains cursor and source boundary", func(t *testing.T) {
+		bound, err := factory.For(storage.Config{QueueName: "tracking/recovery"})
+		require.NoError(t, err)
+		store := bound.GetIssueTrackingStore()
+		state := entity.IssueTrackingState{
+			RequestID: "10", BuildID: "build/10", NotificationID: "failed-notification",
+			CursorTaskID: "task", CursorUnitID: "unit",
+			Finalize: true, HasTaskWideIssues: true,
+			Phase: entity.IssueTrackingPhaseAbandoning, Version: 1,
+		}
+		require.NoError(t, store.Create(ctx, state))
+		got, err := store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, state, got)
+
+		state.Phase = entity.IssueTrackingPhaseAbandoned
+		require.NoError(t, store.Update(ctx, state, 1, 2))
+		state.Version = 2
+		got, err = store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, state, got)
+		require.ErrorIs(t, store.Update(ctx, state, 1, 2), storage.ErrVersionMismatch)
+	})
+
 	t.Run("one conditional update wins", func(t *testing.T) {
 		results := make(chan error, 2)
 		for _, requestID := range []string{"12", "13"} {

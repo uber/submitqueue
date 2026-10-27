@@ -38,14 +38,27 @@ No closure occurs before all accumulated build issues have been processed. A tas
 
 Every delivery processes at most 100 task/unit keys from one ordered range, including a revisited cursor and retained closed rows. Refreshing reads build issues; finalizing reads issue states. The cursor is always inclusive: revisit it to finish the issue and its history, then continue after it. A full batch retains its active phase and requests redelivery. Moving from refreshing to finalizing conditionally saves a reset cursor before any closing work begins.
 
-An unfinished pass completes before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own source. Completed notifications and older sources are ignored, as are refreshes after the same Request has finalized. A terminal pass requires a terminal build chosen by its Request in both active phases.
+An unfinished pass completes or is safely abandoned before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own source. Completed notifications and older sources are ignored, as are refreshes after the same Request has finalized or its terminal pass was abandoned. A terminal pass requires a terminal build chosen by its Request in both active phases.
 
 Build IDs are opaque; source order comes from Request IDs. All scans are bounded reads under leading primary-key prefixes. There is no transaction spanning progress, issue state, and history.
 
 ## Recovery and activation
 
-An error returns to normal consumer retry. The next delivery resumes the cursor before advancing. Permanently failing cursor work blocks issue tracking for that queue; terminal recovery and consumer registration remain follow-up work. This PR does not enable consumption. The host must provide a fix publication route and a repair executor when registering the fix consumer.
+An error returns to normal consumer retry. The next delivery resumes the cursor before advancing. Once that retry policy dead-letters a notification, the recovery controller abandons the failed pass rather than rerunning its remaining batches:
+
+1. Conditionally enter `abandoning`, retaining the source, notification, and cursor. Normal deliveries hold for 30 seconds while this phase is present; they cannot start another pass or resume issue application.
+2. If there is a cursor, read its issue and conditionally advance progress after that read. Advance the issue's version without changing its status or transition metadata. This invalidates a paused worker's earlier row guard. If the row has not been created yet, finish that one opening instead: the normal worker can only have saved such a cursor after finding a reported build issue. Creating it prevents the delayed create from succeeding. Closed issue rows are never deleted.
+3. Repair the cursor's opening or closing history from the retained row. Record an `issue_tracking_abandoned` Request-history event keyed by the failed notification, with its build ID.
+4. Conditionally enter `abandoned`. Keep the source-order boundary and notification identity, so the same delivery and older builds cannot restart the abandoned work.
+
+Accepted opens and closes remain in place. Recovery does not scan either issue range, close the remaining issues, change Request or Build outcomes, or release build slots. An abandoned ordinary refresh still permits a new refresh or terminal notification for that Request; an abandoned terminal pass permits only newer Requests. A later successful build can reconcile issues left unchanged by the failed pass.
+
+Recovery must finish fencing the current issue and retaining its history before admitting newer work. If a normal write wins the issue CAS first, recovery retries against that accepted row. If a replacement recovery worker advances first, its issue-version change rejects the old write. Merely marking the pass abandoned without touching the cursor row would not provide this protection.
+
+A notification can fail while helping an older pass. Recovery abandons that saved pass first, then requests immediate redelivery to abandon the failed notification's own work if it has not already been superseded. A delayed DLQ delivery never abandons a newer build or a different notification from the same Request.
+
+Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged. No normal or DLQ consumer is registered yet. Completed opening passes publish repair notifications; recovery does not. The host must provide a fix publication route and a repair executor when registering the fix consumer.
 
 ## Analysis handoff
 
-Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host registers the publication route but does not enable issue-tracking consumption or recovery.
+Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host registers the publication route but does not enable either issue-tracking consumer.

@@ -34,6 +34,10 @@ const (
 	IssueTrackingPhaseFinalizing IssueTrackingPhase = "finalizing"
 	// IssueTrackingPhaseFinalized means final reconciliation completed; later refresh notifications are ignored.
 	IssueTrackingPhaseFinalized IssueTrackingPhase = "finalized"
+	// IssueTrackingPhaseAbandoning means an incomplete pass is being stopped without processing its remaining range.
+	IssueTrackingPhaseAbandoning IssueTrackingPhase = "abandoning"
+	// IssueTrackingPhaseAbandoned means a pass stopped before completing its range.
+	IssueTrackingPhaseAbandoned IssueTrackingPhase = "abandoned"
 )
 
 // IssueTrackingState is the queue-scoped source-order boundary and resumable reconciliation state.
@@ -53,7 +57,7 @@ type IssueTrackingState struct {
 	Finalize bool `json:"finalize"`
 	// HasTaskWideIssues records whether this pass has encountered a task-wide issue.
 	HasTaskWideIssues bool `json:"has_task_wide_issues"`
-	// Phase distinguishes running passes from completed refresh or final passes.
+	// Phase distinguishes active, completed, and abandoned work.
 	Phase IssueTrackingPhase `json:"phase"`
 	// Version is the positive optimistic-lock version of this state.
 	Version int32 `json:"version"`
@@ -77,7 +81,7 @@ func (s IssueTrackingState) Validate() error {
 		return fmt.Errorf("issue tracking version must be positive")
 	}
 	switch s.Phase {
-	case IssueTrackingPhaseRefreshing:
+	case IssueTrackingPhaseRefreshing, IssueTrackingPhaseAbandoning, IssueTrackingPhaseAbandoned:
 	case IssueTrackingPhaseRefreshed:
 		if s.Finalize {
 			return fmt.Errorf("a terminal pass cannot finish as an ordinary refresh")

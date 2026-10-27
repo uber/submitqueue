@@ -66,6 +66,8 @@ History persistence does not alter issue state or validate transitions against i
 
 The store does not decide source ordering, apply issue transitions, or advance versions. Its caller supplies the guard version and replacement version. A later controller will own acceptance, resumption of cursor work, and completion; no runtime writer is enabled here.
 
+Recovery uses the same record's `abandoning` and `abandoned` phases; no additional schema fields or storage operations are required. The source, notification, cursor, and terminal intent remain present after abandonment. See [issue tracking recovery](../../controller/issuetrack/README.md#recovery-and-activation) for the conditional-write ordering that protects the current cursor before newer work is admitted.
+
 The issue-tracking table must include the notification, cursor, `finalize`, and `has_task_wide_issues` columns before updated readers or writers are deployed. Both boolean columns default to false. They describe one pass, not analysis state for every build in the queue; terminal intent is required before absence-based reconciliation is permitted. No runtime writer is enabled by the storage layer. Notification IDs allow up to 1020 bytes, matching the queue message ID byte capacity; cursor limits match the issue stores.
 
 ### Applied transition facts
