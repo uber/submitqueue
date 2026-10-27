@@ -36,7 +36,10 @@ const _dlqOpName = "record_dlq"
 // DLQController retains abandoned record work and ensures failed requests have
 // a repository fact without requiring project attribution.
 type DLQController struct {
-	factRecorder
+	logger        *zap.SugaredLogger
+	metricsScope  tally.Scope
+	materializer  requestlog.Materializer
+	registry      consumer.TopicRegistry
 	stores        storage.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -56,12 +59,10 @@ func NewDLQController(
 ) *DLQController {
 	name := string(topicKey) + "_controller"
 	return &DLQController{
-		factRecorder: factRecorder{
-			logger:       logger.Named(name),
-			metricsScope: scope.SubScope(name),
-			materializer: materializer,
-			registry:     registry,
-		},
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
+		materializer:  materializer,
+		registry:      registry,
 		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -141,14 +142,14 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	}
 
 	if request.State == entity.RequestStateFailed {
-		fact, _, err := c.recordFact(ctx, store, request, nil)
+		fact, _, err := recordFact(ctx, c.logger, c.metricsScope, store, request, nil)
 		if err != nil {
 			return err
 		}
-		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
+		if err := persistValidationFactRecordedLog(ctx, c.materializer, store, request, fact); err != nil {
 			return err
 		}
-		if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryRecorded(request)); err != nil {
+		if err := publishHookEvent(ctx, c.logger, c.metricsScope, c.registry, request, hookevent.NewValidationRepositoryRecorded(request)); err != nil {
 			return err
 		}
 	}

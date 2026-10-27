@@ -35,15 +35,15 @@ import (
 	"go.uber.org/zap"
 )
 
-type factRecorder struct {
-	logger       *zap.SugaredLogger
-	metricsScope tally.Scope
-	materializer requestlog.Materializer
-	registry     consumer.TopicRegistry
-}
-
-func (c *factRecorder) recordFact(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) (entity.ValidationFact, bool, error) {
-	return c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
+func recordFact(
+	ctx context.Context,
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	store storage.Storage,
+	request entity.Request,
+	results []projectstatus.Result,
+) (entity.ValidationFact, bool, error) {
+	return recordValidationFact(ctx, logger, scope, store.GetValidationFactStore(), entity.ValidationFact{
 		URI:       request.URI,
 		Project:   wholeRepositoryProject,
 		Degree:    degreeFor(request.State, results),
@@ -52,12 +52,18 @@ func (c *factRecorder) recordFact(ctx context.Context, store storage.Storage, re
 	})
 }
 
-func (c *factRecorder) recordValidationFact(ctx context.Context, factStore storage.ValidationFactStore, fact entity.ValidationFact) (entity.ValidationFact, bool, error) {
+func recordValidationFact(
+	ctx context.Context,
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	factStore storage.ValidationFactStore,
+	fact entity.ValidationFact,
+) (entity.ValidationFact, bool, error) {
 	err := factStore.Create(ctx, fact)
 	switch {
 	case err == nil:
-		metrics.NamedCounter(c.metricsScope, _opName, "fact_created", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("recorded validation fact",
+		metrics.NamedCounter(scope, _opName, "fact_created", 1, metrics.TagsFromContext(ctx)...)
+		logger.Infow("recorded validation fact",
 			"request_id", fact.RequestID,
 			"uri", fact.URI,
 			"project", fact.Project,
@@ -68,26 +74,27 @@ func (c *factRecorder) recordValidationFact(ctx context.Context, factStore stora
 	case errors.Is(err, storage.ErrAlreadyExists):
 		stored, getErr := factStore.Get(ctx, fact.URI, fact.Project)
 		if getErr != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+			metrics.NamedCounter(scope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s and project %q: %w", fact.URI, fact.Project, getErr)
 		}
 		if stored.RequestID != fact.RequestID {
 			// Ingest deduplication forbids different requests owning the same immutable fact.
-			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
+			metrics.NamedCounter(scope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 			return entity.ValidationFact{}, false, fmt.Errorf(
 				"fact for uri %s and project %q is owned by request %s, not %s", fact.URI, fact.Project, stored.RequestID, fact.RequestID)
 		}
-		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1, metrics.TagsFromContext(ctx)...)
+		metrics.NamedCounter(scope, _opName, "fact_exists", 1, metrics.TagsFromContext(ctx)...)
 		return stored, false, nil
 
 	default:
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		metrics.NamedCounter(scope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s and project %q: %w", fact.URI, fact.Project, err)
 	}
 }
 
-func (c *factRecorder) persistValidationFactRecordedLog(
+func persistValidationFactRecordedLog(
 	ctx context.Context,
+	materializer requestlog.Materializer,
 	store storage.Storage,
 	request entity.Request,
 	fact entity.ValidationFact,
@@ -101,22 +108,29 @@ func (c *factRecorder) persistValidationFactRecordedLog(
 		map[string]string{requestlog.MetadataKeyFactDegree: strconv.FormatFloat(fact.Degree, 'g', -1, 64)},
 	)
 	log.TimestampMs = fact.CreatedAt
-	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+	if err := materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("failed to record validation fact for request %s: %w", request.ID, err)
 	}
 	return nil
 }
 
-func (c *factRecorder) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
-	if err := platformhook.Publish(ctx, c.registry, request.Queue, event, request.ID); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
+func publishHookEvent(
+	ctx context.Context,
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	registry consumer.TopicRegistry,
+	request entity.Request,
+	event *basehook.HookEvent,
+) error {
+	if err := platformhook.Publish(ctx, registry, request.Queue, event, request.ID); err != nil {
+		metrics.NamedCounter(scope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
 	}
 
-	metrics.NamedCounter(c.metricsScope, _opName, "hook_events_published", 1,
+	metrics.NamedCounter(scope, _opName, "hook_events_published", 1,
 		metrics.TagsFromContext(ctx, metrics.NewTag("event_type", event.GetType()))...,
 	)
-	c.logger.Infow("announced validation outcome",
+	logger.Infow("announced validation outcome",
 		"queue", request.Queue,
 		"request_id", request.ID,
 		"uri", request.URI,

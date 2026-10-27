@@ -55,7 +55,10 @@ import (
 // when that fact is green and holds the queue's last-green bookmark promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	factRecorder
+	logger                       *zap.SugaredLogger
+	metricsScope                 tally.Scope
+	materializer                 requestlog.Materializer
+	registry                     consumer.TopicRegistry
 	stores                       storage.Factory
 	projectStatusResolverFactory projectstatus.ResolverFactory
 	sourceControl                sourcecontrol.Factory
@@ -87,12 +90,10 @@ func NewController(
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		factRecorder: factRecorder{
-			logger:       logger.Named(name),
-			metricsScope: scope.SubScope(name),
-			materializer: materializer,
-			registry:     registry,
-		},
+		logger:                       logger.Named(name),
+		metricsScope:                 scope.SubScope(name),
+		materializer:                 materializer,
+		registry:                     registry,
 		stores:                       stores,
 		projectStatusResolverFactory: projectStatusResolverFactory,
 		sourceControl:                sourceControl,
@@ -147,11 +148,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err != nil {
 			return err
 		}
-		fact, created, err := c.recordFact(ctx, store, request, results)
+		fact, created, err := recordFact(ctx, c.logger, c.metricsScope, store, request, results)
 		if err != nil {
 			return err
 		}
-		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
+		if err := persistValidationFactRecordedLog(ctx, c.materializer, store, request, fact); err != nil {
 			return err
 		}
 		if err := c.persistProjectFacts(ctx, store, request, results); err != nil {
@@ -160,13 +161,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
-		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryRecorded(request))
+		return publishHookEvent(ctx, c.logger, c.metricsScope, c.registry, request, hookevent.NewValidationRepositoryRecorded(request))
 
 	case entity.RequestStateCancelled:
 		// A cancelled build decided nothing about the commit, so it establishes
 		// no fact. The identity stays unclaimed; the next commit re-validates.
 		metrics.NamedCounter(c.metricsScope, _opName, "cancelled", 1, metrics.TagsFromContext(ctx)...)
-		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryCancelled(request))
+		return publishHookEvent(ctx, c.logger, c.metricsScope, c.registry, request, hookevent.NewValidationRepositoryCancelled(request))
 
 	case entity.RequestStateSuperseded:
 		// Terminal without a build outcome. buildsignal never publishes for a
@@ -201,7 +202,7 @@ func (c *Controller) resolveProjectResults(ctx context.Context, request entity.R
 
 func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) error {
 	for _, result := range results {
-		fact, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
+		fact, _, err := recordValidationFact(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:       request.URI,
 			Project:   result.Project,
 			Degree:    result.Degree,
