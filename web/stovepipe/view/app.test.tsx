@@ -21,7 +21,8 @@ const model: StovepipePageModel = {
       complete: false,
       projects: [
         { project: "green-project", breakageDegree: 0 },
-        { project: "broken-project", breakageDegree: 0.25 },
+        { project: "partial-breakage-project", breakageDegree: 0.25 },
+        { project: "broken-project", breakageDegree: 1 },
         { project: "unknown-project", breakageDegree: null },
       ],
       firstHref: null,
@@ -133,6 +134,7 @@ it("renders recorded project results, completion and shareable pagination", () =
   expect(within(table).queryByText(/Repository/)).toBeNull();
   expect(within(table).getByRole("columnheader", { name: "Project" })).toBeVisible();
   expect(within(projects).getByText("Green")).toBeVisible();
+  expect(within(table).getByRole("row", { name: "partial-breakage-project Partial Breakage" })).toBeVisible();
   expect(within(projects).getByText("Breakage")).toBeVisible();
   expect(within(projects).getByText("No result recorded")).toBeVisible();
   expect(within(projects).queryByText(/%/)).toBeNull();
@@ -175,7 +177,8 @@ it("shows complete empty results without inventing green or a continuation", () 
 
 it.each([
   [0, "Green"],
-  [0.25, "Breakage"],
+  [0.25, "Partial Breakage"],
+  [1, "Breakage"],
   [null, "No result recorded"],
 ] as const)("shows repository result %s above history as %s", (degree, label) => {
   if (!model.projectStatus.ok) throw new Error("No projects");

@@ -13,7 +13,7 @@ export function RecordedResult({ degree }: { degree: number | null }) {
     <Tag closeable={false} size="small" kind={
       degree === null ? "neutral" : degree === 0 ? "positive" : "negative"
     }>
-      {degree === null ? "No result recorded" : degree === 0 ? "Green" : "Breakage"}
+      {degree === null ? "No result recorded" : degree === 0 ? "Green" : degree === 1 ? "Breakage" : "Partial Breakage"}
     </Tag>
   );
 }
