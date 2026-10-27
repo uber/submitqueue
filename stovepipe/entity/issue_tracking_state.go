@@ -30,7 +30,7 @@ const (
 	IssueTrackingPhaseRefreshing IssueTrackingPhase = "refreshing"
 	// IssueTrackingPhaseRefreshed means a refresh pass completed; later refresh notifications remain eligible.
 	IssueTrackingPhaseRefreshed IssueTrackingPhase = "refreshed"
-	// IssueTrackingPhaseFinalizing means final opening and closing updates are underway.
+	// IssueTrackingPhaseFinalizing means existing issues are being reconciled after all reported issues were applied.
 	IssueTrackingPhaseFinalizing IssueTrackingPhase = "finalizing"
 	// IssueTrackingPhaseFinalized means final reconciliation completed; later refresh notifications are ignored.
 	IssueTrackingPhaseFinalized IssueTrackingPhase = "finalized"
@@ -45,10 +45,14 @@ type IssueTrackingState struct {
 	// NotificationID identifies the message that owns this reconciliation pass.
 	NotificationID string `json:"notification_id"`
 	// CursorTaskID identifies the current issue's task; active passes revisit it on continuation.
-	// Empty with an empty CursorUnitID starts a pass.
+	// Empty with an empty CursorUnitID starts the phase's range.
 	CursorTaskID string `json:"cursor_task_id"`
 	// CursorUnitID identifies the unit at the cursor; empty is task-wide.
 	CursorUnitID string `json:"cursor_unit_id"`
+	// Finalize identifies a terminal reconciliation pass rather than an ordinary refresh.
+	Finalize bool `json:"finalize"`
+	// HasTaskWideIssues records whether this pass has encountered a task-wide issue.
+	HasTaskWideIssues bool `json:"has_task_wide_issues"`
 	// Phase distinguishes running passes from completed refresh or final passes.
 	Phase IssueTrackingPhase `json:"phase"`
 	// Version is the positive optimistic-lock version of this state.
@@ -73,7 +77,22 @@ func (s IssueTrackingState) Validate() error {
 		return fmt.Errorf("issue tracking version must be positive")
 	}
 	switch s.Phase {
-	case IssueTrackingPhaseRefreshing, IssueTrackingPhaseFinalizing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalized:
+	case IssueTrackingPhaseRefreshing:
+	case IssueTrackingPhaseRefreshed:
+		if s.Finalize {
+			return fmt.Errorf("a terminal pass cannot finish as an ordinary refresh")
+		}
+	case IssueTrackingPhaseFinalizing:
+		if !s.Finalize {
+			return fmt.Errorf("finalizing requires terminal intent")
+		}
+		if s.HasTaskWideIssues {
+			return fmt.Errorf("task-wide failures prevent closing missing issues")
+		}
+	case IssueTrackingPhaseFinalized:
+		if !s.Finalize {
+			return fmt.Errorf("finalized requires terminal intent")
+		}
 	default:
 		return fmt.Errorf("invalid issue tracking phase %q", s.Phase)
 	}

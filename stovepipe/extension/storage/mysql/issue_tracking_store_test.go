@@ -31,7 +31,7 @@ import (
 )
 
 func trackingFixture() entity.IssueTrackingState {
-	return entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", CursorTaskID: "task", CursorUnitID: "unit", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
+	return entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", CursorTaskID: "task", CursorUnitID: "unit", Phase: entity.IssueTrackingPhaseFinalizing, Finalize: true, Version: 1}
 }
 
 func TestIssueTrackingStoreGet(t *testing.T) {
@@ -43,7 +43,7 @@ func TestIssueTrackingStoreGet(t *testing.T) {
 
 			state := trackingFixture()
 			store := NewIssueTrackingStore(db, testMetrics(), "queue")
-			query := mock.ExpectQuery(regexp.QuoteMeta(`SELECT request_id, build_id, notification_id, cursor_task_id, cursor_unit_id,  phase, version FROM issue_tracking WHERE queue = ?`)).WithArgs("queue")
+			query := mock.ExpectQuery(regexp.QuoteMeta(`SELECT request_id, build_id, notification_id, cursor_task_id, cursor_unit_id, finalize, has_task_wide_issues, phase, version FROM issue_tracking WHERE queue = ?`)).WithArgs("queue")
 			switch kind {
 			case "missing":
 				query.WillReturnError(sql.ErrNoRows)
@@ -54,7 +54,7 @@ func TestIssueTrackingStoreGet(t *testing.T) {
 				if kind == "scan error" {
 					request = nil
 				}
-				query.WillReturnRows(sqlmock.NewRows([]string{"request_id", "build_id", "notification_id", "cursor_task_id", "cursor_unit_id", "phase", "version"}).AddRow(request, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Phase, state.Version))
+				query.WillReturnRows(sqlmock.NewRows([]string{"request_id", "build_id", "notification_id", "cursor_task_id", "cursor_unit_id", "finalize", "has_task_wide_issues", "phase", "version"}).AddRow(request, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Finalize, state.HasTaskWideIssues, state.Phase, state.Version))
 			}
 
 			got, err := store.Get(context.Background())
@@ -94,8 +94,8 @@ func TestIssueTrackingStoreCreate(t *testing.T) {
 
 			state := trackingFixture()
 			store := NewIssueTrackingStore(db, testMetrics(), "queue")
-			query := mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id, cursor_task_id, cursor_unit_id,  phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)).
-				WithArgs("queue", state.RequestID, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Phase, state.Version)
+			query := mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id, cursor_task_id, cursor_unit_id, finalize, has_task_wide_issues, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)).
+				WithArgs("queue", state.RequestID, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Finalize, state.HasTaskWideIssues, state.Phase, state.Version)
 			if tt.dbErr != nil {
 				query.WillReturnError(tt.dbErr)
 			} else {
@@ -133,8 +133,8 @@ func TestIssueTrackingStoreUpdate(t *testing.T) {
 
 			state := trackingFixture()
 			store := NewIssueTrackingStore(db, testMetrics(), "queue")
-			query := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?, cursor_task_id = ?, cursor_unit_id = ?,  phase = ?, version = ? WHERE queue = ? AND version = ?`)).
-				WithArgs(state.RequestID, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Phase, int32(7), "queue", int32(1))
+			query := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?, cursor_task_id = ?, cursor_unit_id = ?, finalize = ?, has_task_wide_issues = ?, phase = ?, version = ? WHERE queue = ? AND version = ?`)).
+				WithArgs(state.RequestID, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Finalize, state.HasTaskWideIssues, state.Phase, int32(7), "queue", int32(1))
 			switch {
 			case tt.dbErr != nil:
 				query.WillReturnError(tt.dbErr)

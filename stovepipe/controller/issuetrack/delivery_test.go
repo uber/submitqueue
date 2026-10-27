@@ -77,7 +77,9 @@ func TestFinalizationOpensKeepsAndClosesIssues(t *testing.T) {
 	f.seedIssue("closed", "", entity.IssueStatusClosed)
 	f.reportIssue("build", "b", "unit")
 	f.reportIssue("build", "c", "unit")
-	require.NoError(t, f.deliver(f.message("build", true), false))
+	msg := f.message("build", true)
+	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(msg, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"a", ""}].Status)
 	require.Equal(t, int32(8), f.states[issueKey{"a", ""}].Version)
@@ -94,7 +96,9 @@ func TestEmptyFinalBuildClosesIssuesButRetainsTheirRows(t *testing.T) {
 	f := newFixture(t)
 	f.source("build", "10", entity.BuildStatusSucceeded)
 	f.seedIssue("task", "", entity.IssueStatusOpen)
-	require.NoError(t, f.deliver(f.message("build", true), false))
+	msg := f.message("build", true)
+	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(msg, false))
 	require.Len(t, f.states, 1)
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", ""}].Status)
 	require.Len(t, f.logs, 1)
@@ -119,6 +123,7 @@ func TestClosedRecordsStillAdvanceTheCursor(t *testing.T) {
 		f.seedIssue("task", fmt.Sprintf("unit/%03d", i), entity.IssueStatusClosed)
 	}
 	msg := f.message("build", true)
+	require.NoError(t, f.deliver(msg, true))
 	require.NoError(t, f.deliver(msg, true))
 	require.Equal(t, "unit/099", f.progress.CursorUnitID)
 	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
@@ -151,7 +156,7 @@ func TestRefreshCheckpointsAtTheBatchBoundary(t *testing.T) {
 	}
 }
 
-func TestShortReadsWithMoreThanOneBatchOfCombinedKeys(t *testing.T) {
+func TestFinalizationTraversesBuildIssuesThenExistingStates(t *testing.T) {
 	f := newFixture(t)
 	f.source("build", "10", entity.BuildStatusFailed)
 	for i := 0; i < 99; i++ {
@@ -159,6 +164,7 @@ func TestShortReadsWithMoreThanOneBatchOfCombinedKeys(t *testing.T) {
 		f.seedIssue("task", fmt.Sprintf("unit/%03d", 2*i+1), entity.IssueStatusOpen)
 	}
 	msg := f.message("build", true)
+	require.NoError(t, f.deliver(msg, true))
 	require.NoError(t, f.deliver(msg, true))
 	require.Equal(t, "unit/099", f.progress.CursorUnitID)
 	require.NoError(t, f.deliver(msg, false))
@@ -193,7 +199,9 @@ func TestFinalNotificationBeforeLateRefreshAndOlderBuild(t *testing.T) {
 	f := newFixture(t)
 	f.source("older-build", "9", entity.BuildStatusSucceeded)
 	f.source("newer-build", "10", entity.BuildStatusSucceeded)
-	require.NoError(t, f.deliver(f.message("newer-build", true), false))
+	msg := f.message("newer-build", true)
+	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(msg, false))
 	before := f.progress
 	f.reportIssue("newer-build", "late", "")
 	f.reportIssue("older-build", "old", "")
@@ -214,6 +222,7 @@ func TestAnotherNotificationFinishesTheCursorBeforeItsOwnBuild(t *testing.T) {
 	require.Equal(t, entity.IssueTrackingPhaseRefreshed, f.progress.Phase)
 	require.Equal(t, "build/100", f.progress.BuildID)
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
+	require.NoError(t, f.deliver(incoming, true))
 	require.NoError(t, f.deliver(incoming, false))
 	require.Equal(t, "build/101", f.progress.BuildID)
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
@@ -243,6 +252,8 @@ func TestRetryRepairsHistoryBeforeFinalizing(t *testing.T) {
 	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 	require.Equal(t, "task", f.progress.CursorTaskID)
 	require.Equal(t, "unit", f.progress.CursorUnitID)
+	require.NoError(t, f.deliver(msg, true))
+	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
 	require.NoError(t, f.deliver(msg, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.Equal(t, "task", f.progress.CursorTaskID)
@@ -284,8 +295,12 @@ func TestReadFailuresDoNotChangeIssues(t *testing.T) {
 			f := newFixture(t)
 			f.source("build", "10", entity.BuildStatusSucceeded)
 			f.seedIssue("task", "unit", entity.IssueStatusOpen)
+			msg := f.message("build", true)
+			if operation != "build-issues/list" {
+				require.NoError(t, f.deliver(msg, true))
+			}
 			f.failures[operation] = 1
-			require.ErrorIs(t, f.deliver(f.message("build", true), false), assert.AnError)
+			require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 			require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
 			require.Empty(t, f.logs)
 		})
@@ -386,6 +401,7 @@ func TestHistoryRecordsTheActualChangingBuildNotTheLatestProcessedBuild(t *testi
 	f.source("build/100", "100", entity.BuildStatusSucceeded)
 	f.failures["history/create"] = 1
 	msg := f.message("build/100", true)
+	require.NoError(t, f.deliver(msg, true))
 	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 	changed := f.states[issueKey{"task", "unit"}]
 	require.Equal(t, entity.IssueStatusClosed, changed.Status)
@@ -399,11 +415,205 @@ func TestHistoryRecordsTheActualChangingBuildNotTheLatestProcessedBuild(t *testi
 	require.Equal(t, changed, f.states[issueKey{"task", "unit"}])
 
 	f.source("build/101", "101", entity.BuildStatusSucceeded)
-	require.NoError(t, f.deliver(f.message("build/101", true), false))
+	next := f.message("build/101", true)
+	require.NoError(t, f.deliver(next, true))
+	require.NoError(t, f.deliver(next, false))
 	retained := f.states[issueKey{"task", "unit"}]
 	require.Equal(t, "build/101", retained.LastProcessedBuildID)
 	require.Equal(t, "build/100", retained.LastChangedBuildID)
 	require.Equal(t, int64(1000), retained.ChangedAtMs)
 	require.Equal(t, int32(9), retained.Version)
 	require.Len(t, f.logs, 1)
+}
+
+func TestTaskWideFailurePreservesAllExistingIssues(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusFailed)
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
+	f.seedIssue("old", "", entity.IssueStatusOpen)
+	f.seedIssue("old", "closed", entity.IssueStatusClosed)
+	f.seedIssue("reopen", "unit", entity.IssueStatusClosed)
+	f.reportIssue("build/100", "new", "unit")
+	f.reportIssue("build/100", "reopen", "unit")
+	f.reportIssue("build/100", "unrelated", "")
+	f.failures["issue/list"] = 1
+	msg := f.message("build/100", true)
+
+	require.NoError(t, f.deliver(msg, false))
+	require.True(t, f.progress.Finalize)
+	require.True(t, f.progress.HasTaskWideIssues)
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	for _, key := range []issueKey{{"old", "unit"}, {"old", ""}, {"new", "unit"}, {"reopen", "unit"}, {"unrelated", ""}} {
+		require.Equal(t, entity.IssueStatusOpen, f.states[key].Status)
+	}
+	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"old", "closed"}].Status)
+	require.Len(t, f.logs, 3)
+	for key := range f.logs {
+		require.Equal(t, entity.IssueEventOpened, key.event)
+	}
+	require.Equal(t, 1, f.failures["issue/list"])
+
+	f.failures["issue/list"] = 0
+	f.source("build/101", "101", entity.BuildStatusSucceeded)
+	next := f.message("build/101", true)
+	require.NoError(t, f.deliver(next, true))
+	require.False(t, f.progress.HasTaskWideIssues)
+	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
+	require.NoError(t, f.deliver(next, false))
+	for _, issue := range f.states {
+		require.Equal(t, entity.IssueStatusClosed, issue.Status)
+	}
+}
+
+func TestTaskWideFailureInLaterOpeningBatchPreventsAllClosures(t *testing.T) {
+	f := newFixture(t)
+	f.source("build", "10", entity.BuildStatusFailed)
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
+	for i := 0; i < 105; i++ {
+		f.reportIssue("build", fmt.Sprintf("task/%03d", i), "unit")
+	}
+	f.reportIssue("build", "zzz", "")
+	msg := f.message("build", true)
+
+	require.NoError(t, f.deliver(msg, true))
+	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
+	require.True(t, f.progress.Finalize)
+	require.False(t, f.progress.HasTaskWideIssues)
+	require.Equal(t, "task/099", f.progress.CursorTaskID)
+	require.Len(t, f.logs, 100)
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
+
+	require.NoError(t, f.deliver(msg, false))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	require.True(t, f.progress.HasTaskWideIssues)
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
+	require.Len(t, f.logs, 106)
+	for key := range f.logs {
+		require.Equal(t, entity.IssueEventOpened, key.event)
+	}
+}
+
+func TestTaskWideFlagSurvivesNoOpOpeningBatchAndRetry(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusFailed)
+	for i := 0; i < 104; i++ {
+		unit := fmt.Sprintf("unit/%03d", i)
+		if i == 0 {
+			unit = ""
+		}
+		f.reportIssue("build/100", "task", unit)
+		f.seedIssue("task", unit, entity.IssueStatusOpen)
+		key := issueKey{"task", unit}
+		issue := f.states[key]
+		issue.LastProcessedBuildID = "build/100"
+		f.states[key] = issue
+	}
+	prior := currentCursor()
+	prior.Phase = entity.IssueTrackingPhaseRefreshed
+	f.retain(prior)
+	msg := f.message("build/100", true)
+
+	require.NoError(t, f.deliver(msg, true))
+	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
+	require.True(t, f.progress.Finalize)
+	require.True(t, f.progress.HasTaskWideIssues)
+	require.Equal(t, "unit/099", f.progress.CursorUnitID)
+	require.Empty(t, f.logs)
+	f.failures["build-issues/list"] = 1
+	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
+	require.True(t, f.progress.HasTaskWideIssues)
+	require.NoError(t, f.deliver(msg, false))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	require.True(t, f.progress.HasTaskWideIssues)
+	for _, issue := range f.states {
+		require.Equal(t, int32(7), issue.Version)
+	}
+}
+
+func TestAnotherNotificationRetainsTheSavedTerminalIntent(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusFailed)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	f.reportIssue("build/100", "task/a", "unit")
+	f.reportIssue("build/100", "task/b", "unit")
+	progress := currentCursor()
+	progress.CursorTaskID, progress.CursorUnitID = "task/a", "unit"
+	progress.Finalize = true
+	f.retain(progress)
+	msg := f.message("build/101", false)
+
+	require.NoError(t, f.deliver(msg, true))
+	require.Equal(t, "build/100", f.progress.BuildID)
+	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
+	require.True(t, f.progress.Finalize)
+	require.Empty(t, f.progress.CursorTaskID)
+	require.NoError(t, f.deliver(msg, true))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	require.NoError(t, f.deliver(msg, false))
+	require.Equal(t, "build/101", f.progress.BuildID)
+	require.False(t, f.progress.Finalize)
+	require.False(t, f.progress.HasTaskWideIssues)
+	require.Equal(t, entity.IssueTrackingPhaseRefreshed, f.progress.Phase)
+}
+
+func TestOpeningCursorCannotCloseAnUnreportedIssue(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusFailed)
+	f.seedIssue("task", "unit", entity.IssueStatusOpen)
+	progress := currentCursor()
+	progress.Finalize = true
+	progress.HasTaskWideIssues = true
+	f.retain(progress)
+	msg := f.message("build/100", true)
+	msg.ID = progress.NotificationID
+
+	require.Error(t, f.deliver(msg, false))
+	issue := f.states[issueKey{"task", "unit"}]
+	require.Equal(t, entity.IssueStatusOpen, issue.Status)
+	require.Equal(t, int32(7), issue.Version)
+	require.Empty(t, f.logs)
+}
+
+func TestTaskWideHistoryRetryFinishesWithoutClosing(t *testing.T) {
+	f := newFixture(t)
+	f.source("build", "10", entity.BuildStatusFailed)
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
+	f.reportIssue("build", "task", "")
+	f.failures["history/create"] = 1
+	f.failures["issue/list"] = 1
+	msg := f.message("build", true)
+
+	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
+	require.True(t, f.progress.HasTaskWideIssues)
+	require.True(t, f.progress.Finalize)
+	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
+	f.controller.nowMs = func() int64 { return 2000 }
+	require.NoError(t, f.deliver(msg, false))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
+	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", ""}, "build", entity.IssueEventOpened}].TimestampMs)
+	require.Equal(t, 1, f.failures["issue/list"])
+}
+
+func TestRetryResetsCursorBeforeClosing(t *testing.T) {
+	f := newFixture(t)
+	f.source("build", "10", entity.BuildStatusFailed)
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
+	f.reportIssue("build", "task", "unit")
+	f.failOnPhase = entity.IssueTrackingPhaseFinalizing
+	msg := f.message("build", true)
+
+	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
+	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
+	require.Equal(t, "task", f.progress.CursorTaskID)
+	require.True(t, f.progress.Finalize)
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
+	require.NoError(t, f.deliver(msg, true))
+	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
+	require.Empty(t, f.progress.CursorTaskID)
+	require.NoError(t, f.deliver(msg, false))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"old", "unit"}].Status)
+	require.Equal(t, int32(1), f.states[issueKey{"task", "unit"}].Version)
+	require.Len(t, f.logs, 2)
 }

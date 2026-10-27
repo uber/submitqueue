@@ -1,6 +1,6 @@
 # Issue tracking
 
-Issue tracking maintains current issue state and opening/closing history from persisted build issues. Each delivery handles a bounded batch of issues and requests immediate redelivery when more work remains. No consumer is registered yet.
+Issue tracking maintains current issue state and opening/closing history from persisted build issues. Each delivery applies a bounded batch of issues and requests immediate redelivery when more work remains. No consumer is registered yet.
 
 ## Applying one issue
 
@@ -14,17 +14,29 @@ Closed issue rows are retained, so their versions cannot reset on reopening. A r
 
 ## Ordering requirements
 
-The caller must finish the current cursor and its history before moving on or admitting another build. If a replacement worker advances, completing that cursor changes the issue version first. A paused worker's earlier issue write then fails its row guard. A worker that reads later is rejected by source ordering or the conditional cursor write.
+During issue application, the caller must finish the current cursor and its history before moving on or admitting another build. If a replacement worker advances, completing that cursor changes the issue version first. A paused worker's earlier issue write then fails its row guard. A worker that reads later is rejected by source ordering or the conditional cursor write.
 
 The post-read cursor write and processed-build updates, including unchanged statuses, are required for this ordering. A progress version alone is not a lock around issue writes. These operations use individual K-V reads, conditional writes, and immutable history creates; no cross-record transaction or stored future-change payload is needed.
 
+## Refreshing and finalizing
+
+Every pass starts in `refreshing`, applying the build's accumulated issues in primary-key order. Reported issues are opened or kept open; nothing is closed. A terminal notification retains `Finalize = true` in the progress record, so a replacement worker can distinguish terminal work from an ordinary refresh even when helping it through another notification. Encountering a task-wide issue (empty unit ID) sets `HasTaskWideIssues` in that same versioned record. This fact remains set across batches and retries, including when the issue was already applied by an earlier pass.
+
+Once the entire build-issue range is exhausted:
+
+- An ordinary refresh becomes `refreshed`.
+- A terminal pass with a task-wide failure, or a canceled build, becomes `finalized` without closing anything. Reported closed issues may still have reopened during refreshing; unreported closed issues remain closed.
+- Any other terminal pass becomes `finalizing`, resetting its cursor to the start of the issue-state range.
+
+The `finalizing` phase traverses retained issue states in primary-key order. Each key is looked up in the build's issues: a reported issue remains open, while an absent issue closes. Actual openings and closings are retained in history. Exhausting the issue-state range marks the pass `finalized`, so late refreshes are ignored.
+
+No closure occurs before all accumulated build issues have been processed. A task-wide failure in a later batch therefore protects existing issues across every task, not just keys encountered afterward. A later build makes its own decision; the restriction does not carry over. Both walks consume one ordered range at a time; no merge is required.
+
 ## Bounded passes
 
-Every delivery processes at most 100 task/unit keys, including a revisited cursor and retained closed rows. Refreshes open reported issues without closing missing ones. Finalization also scans issue states and closes issues absent from that build's accumulated issues. A canceled build may not have performed validation, so it can open reported issues but cannot close existing issues by absence.
+Every delivery processes at most 100 task/unit keys from one ordered range, including a revisited cursor and retained closed rows. Refreshing reads build issues; finalizing reads issue states. The cursor is always inclusive: revisit it to finish the issue and its history, then continue after it. A full batch retains its active phase and requests redelivery. Moving from refreshing to finalizing conditionally saves a reset cursor before any closing work begins.
 
-The cursor is inclusive: revisit it to finish the issue and its history, then continue the ordered range after it. A full batch retains the active phase and requests redelivery. Exhausting the range conditionally marks the pass refreshed or finalized.
-
-An unfinished pass completes before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own build. Completed notifications and older sources are ignored, as are refreshes after the same Request has finalized. A final notification requires a terminal build chosen by its Request.
+An unfinished pass completes before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own source. Completed notifications and older sources are ignored, as are refreshes after the same Request has finalized. A terminal pass requires a terminal build chosen by its Request in both active phases.
 
 Build IDs are opaque; source order comes from Request IDs. All scans are bounded reads under leading primary-key prefixes. There is no transaction spanning progress, issue state, and history.
 

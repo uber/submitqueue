@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/uber-go/tally"
@@ -35,7 +34,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Each delivery processes at most this many keys, including a revisited cursor and closed records.
+// Each delivery processes at most this many issue keys, including a revisited cursor and closed records.
 const _issueBatchSize = 100
 
 type issueKey struct{ task, unit string }
@@ -130,13 +129,13 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 				BuildID:        build.ID,
 				NotificationID: notificationID,
 				Phase:          entity.IssueTrackingPhaseRefreshing,
+				Finalize:       notification.GetFinalize(),
 				Version:        progress.Version + 1,
 			}
-			if notification.GetFinalize() {
-				if !build.Status.IsTerminal() || request.TerminalBuildID != build.ID {
-					return fmt.Errorf("final issue tracking requires the request's terminal build")
+			if next.Finalize {
+				if err := requireTerminalBuild(build, request); err != nil {
+					return err
 				}
-				next.Phase = entity.IssueTrackingPhaseFinalizing
 			}
 
 			if progress.Version == 0 {
@@ -170,6 +169,10 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	op := metrics.Begin(c.metricsScope, "batch", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
 
+	if err := progress.Validate(); err != nil {
+		return entity.IssueTrackingState{}, fmt.Errorf("invalid issue tracking progress: %w", err)
+	}
+
 	limit := _issueBatchSize
 
 	build, request, err := loadBuildAndRequest(ctx, store, queue, progress.BuildID)
@@ -179,14 +182,20 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	switch progress.Phase {
 	case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing:
 	default:
-		return entity.IssueTrackingState{}, fmt.Errorf("issue batch requires a refreshing or finalizing pass")
+		return entity.IssueTrackingState{}, fmt.Errorf("issue batch requires an active pass")
 	}
 	if request.ID != progress.RequestID {
 		return entity.IssueTrackingState{}, fmt.Errorf("issue batch does not match its source request")
 	}
 	finalizing := progress.Phase == entity.IssueTrackingPhaseFinalizing
-	if finalizing && (!build.Status.IsTerminal() || request.TerminalBuildID != build.ID) {
-		return entity.IssueTrackingState{}, fmt.Errorf("final issue tracking requires the request's terminal build")
+	if progress.Finalize {
+		if err := requireTerminalBuild(build, request); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+	}
+
+	if finalizing && build.Status == entity.BuildStatusCancelled {
+		return entity.IssueTrackingState{}, fmt.Errorf("canceled builds cannot close missing issues")
 	}
 
 	if progress.CursorTaskID != "" {
@@ -198,46 +207,29 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 		limit--
 	}
 
-	buildIssues, err := store.GetBuildIssueStore().List(ctx, build.ID, storage.BuildIssueRange{
-		After: storage.BuildIssueCursor{TaskID: progress.CursorTaskID, UnitID: progress.CursorUnitID},
-		Limit: limit,
-	})
-	if err != nil {
-		return entity.IssueTrackingState{}, fmt.Errorf("list build issues: %w", err)
-	}
-
-	var states []entity.IssueState
-	// Cancellation may have skipped validation, so absence cannot close an existing issue.
-	if finalizing && build.Status != entity.BuildStatusCancelled {
-		states, err = store.GetIssueStateStore().List(ctx, storage.IssueStateRange{
+	var keys []issueKey
+	if finalizing {
+		states, err := store.GetIssueStateStore().List(ctx, storage.IssueStateRange{
 			After: storage.IssueStateCursor{TaskID: progress.CursorTaskID, UnitID: progress.CursorUnitID},
 			Limit: limit,
 		})
 		if err != nil {
 			return entity.IssueTrackingState{}, fmt.Errorf("list issue states: %w", err)
 		}
-	}
-
-	reported := make(map[issueKey]bool, len(buildIssues)+len(states))
-	for _, issue := range states {
-		reported[issueKey{issue.TaskID, issue.UnitID}] = false
-	}
-	for _, issue := range buildIssues {
-		reported[issueKey{issue.TaskID, issue.UnitID}] = true
-	}
-	keys := make([]issueKey, 0, len(reported))
-	for key := range reported {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].task != keys[j].task {
-			return keys[i].task < keys[j].task
+		for _, issue := range states {
+			keys = append(keys, issueKey{issue.TaskID, issue.UnitID})
 		}
-		return keys[i].unit < keys[j].unit
-	})
-	complete := len(buildIssues) < limit && len(states) < limit && len(keys) <= limit
-	if len(keys) > limit {
-		keys = keys[:limit]
+	} else {
+		issues, err := store.GetBuildIssueStore().List(ctx, build.ID, storage.BuildIssueRange{
+			After: storage.BuildIssueCursor{TaskID: progress.CursorTaskID, UnitID: progress.CursorUnitID},
+			Limit: limit,
+		})
+		if err != nil {
+			return entity.IssueTrackingState{}, fmt.Errorf("list build issues: %w", err)
+		}
+		for _, issue := range issues {
+			keys = append(keys, issueKey{issue.TaskID, issue.UnitID})
+		}
 	}
 
 	cursorNeedsCheckpoint := false
@@ -246,18 +238,25 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			return entity.IssueTrackingState{}, err
 		}
 		previousVersion := progress.Version
-		progress, err = c.processIssue(ctx, store, progress, key, reported[key])
+		progress, err = c.processIssue(ctx, store, progress, key, !finalizing)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
 		cursorNeedsCheckpoint = progress.Version == previousVersion
 	}
 
-	if complete {
+	if len(keys) < limit {
 		next := progress
-		next.Phase = entity.IssueTrackingPhaseRefreshed
-		if finalizing {
+		switch {
+		case finalizing:
 			next.Phase = entity.IssueTrackingPhaseFinalized
+		case !progress.Finalize:
+			next.Phase = entity.IssueTrackingPhaseRefreshed
+		case progress.HasTaskWideIssues || build.Status == entity.BuildStatusCancelled:
+			next.Phase = entity.IssueTrackingPhaseFinalized
+		default:
+			next.Phase = entity.IssueTrackingPhaseFinalizing
+			next.CursorTaskID, next.CursorUnitID = "", ""
 		}
 		return saveProgress(ctx, store.GetIssueTrackingStore(), next)
 	}
@@ -281,7 +280,10 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	}
 
 	if !reported && progress.Phase != entity.IssueTrackingPhaseFinalizing {
-		return entity.IssueTrackingState{}, fmt.Errorf("refresh cursor requires a reported issue")
+		return entity.IssueTrackingState{}, fmt.Errorf("only finalizing passes can close missing issues")
+	}
+	if reported && key.unit == "" && progress.Phase == entity.IssueTrackingPhaseRefreshing {
+		progress.HasTaskWideIssues = true
 	}
 
 	desired := entity.IssueStatusClosed
@@ -395,6 +397,16 @@ func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next en
 	}
 	next.Version = newVersion
 	return next, nil
+}
+
+func requireTerminalBuild(build entity.Build, request entity.Request) error {
+	if !build.Status.IsTerminal() {
+		return fmt.Errorf("final issue tracking requires a terminal build")
+	}
+	if request.TerminalBuildID != build.ID {
+		return fmt.Errorf("final issue tracking requires the request's terminal build")
+	}
+	return nil
 }
 
 func loadBuildAndRequest(ctx context.Context, store storage.Storage, queue, buildID string) (entity.Build, entity.Request, error) {
