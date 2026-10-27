@@ -30,8 +30,6 @@ package record
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -39,10 +37,8 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
@@ -59,13 +55,10 @@ import (
 // when that fact is green and holds the queue's last-green bookmark promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	logger                       *zap.SugaredLogger
-	metricsScope                 tally.Scope
+	factRecorder
 	stores                       storage.Factory
-	materializer                 requestlog.Materializer
 	projectStatusResolverFactory projectstatus.ResolverFactory
 	sourceControl                sourcecontrol.Factory
-	registry                     consumer.TopicRegistry
 	topicKey                     consumer.TopicKey
 	consumerGroup                string
 }
@@ -94,13 +87,15 @@ func NewController(
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		logger:                       logger.Named(name),
-		metricsScope:                 scope.SubScope(name),
+		factRecorder: factRecorder{
+			logger:       logger.Named(name),
+			metricsScope: scope.SubScope(name),
+			materializer: materializer,
+			registry:     registry,
+		},
 		stores:                       stores,
-		materializer:                 materializer,
 		projectStatusResolverFactory: projectStatusResolverFactory,
 		sourceControl:                sourceControl,
-		registry:                     registry,
 		topicKey:                     topicKey,
 		consumerGroup:                consumerGroup,
 	}
@@ -264,27 +259,6 @@ func (c *Controller) persistProjectFactsRecordedLog(
 	return nil
 }
 
-func (c *Controller) persistValidationFactRecordedLog(
-	ctx context.Context,
-	store storage.Storage,
-	request entity.Request,
-	fact entity.ValidationFact,
-) error {
-	// Hash the composite fact key so an arbitrarily long URI cannot overflow the bounded log ID.
-	identity := sha256.Sum256([]byte(fact.URI + "\x00" + fact.Project))
-	log := requestlog.NewRequestEventLog(
-		request,
-		entity.RequestEventValidationFactRecorded,
-		hex.EncodeToString(identity[:]),
-		map[string]string{requestlog.MetadataKeyFactDegree: strconv.FormatFloat(fact.Degree, 'g', -1, 64)},
-	)
-	log.TimestampMs = fact.CreatedAt
-	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("failed to record validation fact for request %s: %w", request.ID, err)
-	}
-	return nil
-}
-
 // applyFactToDerivedCaches follows the persisted fact: a green fact promotes the
 // commit when this request holds the queue's bookmark, set by build completion.
 // A broken fact skips promotion, and instead reports how long the break it names
@@ -324,61 +298,6 @@ func (c *Controller) applyFactToDerivedCaches(
 	}
 	c.emitLastGreenTimestamp(ctx, request)
 	return c.promote(ctx, request)
-}
-
-// recordFact writes the request's outcome as an immutable whole-repository fact and
-// returns the fact that is actually stored, which is not always the one just built:
-// facts are first-writer-wins, so an identity already claimed by this same request —
-// a redelivery after the write but before promotion — yields the stored
-// fact instead. Every decision downstream reads that stored fact rather than the
-// request, so a redelivery cannot reach a different verdict than the original. The
-// second return reports whether this call is the one that wrote the fact, which is
-// how a caller tells the original delivery from a redelivery.
-func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) (entity.ValidationFact, bool, error) {
-	return c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
-		URI:       request.URI,
-		Project:   wholeRepositoryProject,
-		Degree:    degreeFor(request.State, results),
-		RequestID: request.ID,
-		CreatedAt: time.Now().UnixMilli(),
-	})
-}
-
-func (c *Controller) recordValidationFact(ctx context.Context, factStore storage.ValidationFactStore, fact entity.ValidationFact) (entity.ValidationFact, bool, error) {
-
-	err := factStore.Create(ctx, fact)
-	switch {
-	case err == nil:
-		metrics.NamedCounter(c.metricsScope, _opName, "fact_created", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("recorded validation fact",
-			"request_id", fact.RequestID,
-			"uri", fact.URI,
-			"project", fact.Project,
-			"degree", fact.Degree,
-		)
-		return fact, true, nil
-
-	case errors.Is(err, storage.ErrAlreadyExists):
-		stored, getErr := factStore.Get(ctx, fact.URI, fact.Project)
-		if getErr != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s and project %q: %w", fact.URI, fact.Project, getErr)
-		}
-		if stored.RequestID != fact.RequestID {
-			// Two requests validating one URI would break the dedup ingest
-			// enforces, so this is a broken invariant rather than a race to
-			// resolve. Non-retryable: the stored fact is immutable.
-			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
-			return entity.ValidationFact{}, false, fmt.Errorf(
-				"fact for uri %s and project %q is owned by request %s, not %s", fact.URI, fact.Project, stored.RequestID, fact.RequestID)
-		}
-		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1, metrics.TagsFromContext(ctx)...)
-		return stored, false, nil
-
-	default:
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s and project %q: %w", fact.URI, fact.Project, err)
-	}
 }
 
 // reportFailureDetectionLatency records how long the break this build failed on went
@@ -554,34 +473,6 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		"queue", request.Queue,
 		"request_id", request.ID,
 		"uri", request.URI,
-	)
-	return nil
-}
-
-// publishHookEvent sends one event about request to the domain's hook topic.
-//
-// Called last, after the fact write and after both caches derived from it have
-// moved: the payload names the request rather than snapshotting it, so a hook
-// reacting to a green commit by reading the bookmark or resolving the promotion
-// ref must not find either still pointing at the previous commit.
-//
-// Partitioning by request id matches the record topic's own, carrying
-// per-request ordering across the seam.
-func (c *Controller) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
-	if err := platformhook.Publish(ctx, c.registry, request.Queue, event, request.ID); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
-	}
-
-	metrics.NamedCounter(c.metricsScope, _opName, "hook_events_published", 1,
-		metrics.TagsFromContext(ctx, metrics.NewTag("event_type", event.GetType()))...,
-	)
-	c.logger.Infow("announced validation outcome",
-		"queue", request.Queue,
-		"request_id", request.ID,
-		"uri", request.URI,
-		"event_type", event.GetType(),
-		"event_id", event.GetId(),
 	)
 	return nil
 }

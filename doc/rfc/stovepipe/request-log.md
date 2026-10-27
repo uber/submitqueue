@@ -217,13 +217,13 @@ The `project_facts_recorded` event also projects its retained timestamp into `Re
 | Build | Create Build after runner acceptance, then retain `build_triggered`. | An identical existing Build ensures the event before buildsignal publication. |
 | Buildsignal | Persist terminal Build and retain `build_finished`; CAS the Request outcome and retain its terminal state. | Existing terminal Build and Request outcome each ensure their own entry before record publication. |
 | Record | Create or verify the whole-repository fact, then retain `validation_fact_recorded`; after recording project facts, retain one `project_facts_recorded` event. | An identical whole-repository fact and project-fact batch ensure their events before bookmark or promotion work. |
-| Record DLQ | Retain `record_abandoned`, then acknowledge the remaining record work. | The stable event ID makes history retention idempotent without replaying facts, bookmarks, promotion, or hooks. |
+| Record DLQ | Retain `record_abandoned`; for failed Requests, create or verify the repository fact and retain `validation_fact_recorded` before publishing its hook. | Existing facts remain authoritative; stable log and hook IDs make replay idempotent without resolving projects or replaying promotion. |
 | Build analysis DLQ | Retain `build_analysis_abandoned` without rerunning detection or changing validation state. | One stable event per build deduplicates recovery deliveries; only state reads and history retention retry. |
 | Reconciler | CAS an unrecoverable non-terminal Request to failed, then retain failed. | An existing terminal Request is repaired from its persisted outcome without relabeling it. |
 
 Build running and unchanged polls create no entry. A failed runner trigger that creates no Build creates no event. Cancelled and superseded requests create no validation fact.
 
-No controller infers an outcome reason from `RequestStateFailed` alone, invents a broken fact, or records DLQ as the domain reason.
+No controller infers an outcome reason from `RequestStateFailed` alone or records DLQ as the domain reason. Record DLQ uses that persisted state to recover a missing broken repository fact; it does not infer project verdicts.
 
 ### Repair trigger requirement
 
