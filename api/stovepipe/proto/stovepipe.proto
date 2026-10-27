@@ -142,12 +142,12 @@ message GetProjectStatusByURIRequest {
 message ProjectValidation {
     // Stable consumer-defined project identifier.
     string project = 1;
-    // Provider-defined project classification; empty means unknown.
-    string project_type = 3;
     // Breakage degree on [0.0, 1.0]. Zero is green; absence means no result is recorded yet.
     oneof result {
         double breakage_degree = 2;
     }
+    // Provider-defined project classification; empty means unknown.
+    string project_type = 3;
 }
 
 // GetProjectStatusByIDResponse contains the selected validation's current projection.

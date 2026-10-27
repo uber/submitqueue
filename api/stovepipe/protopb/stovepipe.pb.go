@@ -858,14 +858,14 @@ type ProjectValidation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Stable consumer-defined project identifier.
 	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
-	// Provider-defined project classification; empty means unknown.
-	ProjectType string `protobuf:"bytes,3,opt,name=project_type,json=projectType,proto3" json:"project_type,omitempty"`
 	// Breakage degree on [0.0, 1.0]. Zero is green; absence means no result is recorded yet.
 	//
 	// Types that are valid to be assigned to Result:
 	//
 	//	*ProjectValidation_BreakageDegree
-	Result        isProjectValidation_Result `protobuf_oneof:"result"`
+	Result isProjectValidation_Result `protobuf_oneof:"result"`
+	// Provider-defined project classification; empty means unknown.
+	ProjectType   string `protobuf:"bytes,3,opt,name=project_type,json=projectType,proto3" json:"project_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -907,13 +907,6 @@ func (x *ProjectValidation) GetProject() string {
 	return ""
 }
 
-func (x *ProjectValidation) GetProjectType() string {
-	if x != nil {
-		return x.ProjectType
-	}
-	return ""
-}
-
 func (x *ProjectValidation) GetResult() isProjectValidation_Result {
 	if x != nil {
 		return x.Result
@@ -928,6 +921,13 @@ func (x *ProjectValidation) GetBreakageDegree() float64 {
 		}
 	}
 	return 0
+}
+
+func (x *ProjectValidation) GetProjectType() string {
+	if x != nil {
+		return x.ProjectType
+	}
+	return ""
 }
 
 type isProjectValidation_Result interface {
@@ -1772,9 +1772,9 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\n" +
 	"page_token\x18\x05 \x01(\tR\tpageToken\"\x85\x01\n" +
 	"\x11ProjectValidation\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\x12!\n" +
-	"\fproject_type\x18\x03 \x01(\tR\vprojectType\x12)\n" +
-	"\x0fbreakage_degree\x18\x02 \x01(\x01H\x00R\x0ebreakageDegreeB\b\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12)\n" +
+	"\x0fbreakage_degree\x18\x02 \x01(\x01H\x00R\x0ebreakageDegree\x12!\n" +
+	"\fproject_type\x18\x03 \x01(\tR\vprojectTypeB\b\n" +
 	"\x06result\"\xd8\x03\n" +
 	"\x1cGetProjectStatusByIDResponse\x12\x1d\n" +
 	"\n" +
