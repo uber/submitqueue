@@ -40,6 +40,11 @@ func TestProtoToListRequest(t *testing.T) {
 			want: entity.ListRequest{HasReceivedAtOrAfterMs: true, HasReceivedBeforeMs: true},
 		},
 		{
+			name: "status filter",
+			req:  &pb.ListRequest{Queue: "q", Statuses: []string{"landed", "error"}},
+			want: entity.ListRequest{Queue: "q", Statuses: []entity.RequestStatus{entity.RequestStatusLanded, entity.RequestStatusError}},
+		},
+		{
 			name: "explicit window and pagination",
 			req: &pb.ListRequest{
 				Queue: "q", PageSize: 25, PageToken: "token",
