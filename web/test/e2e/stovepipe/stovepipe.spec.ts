@@ -405,6 +405,8 @@ test("pages through project results and switches views without reloading the doc
   const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
   const topPager = page.getByRole("navigation", { name: "Project pages (top)" });
   const bottomPager = page.getByRole("navigation", { name: "Project pages (bottom)" });
+  const details = page.getByRole("region", { name: "Request status" }).locator("details");
+  await details.locator("summary").click();
   await expect(projects.locator("tbody tr")).toHaveCount(50);
   await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
   let documentRequests = 0;
@@ -420,6 +422,7 @@ test("pages through project results and switches views without reloading the doc
   const resultHeight = await projectScroll.evaluate(element => element.clientHeight);
   await bottomPager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await expect(details).toHaveAttribute("open", "");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(documentScroll);
   expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
   expect(await projectScroll.evaluate(element => element.clientHeight)).toBe(resultHeight);
@@ -445,6 +448,7 @@ test("pages through project results and switches views without reloading the doc
   await bottomPager.getByRole("link", { name: "First projects", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(50);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(documentScroll);
+  await expect(details).toHaveAttribute("open", "");
   await topPager.scrollIntoViewIfNeeded();
   const topPagerScroll = await page.evaluate(() => window.scrollY);
   await topPager.getByRole("link", { name: "Next projects →", exact: true }).click();

@@ -156,6 +156,27 @@ it("renders recorded project results, completion and shareable pagination", () =
   expect(pagination.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
+it.each(["projects=next", "projectPageSize=25"])("preserves expanded details and pager focus when loading %s", (query) => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  const { rerender } = render(<StovepipeApp model={model} />);
+  fireEvent.click(screen.getByText("Change and base URIs"));
+  const next = within(screen.getByRole("navigation", { name: "Project pages (top)" }))
+    .getByRole("link", { name: /Next projects/ });
+  next.focus();
+  rerender(<StovepipeApp model={{
+    ...model,
+    key: "/repo%2Fmain/request/7?" + query,
+    projectStatus: { ok: true, data: {
+      ...model.projectStatus.data,
+      projects: [{ project: "next-project", breakageDegree: 0 }],
+    } },
+  }} />);
+  expect(screen.getByText("git://repo/sha")).toBeVisible();
+  expect(next).toHaveFocus();
+  expect(screen.queryByText("green-project")).toBeNull();
+  expect(screen.getByText("next-project")).toBeVisible();
+});
+
 it("does not show a previous project's page after a failed pagination load", () => {
   const { rerender } = render(<StovepipeApp model={model} />);
   rerender(<StovepipeApp model={{

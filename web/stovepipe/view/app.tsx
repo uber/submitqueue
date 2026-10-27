@@ -88,7 +88,7 @@ function Page({ model }: { model: StovepipePageModel }) {
         ) : (
           <Section result={model.history}>
             {(history) => (
-              <Section key={views.projectsHref} result={model.projectStatus}>
+              <Section cacheKey={views.projectsHref} result={model.projectStatus}>
                 {(projects) => (
                   <Block display="grid" gridTemplateColumns="minmax(0, 1fr)" gridGap="scale400">
                     <section aria-label="Request status">
@@ -104,7 +104,7 @@ function Page({ model }: { model: StovepipePageModel }) {
                     </section>
                     <section aria-label="Project results" hidden={views.historySelected}>
                       <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">Project results</HeadingSmall>
-                      {projects && <ProjectResults model={projects} />}
+                      {projects && <ProjectResults model={projects} pageKey={views.projectsHref} />}
                     </section>
                   </Block>
                 )}

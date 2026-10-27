@@ -15,22 +15,22 @@ export function Link({ className = "", scroll, ...props }: WebLinkProps) {
 }
 export function Section<T>({
   result,
+  cacheKey,
   children,
 }: {
   result: ReadResult<T>;
+  cacheKey?: string;
   children(data: T | null): ReactNode;
 }) {
-  const [previous, setPrevious] = useState<T | null>(
-    result.ok ? result.data : null,
-  );
-  if (result.ok && result.data !== previous) setPrevious(result.data);
-  const data = result.ok ? result.data : previous;
+  const [previous, setPrevious] = useState({ cacheKey, data: result.ok ? result.data : null });
+  const data = result.ok ? result.data : previous.cacheKey === cacheKey ? previous.data : null;
+  if (previous.cacheKey !== cacheKey || previous.data !== data) setPrevious({ cacheKey, data });
   return (
     <>
       {!result.ok && (
         <Notification kind={KIND.negative} overrides={{ Body: { props: { role: "alert" }, style: { width: "auto" } } }}>
           {result.error}
-          {previous !== null && <ParagraphSmall>Showing the last successful result.</ParagraphSmall>}
+          {data !== null && <ParagraphSmall>Showing the last successful result.</ParagraphSmall>}
         </Notification>
       )}
       {children(data)}
