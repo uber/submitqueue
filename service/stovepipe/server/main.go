@@ -409,7 +409,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
 	}
@@ -561,6 +561,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Name:         "stovepipe-hook_dlq",
 			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-hook-dlq"),
+		},
+		{
+			Key:   stovepipemq.TopicKeyIssueTrack,
+			Name:  "issuetrack",
+			Queue: q,
 		},
 		{
 			Key:          stovepipemq.TopicKeyBuildAnalysis,

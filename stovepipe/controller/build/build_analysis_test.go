@@ -110,15 +110,16 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 
 	detectorFactory := buildissuemock.NewMockDetectorFactory(ctrl)
 	detector := buildissuemock.NewMockDetector(ctrl)
-	detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(detector, nil).Times(3)
+	detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(detector, nil).Times(4)
 	gomock.InOrder(
 		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{a}, nil),
-		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{a, b}, nil),
-		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{a, b}, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{b}, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(nil, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(nil, nil),
 	)
 
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "analysis")
+		staticStorageFactory{store: m.store}, detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
 	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
 		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
 		stovepipemq.TopicKeyBuildSignal, "signal")
@@ -139,17 +140,37 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	assert.True(t, persisted[a])
 	assert.False(t, persisted[b])
 
+	secondPoll := delivered(published["buildanalysis"][0])
+	secondPoll.EXPECT().Hold(buildanalysis.PollDelayMs)
+	require.NoError(t, analysisController.Process(ctx, secondPoll))
+	assert.True(t, persisted[b])
+
 	require.NoError(t, statusController.Process(ctx, delivered(published["buildsignal"][0])))
 	require.Len(t, published["record"], 1)
 	require.Len(t, published["buildanalysis"], 2)
 	assert.Equal(t, entity.BuildStatusFailed, savedBuild.Status)
 	assert.Equal(t, entity.RequestStateFailed, request.State)
 	assert.Zero(t, queue.InFlightCount)
-	assert.False(t, persisted[b])
+	assert.True(t, persisted[b])
 	assert.NotEqual(t, published["buildanalysis"][0].ID, published["buildanalysis"][1].ID)
 
 	require.NoError(t, analysisController.Process(ctx, delivered(published["buildanalysis"][0])))
 	require.NoError(t, analysisController.Process(ctx, delivered(published["buildanalysis"][1])))
 	assert.Len(t, persisted, 2)
 	assert.True(t, persisted[b])
+	assert.True(t, persisted[a])
+
+	require.Len(t, published["issuetrack"], 4)
+	for i, msg := range published["issuetrack"] {
+		assert.Equal(t, testQueue, msg.PartitionKey)
+		assert.Equal(t, testQueue, msg.Tenant)
+		notification := &stovepipemq.IssueTrack{}
+		require.NoError(t, stovepipemq.Unmarshal(msg.Payload, notification))
+		assert.Equal(t, testBuildID, notification.GetBuildId())
+		assert.Equal(t, testQueue, notification.GetQueueName())
+		assert.Equal(t, i > 1, notification.GetFinalize())
+	}
+	assert.NotEqual(t, published["issuetrack"][0].ID, published["issuetrack"][1].ID)
+	assert.NotEqual(t, published["issuetrack"][1].ID, published["issuetrack"][2].ID)
+	assert.Equal(t, published["issuetrack"][2].ID, published["issuetrack"][3].ID)
 }

@@ -25,6 +25,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -33,17 +34,18 @@ import (
 	"go.uber.org/zap"
 )
 
-// PollDelayMs is the delay in milliseconds after a successful nonterminal pass.
+// PollDelayMs is the delay in milliseconds between successful polling passes.
 // Two minutes limits provider traffic during long-running builds.
 const PollDelayMs int64 = 120000
 
-// Controller accumulates observations while builds run and after completion.
-// Terminal analysis must finish persistence before its delivery completes.
+// Controller accumulates build issues while builds run and after completion.
+// Terminal analysis must finish persistence and publication before its delivery completes.
 type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	stores          storage.Factory
 	detectorFactory buildissue.DetectorFactory
+	registry        consumer.TopicRegistry
 	topicKey        consumer.TopicKey
 	consumerGroup   string
 }
@@ -53,6 +55,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	detectorFactory buildissue.DetectorFactory,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -61,13 +64,14 @@ func NewController(
 		metricsScope:    scope.SubScope("buildanalysis_controller"),
 		stores:          stores,
 		detectorFactory: detectorFactory,
+		registry:        registry,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
 	}
 }
 
-// Process holds after a successful nonterminal pass. Errors are returned for
-// normal queue retry or DLQ handling; partial writes are safe to retry.
+// Process persists before publication and holds while further analysis is needed.
+// Errors use normal queue retry or DLQ handling; partial writes are safe to retry.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, "process", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
@@ -84,6 +88,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	if analysis.GetId() == "" {
 		return fmt.Errorf("build analysis requires a build ID")
+	}
+	if msg.PartitionKey != analysis.GetId() {
+		return fmt.Errorf("build analysis must be partitioned by build %q", analysis.GetId())
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: analysis.GetQueueName()})
@@ -103,6 +110,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	if request.Queue != analysis.GetQueueName() {
 		return fmt.Errorf("request queue %q does not match analysis queue %q", request.Queue, analysis.GetQueueName())
+	}
+	if request.TerminalBuildID != "" && request.TerminalBuildID != build.ID {
+		return nil
 	}
 
 	// The Build may finish between the initial Build read and the Request read.
@@ -137,9 +147,29 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		}
 	}
 
-	// A nonterminal status read before detection requires another pass,
-	// even if the build finishes while detection is running.
-	if !build.Status.IsTerminal() {
+	hold := !build.Status.IsTerminal()
+	finalize := false
+	if build.Status.IsTerminal() {
+		// Build status can become terminal before buildsignal records the winning build.
+		request, err = loader.ByID(ctx, build.RequestID, store.GetRequestStore().Get, "request")
+		if err != nil {
+			return err
+		}
+		if request.Queue != analysis.GetQueueName() {
+			return fmt.Errorf("request queue %q does not match analysis queue %q", request.Queue, analysis.GetQueueName())
+		}
+		if request.TerminalBuildID != "" && request.TerminalBuildID != build.ID {
+			return nil
+		}
+		finalize = request.TerminalBuildID == build.ID
+		hold = !finalize && !request.State.IsTerminal()
+	}
+
+	if err := c.publishIssueTracking(ctx, request.Queue, build.ID, finalize); err != nil {
+		return err
+	}
+
+	if hold {
 		delivery.Hold(PollDelayMs)
 	}
 
@@ -150,6 +180,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"observed_issue_count", len(issues),
 	)
 
+	return nil
+}
+
+func (c *Controller) publishIssueTracking(ctx context.Context, queue, buildID string, finalize bool) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{
+		BuildId: buildID, QueueName: queue, Finalize: finalize,
+	})
+	if err != nil {
+		return fmt.Errorf("serialize issue tracking notification: %w", err)
+	}
+
+	// Polls reuse one delivery, so no stable occurrence ID distinguishes refreshes.
+	messageID := publish.UniqueID(buildID)
+	if finalize {
+		messageID = publish.IntentID(buildID, "finished")
+	}
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyIssueTrack, publish.MessageParams{
+		Tenant: queue, ID: messageID, Payload: payload, PartitionKey: queue,
+	}); err != nil {
+		return fmt.Errorf("publish issue tracking notification: %w", err)
+	}
 	return nil
 }
 

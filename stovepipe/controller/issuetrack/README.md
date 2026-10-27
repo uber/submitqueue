@@ -31,3 +31,7 @@ Build IDs are opaque; source order comes from Request IDs. All scans are bounded
 ## Recovery and activation
 
 An error returns to normal consumer retry. The next delivery resumes the cursor before advancing. Permanently failing cursor work blocks issue tracking for that queue; terminal recovery and consumer registration remain follow-up work. This PR does not enable consumption or publish repair requests.
+
+## Analysis handoff
+
+Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host registers the publication route but does not enable issue-tracking consumption or recovery.
