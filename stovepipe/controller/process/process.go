@@ -456,6 +456,7 @@ func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage
 
 		updated := request
 		updated.State = entity.RequestStateSuperseded
+		updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 		newVersion := request.Version + 1
 		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {

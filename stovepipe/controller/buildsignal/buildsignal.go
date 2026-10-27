@@ -255,7 +255,8 @@ func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, r
 		return err
 	}
 
-	if err := c.markOutcome(ctx, store, request, buildID, outcomeState(status)); err != nil {
+	state := outcomeState(status)
+	if err := c.markOutcome(ctx, store, request, buildID, state, buildOutcomeReason(state)); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
@@ -263,20 +264,13 @@ func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, r
 }
 
 func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) error {
-	var reason entity.RequestOutcomeReason
-	// The durable request is authoritative when duplicate builds race to record different outcomes.
-	switch request.State {
-	case entity.RequestStateSucceeded:
-		reason = entity.RequestOutcomeReasonBuildSucceeded
-	case entity.RequestStateFailed:
-		reason = entity.RequestOutcomeReasonBuildFailed
-	case entity.RequestStateCancelled:
-		reason = entity.RequestOutcomeReasonBuildCancelled
-	default:
+	if !request.State.HasBuildOutcome() {
 		return fmt.Errorf("request %s has no build outcome to record", request.ID)
 	}
 
-	log := requestlog.NewRequestStateLog(request, reason)
+	// The durable request is authoritative: a DLQ may have forced this outcome, or a duplicate
+	// build won it. The build-derived reason applies only to a request stored without one.
+	log := requestlog.NewRequestStateLog(request, buildOutcomeReason(request.State))
 	if request.TerminalBuildID != "" {
 		log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 	}
@@ -300,11 +294,25 @@ func outcomeState(status entity.BuildStatus) entity.RequestState {
 	}
 }
 
-// markOutcome CAS-transitions request from processing to state, recording the
-// winning build ID and retrying on version conflicts. First writer wins: once
+// buildOutcomeReason is the outcome reason a build-established state records.
+func buildOutcomeReason(state entity.RequestState) entity.RequestOutcomeReason {
+	switch state {
+	case entity.RequestStateSucceeded:
+		return entity.RequestOutcomeReasonBuildSucceeded
+	case entity.RequestStateFailed:
+		return entity.RequestOutcomeReasonBuildFailed
+	case entity.RequestStateCancelled:
+		return entity.RequestOutcomeReasonBuildCancelled
+	default:
+		return entity.RequestOutcomeReasonUnknown
+	}
+}
+
+// markOutcome CAS-transitions request from processing to state and reason, recording
+// the winning build ID and retrying on version conflicts. First writer wins: once
 // any outcome is recorded a later caller leaves it alone, so duplicate builds
 // for one request (which build.md accepts) cannot flip the verdict back and forth.
-func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, request *entity.Request, buildID string, state entity.RequestState) error {
+func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, request *entity.Request, buildID string, state entity.RequestState, reason entity.RequestOutcomeReason) error {
 	reqStore := store.GetRequestStore()
 
 	for {
@@ -315,6 +323,7 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 		updated := *request
 		updated.State = state
 		updated.TerminalBuildID = buildID
+		updated.OutcomeReason = reason
 		newVersion := request.Version + 1
 		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {

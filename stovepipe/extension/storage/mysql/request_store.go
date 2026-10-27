@@ -55,14 +55,15 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	}
 
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, version)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, outcome_reason, version)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.ID,
 		request.Queue,
 		request.URI,
 		request.State,
 		request.BuildStrategy,
 		request.BaseURI,
+		request.OutcomeReason,
 		request.Version,
 	)
 	if err != nil {
@@ -82,7 +83,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 
 	var req entity.Request
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, queue, uri, state, build_strategy, base_uri, COALESCE(terminal_build_id, ''), version
+		`SELECT id, queue, uri, state, build_strategy, base_uri, COALESCE(terminal_build_id, ''), outcome_reason, version
 		 FROM request WHERE queue = ? AND id = ?`,
 		r.queue, id,
 	).Scan(
@@ -93,6 +94,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 		&req.BuildStrategy,
 		&req.BaseURI,
 		&req.TerminalBuildID,
+		&req.OutcomeReason,
 		&req.Version,
 	)
 
@@ -107,10 +109,10 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 }
 
 // Update persists the mutable fields of request (URI, state, build strategy,
-// base URI, terminal build ID) if the oldVersion, writing newVersion. Returns
-// ErrVersionMismatch if the stored version does not match (including when the
-// request does not exist). This is a pure conditional write; the caller owns
-// version arithmetic.
+// base URI, terminal build ID, outcome reason) if the oldVersion, writing
+// newVersion. Returns ErrVersionMismatch if the stored version does not match
+// (including when the request does not exist). This is a pure conditional
+// write; the caller owns version arithmetic.
 func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(r.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
@@ -121,13 +123,14 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE request
-		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, terminal_build_id = NULLIF(?, ''), version = ?
+		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, terminal_build_id = NULLIF(?, ''), outcome_reason = ?, version = ?
 		 WHERE queue = ? AND id = ? AND version = ?`,
 		request.URI,
 		request.State,
 		request.BuildStrategy,
 		request.BaseURI,
 		request.TerminalBuildID,
+		request.OutcomeReason,
 		newVersion,
 		request.Queue,
 		request.ID,

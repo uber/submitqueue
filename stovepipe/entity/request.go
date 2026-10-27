@@ -118,6 +118,9 @@ type Request struct {
 	// TerminalBuildID is the build that established this request's terminal
 	// state. It is empty when no build established the terminal state.
 	TerminalBuildID string `json:"terminal_build_id"`
+	// OutcomeReason is the durable reason for the current terminal state. It is empty while
+	// the request is nonterminal and on requests made terminal before reasons were persisted.
+	OutcomeReason RequestOutcomeReason `json:"outcome_reason"`
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`
