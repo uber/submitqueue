@@ -146,6 +146,8 @@ message ProjectValidation {
     oneof result {
         double breakage_degree = 2;
     }
+    // Provider-defined project classification; empty means unknown.
+    string project_type = 3;
 }
 
 // GetProjectStatusByIDResponse contains the selected validation's current projection.

@@ -11,5 +11,6 @@ CREATE TABLE IF NOT EXISTS validation_fact (
     degree      DOUBLE       NOT NULL,
     request_id  VARCHAR(255) NOT NULL,
     created_at  BIGINT       NOT NULL,
+    project_type VARCHAR(255) NOT NULL DEFAULT '',
     PRIMARY KEY (queue, uri, project)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

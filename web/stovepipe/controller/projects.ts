@@ -29,6 +29,7 @@ export async function loadProjectStatus(
     complete: result.projectResultsComplete,
     projects: result.projects.map((entry) => ({
       project: entry.project,
+      projectType: entry.projectType,
       breakageDegree: entry.result.case === "breakageDegree"
         ? breakageDegree(entry.result.value) : null,
     })),

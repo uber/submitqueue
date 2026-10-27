@@ -28,6 +28,7 @@ export interface ProjectStatus {
   projectResultsComplete: boolean;
   projects: {
     project: string;
+    projectType: string;
     result:
       | { case: "breakageDegree"; value: number }
       | { case: undefined; value?: undefined };

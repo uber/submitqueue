@@ -21,10 +21,11 @@ export function RecordedResult({ degree }: { degree: number | null }) {
 export function ProjectResults({ model }: { model: ProjectStatusModel }) {
   return (
     <>
-      <Table label="Recorded project results" headers={["Project", "Recorded result"]}>
+      <Table label="Recorded project results" headers={["Project", "Project type", "Recorded result"]}>
         {model.projects.map((entry) => (
           <StyledTableBodyRow key={entry.project}>
             <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
+            <StyledTableBodyCell>{entry.projectType || "Unknown"}</StyledTableBodyCell>
             <StyledTableBodyCell><RecordedResult degree={entry.breakageDegree} /></StyledTableBodyCell>
           </StyledTableBodyRow>
         ))}

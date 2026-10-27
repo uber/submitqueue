@@ -47,11 +47,12 @@ func setupValidationFactStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, stora
 
 func TestValidationFactStore_Create(t *testing.T) {
 	fact := entity.ValidationFact{
-		URI:       testFactURI,
-		Project:   "",
-		Degree:    entity.DegreeGreen,
-		RequestID: "1",
-		CreatedAt: 1735689600000,
+		URI:         testFactURI,
+		Project:     "project-a",
+		ProjectType: "service",
+		Degree:      entity.DegreeGreen,
+		RequestID:   "1",
+		CreatedAt:   1735689600000,
 	}
 
 	tests := []struct {
@@ -64,7 +65,7 @@ func TestValidationFactStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO validation_fact").
-					WithArgs(testFactQueue, fact.URI, fact.Project, fact.Degree, fact.RequestID, fact.CreatedAt).
+					WithArgs(testFactQueue, fact.URI, fact.Project, fact.ProjectType, fact.Degree, fact.RequestID, fact.CreatedAt).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -72,7 +73,7 @@ func TestValidationFactStore_Create(t *testing.T) {
 			name: "duplicate identity returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO validation_fact").
-					WithArgs(testFactQueue, fact.URI, fact.Project, fact.Degree, fact.RequestID, fact.CreatedAt).
+					WithArgs(testFactQueue, fact.URI, fact.Project, fact.ProjectType, fact.Degree, fact.RequestID, fact.CreatedAt).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -82,7 +83,7 @@ func TestValidationFactStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO validation_fact").
-					WithArgs(testFactQueue, fact.URI, fact.Project, fact.Degree, fact.RequestID, fact.CreatedAt).
+					WithArgs(testFactQueue, fact.URI, fact.Project, fact.ProjectType, fact.Degree, fact.RequestID, fact.CreatedAt).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -112,11 +113,12 @@ func TestValidationFactStore_Create(t *testing.T) {
 
 func TestValidationFactStore_Get(t *testing.T) {
 	want := entity.ValidationFact{
-		URI:       testFactURI,
-		Project:   "",
-		Degree:    entity.DegreeBroken,
-		RequestID: "2",
-		CreatedAt: 1735689600000,
+		URI:         testFactURI,
+		Project:     "project-a",
+		ProjectType: "service",
+		Degree:      entity.DegreeBroken,
+		RequestID:   "2",
+		CreatedAt:   1735689600000,
 	}
 
 	tests := []struct {
@@ -129,9 +131,9 @@ func TestValidationFactStore_Get(t *testing.T) {
 		{
 			name: "found",
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"uri", "project", "degree", "request_id", "created_at"}).
-					AddRow(want.URI, want.Project, want.Degree, want.RequestID, want.CreatedAt)
-				mock.ExpectQuery("SELECT uri, project, degree, request_id, created_at FROM validation_fact").
+				rows := sqlmock.NewRows([]string{"uri", "project", "project_type", "degree", "request_id", "created_at"}).
+					AddRow(want.URI, want.Project, want.ProjectType, want.Degree, want.RequestID, want.CreatedAt)
+				mock.ExpectQuery("SELECT uri, project, project_type, degree, request_id, created_at FROM validation_fact").
 					WithArgs(testFactQueue, want.URI, want.Project).
 					WillReturnRows(rows)
 			},
@@ -140,7 +142,7 @@ func TestValidationFactStore_Get(t *testing.T) {
 		{
 			name: "not found",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT uri, project, degree, request_id, created_at FROM validation_fact").
+				mock.ExpectQuery("SELECT uri, project, project_type, degree, request_id, created_at FROM validation_fact").
 					WithArgs(testFactQueue, want.URI, want.Project).
 					WillReturnError(sql.ErrNoRows)
 			},
@@ -150,7 +152,7 @@ func TestValidationFactStore_Get(t *testing.T) {
 		{
 			name: "query error",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT uri, project, degree, request_id, created_at FROM validation_fact").
+				mock.ExpectQuery("SELECT uri, project, project_type, degree, request_id, created_at FROM validation_fact").
 					WithArgs(testFactQueue, want.URI, want.Project).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
@@ -182,8 +184,8 @@ func TestValidationFactStore_Get(t *testing.T) {
 
 func TestValidationFactStore_ListProjects(t *testing.T) {
 	readErr := fmt.Errorf("connection reset")
-	columns := []string{"uri", "project", "degree", "request_id", "created_at"}
-	want := entity.ValidationFact{URI: testFactURI, Project: "project-b", Degree: 0.5, RequestID: "2", CreatedAt: 20}
+	columns := []string{"uri", "project", "project_type", "degree", "request_id", "created_at"}
+	want := entity.ValidationFact{URI: testFactURI, Project: "project-b", ProjectType: "future-type", Degree: 0.5, RequestID: "2", CreatedAt: 20}
 	tests := []struct {
 		name     string
 		rows     *sqlmock.Rows
@@ -191,17 +193,17 @@ func TestValidationFactStore_ListProjects(t *testing.T) {
 		wantErr  bool
 		want     []entity.ValidationFact
 	}{
-		{name: "found", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.Degree, want.RequestID, want.CreatedAt), want: []entity.ValidationFact{want}},
+		{name: "found", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.ProjectType, want.Degree, want.RequestID, want.CreatedAt), want: []entity.ValidationFact{want}},
 		{name: "empty", rows: sqlmock.NewRows(columns)},
 		{name: "query failure", queryErr: readErr, wantErr: true},
-		{name: "scan failure", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, "invalid", want.RequestID, want.CreatedAt), wantErr: true},
-		{name: "iteration failure", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.Degree, want.RequestID, want.CreatedAt).RowError(0, readErr), wantErr: true},
+		{name: "scan failure", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.ProjectType, "invalid", want.RequestID, want.CreatedAt), wantErr: true},
+		{name: "iteration failure", rows: sqlmock.NewRows(columns).AddRow(want.URI, want.Project, want.ProjectType, want.Degree, want.RequestID, want.CreatedAt).RowError(0, readErr), wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, store := setupValidationFactStoreTest(t)
 			defer db.Close()
-			query := mock.ExpectQuery(`SELECT uri, project, degree, request_id, created_at FROM validation_fact\s+WHERE queue = \? AND uri = \? AND project > \?\s+ORDER BY project ASC LIMIT \?`).WithArgs(testFactQueue, testFactURI, "project-a", 3)
+			query := mock.ExpectQuery(`SELECT uri, project, project_type, degree, request_id, created_at FROM validation_fact\s+WHERE queue = \? AND uri = \? AND project > \?\s+ORDER BY project ASC LIMIT \?`).WithArgs(testFactQueue, testFactURI, "project-a", 3)
 			if tt.queryErr != nil {
 				query.WillReturnError(tt.queryErr)
 			} else {

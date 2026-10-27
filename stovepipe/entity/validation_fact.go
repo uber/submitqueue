@@ -42,6 +42,8 @@ type ValidationFact struct {
 	// Project is the scope the degree applies to. Empty means the whole
 	// repository; named projects narrow the fact to part of it.
 	Project string `json:"project"`
+	// ProjectType is a provider-defined classification recorded with the fact; empty means unknown.
+	ProjectType string `json:"project_type"`
 	// Degree is how broken the scope was, on the closed interval
 	// [DegreeGreen, DegreeBroken]. A failed repository with project results has
 	// DegreePartial; without project results it has DegreeBroken.
