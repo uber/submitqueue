@@ -54,6 +54,10 @@ export interface ProjectStatusModel {
   repositoryBreakageDegree: number | null;
   /** Whether production of relevant project results has finished, independent of pagination. */
   complete: boolean;
+  /** Maximum project results requested per page. */
+  pageSize: number;
+  /** Supported page sizes and their first-page URLs for this request. */
+  pageSizeChoices: { value: number; href: string }[];
   /** Recorded projects on this page; null breakage means no result. */
   projects: { project: string; breakageDegree: number | null }[];
   /** First project page for this request; null on the first page. */

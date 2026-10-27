@@ -2,38 +2,23 @@
 
 import { ErrorState } from "./error-state.js";
 import { useLastSuccessfulData } from "./last-successful-data.js";
-import { Fact, Table, Timestamp } from "@submitqueue/web-platform";
+import { Fact, selectOverrides, Table, Timestamp } from "@submitqueue/web-platform";
 import { styled } from "baseui";
 import { Block } from "baseui/block";
 import { Button, SIZE } from "baseui/button";
 import { Input } from "baseui/input";
 import { KIND, Notification } from "baseui/notification";
-import { Select, StyledInput } from "baseui/select";
+import { Select } from "baseui/select";
 import { Tag } from "baseui/tag";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { HeadingLarge, HeadingSmall, LabelXSmall, ParagraphSmall, ParagraphXSmall } from "baseui/typography";
 import { useWebApp, WebLink } from "./web-app.js";
-import { forwardRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type {
   ChangeDetailModel, HistoryEventModel, LoadResult, QueueModel, RequestDetailModel, RequestListModel, RequestSummaryModel,
 } from "../entity/index.js";
 import { WebPaths } from "../core/paths.js";
 import { statusDisplay } from "../core/status.js";
-
-// Closing removes the options; suppress the old ID until the menu reports a new one.
-const SelectInput = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<typeof StyledInput>>((props, ref) => {
-  const activeDescendant = props["aria-activedescendant"];
-  const [closedActiveDescendant, setClosedActiveDescendant] = useState(activeDescendant);
-  if (!props.$isOpen && closedActiveDescendant !== activeDescendant) setClosedActiveDescendant(activeDescendant);
-  return <StyledInput {...props} ref={ref}
-    aria-activedescendant={props.$isOpen && activeDescendant !== closedActiveDescendant ? activeDescendant : undefined} />;
-});
-
-const selectOverrides = {
-  Input: { component: SelectInput },
-  // The enclosing option owns selection semantics; its label is a generic div.
-  OptionContent: { props: { "aria-selected": undefined, "aria-readonly": undefined } },
-};
 
 const MetadataRow = styled("div", ({ $theme }) => ({
   display: "grid",

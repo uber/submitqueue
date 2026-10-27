@@ -314,6 +314,37 @@ describe("Stovepipe page loading", () => {
     expect(() => JSON.stringify(result)).not.toThrow();
   });
 
+  it.each([25, 100, 200])("requests %s project results and preserves the size in pagination links", async (pageSize) => {
+    const { app, service, paths } = createPageTestContext();
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId),
+      search: new URLSearchParams({ projects: "opaque+/=", projectPageSize: String(pageSize) }),
+    });
+    expect(service.getProjectStatusByID).toHaveBeenCalledWith({
+      queue: summary.queue, requestId: summary.requestId,
+      projects: [], pageSize, pageToken: "opaque+/=",
+    }, {});
+    expect(result).toMatchObject({ kind: "render", model: { projectStatus: {
+      ok: true, data: {
+        pageSize,
+        firstHref: paths.request(summary.queue, summary.requestId) + `?projectPageSize=${pageSize}`,
+        nextHref: paths.request(summary.queue, summary.requestId) + `?projects=next%2B%2F%3D&projectPageSize=${pageSize}`,
+      },
+    } } });
+  });
+
+  it.each(["", "0", "-1", "201", "25.5", "invalid"])("uses 50 project results for an invalid page size %j", async (projectPageSize) => {
+    const { app, service, paths } = createPageTestContext();
+    await app.handle({
+      path: paths.request(summary.queue, summary.requestId),
+      search: new URLSearchParams({ projectPageSize }),
+    });
+    expect(service.getProjectStatusByID).toHaveBeenCalledWith({
+      queue: summary.queue, requestId: summary.requestId,
+      projects: [], pageSize: 50, pageToken: "",
+    }, {});
+  });
+
   it.each([
     { queue: "other" },
     { requestId: "other" },

@@ -19,6 +19,10 @@ const model: StovepipePageModel = {
       updatedAtMs: "1000",
       repositoryBreakageDegree: null,
       complete: false,
+      pageSize: 50,
+      pageSizeChoices: [25, 50, 100, 200].map(value => ({
+        value, href: "/repo%2Fmain/request/7?projectPageSize=" + value,
+      })),
       projects: [
         { project: "green-project", breakageDegree: 0 },
         { project: "partial-breakage-project", breakageDegree: 0.25 },

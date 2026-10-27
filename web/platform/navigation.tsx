@@ -17,7 +17,7 @@ export interface WebNavigation {
   /** Renders in-app links, e.g. a framework router link. */
   Link?: ComponentType<WebLinkProps>;
   /** Moves to an in-app href. */
-  push?: (href: string) => void;
+  push?: (href: string, options?: Pick<WebLinkProps, "scroll">) => void;
   /** Re-renders the current page with a fresh model, or moves to `href`; settles once rendered. Enables polling. */
   refresh?: (href: string | null) => Promise<void>;
 }

@@ -1,6 +1,6 @@
 import type { ProjectStatusModel } from "../entity/index.js";
 import type { StovepipeService } from "../extension/service/index.js";
-import type { StovepipePaths } from "../core/paths.js";
+import { projectPageSizes, type StovepipePaths } from "../core/paths.js";
 
 function breakageDegree(value: number): number {
   if (!Number.isFinite(value) || value < 0 || value > 1)
@@ -14,10 +14,11 @@ export async function loadProjectStatus(
   queue: string,
   requestId: string,
   pageToken: string,
+  pageSize: number,
   signal?: AbortSignal,
 ): Promise<ProjectStatusModel> {
   const result = await service.getProjectStatusByID(
-    { queue, requestId, projects: [], pageSize: 50, pageToken },
+    { queue, requestId, projects: [], pageSize, pageToken },
     signal ? { signal } : {},
   );
   if (result.queue !== queue || result.requestId !== requestId)
@@ -27,14 +28,18 @@ export async function loadProjectStatus(
     repositoryBreakageDegree: result.repositoryResult.case === "repositoryBreakageDegree"
       ? breakageDegree(result.repositoryResult.value) : null,
     complete: result.projectResultsComplete,
+    pageSize,
+    pageSizeChoices: projectPageSizes.map(value => ({
+      value, href: paths.request(queue, requestId, "", value),
+    })),
     projects: result.projects.map((entry) => ({
       project: entry.project,
       breakageDegree: entry.result.case === "breakageDegree"
         ? breakageDegree(entry.result.value) : null,
     })),
-    firstHref: pageToken ? paths.request(queue, requestId) : null,
+    firstHref: pageToken ? paths.request(queue, requestId, "", pageSize) : null,
     nextHref: result.nextPageToken
-      ? paths.request(queue, requestId, result.nextPageToken)
+      ? paths.request(queue, requestId, result.nextPageToken, pageSize)
       : null,
   };
 }

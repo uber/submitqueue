@@ -19,8 +19,11 @@ Mount `StovepipeQueueProvider` above route changes with a `loadPage(href, signal
 Request pages use `/<queue>/request/<request-id>` and load both the current summary and events with `GetRequestHistoryByID`. The summary is displayed above history and is not reconstructed from retained events. Queue pagination uses the backend's opaque continuations, and the latest URL carries no time window.
 
 Project results use `GetProjectStatusByID` for that exact request, with an empty
-project selection to read all recorded projects. Each page contains up to 50
-projects; `?projects=<opaque-token>` carries its continuation and can be shared.
+project selection to read all recorded projects. Pages default to 50
+projects; the Projects per page dropdown offers 25, 50, 100, or 200.
+`?projects=<opaque-token>` carries the continuation and `projectPageSize` carries
+a non-default page size, so both can be shared. Changing the size starts at the
+first page. Unsupported sizes fall back to 50.
 First-page navigation removes the cursor. Pages are live rather than a snapshot;
 return to the first page to see newly recorded projects.
 
