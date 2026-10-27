@@ -35,6 +35,7 @@ web_library(
         ":node_modules/@types/react",
         ":node_modules/baseui",
         ":node_modules/react",
+        "//web:node_modules/@types/react",
     ],
 )
 

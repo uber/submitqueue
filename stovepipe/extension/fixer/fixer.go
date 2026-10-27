@@ -26,10 +26,9 @@ import (
 // RepairExecutor submits repair work for one open issue within a configured queue.
 // Implementations must be concurrency-safe and return promptly after submission.
 type RepairExecutor interface {
-	// Submit returns a nonempty opaque provider attempt ID on acceptance.
-	// Acceptance does not establish recovery.
-	// Repeated calls may start additional attempts. A plain error can follow acceptance,
-	// including on context cancellation; callers must not automatically repeat Submit.
+	// Submit returns a nonempty opaque fix ID on acceptance, without establishing recovery.
+	// An ID returned alongside an error still identifies the repair attempt.
+	// Errors without an ID may follow acceptance; repeated calls can start additional work.
 	Submit(context.Context, entity.OpenIssue) (string, error)
 }
 

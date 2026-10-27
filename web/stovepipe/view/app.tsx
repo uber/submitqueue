@@ -1,6 +1,6 @@
 "use client";
 
-import { Fact, Timestamp } from "@submitqueue/web-platform";
+import { Fact, Timestamp, TimeZoneProvider, TimeZoneToggle } from "@submitqueue/web-platform";
 import { Block } from "baseui/block";
 import { Tag } from "baseui/tag";
 import { HeadingLarge, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/typography";
@@ -16,9 +16,13 @@ function Page({ model }: { model: StovepipePageModel }) {
     <Block className="sq-app" backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
       minHeight="100vh" display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows="auto 1fr auto"
       paddingLeft="scale600" paddingRight="scale600">
-      <Block as="header" paddingTop="scale300" paddingBottom="scale300">
+      <Block as="header" display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale600"
+        paddingTop="scale300" paddingBottom="scale300">
         <Block as={Link} display="inline-flex" alignItems="center" gridGap="scale300" href={model.queueHref}>
           <Tag closeable={false} kind="neutral" size="small">SP</Tag><LabelMedium as="span">Stovepipe</LabelMedium>
+        </Block>
+        <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
+          <TimeZoneToggle /><RefreshControls />
         </Block>
       </Block>
       <Block as="main" paddingTop="scale600" paddingBottom="scale600">
@@ -51,7 +55,6 @@ function Page({ model }: { model: StovepipePageModel }) {
                 : model.queue}
             </ParagraphSmall>
           </div>
-          <RefreshControls />
         </Block>
         {model.kind === "queue" && model.showLatestLink && (
           <ParagraphSmall>
@@ -101,5 +104,5 @@ function Page({ model }: { model: StovepipePageModel }) {
   );
 }
 export function StovepipeApp({ model }: { model: StovepipePageModel }) {
-  return <Page key={model.key} model={model} />;
+  return <TimeZoneProvider><Page key={model.key} model={model} /></TimeZoneProvider>;
 }

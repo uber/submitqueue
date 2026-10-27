@@ -24,7 +24,7 @@ projects; `?projects=<opaque-token>` carries its continuation and can be shared.
 First-page navigation removes the cursor. Pages are live rather than a snapshot;
 return to the first page to see newly recorded projects.
 
-The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green or Breakage without percentages.
+The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green at zero, Partial Breakage between zero and one, and Breakage at one, without percentages.
 
 Repository breakage, per-project breakage, and recording completion are separate.
 Zero breakage is green; absent results are never treated as green. Completion
@@ -35,6 +35,6 @@ in this package; hosts only adapt their transport representation.
 
 ## Refresh and presentation
 
-Refresh is manual by default, with optional ten-second polling. Failed refreshes retain successful results on the same route; request-detail results are scoped to their route. Timestamps use UTC. Lifecycle labels and outcome reasons come from the backend and are displayed verbatim.
+The header offers optional ten-second auto-refresh, off by default. Use browser reload for manual updates. Polling pauses while the page is hidden or offline. Failed refreshes retain successful results on the same route; request-detail results are scoped to their route. Timestamps default to the browser's time zone, with a Browser/UTC segmented control in the header. The browser remembers the selection across navigation and reloads when local storage is available. Server-rendered timestamps use UTC until the browser resolves its time zone and preference. Lifecycle labels and outcome reasons come from the backend and are displayed verbatim.
 
 Queue refreshes update the status of matching displayed requests while preserving their positions and loaded older pages. New arrivals appear behind a Show latest requests action that starts a fresh list. A full browser reload also starts a fresh list; older-page URLs retain their explicit cursor.

@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Theme } from "baseui";
 import { Block } from "baseui/block";
-import { Button, SIZE } from "baseui/button";
+import { Checkbox } from "baseui/checkbox";
 import { LabelXSmall } from "baseui/typography";
 
 export interface AutoRefreshProps {
   terminal?: boolean;
-  /** Whether to poll; when false only the manual button refreshes. */
-  automatic?: boolean;
+  /** Whether the host supports refreshing in place. */
+  available?: boolean;
   intervalMs?: number;
   jitterMs?: number;
   maxBackoffMs?: number;
@@ -23,14 +24,15 @@ function pageCanRefresh(): boolean {
 
 export function AutoRefresh({
   terminal = false,
-  automatic = true,
-  intervalMs = 2_000,
-  jitterMs = 500,
+  available = true,
+  intervalMs = 10_000,
+  jitterMs = 0,
   maxBackoffMs = 30_000,
   transientFailureCount = 0,
   refresh,
   random = Math.random,
 }: AutoRefreshProps) {
+  const [enabled, setEnabled] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [paused, setPaused] = useState(false);
   const [cycle, setCycle] = useState(0);
@@ -80,7 +82,7 @@ export function AutoRefresh({
   }, []);
 
   useEffect(() => {
-    if (terminal || paused || !automatic) {
+    if (terminal || paused || !available || !enabled) {
       return;
     }
     const failures = Math.max(transientFailureCount, localFailures.current);
@@ -96,17 +98,23 @@ export function AutoRefresh({
         timer.current = null;
       }
     };
-  }, [automatic, cycle, intervalMs, jitterMs, maxBackoffMs, paused, random, runRefresh, terminal, transientFailureCount]);
+  }, [available, enabled, cycle, intervalMs, jitterMs, maxBackoffMs, paused, random, runRefresh, terminal, transientFailureCount]);
+
+  if (!available) return null;
 
   return (
     <Block display="flex" alignItems="center" flexWrap gridGap="scale500" data-paused={paused || terminal}>
-      <Button size={SIZE.compact} disabled={refreshing || paused} onClick={() => void runRefresh()} type="button">
-        {refreshing ? "Refreshing…" : "Refresh"}
-      </Button>
-      <LabelXSmall as="span" color="contentSecondary" aria-live="polite">
-        {terminal ? "Automatic refresh stopped" : !automatic ? "Manual refresh" : paused ? "Automatic refresh paused" :
+      <Checkbox checked={enabled} disabled={terminal} onChange={event => setEnabled(event.currentTarget.checked)}
+        overrides={{
+          Root: { style: { alignItems: "center" } },
+          Label: { style: ({ $theme }: { $theme: Theme }) => $theme.typography.LabelSmall },
+        }}>
+        Auto refresh every {intervalMs / 1_000}s
+      </Checkbox>
+      {enabled && <LabelXSmall as="span" color="contentSecondary" aria-live="polite">
+        {terminal ? "Automatic refresh stopped" : paused ? "Automatic refresh paused" : refreshing ? "Refreshing…" :
           transientFailureCount > 0 || localFailures.current > 0 ? "Updates unavailable · retrying" : "Live"}
-      </LabelXSmall>
+      </LabelXSmall>}
     </Block>
   );
 }

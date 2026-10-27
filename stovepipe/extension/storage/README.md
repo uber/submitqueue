@@ -1,6 +1,6 @@
 # Storage
 
-Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`, `IssueLogStore`). Implementations live under `extension/storage/<impl>/`.
+Pluggable persistence interfaces for Stovepipe entities (`RequestStore`, `RequestURIStore`, `QueueStore`, `BuildStore`, `BuildIssueStore`, `OpenIssueStore`, `IssueLogStore`, `IssueTrackingStore`). Implementations live under `extension/storage/<impl>/`.
 
 The aggregate is resolved per queue through a factory keyed by queue name, mirroring the extension contract and the [submitqueue storage seam](../../../submitqueue/extension/storage/README.md#queue-scoped-resolution): a resolved instance is bound to its queue, entity arguments whose queue disagrees with the binding are rejected, and reads never surface another queue's records. Stovepipe has no cross-queue read paths, so every store — including `QueueStore`, whose row key is the queue name itself — lives inside the queue-scoped aggregate; there is no global remainder.
 
@@ -28,17 +28,21 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 
 ## Build issue observations
 
-`BuildIssueStore` accumulates immutable observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.
+`BuildIssueStore` accumulates observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.
 
 Listing fixes the queue/build primary-key prefix and returns bounded pages in ascending bytewise task/unit order. A task/unit cursor continues after the last returned key; the zero cursor starts the range, and a unit without a task is invalid. Pages are not a snapshot across calls: concurrent observations can affect membership. Empty pages represent no observations in that range, not build success or completed analysis.
 
-Each observation is stored separately, not in a serialized collection. Observations are historical evidence; they do not track whether an issue is currently open or resolved. No update, deletion, or absence-based recovery is implied by this store.
+Each observation is stored separately, not in a serialized collection. Observations are historical evidence; they do not track whether an issue is currently open or resolved. Repair metadata is mutable; observation identities remain durable, with no deletion or absence-based recovery.
 
 The MySQL primary key contains the queue, build ID, task ID, and unit ID directly as binary strings, preserving byte-exact identity. Their limits are 255, 1020, 255, and 1024 bytes respectively, for a combined maximum of 2554 bytes. Creates and reads reject identifiers exceeding these limits before querying the database; identifiers are never truncated.
 
+`BuildIssue.FixID` associates an observation with an opaque executor-provided repair ID. An empty ID means no association is recorded. `Update` uses the existing entity CAS convention: it guards `oldVersion` and writes `newVersion`, returning `ErrVersionMismatch` for a stale or missing record. The caller owns version arithmetic and repair policy; storage does not enforce a per-build submission limit. Observation identity and membership survive recovery.
+
+Existing MySQL deployments must add `fix_id VARCHAR(255) NOT NULL DEFAULT ''` and `version INT NOT NULL DEFAULT 0` to `build_issue` before deploying the new readers and writers. The schema's `CREATE TABLE IF NOT EXISTS` does not alter existing tables.
+
 ## Currently open issues
 
-`OpenIssueStore` contains only currently open issues, keyed by task and unit within the bound queue. Removing an open row never removes immutable per-build observations. Task IDs must be nonempty; an empty unit identifies a task-wide issue. There is no open/resolved flag; a resolved issue has no row here.
+`OpenIssueStore` contains only currently open issues, keyed by task and unit within the bound queue. Removing an open row never removes durable per-build observations. Task IDs must be nonempty; an empty unit identifies a task-wide issue. There is no open/resolved flag; a resolved issue has no row here.
 
 An open row is immutable. Its first-seen build identifies the current opening, not its latest observation. Repeated observations remain in the per-build store. Reopening after removal uses a different first-seen build ID; no last-observed build, version counter, or update operation is stored here.
 
@@ -59,3 +63,11 @@ The build ID identifies the build where the issue was first seen or confirmed re
 The MySQL key uses the same binary identifier limits as the issue stores, plus a 32-byte event field, for a maximum of 2586 bytes. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
 
 History persistence does not alter open-issue membership or validate transitions against it. No runtime writer is enabled here. A later reconciliation controller must own opening/resolution decisions, retry-safe writes to both stores, and protection against stale build analysis. History enumeration is outside this storage contract.
+
+## Issue reconciliation progress
+
+`IssueTrackingStore` retains one queue-scoped operational `IssueTrackingState`, independently of open-issue membership and user-facing summaries. It records the source request and build, whether refresh or final writes are pending or complete, the owning notification, an exclusive task/unit cursor, and its optimistic version. The zero cursor starts a pass. A cursor checkpoint follows the writes for every processed key; notification identity lets the controller distinguish its own continuation from helping another pass. Keeping it after the last open row is removed preserves the source-order boundary. The MySQL table is keyed only by queue; creates, reads, and updates use complete primary keys with no secondary indexes or cross-table transaction.
+
+The store does not decide source ordering, apply issue transitions, or advance versions. Its caller supplies the guard version and replacement version. A later controller will own acceptance, resumption of pending writes, and completion; no runtime writer is enabled here.
+
+The issue-tracking table must include the notification and cursor columns before updated readers or writers are deployed. No runtime writer is enabled by the storage layer. Notification IDs allow up to 1020 bytes, matching the queue message ID byte capacity; cursor limits match the issue stores.

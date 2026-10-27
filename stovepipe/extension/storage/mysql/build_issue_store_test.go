@@ -53,8 +53,8 @@ func TestBuildIssueStoreCreate(t *testing.T) {
 			store := NewBuildIssueStore(db, testMetrics(), "queue")
 			issue := entity.BuildIssue{TaskID: "task", UnitID: tt.unitID}
 
-			expectation := mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO build_issue (queue, build_id, task_id, unit_id) VALUES (?, ?, ?, ?)`)).
-				WithArgs("queue", "build", issue.TaskID, issue.UnitID)
+			expectation := mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO build_issue (queue, build_id, task_id, unit_id, fix_id, version) VALUES (?, ?, ?, ?, ?, ?)`)).
+				WithArgs("queue", "build", issue.TaskID, issue.UnitID, issue.FixID, issue.Version)
 			if tt.dbErr != nil {
 				expectation.WillReturnError(tt.dbErr)
 			} else {
@@ -97,14 +97,14 @@ func TestBuildIssueStoreGet(t *testing.T) {
 			store := NewBuildIssueStore(db, testMetrics(), "queue")
 			issue := entity.BuildIssue{TaskID: "task", UnitID: tt.unitID}
 
-			expectation := mock.ExpectQuery(regexp.QuoteMeta(`SELECT task_id, unit_id FROM build_issue WHERE queue = ? AND build_id = ? AND task_id = ? AND unit_id = ?`)).
+			expectation := mock.ExpectQuery(regexp.QuoteMeta(`SELECT task_id, unit_id, fix_id, version FROM build_issue WHERE queue = ? AND build_id = ? AND task_id = ? AND unit_id = ?`)).
 				WithArgs("queue", "build", issue.TaskID, issue.UnitID)
 			if tt.queryErr != nil {
 				expectation.WillReturnError(tt.queryErr)
 			} else if tt.scanErr {
-				expectation.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id"}).AddRow(nil, issue.UnitID))
+				expectation.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "fix_id", "version"}).AddRow(nil, issue.UnitID, "", 0))
 			} else {
-				expectation.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id"}).AddRow(issue.TaskID, issue.UnitID))
+				expectation.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "fix_id", "version"}).AddRow(issue.TaskID, issue.UnitID, issue.FixID, issue.Version))
 			}
 
 			got, err := store.Get(context.Background(), "build", issue.TaskID, issue.UnitID)
@@ -150,8 +150,8 @@ func TestBuildIssueStoreRejectsOversizedIdentifiers(t *testing.T) {
 			// SQL would succeed, so rejection must come from identifier validation.
 			mock.MatchExpectationsInOrder(false)
 			mock.ExpectExec("INSERT INTO build_issue").WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectQuery("SELECT task_id, unit_id FROM build_issue").WillReturnRows(
-				sqlmock.NewRows([]string{"task_id", "unit_id"}).AddRow(tt.issue.TaskID, tt.issue.UnitID),
+			mock.ExpectQuery("SELECT").WillReturnRows(
+				sqlmock.NewRows([]string{"task_id", "unit_id", "fix_id", "version"}).AddRow(tt.issue.TaskID, tt.issue.UnitID, tt.issue.FixID, tt.issue.Version),
 			)
 
 			require.Error(t, store.Create(context.Background(), tt.buildID, tt.issue))
@@ -159,6 +159,7 @@ func TestBuildIssueStoreRejectsOversizedIdentifiers(t *testing.T) {
 			got, err := store.Get(context.Background(), tt.buildID, tt.issue.TaskID, tt.issue.UnitID)
 			require.Error(t, err)
 			require.Equal(t, entity.BuildIssue{}, got)
+			require.Error(t, store.Update(context.Background(), tt.buildID, tt.issue, 0, 1))
 		})
 	}
 }
@@ -179,7 +180,7 @@ func TestBuildIssueStoreRejectsMissingIdentifiers(t *testing.T) {
 			store := NewBuildIssueStore(db, testMetrics(), "queue")
 			mock.MatchExpectationsInOrder(false)
 			mock.ExpectExec("INSERT INTO build_issue").WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id"}).AddRow(tt.taskID, "unit"))
+			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "fix_id", "version"}).AddRow(tt.taskID, "unit", "", 0))
 
 			require.Error(t, store.Create(context.Background(), tt.buildID, entity.BuildIssue{TaskID: tt.taskID, UnitID: "unit"}))
 			_, err = store.Get(context.Background(), tt.buildID, tt.taskID, "unit")

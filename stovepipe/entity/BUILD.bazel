@@ -7,6 +7,7 @@ go_library(
         "build_issue.go",
         "ingest.go",
         "issue_log.go",
+        "issue_tracking_state.go",
         "list.go",
         "open_issue.go",
         "project_fact_by_degree.go",
@@ -35,6 +36,7 @@ go_test(
     srcs = [
         "build_test.go",
         "issue_log_test.go",
+        "issue_tracking_state_test.go",
         "project_fact_by_degree_test.go",
         "queue_state_test.go",
         "request_id_test.go",

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "../../platform/test/rtl.js";
+import { fireEvent, render, screen } from "../../platform/test/rtl.js";
 import { describe, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { SubmitQueueApp } from "./app.js";
@@ -41,12 +41,10 @@ describe("default reusable application views", () => {
       throw new Error("Expected a rendered page");
     }
     const refresh = vi.fn(async () => undefined);
-    render(<WebNavigationProvider value={{ refresh }}><SubmitQueueShell homeHref="/sq">
-      <SubmitQueueApp model={result.model} />
-    </SubmitQueueShell></WebNavigationProvider>);
+    render(<WebNavigationProvider value={{ refresh }}><SubmitQueueApp model={result.model} /></WebNavigationProvider>);
     expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
+    expect(refresh).not.toHaveBeenCalled();
     const queueLinks = screen.queryAllByRole("link", { name: "demo-queue" });
     queueLinks.forEach(link => expect(link.getAttribute("href")).toBe("/sq/demo-queue"));
   });

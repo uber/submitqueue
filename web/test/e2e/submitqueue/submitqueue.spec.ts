@@ -89,7 +89,7 @@ test("shows newest requests and an accessible readable detail history", async ({
     "github://github.com/uber/submitqueue/pull/123/2222222222222222222222222222222222222222",
   );
 
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.reload();
   const requestLinks = page.locator(".sq-request-list__item td:first-child a");
   await expect(requestLinks).toHaveCount(3, { timeout: 0 });
   await expect(requestLinks.nth(0)).toHaveText(repeatedSqid);
@@ -121,11 +121,11 @@ test("shows newest requests and an accessible readable detail history", async ({
 
   await expect(page.getByRole("button", { name: "Copy ID" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Summary", exact: true })).toHaveAttribute("aria-current", "page");
-  const actionBoxes = await Promise.all(["Copy ID", "Copy link", "Refresh"].map(name =>
+  const actionBoxes = await Promise.all(["Copy ID", "Copy link"].map(name =>
     page.getByRole("button", { name, exact: true }).boundingBox()));
   expect(actionBoxes.every(box => box !== null)).toBe(true);
-  expect(actionBoxes.map(box => box!.y)).toEqual([actionBoxes[0]!.y, actionBoxes[0]!.y, actionBoxes[0]!.y]);
-  expect(actionBoxes.map(box => box!.height)).toEqual([actionBoxes[0]!.height, actionBoxes[0]!.height, actionBoxes[0]!.height]);
+  expect(actionBoxes.map(box => box!.y)).toEqual([actionBoxes[0]!.y, actionBoxes[0]!.y]);
+  expect(actionBoxes.map(box => box!.height)).toEqual([actionBoxes[0]!.height, actionBoxes[0]!.height]);
   const facts = page.locator(".sq-request-detail dl").first().locator(":scope > div");
   await expect(facts).toHaveCount(5);
   const factLayout = await facts.evaluateAll(rows => rows.map(row => {
@@ -219,7 +219,7 @@ test("shows newest requests and an accessible readable detail history", async ({
   expect(new URL(page.url()).search).toBe("");
   const gitUri = "git://git.example.com/demo/refs%2Fheads%2Fweb-demo/3333333333333333333333333333333333333333";
   const gitRequest = await submitRequest(`${gitUri}?sq-files=demo%2F00%2Ffile.txt`);
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.reload();
   await expect(page.getByRole("link", { name: gitRequest, exact: true })).toBeVisible();
   const changeLink = page.getByRole("link", { name: gitUri, exact: true });
   await expect(changeLink).toBeVisible();
@@ -301,7 +301,72 @@ test("paginates change history through more than 500 queue requests", async ({ p
   await page.reload();
   await expect(page.getByRole("link", { name: oldest, exact: true })).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("link", { name: "Latest history", exact: true }).click();
   await expect(page.getByRole("link", { name: newest, exact: true })).toBeVisible();
   expect(new URL(page.url()).search).toBe("");
+});
+
+test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
+  await page.goto(`/${queue}`);
+  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
+  await expect(automatic).not.toBeChecked();
+  const now = new Date();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
+  let refreshRequests = 0;
+  const isRefresh = (request: import("@playwright/test").Request) =>
+    request.headers()["rsc"] === "1" && new URL(request.url()).pathname === new URL(page.url()).pathname;
+  page.on("request", request => { if (isRefresh(request)) refreshRequests++; });
+  await page.clock.fastForward(30_000);
+  expect(refreshRequests).toBe(0);
+  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await page.clock.runFor(9_999);
+  expect(refreshRequests).toBe(0);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const response = page.waitForResponse(response => isRefresh(response.request()));
+    await page.clock.runFor(cycle === 0 ? 1 : 10_000);
+    expect((await response).ok()).toBe(true);
+    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+    await expect(automatic).toBeChecked();
+  }
+  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await expect(automatic).not.toBeChecked();
+  await page.clock.fastForward(30_000);
+  expect(refreshRequests).toBe(2);
+});
+
+test.describe("time zone selection", () => {
+  test.use({ timezoneId: "America/New_York" });
+  test("switches queue, request history and change timestamps from the shared header", async ({ page }) => {
+    const expectTimeZone = async (zone: string) => {
+      await expect.poll(() => page.locator("time[datetime]").evaluateAll((times, timeZone) => {
+        const formatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "long", timeZone });
+        return times.length > 0 && times.every(time => time.textContent === formatter.format(new Date(time.getAttribute("datetime")!)));
+      }, zone)).toBe(true);
+    };
+    const timeZones = page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true });
+    await page.goto(`/${queue}`);
+    await expect(timeZones.getByRole("option", { name: "Browser", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("America/New_York");
+    await timeZones.getByRole("option", { name: "UTC", exact: true }).click();
+    await expectTimeZone("UTC");
+    await page.locator(".sq-request-list__item td:first-child a").first().click();
+    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("UTC");
+    await expect(page.getByText("Received", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: /^History/ }).click();
+    await expect(page.getByRole("list", { name: "Request history", exact: true })).toBeVisible();
+    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expectTimeZone("UTC");
+    const changePath = `/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
+    for (const path of [changePath, `${changePath}/7777777777777777777777777777777777777777`]) {
+      await page.goto(path);
+      await expect(page.getByRole("table", { name: "Change submissions" })).toBeVisible();
+      await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+      await expectTimeZone("UTC");
+    }
+    await timeZones.getByRole("option", { name: "Browser", exact: true }).click();
+    await expectTimeZone("America/New_York");
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  });
 });
