@@ -42,6 +42,7 @@ import (
 	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
@@ -74,7 +75,17 @@ type Controller struct {
 var _ consumer.Controller = (*Controller)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
-const _opName = "record"
+const (
+	_opName                       = "record"
+	_recordStageUnknown           = "unknown"
+	_recordStagePrepare           = "prepare"
+	_recordStageProjectResults    = "resolve_project_results"
+	_recordStageRepositoryFact    = "record_validation_fact"
+	_recordStageRepositoryHistory = "retain_validation_fact"
+	_recordStageProjectFacts      = "record_project_facts"
+	_recordStageDerivedCaches     = "apply_derived_caches"
+	_recordStageNotification      = "publish_notification"
+)
 
 // wholeRepositoryProject is the project component of a fact covering the whole
 // repository rather than one project within it.
@@ -114,7 +125,13 @@ func NewController(
 // buildsignal stamps the outcome on the request before publishing here, so a
 // request without a build outcome is a producer invariant violation rather
 // than a state this stage waits for.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	stage := _recordStagePrepare
+	defer func() {
+		if retErr != nil {
+			retErr = errs.Detail(retErr, map[string]any{requestlog.MetadataKeyRecordStage: stage})
+		}
+	}()
 	msg := delivery.Message()
 
 	rec := &stovepipemq.Record{}
@@ -148,29 +165,36 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
+		stage = _recordStageProjectResults
 		results, err := c.resolveProjectResults(ctx, request)
 		if err != nil {
 			return err
 		}
+		stage = _recordStageRepositoryFact
 		fact, created, err := c.recordFact(ctx, store, request, results)
 		if err != nil {
 			return err
 		}
+		stage = _recordStageRepositoryHistory
 		if err := c.persistValidationFactRecordedLog(ctx, store, request, fact); err != nil {
 			return err
 		}
+		stage = _recordStageProjectFacts
 		if err := c.persistProjectFacts(ctx, store, request, results); err != nil {
 			return err
 		}
+		stage = _recordStageDerivedCaches
 		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
+		stage = _recordStageNotification
 		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryRecorded(request))
 
 	case entity.RequestStateCancelled:
 		// A cancelled build decided nothing about the commit, so it establishes
 		// no fact. The identity stays unclaimed; the next commit re-validates.
 		metrics.NamedCounter(c.metricsScope, _opName, "cancelled", 1, metrics.TagsFromContext(ctx)...)
+		stage = _recordStageNotification
 		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryCancelled(request))
 
 	case entity.RequestStateSuperseded:

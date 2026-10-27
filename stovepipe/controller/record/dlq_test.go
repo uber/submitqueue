@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -56,10 +57,12 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 		name       string
 		failure    failure.Failure
 		hasFailure bool
+		wantStage  string
 	}{
 		{
 			name:       "promotion failure",
-			failure:    failure.Failure{Message: "failed to promote: permission denied"},
+			wantStage:  _recordStageDerivedCaches,
+			failure:    failure.Failure{Message: "failed to promote: permission denied", Detail: map[string]any{requestlog.MetadataKeyRecordStage: _recordStageDerivedCaches}},
 			hasFailure: true,
 		},
 		{
@@ -67,9 +70,9 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 			failure:    failure.Failure{Message: "hook publish failed"},
 			hasFailure: true,
 		},
-		{
-			name: "missing failure attribution",
-		},
+		{name: "missing failure attribution"},
+		{name: "unrecognized context is not retained", failure: failure.Failure{Detail: map[string]any{requestlog.MetadataKeyRecordStage: "arbitrary provider response"}}, hasFailure: true},
+		{name: "non-string context is not retained", failure: failure.Failure{Detail: map[string]any{requestlog.MetadataKeyRecordStage: 17}}, hasFailure: true},
 	}
 
 	for _, tt := range tests {
@@ -83,7 +86,11 @@ func TestDLQControllerRetainsAbandonedRecordHistory(t *testing.T) {
 					assert.Equal(t, "event/record_abandoned/repository", log.ID)
 					assert.Equal(t, testID, log.RequestID)
 					assert.Empty(t, log.State)
-					assert.Empty(t, log.Metadata)
+					stage := tt.wantStage
+					if stage == "" {
+						stage = _recordStageUnknown
+					}
+					assert.Equal(t, map[string]string{requestlog.MetadataKeyRecordStage: stage}, log.Metadata)
 					return nil
 				},
 			)

@@ -7,3 +7,5 @@ A returned fix ID is associated with the issue through `BuildIssueStore.Update`,
 Issue tracking calls [`fixrequest.Publish`](../../core/fixrequest/publish.go) after persisting both the build observation and open issue. Publications for the same build share a message identity and partition.
 
 The one-per-build limit is controller policy. Submission precedes persistence, so overlapping deliveries, crashes, and failed writes can still produce duplicate executor calls. Issue recovery remains separate from repair association.
+
+After an association is durable, the controller retains `repair_submitted` in the owning request history with the build, task, unit, and fix IDs. An existing association repairs missing history without calling the executor again. The event describes the persisted association, including the winner of a concurrent update, and does not imply repair completion.

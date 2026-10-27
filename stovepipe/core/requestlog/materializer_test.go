@@ -242,6 +242,48 @@ func TestMaterializerExistingConflictingOccurrenceFails(t *testing.T) {
 	require.Error(t, materializer.PersistLog(context.Background(), stores, NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded)))
 }
 
+func TestMaterializerSupersessionWithDifferentObservedHead(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		key     string
+		stored  string
+		retry   string
+		wantErr bool
+	}{
+		{name: "later head", key: MetadataKeySupersededByRequestID, stored: "9", retry: "10"},
+		{name: "earlier observation still newer than request", key: MetadataKeySupersededByRequestID, stored: "10", retry: "9"},
+		{name: "different baseline conflicts", key: MetadataKeyBaseURI, stored: "git://repo/base", retry: "git://repo/other", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
+			stored := NewRequestStateLog(entity.Request{
+				ID: testRequestID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+			}, entity.RequestOutcomeReasonSupersededByNewerHead)
+			stored.TimestampMs = testNowMs - 1000
+			stored.Metadata[tt.key] = tt.stored
+			candidate := stored
+			candidate.TimestampMs = 0
+			candidate.Metadata = map[string]string{tt.key: tt.retry}
+			logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+			logs.EXPECT().Get(gomock.Any(), testRequestID, candidate.ID).Return(stored, nil)
+			if !tt.wantErr {
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(seededRequestSummary(), nil)
+				summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+					func(_ context.Context, summary entity.RequestSummary, _, _ int32) error {
+						assert.Equal(t, stored.TimestampMs, summary.StateTimestampMs)
+						return nil
+					})
+			}
+			err := materializer.PersistLog(context.Background(), stores, candidate)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestMaterializerStorageFailures(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -396,6 +438,24 @@ func TestMaterializerRetainsOtherEventsWithoutProjectingSummary(t *testing.T) {
 			materializer, stores, logs, _, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", nil)
 			logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+		})
+	}
+}
+
+func TestMaterializerRetainsNewEventsIdempotentlyWithoutChangingSummary(t *testing.T) {
+	for _, event := range []entity.RequestEvent{entity.RequestEventBuildAnalysisCompleted, entity.RequestEventRepairSubmitted} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, _, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "build/1", map[string]string{MetadataKeyBuildID: "build/1"})
+			stored := log
+			stored.TimestampMs = testNowMs
+			gomock.InOrder(
+				logs.EXPECT().Create(gomock.Any(), stored).Return(nil),
+				logs.EXPECT().Create(gomock.Any(), stored).Return(storage.ErrAlreadyExists),
+				logs.EXPECT().Get(gomock.Any(), testRequestID, log.ID).Return(stored, nil),
+			)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
 			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
 		})
 	}

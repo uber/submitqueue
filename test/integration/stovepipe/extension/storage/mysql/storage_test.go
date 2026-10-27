@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
@@ -418,4 +419,32 @@ type mysqlFactory struct {
 // For returns the queue-scoped store aggregate bound to the queue named in config.
 func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
 	return f.backend.For(config.QueueName)
+}
+
+func (s *MySQLRequestStoreSuite) TestSupersessionHistoryPreservesFirstObservedHead() {
+	request := entity.Request{ID: "20", Queue: "monorepo/main", URI: "git://repo/superseded", State: entity.RequestStateAccepted, Version: 1}
+	require.NoError(s.T(), s.store.Create(s.ctx, request))
+	stores, err := s.backend.For(request.Queue)
+	require.NoError(s.T(), err)
+	materializer := requestlog.NewMaterializer(tally.NoopScope)
+	require.NoError(s.T(), materializer.PersistLog(s.ctx, stores, requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)))
+	updated := request
+	updated.State = entity.RequestStateSuperseded
+	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))
+	reloaded, err := s.store.Get(s.ctx, request.ID)
+	require.NoError(s.T(), err)
+	log := requestlog.NewRequestStateLog(reloaded, entity.RequestOutcomeReasonSupersededByNewerHead)
+	log.Metadata[requestlog.MetadataKeySupersededByRequestID] = "21"
+	require.NoError(s.T(), materializer.PersistLog(s.ctx, stores, log))
+	retry := log
+	retry.Metadata = map[string]string{requestlog.MetadataKeySupersededByRequestID: "22"}
+	require.NoError(s.T(), materializer.PersistLog(s.ctx, stores, retry))
+	history, err := stores.GetRequestLogStore().List(s.ctx, request.ID)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), history, 2)
+	for _, occurrence := range history {
+		if occurrence.State == entity.RequestStateSuperseded {
+			require.Equal(s.T(), "21", occurrence.Metadata[requestlog.MetadataKeySupersededByRequestID])
+		}
+	}
 }

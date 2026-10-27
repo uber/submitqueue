@@ -222,6 +222,17 @@ func expectStateLog(t *testing.T, m processMocks, request entity.Request, reason
 	).Return(nil)
 }
 
+func supersededStateLog(request entity.Request, newerID string) entity.RequestLog {
+	log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead)
+	log.Metadata[requestlog.MetadataKeySupersededByRequestID] = newerID
+	return log
+}
+
+func expectSupersededLog(t *testing.T, m processMocks, request entity.Request, newerID string) *gomock.Call {
+	t.Helper()
+	return m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, supersededStateLog(request, newerID)).Return(nil)
+}
+
 func expectStartValidationAnnounce(t *testing.T, m processMocks, id string) *gomock.Call {
 	t.Helper()
 
@@ -514,7 +525,8 @@ func TestProcess(t *testing.T) {
 					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
 				}
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
-				expectStateLog(t, m, request, entity.RequestOutcomeReasonSupersededByNewerHead)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, LatestRequestID: "99"}, nil)
+				expectSupersededLog(t, m, request, "99")
 			},
 		},
 		{
@@ -525,10 +537,11 @@ func TestProcess(t *testing.T) {
 					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
 				}
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, LatestRequestID: "99"}, nil)
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead),
+					supersededStateLog(request, "99"),
 				).Return(errors.New("db down"))
 			},
 		},
@@ -804,7 +817,7 @@ func TestProcess(t *testing.T) {
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
 				loggedRequest := superseded
 				loggedRequest.Version = 2
-				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				expectSupersededLog(t, m, loggedRequest, "9").After(updateCall)
 			},
 		},
 		{
@@ -909,7 +922,7 @@ func TestProcess(t *testing.T) {
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 				loggedRequest := updated
 				loggedRequest.Version = 2
-				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				expectSupersededLog(t, m, loggedRequest, testID).After(updateCall)
 			},
 		},
 		{
@@ -932,7 +945,7 @@ func TestProcess(t *testing.T) {
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead),
+					supersededStateLog(request, testID),
 				).Return(errors.New("db down")).After(updateCall)
 			},
 		},
@@ -953,7 +966,7 @@ func TestProcess(t *testing.T) {
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
 				}
 				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(reloaded, nil)
-				expectStateLog(t, m, reloaded, entity.RequestOutcomeReasonSupersededByNewerHead).After(reloadCall)
+				expectSupersededLog(t, m, reloaded, testID).After(reloadCall)
 			},
 		},
 		{
@@ -1051,4 +1064,54 @@ func TestHoldForBuildSlotRequiresPositiveDelay(t *testing.T) {
 
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
+}
+
+func TestSupersededHistoryRepairsWithLaterHead(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := acceptedRequest(testOlderID)
+	latest := testID
+	m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).DoAndReturn(func(context.Context, string) (entity.Request, error) { return request, nil }).Times(2)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		return entity.Queue{Name: testQueue, LatestRequestID: latest}, nil
+	}).Times(2)
+	m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+		func(_ context.Context, updated entity.Request, _, version int32) error {
+			request = updated
+			request.Version = version
+			return nil
+		})
+	var first entity.RequestLog
+	gomock.InOrder(
+		m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+			first = log
+			assert.Equal(t, testID, log.Metadata[requestlog.MetadataKeySupersededByRequestID])
+			return assert.AnError
+		}),
+		m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+			assert.Equal(t, first.ID, log.ID)
+			assert.Equal(t, "99", log.Metadata[requestlog.MetadataKeySupersededByRequestID])
+			return nil
+		}),
+	)
+	require.ErrorIs(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testOlderID))), assert.AnError)
+	latest = "99"
+	require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testOlderID))))
+}
+
+func TestSupersededHistoryOmitsStaleBookmark(t *testing.T) {
+	for _, latestID := range []string{"", testID, testOlderID} {
+		t.Run("latest="+latestID, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := acceptedRequest(testID)
+			request.State = entity.RequestStateSuperseded
+			request.Version = 2
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, LatestRequestID: latestID}, nil)
+			expectStateLog(t, m, request, entity.RequestOutcomeReasonSupersededByNewerHead)
+
+			require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
+		})
+	}
 }

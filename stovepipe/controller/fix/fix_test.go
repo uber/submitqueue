@@ -23,6 +23,8 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	fixermock "github.com/uber/submitqueue/stovepipe/extension/fixer/mock"
@@ -65,7 +67,15 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 	}
 	m.store.EXPECT().GetOpenIssueStore().Return(m.issues).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.observations).AnyTimes()
-	return NewController(zap.New(core).Sugar(), tally.NoopScope, m.stores, m.executors,
+	builds := storagemock.NewMockBuildStore(ctrl)
+	requests := storagemock.NewMockRequestStore(ctrl)
+	materializer := requestlogmock.NewMockMaterializer(ctrl)
+	m.store.EXPECT().GetBuildStore().Return(builds).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+	builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: "1"}, nil).AnyTimes()
+	requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{ID: "1", Queue: testQueue}, nil).AnyTimes()
+	materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).AnyTimes()
+	return NewController(zap.New(core).Sugar(), tally.NoopScope, m.stores, materializer, m.executors,
 		consumer.TopicKey("fix"), "stovepipe-fix"), m
 }
 
@@ -317,6 +327,75 @@ func TestProcessBuildReturnsErrorsBeforeSubmission(t *testing.T) {
 			}
 			configureFailure()
 			require.ErrorIs(t, controller.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
+		})
+	}
+}
+
+func TestProcessBuildRepairsHistoryWithoutResubmitting(t *testing.T) {
+	controller, m := newTestController(t)
+	logs := requestlogmock.NewMockMaterializer(m.ctrl)
+	controller.materializer = logs
+	observation := issueWithFixID(testIssue(), "fix/1")
+	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil).Times(2)
+	m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{observation}, nil).Times(2)
+	var firstID string
+	for _, logErr := range []error{assert.AnError, nil} {
+		logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+				assert.Equal(t, entity.RequestEventRepairSubmitted, log.Event)
+				assert.NotEmpty(t, log.ID)
+				if firstID == "" {
+					firstID = log.ID
+				} else {
+					assert.Equal(t, firstID, log.ID)
+				}
+				assert.Equal(t, "1", log.RequestID)
+				assert.Equal(t, map[string]string{
+					requestlog.MetadataKeyBuildID: testBuildID,
+					requestlog.MetadataKeyFixID:   observation.FixID,
+					requestlog.MetadataKeyTaskID:  observation.TaskID,
+					requestlog.MetadataKeyUnitID:  observation.UnitID,
+				}, log.Metadata)
+				return logErr
+			})
+		err := controller.processBuild(context.Background(), testQueue, testBuildID)
+		if logErr != nil {
+			require.ErrorIs(t, err, logErr)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestProcessBuildRecordsHistoryAfterAssociation(t *testing.T) {
+	for _, competing := range []bool{false, true} {
+		name := "submitted repair"
+		if competing {
+			name = "competing repair wins"
+		}
+		t.Run(name, func(t *testing.T) {
+			controller, m := newTestController(t)
+			logs := requestlogmock.NewMockMaterializer(m.ctrl)
+			controller.materializer = logs
+			issue := testIssue()
+			m.expectIssue(issue)
+			submitted := m.executor.EXPECT().Submit(gomock.Any(), issue).Return("fix/submitted", nil)
+			updated := m.observations.EXPECT().Update(gomock.Any(), testBuildID, issueWithFixID(issue, "fix/submitted"), int32(0), int32(1)).After(submitted)
+			wantFixID := "fix/submitted"
+			last := updated
+			if competing {
+				updated.Return(storage.ErrVersionMismatch)
+				wantFixID = "fix/winner"
+				last = m.observations.EXPECT().Get(gomock.Any(), testBuildID, issue.TaskID, issue.UnitID).Return(issueWithFixID(issue, wantFixID), nil).After(updated)
+			} else {
+				updated.Return(nil)
+			}
+			logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+					assert.Equal(t, wantFixID, log.Metadata[requestlog.MetadataKeyFixID])
+					return nil
+				}).After(last)
+			require.NoError(t, controller.processBuild(context.Background(), testQueue, testBuildID))
 		})
 	}
 }
