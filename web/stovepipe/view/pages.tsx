@@ -5,6 +5,7 @@ import { Block } from "baseui/block";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { ParagraphSmall } from "baseui/typography";
+import type { ReactNode } from "react";
 import type {
   RequestSummaryModel,
   HistoryEventModel,
@@ -64,24 +65,34 @@ export function RequestList({
     </>
   );
 }
-export function RequestDetails({ request }: { request: RequestSummaryModel }) {
+export function RequestDetails({ request, repositoryResult }: { request: RequestSummaryModel | null; repositoryResult: ReactNode }) {
   return (
-    <Block as="dl" margin="0">
-      <Fact label="State">
-        <Tag closeable={false} kind="neutral" size="small">
-          {request.state || "Unknown"}
-        </Tag>
-      </Fact>
-      <Fact label="Change URI">
-        <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
-      </Fact>
-      <Fact label="Base URI">
-        <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
-      </Fact>
-      <Fact label="Accepted"><RequestTimestamp value={request.acceptedAtMs} /></Fact>
-      <Fact label="Updated"><RequestTimestamp value={request.updatedAtMs} /></Fact>
-      <Fact label="Outcome">{request.outcomeReason || "—"}</Fact>
-    </Block>
+    <>
+      <Block as="dl" margin="0" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))", "repeat(3, minmax(0, 1fr))", "repeat(5, minmax(0, 1fr))"]} gridGap="scale400">
+        {request && <Fact label="State" compact>
+          <Tag closeable={false} kind="neutral" size="small">
+            {request.state || "Unknown"}
+          </Tag>
+        </Fact>}
+        {repositoryResult && <Fact label="Repository result" compact>{repositoryResult}</Fact>}
+        {request && <>
+          <Fact label="Accepted" compact><RequestTimestamp value={request.acceptedAtMs} /></Fact>
+          <Fact label="Updated" compact><RequestTimestamp value={request.updatedAtMs} /></Fact>
+          <Fact label="Outcome" compact>{request.outcomeReason || "—"}</Fact>
+        </>}
+      </Block>
+      {request && <Block as="details" marginTop="scale300" marginBottom="scale400">
+        <Block as="summary" $style={{ cursor: "pointer" }}>Change and base URIs</Block>
+        <Block as="dl" marginTop="scale300" marginBottom="0" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale400">
+          <Fact label="Change URI" compact>
+            <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
+          </Fact>
+          <Fact label="Base URI" compact>
+            <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
+          </Fact>
+        </Block>
+      </Block>}
+    </>
   );
 }
 export function History({ events }: { events: HistoryEventModel[] }) {

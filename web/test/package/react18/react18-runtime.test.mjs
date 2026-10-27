@@ -58,11 +58,12 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     }),
     getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "" }, events: [] }),
   } });
-  for (const path of ["/repo%2Fmain", "/repo%2Fmain/request/1"]) {
-    const result = await stovepipe.handle({ path, search: new URLSearchParams() });
+  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history"]) {
+    const url = new URL(href, "https://submitqueue.test");
+    const result = await stovepipe.handle({ path: url.pathname, search: url.searchParams });
     assert.equal(result.kind, "render");
     const page = createElement(StovepipeApp, { model: result.model });
-    addPage(path, page);
+    addPage(href, page);
   }
 
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://submitqueue.test/" });

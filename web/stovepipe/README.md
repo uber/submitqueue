@@ -24,7 +24,7 @@ projects; `?projects=<opaque-token>` carries its continuation and can be shared.
 First-page navigation removes the cursor. Pages are live rather than a snapshot;
 return to the first page to see newly recorded projects.
 
-The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green at zero, Partial Breakage between zero and one, and Breakage at one, without percentages.
+The request page shows a compact summary with expandable change and base URIs. Project results are the default view; History is a separate tab at `?view=history`. Switching tabs preserves the project cursor. Project pagination controls appear above and below the table, show the number of projects on the page, and use the host router without a document reload. Browser Back and Forward restore the selected tab and cursor; links also work without JavaScript. The repository result appears in the summary above both tabs; the project results table contains only projects. Recorded results show Green at zero, Partial Breakage between zero and one, and Breakage at one, without percentages.
 
 Repository breakage, per-project breakage, and recording completion are separate.
 Zero breakage is green; absent results are never treated as green. Completion

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../../platform/test/rtl.js";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it } from "vitest";
 import { StovepipeApp } from "./app.js";
 import type { StovepipePageModel } from "../entity/index.js";
@@ -56,6 +56,7 @@ const model: StovepipePageModel = {
 };
 it("displays the backend summary above the retained history", () => {
   render(<StovepipeApp model={model} />);
+  fireEvent.click(screen.getByText("Change and base URIs"));
   const status = screen.getByRole("region", { name: "Request status" });
   expect(within(status).getByText("completed")).toBeVisible();
   expect(within(status).getByText("git://repo/sha")).toBeVisible();
@@ -65,12 +66,12 @@ it("displays the backend summary above the retained history", () => {
   expect(within(status).getByText("Updated")).toBeVisible();
   expect(within(status).getByText("Repository result")).toBeVisible();
   expect(within(status).getByText("No result recorded")).toBeVisible();
-  const history = screen.getByRole("region", { name: "History" });
-  expect(within(history).getByText("accepted")).toBeVisible();
+  const history = screen.getByText("accepted").closest("section")!;
+  expect(history).not.toBeVisible();
   expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(
     screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
-  ).toEqual(["Request status", "History", "Project results"]);
+  ).toEqual(["Project results"]);
 });
 it("links queue entries by request ID even when the change URI is missing", () => {
   if (!model.history.ok) throw new Error("No summary");
@@ -102,9 +103,10 @@ it("retains the summary and history after a failed refresh", async () => {
       projectStatus: { ok: false, error: "Projects unavailable" },
     }} />,
   );
+  fireEvent.click(screen.getByText("Change and base URIs"));
   expect(screen.getByText("git://repo/sha")).toBeVisible();
   expect(screen.getByText("all_targets_passed")).toBeVisible();
-  expect(screen.getByText("accepted")).toBeVisible();
+  expect(screen.getByText("accepted")).toBeInTheDocument();
   await waitFor(() => expect(screen.getAllByText("Showing the last successful result.")).toHaveLength(2));
   expect(screen.getByText("green-project")).toBeVisible();
   expect(within(screen.getByRole("region", { name: "Request status" }))
@@ -139,11 +141,13 @@ it("renders recorded project results, completion and shareable pagination", () =
   expect(within(projects).getByText("No result recorded")).toBeVisible();
   expect(within(projects).queryByText(/%/)).toBeNull();
   expect(within(projects).getByText(/still in progress/)).toBeVisible();
-  expect(within(projects).getByRole("link", { name: /Next projects/ })).toHaveAttribute(
-    "href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D",
-  );
+  for (const link of within(projects).getAllByRole("link", { name: /Next projects/ })) {
+    expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
+  }
   const timestamp = within(projects).getByText(/Results updated:/);
-  const pagination = within(projects).getByRole("navigation", { name: "Project pages" });
+  const pagination = within(projects).getByRole("navigation", { name: "Project pages (bottom)" });
+  const topPagination = within(projects).getByRole("navigation", { name: "Project pages (top)" });
+  expect(topPagination.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(table.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(pagination.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
@@ -155,6 +159,7 @@ it("does not show a previous project's page after a failed pagination load", () 
     projectStatus: { ok: false, error: "Projects unavailable" },
   }} />);
   expect(screen.queryByText("green-project")).toBeNull();
+  fireEvent.click(screen.getByText("Change and base URIs"));
   expect(screen.getByText("git://repo/sha")).toBeVisible();
 });
 
@@ -205,10 +210,26 @@ it("shows repository and project results when history is unavailable", async () 
 
 it("shows history when repository and project results are unavailable", async () => {
   render(<StovepipeApp model={{
-    ...model, projectStatus: { ok: false, error: "Projects unavailable" },
+    ...model, key: "/repo%2Fmain/request/7?view=history", projectStatus: { ok: false, error: "Projects unavailable" },
   }} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Projects unavailable");
-  expect(screen.getByText("accepted")).toBeVisible();
+  expect(screen.getByText("accepted")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Change and base URIs"));
   expect(screen.getByText("git://repo/sha")).toBeVisible();
   expect(screen.queryByText("Repository result")).toBeNull();
+});
+
+
+it.each([false, true])("keeps the project cursor when selecting either request view (history: %s)", (historySelected) => {
+  const query = new URLSearchParams({ projects: "opaque+/=", filter: "keep" });
+  if (historySelected) query.set("view", "history");
+  render(<StovepipeApp model={{ ...model, key: `/repo%2Fmain/request/7?${query}` }} />);
+  const navigation = screen.getByRole("navigation", { name: "Request views" });
+  const projects = within(navigation).getByRole("link", { name: "Project results" });
+  const history = within(navigation).getByRole("link", { name: "History" });
+  expect(projects).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D&filter=keep");
+  expect(history).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D&filter=keep&view=history");
+  expect(historySelected ? history : projects).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("region", { name: historySelected ? "History" : "Project results" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: historySelected ? "Project results" : "History" })).toBeNull();
 });

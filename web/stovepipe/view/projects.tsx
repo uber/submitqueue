@@ -21,6 +21,7 @@ export function RecordedResult({ degree }: { degree: number | null }) {
 export function ProjectResults({ model }: { model: ProjectStatusModel }) {
   return (
     <>
+      <ProjectPagination model={model} position="top" />
       <Table label="Recorded project results" headers={["Project", "Recorded result"]}>
         {model.projects.map((entry) => (
           <StyledTableBodyRow key={entry.project}>
@@ -33,14 +34,19 @@ export function ProjectResults({ model }: { model: ProjectStatusModel }) {
       <ParagraphSmall color="contentSecondary">{model.complete
         ? "Project result recording is complete."
         : "Project result recording is still in progress; more results may arrive."}</ParagraphSmall>
-      {(model.firstHref || model.nextHref) && (
-        <Block as="nav" aria-label="Project pages" display="flex" flexWrap gridGap="scale500">
-          {model.firstHref && <Link href={model.firstHref}>First projects</Link>}
-          {model.nextHref && <Link href={model.nextHref}>Next projects →</Link>}
-        </Block>
-      )}
+      <ProjectPagination model={model} position="bottom" />
       <ParagraphSmall color="contentSecondary">Results updated: {model.updatedAtMs === "0"
         ? "Unknown" : <Timestamp value={model.updatedAtMs} />}</ParagraphSmall>
     </>
   );
+}
+
+function ProjectPagination({ model, position }: { model: ProjectStatusModel; position: "top" | "bottom" }) {
+  return <Block as="nav" aria-label={`Project pages (${position})`} display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale400" marginBottom="scale300">
+    <ParagraphSmall margin="0" color="contentSecondary">{model.projects.length} projects on this page{model.nextHref ? " · More results available" : " · Last page"}</ParagraphSmall>
+    <Block display="flex" flexWrap gridGap="scale500">
+      {model.firstHref && <Link href={model.firstHref}>First projects</Link>}
+      {model.nextHref && <Link href={model.nextHref}>Next projects →</Link>}
+    </Block>
+  </Block>;
 }

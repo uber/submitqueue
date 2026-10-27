@@ -26,16 +26,12 @@ test.describe("server-rendered styling", () => {
     await expect(rows).toHaveCount(7);
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
-    const layout = await rows.evaluateAll(fields => fields.map(field => ({
-      height: field.getBoundingClientRect().height,
-      labelGap: field.querySelector("dd")!.getBoundingClientRect().top - field.querySelector("dt")!.getBoundingClientRect().bottom,
-      separator: parseFloat(getComputedStyle(field).borderBottomWidth),
-    })));
-    for (const row of layout) {
-      expect(row.height).toBeGreaterThanOrEqual(60);
-      expect(row.labelGap).toBeGreaterThanOrEqual(6);
-      expect(row.separator).toBeGreaterThan(0);
-    }
+    await expect(status.locator("details")).not.toHaveAttribute("open", "");
+    await status.getByText("Change and base URIs", { exact: true }).click();
+    await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
+    await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("view")).toBe("history");
   });
   test("keeps continuation links usable without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination");
@@ -60,6 +56,8 @@ test("keeps queue tables inside a narrow viewport", async ({ page }) => {
   await page.getByRole("link", { name: "51", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Request 51", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request-narrow.png` });
+  await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
   const history = page.getByRole("region", { name: "Request history", exact: true });
   await history.focus();
   await expect(history).toBeFocused();
@@ -268,10 +266,11 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await expect(
       page.getByRole("heading", { name: `Request ${id}`, exact: true }),
     ).toBeVisible();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(
       page.getByRole("table", { name: "Request history" }).locator("tbody tr"),
     ).not.toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`/monorepo%2Fmain/request/${id}$`));
+    await expect(page).toHaveURL(new RegExp(`/monorepo%2Fmain/request/${id}\\?view=history$`));
     await expect(
       page.getByRole("region", { name: "Request status" }),
     ).toBeVisible();
@@ -306,6 +305,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     const status = page.getByRole("region", { name: "Request status" });
     await expect(status.getByText("failed", { exact: true })).toBeVisible();
+    await status.getByText("Change and base URIs", { exact: true }).click();
     await expect(
       status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", {
         exact: true,
@@ -313,19 +313,19 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     await expect(status.getByText("Accepted", { exact: true })).toBeVisible();
     await expect(status.getByText("Updated", { exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(
       page.getByRole("table", { name: "Request history" }).getByText("accepted", {
         exact: true,
       }),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { level: 2 })).toHaveText([
-      "Request status",
-      "History",
-      "Project results",
-    ]);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["History"]);
+    await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request-history.png` });
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Project results", exact: true }).click();
+    await expect(page.getByRole("table", { name: "Recorded project results" })).toBeVisible();
+    await status.getByText("Change and base URIs", { exact: true }).click();
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request.png`,
-      fullPage: true,
     });
   });
   await test.step("Read recorded project results and reload their cursor", async () => {
@@ -356,7 +356,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     await page.reload();
     await expect(projects.locator("tbody tr")).toHaveCount(50);
-    await section.getByRole("link", { name: "Next projects →", exact: true }).click();
+    await section.getByRole("link", { name: "Next projects →", exact: true }).first().click();
     await expect(projects.locator("tbody tr")).toHaveCount(1);
     await expect(projects.getByRole("cell", { name: "project-51", exact: true })).toBeVisible();
     const cursor = new URL(page.url()).searchParams.get("projects");
@@ -366,7 +366,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
     await expect(section.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
-    await section.getByRole("link", { name: "First projects", exact: true }).click();
+    await section.getByRole("link", { name: "First projects", exact: true }).last().click();
     await expect(projects.locator("tbody tr")).toHaveCount(50);
     expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -394,4 +394,46 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
   });
   expect(errors).toEqual([]);
+});
+
+
+test("pages through project results and switches views without reloading the document", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51");
+  const views = page.getByRole("navigation", { name: "Request views" });
+  const projects = page.getByRole("table", { name: "Recorded project results", exact: true });
+  const topPager = page.getByRole("navigation", { name: "Project pages (top)" });
+  const bottomPager = page.getByRole("navigation", { name: "Project pages (bottom)" });
+  await expect(projects.locator("tbody tr")).toHaveCount(50);
+  await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
+  let documentRequests = 0;
+  page.on("request", request => {
+    if (request.isNavigationRequest() && request.resourceType() === "document") documentRequests++;
+  });
+  await topPager.getByRole("link", { name: "Next projects →", exact: true }).click();
+  await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await expect(projects.getByRole("cell", { name: "project-51", exact: true })).toBeVisible();
+  const cursor = new URL(page.url()).searchParams.get("projects");
+  expect(cursor).toBeTruthy();
+  await expect(topPager).toContainText("Last page");
+  await expect(bottomPager.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
+  await views.getByRole("link", { name: "History", exact: true }).click();
+  await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
+  expect(new URL(page.url()).searchParams.get("view")).toBe("history");
+  await views.getByRole("link", { name: "Project results", exact: true }).click();
+  await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await page.goBack();
+  await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
+  await page.goBack();
+  await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await page.goBack();
+  await expect(projects.locator("tbody tr")).toHaveCount(50);
+  await page.goForward();
+  await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await bottomPager.getByRole("link", { name: "First projects", exact: true }).click();
+  await expect(projects.locator("tbody tr")).toHaveCount(50);
+  expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
+  expect(documentRequests).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.dataset.pageSession)).toBe("retained");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
