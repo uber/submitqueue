@@ -686,9 +686,9 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_ListProjects(
 	const queue = "contract/fact-list-projects"
 	const uri = "git://remote/contract/fact-list-projects/aaaa"
 	store := s.storeFor(queue)
-	failedA := entity.ValidationFact{URI: uri, Project: "a", Degree: 0.25, RequestID: "1", CreatedAt: 10}
+	failedA := entity.ValidationFact{URI: uri, Project: "a", ProjectType: "future-type", Degree: 0.25, RequestID: "1", CreatedAt: 10}
 	failedC := entity.ValidationFact{URI: uri, Project: "c", Degree: 1, RequestID: "1", CreatedAt: 20}
-	greenB := entity.ValidationFact{URI: uri, Project: "b", Degree: 0, RequestID: "1", CreatedAt: 30}
+	greenB := entity.ValidationFact{URI: uri, Project: "b", ProjectType: "service", Degree: 0, RequestID: "1", CreatedAt: 30}
 	for _, fact := range []entity.ValidationFact{
 		failedC, failedA,
 		greenB,

@@ -40,9 +40,9 @@ function createPageTestContext() {
       repositoryResult: { case: "repositoryBreakageDegree", value: 0 },
       projectResultsComplete: false,
       projects: [
-        { project: "green", result: { case: "breakageDegree", value: 0 } },
-        { project: "broken", result: { case: "breakageDegree", value: 0.25 } },
-        { project: "unknown", result: { case: undefined } },
+        { project: "green", projectType: "service", result: { case: "breakageDegree", value: 0 } },
+        { project: "broken", projectType: "future-type", result: { case: "breakageDegree", value: 0.25 } },
+        { project: "unknown", projectType: "", result: { case: undefined } },
       ],
       nextPageToken: "next+/=",
     }),
@@ -303,9 +303,9 @@ describe("Stovepipe page loading", () => {
         repositoryBreakageDegree: 0,
         complete: false,
         projects: [
-          { project: "green", breakageDegree: 0 },
-          { project: "broken", breakageDegree: 0.25 },
-          { project: "unknown", breakageDegree: null },
+          { project: "green", projectType: "service", breakageDegree: 0 },
+          { project: "broken", projectType: "future-type", breakageDegree: 0.25 },
+          { project: "unknown", projectType: "", breakageDegree: null },
         ],
         firstHref: paths.request(summary.queue, summary.requestId),
         nextHref: paths.request(summary.queue, summary.requestId, "next+/="),
@@ -317,7 +317,7 @@ describe("Stovepipe page loading", () => {
   it.each([
     { queue: "other" },
     { requestId: "other" },
-    { projects: [{ project: "invalid", result: { case: "breakageDegree", value: NaN } }] },
+    { projects: [{ project: "invalid", projectType: "", result: { case: "breakageDegree", value: NaN } }] },
     { repositoryResult: { case: "repositoryBreakageDegree", value: 1.1 } },
   ] satisfies Partial<ProjectStatus>[])("rejects mismatched or malformed project status %j", async (overrides) => {
     const { app, service, paths } = createPageTestContext();

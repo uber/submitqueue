@@ -1232,9 +1232,9 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 		{name: "successful repository", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen},
 		{name: "failed repository without project results", state: entity.RequestStateFailed, degree: entity.DegreeBroken},
 		{name: "failed repository with project results", state: entity.RequestStateFailed, degree: entity.DegreePartial,
-			results: []projectstatus.Result{{Project: "a", Degree: entity.DegreeGreen}, {Project: "b", Degree: 0.25}}},
+			results: []projectstatus.Result{{Project: "a", ProjectType: "service", Degree: entity.DegreeGreen}, {Project: "b", ProjectType: "batch", Degree: 0.25}}},
 		{name: "successful repository with project results", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen,
-			results: []projectstatus.Result{{Project: "a", Degree: entity.DegreeGreen}}},
+			results: []projectstatus.Result{{Project: "a", ProjectType: "service", Degree: entity.DegreeGreen}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -1279,6 +1279,7 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 			assert.Equal(t, tt.degree, facts[""].Degree)
 			for _, result := range tt.results {
 				assert.Equal(t, result.Degree, facts[result.Project].Degree)
+				assert.Equal(t, result.ProjectType, facts[result.Project].ProjectType)
 			}
 			assert.Len(t, m.hooks.events, 1)
 		})

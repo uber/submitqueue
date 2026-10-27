@@ -207,11 +207,12 @@ func (c *Controller) resolveProjectResults(ctx context.Context, request entity.R
 func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) error {
 	for _, result := range results {
 		fact, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
-			URI:       request.URI,
-			Project:   result.Project,
-			Degree:    result.Degree,
-			RequestID: request.ID,
-			CreatedAt: time.Now().UnixMilli(),
+			URI:         request.URI,
+			Project:     result.Project,
+			ProjectType: result.ProjectType,
+			Degree:      result.Degree,
+			RequestID:   request.ID,
+			CreatedAt:   time.Now().UnixMilli(),
 		})
 		if err != nil {
 			return err

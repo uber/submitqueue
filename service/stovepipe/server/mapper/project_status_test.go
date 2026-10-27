@@ -35,7 +35,7 @@ func TestProjectStatusRequestAndResponseMapping(t *testing.T) {
 		RequestSummary:              entity.RequestSummary{RequestID: "1", Queue: "queue", URI: "uri", BaseURI: "base", State: entity.RequestStateSucceeded},
 		RepositoryValidationFact:    entity.ValidationFact{Degree: degree},
 		HasRepositoryValidationFact: true,
-		ProjectValidationFacts:      []entity.ValidationFact{{Project: "project-a", Degree: entity.DegreeBroken}},
+		ProjectValidationFacts:      []entity.ValidationFact{{Project: "project-a", ProjectType: "service", Degree: entity.DegreeBroken}},
 		NextPageToken:               "next-token",
 	})
 	assert.Equal(t, "1", response.GetRequestId())
@@ -47,6 +47,7 @@ func TestProjectStatusRequestAndResponseMapping(t *testing.T) {
 		return
 	}
 	assert.Equal(t, "project-a", response.GetProjects()[0].GetProject())
+	assert.Equal(t, "service", response.GetProjects()[0].GetProjectType())
 	assert.Equal(t, entity.DegreeBroken, response.GetProjects()[0].GetBreakageDegree())
 	assert.IsType(t, &pb.ProjectValidation_BreakageDegree{}, response.GetProjects()[0].GetResult())
 	assert.Equal(t, "next-token", response.GetNextPageToken())
@@ -59,8 +60,9 @@ func TestProjectStatusMappingPreservesExplicitGreenResults(t *testing.T) {
 			Degree: entity.DegreeGreen,
 		},
 		ProjectValidationFacts: []entity.ValidationFact{{
-			Project: "project-a",
-			Degree:  entity.DegreeGreen,
+			Project:     "project-a",
+			ProjectType: "service",
+			Degree:      entity.DegreeGreen,
 		}},
 	})
 
@@ -83,7 +85,7 @@ func TestProjectStatusByIDRequestAndResponseMapping(t *testing.T) {
 				HasRepositoryValidationFact: hasFact,
 				RepositoryValidationFact:    entity.ValidationFact{Degree: entity.DegreeGreen},
 				ProjectResultsComplete:      true,
-				ProjectValidationFacts:      []entity.ValidationFact{{Project: "project-a", Degree: entity.DegreeGreen}, {Project: "project-b", Degree: entity.DegreeBroken}},
+				ProjectValidationFacts:      []entity.ValidationFact{{Project: "project-a", ProjectType: "service", Degree: entity.DegreeGreen}, {Project: "project-b", Degree: entity.DegreeBroken}},
 				NextPageToken:               "next-token",
 				UpdatedAtMs:                 123,
 			}
@@ -104,6 +106,8 @@ func TestProjectStatusByIDRequestAndResponseMapping(t *testing.T) {
 			}
 			if assert.Len(t, response.Projects, 2) {
 				assert.Equal(t, "project-a", response.Projects[0].GetProject())
+				assert.Equal(t, "service", response.Projects[0].GetProjectType())
+				assert.Empty(t, response.Projects[1].GetProjectType())
 				assert.IsType(t, &pb.ProjectValidation_BreakageDegree{}, response.Projects[0].GetResult())
 				assert.Equal(t, entity.DegreeGreen, response.Projects[0].GetBreakageDegree())
 				assert.Equal(t, "project-b", response.Projects[1].GetProject())

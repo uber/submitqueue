@@ -55,7 +55,7 @@ export interface ProjectStatusModel {
   /** Whether production of relevant project results has finished, independent of pagination. */
   complete: boolean;
   /** Recorded projects on this page; null breakage means no result. */
-  projects: { project: string; breakageDegree: number | null }[];
+  projects: { project: string; projectType: string; breakageDegree: number | null }[];
   /** First project page for this request; null on the first page. */
   firstHref: string | null;
   /** Opaque project continuation URL; null on the final page. */

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS validation_fact (
     queue       VARCHAR(255) NOT NULL,
     uri         VARCHAR(255) NOT NULL,
     project     VARCHAR(255) NOT NULL DEFAULT '',
+    project_type VARCHAR(255) NOT NULL DEFAULT '',
     degree      DOUBLE       NOT NULL,
     request_id  VARCHAR(255) NOT NULL,
     created_at  BIGINT       NOT NULL,
