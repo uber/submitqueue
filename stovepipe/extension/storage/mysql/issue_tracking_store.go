@@ -43,13 +43,13 @@ func (s *issueTrackingStore) Get(ctx context.Context) (state entity.IssueTrackin
 	err := s.db.QueryRowContext(ctx,
 		`SELECT request_id, build_id, notification_id,
             cursor_task_id, cursor_unit_id,
-            finalize, has_task_wide_issues, phase, version
+            finalize, has_task_wide_issues, phase, version, has_new_issues
          FROM issue_tracking WHERE queue = ?`, s.queue).
 		Scan(
 			&state.RequestID, &state.BuildID, &state.NotificationID,
 			&state.CursorTaskID, &state.CursorUnitID,
 
-			&state.Finalize, &state.HasTaskWideIssues, &state.Phase, &state.Version,
+			&state.Finalize, &state.HasTaskWideIssues, &state.Phase, &state.Version, &state.HasNewIssues,
 		)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.IssueTrackingState{}, storage.WrapNotFound(err)
@@ -69,10 +69,10 @@ func (s *issueTrackingStore) Create(ctx context.Context, state entity.IssueTrack
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id,
             cursor_task_id, cursor_unit_id,
-            finalize, has_task_wide_issues, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            finalize, has_task_wide_issues, phase, version, has_new_issues) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.queue, state.RequestID, state.BuildID, state.NotificationID,
 		state.CursorTaskID, state.CursorUnitID,
-		state.Finalize, state.HasTaskWideIssues, state.Phase, state.Version,
+		state.Finalize, state.HasTaskWideIssues, state.Phase, state.Version, state.HasNewIssues,
 	)
 	if isDuplicateEntry(err) {
 		return storage.ErrAlreadyExists
@@ -97,11 +97,11 @@ func (s *issueTrackingStore) Update(ctx context.Context, state entity.IssueTrack
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?,
             cursor_task_id = ?, cursor_unit_id = ?,
-            finalize = ?, has_task_wide_issues = ?, phase = ?, version = ?
+            finalize = ?, has_task_wide_issues = ?, phase = ?, version = ?, has_new_issues = ?
          WHERE queue = ? AND version = ?`,
 		state.RequestID, state.BuildID, state.NotificationID,
 		state.CursorTaskID, state.CursorUnitID,
-		state.Finalize, state.HasTaskWideIssues, state.Phase, newVersion,
+		state.Finalize, state.HasTaskWideIssues, state.Phase, newVersion, state.HasNewIssues,
 		s.queue, oldVersion,
 	)
 	if err != nil {

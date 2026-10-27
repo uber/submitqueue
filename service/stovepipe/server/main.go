@@ -568,6 +568,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Queue: q,
 		},
 		{
+			Key:   stovepipemq.TopicKeyFix,
+			Name:  "fix",
+			Queue: q,
+		},
+		{
 			Key:          stovepipemq.TopicKeyBuildAnalysis,
 			Name:         "buildanalysis",
 			Queue:        q,

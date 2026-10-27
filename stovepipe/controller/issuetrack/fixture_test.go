@@ -22,6 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -55,6 +58,9 @@ type fixture struct {
 	requests    map[string]entity.Request
 	buildIssues map[string]map[issueKey]entity.BuildIssue
 	sequence    int
+
+	fixMessages  []entityqueue.Message
+	onFixPublish func(entityqueue.Message)
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -235,7 +241,19 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return result, nil
 	}).AnyTimes()
-	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, messagequeue.TopicKeyIssueTrack, "test")
+	queue := queuemock.NewMockQueue(f.mocks)
+	publisher := queuemock.NewMockPublisher(f.mocks)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+	publisher.EXPECT().Publish(gomock.Any(), "fix", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		f.fixMessages = append(f.fixMessages, msg)
+		if f.onFixPublish != nil {
+			f.onFixPublish(msg)
+		}
+		return f.fail("fix/publish")
+	}).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: messagequeue.TopicKeyFix, Name: "fix", Queue: queue}})
+	require.NoError(t, err)
+	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, registry, messagequeue.TopicKeyIssueTrack, "test")
 	f.controller.nowMs = func() int64 { return 1000 }
 	return f
 }

@@ -12,5 +12,6 @@ CREATE TABLE IF NOT EXISTS issue_tracking (
     has_task_wide_issues BOOLEAN         NOT NULL DEFAULT FALSE,
     phase                VARBINARY(32)   NOT NULL,
     version              INT             NOT NULL,
+    has_new_issues       BOOLEAN         NOT NULL DEFAULT FALSE,
     PRIMARY KEY (queue)
 ) ENGINE=InnoDB;

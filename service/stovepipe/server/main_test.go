@@ -101,6 +101,14 @@ func TestIssueTrackingHasPublicationRouteWithoutConsumption(t *testing.T) {
 	assert.NotContains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyIssueTrack))
 }
 
+func TestFixHasPublicationRouteWithoutConsumption(t *testing.T) {
+	registry, primary, _ := registeredControllers(t)
+	name, ok := registry.TopicName(stovepipemq.TopicKeyFix)
+	require.True(t, ok)
+	assert.Equal(t, "fix", name)
+	assert.NotContains(t, topicKeys(primary), stovepipemq.TopicKeyFix)
+}
+
 func TestHookStage(t *testing.T) {
 	registry, primary, deadLetter := registeredControllers(t)
 

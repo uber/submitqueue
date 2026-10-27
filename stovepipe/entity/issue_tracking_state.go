@@ -57,6 +57,8 @@ type IssueTrackingState struct {
 	Phase IssueTrackingPhase `json:"phase"`
 	// Version is the positive optimistic-lock version of this state.
 	Version int32 `json:"version"`
+	// HasNewIssues records whether this pass encountered an issue first opened or reopened by its source build.
+	HasNewIssues bool `json:"has_new_issues"`
 }
 
 // Validate verifies the identity, phase, and version of a persisted state.

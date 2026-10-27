@@ -27,6 +27,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/fixrequest"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -44,16 +45,18 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 	nowMs         func() int64
 }
 
-func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, topicKey consumer.TopicKey, consumerGroup string) *Controller {
+func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) *Controller {
 	return &Controller{
 		logger:        logger.Named("issuetrack_controller"),
 		metricsScope:  scope.SubScope("issuetrack_controller"),
 		stores:        stores,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 		nowMs:         func() int64 { return time.Now().UnixMilli() },
@@ -246,6 +249,11 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	}
 
 	if len(keys) < limit {
+		if !finalizing && progress.HasNewIssues {
+			if err := fixrequest.Publish(ctx, c.registry, queue, progress.BuildID); err != nil {
+				return entity.IssueTrackingState{}, fmt.Errorf("publish build repair request: %w", err)
+			}
+		}
 		next := progress
 		switch {
 		case finalizing:
@@ -314,6 +322,11 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 		if order < 0 {
 			return entity.IssueTrackingState{}, fmt.Errorf("issue already processed a newer source: %w", storage.ErrVersionMismatch)
 		}
+	}
+
+	if progress.Phase == entity.IssueTrackingPhaseRefreshing && reported &&
+		(missing || current.Status == entity.IssueStatusClosed || current.FirstSeenBuildID == progress.BuildID) {
+		progress.HasNewIssues = true
 	}
 
 	next := progress
