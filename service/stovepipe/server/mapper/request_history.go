@@ -15,7 +15,11 @@
 package mapper
 
 import (
+	"math"
+	"strconv"
+
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
@@ -45,6 +49,7 @@ func HistoryEventsToProto(logs []entity.RequestLog) []*pb.HistoryEvent {
 			EventId:       log.ID,
 			TimestampMs:   log.TimestampMs,
 			OutcomeReason: string(log.OutcomeReason),
+			Data:          historyEventDataToProto(log),
 		}
 		if log.State != entity.RequestStateUnknown {
 			event.Occurrence = &pb.HistoryEvent_RequestState{RequestState: string(log.State)}
@@ -67,4 +72,59 @@ func RequestHistoriesToProto(histories []entity.RequestHistory) []*pb.RequestHis
 		}
 	}
 	return result
+}
+
+func historyEventDataToProto(log entity.RequestLog) *pb.HistoryEventData {
+	if log.State != entity.RequestStateUnknown {
+		baseURI, hasBaseURI := log.Metadata[requestlog.MetadataKeyBaseURI]
+		buildID := log.Metadata[requestlog.MetadataKeyBuildID]
+		if !hasBaseURI && buildID == "" {
+			return nil
+		}
+		state := &pb.HistoryRequestStateData{}
+		if hasBaseURI {
+			state.BaseUri = &baseURI
+		}
+		if buildID != "" {
+			state.BuildId = &buildID
+		}
+		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_RequestState{RequestState: state}}
+	}
+
+	switch log.Event {
+	case entity.RequestEventBuildTriggered, entity.RequestEventBuildFinished, entity.RequestEventBuildAnalysisAbandoned:
+		buildID := log.Metadata[requestlog.MetadataKeyBuildID]
+		if buildID == "" {
+			return nil
+		}
+		build := &pb.HistoryBuildData{BuildId: buildID}
+		data := &pb.HistoryEventData{}
+		switch log.Event {
+		case entity.RequestEventBuildTriggered:
+			data.Payload = &pb.HistoryEventData_BuildTriggered{BuildTriggered: build}
+		case entity.RequestEventBuildFinished:
+			data.Payload = &pb.HistoryEventData_BuildFinished{BuildFinished: build}
+		case entity.RequestEventBuildAnalysisAbandoned:
+			data.Payload = &pb.HistoryEventData_BuildAnalysisAbandoned{BuildAnalysisAbandoned: build}
+		}
+		return data
+	case entity.RequestEventValidationFactRecorded:
+		degree, err := strconv.ParseFloat(log.Metadata[requestlog.MetadataKeyFactDegree], 64)
+		if err != nil || math.IsNaN(degree) || degree < entity.DegreeGreen || degree > entity.DegreeBroken {
+			return nil
+		}
+		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_ValidationFactRecorded{
+			ValidationFactRecorded: &pb.HistoryValidationFactData{FactDegree: degree},
+		}}
+	case entity.RequestEventProjectFactsRecorded:
+		count, err := strconv.ParseUint(log.Metadata[requestlog.MetadataKeyProjectFactCount], 10, 64)
+		if err != nil {
+			return nil
+		}
+		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_ProjectFactsRecorded{
+			ProjectFactsRecorded: &pb.HistoryProjectFactsData{ProjectFactCount: count},
+		}}
+	default:
+		return nil
+	}
 }

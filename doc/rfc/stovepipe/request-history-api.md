@@ -26,6 +26,23 @@ The append-only history model is defined by [Stovepipe Request Log](request-log.
 
 Events are returned by `(timestamp_ms ASC, event_id ASC)`. URI histories are ordered by numeric request ID ascending. Timestamps determine display order; persisted request versions determine causal ordering internally and are not exposed as history-event fields. Later repair may insert an older occurrence into its chronological position.
 
+### Retained Event Data
+
+`HistoryEvent.data` contains a typed `payload` oneof matching the containing request-state or event occurrence. It reads only metadata retained on that occurrence; it never fills historical context from the current Request, Build, or summary. The internal metadata map remains private.
+
+| Occurrence | Payload | Retained fields |
+|---|---|---|
+| Any request-state transition | `request_state` | Optional `base_uri` and `build_id` |
+| `build_triggered` | `build_triggered` | `build_id` |
+| `build_finished` | `build_finished` | `build_id` |
+| `build_analysis_abandoned` | `build_analysis_abandoned` | `build_id` |
+| `validation_fact_recorded` | `validation_fact_recorded` | `fact_degree`, a breakage degree in [0, 1] |
+| `project_facts_recorded` | `project_facts_recorded` | `project_fact_count`, an unsigned count |
+
+A present empty `base_uri` means a full build; an absent baseline means it was not retained. State fields are independently optional. Numeric payload presence distinguishes a recorded zero from unavailable metadata. The project-fact count uses protobuf `uint64` (a decimal string in JSON) to preserve precision across clients.
+
+Missing metadata, malformed or out-of-range numbers, empty build IDs, and unsupported event metadata omit the corresponding payload without failing the history lookup. Clients tolerate absent data and unknown future payload kinds. Existing event fields and field numbers remain unchanged.
+
 ## Retention and Errors
 
 History, request-summary, and request-URI mapping retention must support the same advertised lookup period. Neither endpoint promises a lifetime longer than the records required by its selector.
@@ -41,7 +58,7 @@ Authorization follows the same queue policy as other Stovepipe reads. Possession
 
 ## Testing
 
-Tests cover matching events and summaries across selectors, required summaries and retryable materialization gaps, current summaries independent of retained event subsets, queue and URI consistency, storage-read failures, histories absent despite a stored summary, stable event ordering, and unknown future state and outcome-reason strings.
+Tests cover matching events and summaries across selectors, required summaries and retryable materialization gaps, current summaries independent of retained event subsets, queue and URI consistency, storage-read failures, histories absent despite a stored summary, stable event ordering, and unknown future state and outcome-reason strings. Metadata tests cover typed payloads, absent or malformed values, known zeros, empty baseline presence, private keys, and binary/JSON round trips.
 
 ## Alternatives Considered
 

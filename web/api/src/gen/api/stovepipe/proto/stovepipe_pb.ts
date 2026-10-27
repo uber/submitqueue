@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file api/stovepipe/proto/stovepipe.proto.
  */
 export const file_api_stovepipe_proto_stovepipe: GenFile = /*@__PURE__*/
-  fileDesc("CiNhcGkvc3RvdmVwaXBlL3Byb3RvL3N0b3ZlcGlwZS5wcm90bxIadWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUiHgoLUGluZ1JlcXVlc3QSDwoHbWVzc2FnZRgBIAEoCSJaCgxQaW5nUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSEQoJdGltZXN0YW1wGAMgASgDEhAKCGhvc3RuYW1lGAQgASgJIh4KDUluZ2VzdFJlcXVlc3QSDQoFcXVldWUYASABKAkiHAoOSW5nZXN0UmVzcG9uc2USCgoCaWQYASABKAkiQQocR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVxdWVzdBINCgVxdWV1ZRgBIAEoCRISCgpyZXF1ZXN0X2lkGAIgASgJIjsKHUdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEgsKA3VyaRgCIAEoCSKGAQoMSGlzdG9yeUV2ZW50EhAKCGV2ZW50X2lkGAEgASgJEhQKDHRpbWVzdGFtcF9tcxgCIAEoAxIXCg1yZXF1ZXN0X3N0YXRlGAMgASgJSAASDwoFZXZlbnQYBCABKAlIABIWCg5vdXRjb21lX3JlYXNvbhgFIAEoCUIMCgpvY2N1cnJlbmNlIqMBCg5SZXF1ZXN0SGlzdG9yeRISCgpyZXF1ZXN0X2lkGAEgASgJEjgKBmV2ZW50cxgCIAMoCzIoLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlFdmVudBJDCg9yZXF1ZXN0X3N1bW1hcnkYAyABKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0U3VtbWFyeSKeAQodR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVzcG9uc2USOAoGZXZlbnRzGAEgAygLMigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSGlzdG9yeUV2ZW50EkMKD3JlcXVlc3Rfc3VtbWFyeRgCIAEoCzIqLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlJlcXVlc3RTdW1tYXJ5Il8KHkdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXNwb25zZRI9CgloaXN0b3JpZXMYASADKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0SGlzdG9yeSJ5ChtHZXRQcm9qZWN0U3RhdHVzQnlJRFJlcXVlc3QSDQoFcXVldWUYASABKAkSEgoKcmVxdWVzdF9pZBgCIAEoCRIQCghwcm9qZWN0cxgDIAMoCRIRCglwYWdlX3NpemUYBCABKAUSEgoKcGFnZV90b2tlbhgFIAEoCSJ6ChxHZXRQcm9qZWN0U3RhdHVzQnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEhIKCmNoYW5nZV91cmkYAiABKAkSEAoIcHJvamVjdHMYAyADKAkSEQoJcGFnZV9zaXplGAQgASgFEhIKCnBhZ2VfdG9rZW4YBSABKAkiSQoRUHJvamVjdFZhbGlkYXRpb24SDwoHcHJvamVjdBgBIAEoCRIZCg9icmVha2FnZV9kZWdyZWUYAiABKAFIAEIICgZyZXN1bHQizAIKHEdldFByb2plY3RTdGF0dXNCeUlEUmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRISCgpjaGFuZ2VfdXJpGAMgASgJEhAKCGJhc2VfdXJpGAQgASgJEhUKDXJlcXVlc3Rfc3RhdGUYBSABKAkSFQoNdXBkYXRlZF9hdF9tcxgKIAEoAxIkChpyZXBvc2l0b3J5X2JyZWFrYWdlX2RlZ3JlZRgGIAEoAUgAEiAKGHByb2plY3RfcmVzdWx0c19jb21wbGV0ZRgHIAEoCBI/Cghwcm9qZWN0cxgIIAMoCzItLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlByb2plY3RWYWxpZGF0aW9uEhcKD25leHRfcGFnZV90b2tlbhgJIAEoCUITChFyZXBvc2l0b3J5X3Jlc3VsdCLNAgodR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRISCgpjaGFuZ2VfdXJpGAMgASgJEhAKCGJhc2VfdXJpGAQgASgJEhUKDXJlcXVlc3Rfc3RhdGUYBSABKAkSFQoNdXBkYXRlZF9hdF9tcxgKIAEoAxIkChpyZXBvc2l0b3J5X2JyZWFrYWdlX2RlZ3JlZRgGIAEoAUgAEiAKGHByb2plY3RfcmVzdWx0c19jb21wbGV0ZRgHIAEoCBI/Cghwcm9qZWN0cxgIIAMoCzItLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlByb2plY3RWYWxpZGF0aW9uEhcKD25leHRfcGFnZV90b2tlbhgJIAEoCUITChFyZXBvc2l0b3J5X3Jlc3VsdCK9AQoOUmVxdWVzdFN1bW1hcnkSEgoKcmVxdWVzdF9pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRISCgpjaGFuZ2VfdXJpGAMgASgJEhAKCGJhc2VfdXJpGAQgASgJEhUKDXJlcXVlc3Rfc3RhdGUYBSABKAkSGwoTc3RhdGVfdXBkYXRlZF9hdF9tcxgGIAEoAxIWCg5hY2NlcHRlZF9hdF9tcxgHIAEoAxIWCg5vdXRjb21lX3JlYXNvbhgIIAEoCSK0AQoLTGlzdFJlcXVlc3QSDQoFcXVldWUYASABKAkSIQoXYWNjZXB0ZWRfYXRfb3JfYWZ0ZXJfbXMYAiABKANIABIcChJhY2NlcHRlZF9iZWZvcmVfbXMYAyABKANIARIRCglwYWdlX3NpemUYBCABKAUSEgoKcGFnZV90b2tlbhgFIAEoCUIWChRhY2NlcHRlZF9sb3dlcl9ib3VuZEIWChRhY2NlcHRlZF91cHBlcl9ib3VuZCJlCgxMaXN0UmVzcG9uc2USPAoIcmVxdWVzdHMYASADKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0U3VtbWFyeRIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiOgoVR2V0UXVldWVTdGF0dXNSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEhIKCmNoYW5nZV91cmkYAiABKAkingEKFVF1ZXVlRW5hYmxlbWVudFN0YXR1cxIPCgd2ZXJzaW9uGAEgASgDEjoKBXN0YXRlGAIgASgOMisudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUXVldWVFbmFibGVtZW50EiEKGWVmZmVjdGl2ZV9mcm9tX2NvbW1pdF91cmkYAyABKAkSFQoNY2hhbmdlZF9hdF9tcxgEIAEoAyJuChZHZXRRdWV1ZVN0YXR1c1Jlc3BvbnNlEg0KBXF1ZXVlGAEgASgJEkUKCmVuYWJsZW1lbnQYAiABKAsyMS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5RdWV1ZUVuYWJsZW1lbnRTdGF0dXMqbAoPUXVldWVFbmFibGVtZW50EhwKGFFVRVVFX0VOQUJMRU1FTlRfVU5LTk9XThAAEhwKGFFVRVVFX0VOQUJMRU1FTlRfRU5BQkxFRBABEh0KGVFVRVVFX0VOQUJMRU1FTlRfRElTQUJMRUQQAjLnBwoJU3RvdmVwaXBlElsKBFBpbmcSJy51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5QaW5nUmVxdWVzdBooLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlBpbmdSZXNwb25zZSIAEmEKBkluZ2VzdBIpLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkluZ2VzdFJlcXVlc3QaKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5Jbmdlc3RSZXNwb25zZSIAEo4BChVHZXRSZXF1ZXN0SGlzdG9yeUJ5SUQSOC51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRSZXF1ZXN0SGlzdG9yeUJ5SURSZXF1ZXN0GjkudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVzcG9uc2UiABKRAQoWR2V0UmVxdWVzdEhpc3RvcnlCeVVSSRI5LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXF1ZXN0GjoudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UmVxdWVzdEhpc3RvcnlCeVVSSVJlc3BvbnNlIgASiwEKFEdldFByb2plY3RTdGF0dXNCeUlEEjcudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UHJvamVjdFN0YXR1c0J5SURSZXF1ZXN0GjgudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UHJvamVjdFN0YXR1c0J5SURSZXNwb25zZSIAEo4BChVHZXRQcm9qZWN0U3RhdHVzQnlVUkkSOC51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRQcm9qZWN0U3RhdHVzQnlVUklSZXF1ZXN0GjkudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVzcG9uc2UiABJbCgRMaXN0EicudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuTGlzdFJlcXVlc3QaKC51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5MaXN0UmVzcG9uc2UiABJ5Cg5HZXRRdWV1ZVN0YXR1cxIxLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFF1ZXVlU3RhdHVzUmVxdWVzdBoyLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFF1ZXVlU3RhdHVzUmVzcG9uc2UiAEJlCh5jb20udWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGVCDlN0b3ZlcGlwZVByb3RvUAFaMWdpdGh1Yi5jb20vdWJlci9zdWJtaXRxdWV1ZS9hcGkvc3RvdmVwaXBlL3Byb3RvcGJiBnByb3RvMw");
+  fileDesc("CiNhcGkvc3RvdmVwaXBlL3Byb3RvL3N0b3ZlcGlwZS5wcm90bxIadWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUiHgoLUGluZ1JlcXVlc3QSDwoHbWVzc2FnZRgBIAEoCSJaCgxQaW5nUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCRIUCgxzZXJ2aWNlX25hbWUYAiABKAkSEQoJdGltZXN0YW1wGAMgASgDEhAKCGhvc3RuYW1lGAQgASgJIh4KDUluZ2VzdFJlcXVlc3QSDQoFcXVldWUYASABKAkiHAoOSW5nZXN0UmVzcG9uc2USCgoCaWQYASABKAkiQQocR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVxdWVzdBINCgVxdWV1ZRgBIAEoCRISCgpyZXF1ZXN0X2lkGAIgASgJIjsKHUdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEgsKA3VyaRgCIAEoCSLCAQoMSGlzdG9yeUV2ZW50EhAKCGV2ZW50X2lkGAEgASgJEhQKDHRpbWVzdGFtcF9tcxgCIAEoAxIXCg1yZXF1ZXN0X3N0YXRlGAMgASgJSAASDwoFZXZlbnQYBCABKAlIABIWCg5vdXRjb21lX3JlYXNvbhgFIAEoCRI6CgRkYXRhGAYgASgLMiwudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSGlzdG9yeUV2ZW50RGF0YUIMCgpvY2N1cnJlbmNlIoAEChBIaXN0b3J5RXZlbnREYXRhEkwKDXJlcXVlc3Rfc3RhdGUYASABKAsyMy51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5IaXN0b3J5UmVxdWVzdFN0YXRlRGF0YUgAEkcKD2J1aWxkX3RyaWdnZXJlZBgCIAEoCzIsLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlCdWlsZERhdGFIABJGCg5idWlsZF9maW5pc2hlZBgDIAEoCzIsLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlCdWlsZERhdGFIABJZChh2YWxpZGF0aW9uX2ZhY3RfcmVjb3JkZWQYBCABKAsyNS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5IaXN0b3J5VmFsaWRhdGlvbkZhY3REYXRhSAASVQoWcHJvamVjdF9mYWN0c19yZWNvcmRlZBgFIAEoCzIzLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlQcm9qZWN0RmFjdHNEYXRhSAASUAoYYnVpbGRfYW5hbHlzaXNfYWJhbmRvbmVkGAYgASgLMiwudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSGlzdG9yeUJ1aWxkRGF0YUgAQgkKB3BheWxvYWQiYQoXSGlzdG9yeVJlcXVlc3RTdGF0ZURhdGESFQoIYmFzZV91cmkYASABKAlIAIgBARIVCghidWlsZF9pZBgCIAEoCUgBiAEBQgsKCV9iYXNlX3VyaUILCglfYnVpbGRfaWQiJAoQSGlzdG9yeUJ1aWxkRGF0YRIQCghidWlsZF9pZBgBIAEoCSIwChlIaXN0b3J5VmFsaWRhdGlvbkZhY3REYXRhEhMKC2ZhY3RfZGVncmVlGAEgASgBIjUKF0hpc3RvcnlQcm9qZWN0RmFjdHNEYXRhEhoKEnByb2plY3RfZmFjdF9jb3VudBgBIAEoBCKjAQoOUmVxdWVzdEhpc3RvcnkSEgoKcmVxdWVzdF9pZBgBIAEoCRI4CgZldmVudHMYAiADKAsyKC51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5IaXN0b3J5RXZlbnQSQwoPcmVxdWVzdF9zdW1tYXJ5GAMgASgLMioudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUmVxdWVzdFN1bW1hcnkingEKHUdldFJlcXVlc3RIaXN0b3J5QnlJRFJlc3BvbnNlEjgKBmV2ZW50cxgBIAMoCzIoLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkhpc3RvcnlFdmVudBJDCg9yZXF1ZXN0X3N1bW1hcnkYAiABKAsyKi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5SZXF1ZXN0U3VtbWFyeSJfCh5HZXRSZXF1ZXN0SGlzdG9yeUJ5VVJJUmVzcG9uc2USPQoJaGlzdG9yaWVzGAEgAygLMioudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUmVxdWVzdEhpc3RvcnkieQobR2V0UHJvamVjdFN0YXR1c0J5SURSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEhIKCnJlcXVlc3RfaWQYAiABKAkSEAoIcHJvamVjdHMYAyADKAkSEQoJcGFnZV9zaXplGAQgASgFEhIKCnBhZ2VfdG9rZW4YBSABKAkiegocR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVxdWVzdBINCgVxdWV1ZRgBIAEoCRISCgpjaGFuZ2VfdXJpGAIgASgJEhAKCHByb2plY3RzGAMgAygJEhEKCXBhZ2Vfc2l6ZRgEIAEoBRISCgpwYWdlX3Rva2VuGAUgASgJIkkKEVByb2plY3RWYWxpZGF0aW9uEg8KB3Byb2plY3QYASABKAkSGQoPYnJlYWthZ2VfZGVncmVlGAIgASgBSABCCAoGcmVzdWx0IswCChxHZXRQcm9qZWN0U3RhdHVzQnlJRFJlc3BvbnNlEhIKCnJlcXVlc3RfaWQYASABKAkSDQoFcXVldWUYAiABKAkSEgoKY2hhbmdlX3VyaRgDIAEoCRIQCghiYXNlX3VyaRgEIAEoCRIVCg1yZXF1ZXN0X3N0YXRlGAUgASgJEhUKDXVwZGF0ZWRfYXRfbXMYCiABKAMSJAoacmVwb3NpdG9yeV9icmVha2FnZV9kZWdyZWUYBiABKAFIABIgChhwcm9qZWN0X3Jlc3VsdHNfY29tcGxldGUYByABKAgSPwoIcHJvamVjdHMYCCADKAsyLS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5Qcm9qZWN0VmFsaWRhdGlvbhIXCg9uZXh0X3BhZ2VfdG9rZW4YCSABKAlCEwoRcmVwb3NpdG9yeV9yZXN1bHQizQIKHUdldFByb2plY3RTdGF0dXNCeVVSSVJlc3BvbnNlEhIKCnJlcXVlc3RfaWQYASABKAkSDQoFcXVldWUYAiABKAkSEgoKY2hhbmdlX3VyaRgDIAEoCRIQCghiYXNlX3VyaRgEIAEoCRIVCg1yZXF1ZXN0X3N0YXRlGAUgASgJEhUKDXVwZGF0ZWRfYXRfbXMYCiABKAMSJAoacmVwb3NpdG9yeV9icmVha2FnZV9kZWdyZWUYBiABKAFIABIgChhwcm9qZWN0X3Jlc3VsdHNfY29tcGxldGUYByABKAgSPwoIcHJvamVjdHMYCCADKAsyLS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5Qcm9qZWN0VmFsaWRhdGlvbhIXCg9uZXh0X3BhZ2VfdG9rZW4YCSABKAlCEwoRcmVwb3NpdG9yeV9yZXN1bHQivQEKDlJlcXVlc3RTdW1tYXJ5EhIKCnJlcXVlc3RfaWQYASABKAkSDQoFcXVldWUYAiABKAkSEgoKY2hhbmdlX3VyaRgDIAEoCRIQCghiYXNlX3VyaRgEIAEoCRIVCg1yZXF1ZXN0X3N0YXRlGAUgASgJEhsKE3N0YXRlX3VwZGF0ZWRfYXRfbXMYBiABKAMSFgoOYWNjZXB0ZWRfYXRfbXMYByABKAMSFgoOb3V0Y29tZV9yZWFzb24YCCABKAkitAEKC0xpc3RSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEiEKF2FjY2VwdGVkX2F0X29yX2FmdGVyX21zGAIgASgDSAASHAoSYWNjZXB0ZWRfYmVmb3JlX21zGAMgASgDSAESEQoJcGFnZV9zaXplGAQgASgFEhIKCnBhZ2VfdG9rZW4YBSABKAlCFgoUYWNjZXB0ZWRfbG93ZXJfYm91bmRCFgoUYWNjZXB0ZWRfdXBwZXJfYm91bmQiZQoMTGlzdFJlc3BvbnNlEjwKCHJlcXVlc3RzGAEgAygLMioudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUmVxdWVzdFN1bW1hcnkSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIjoKFUdldFF1ZXVlU3RhdHVzUmVxdWVzdBINCgVxdWV1ZRgBIAEoCRISCgpjaGFuZ2VfdXJpGAIgASgJIp4BChVRdWV1ZUVuYWJsZW1lbnRTdGF0dXMSDwoHdmVyc2lvbhgBIAEoAxI6CgVzdGF0ZRgCIAEoDjIrLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLlF1ZXVlRW5hYmxlbWVudBIhChllZmZlY3RpdmVfZnJvbV9jb21taXRfdXJpGAMgASgJEhUKDWNoYW5nZWRfYXRfbXMYBCABKAMibgoWR2V0UXVldWVTdGF0dXNSZXNwb25zZRINCgVxdWV1ZRgBIAEoCRJFCgplbmFibGVtZW50GAIgASgLMjEudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUXVldWVFbmFibGVtZW50U3RhdHVzKmwKD1F1ZXVlRW5hYmxlbWVudBIcChhRVUVVRV9FTkFCTEVNRU5UX1VOS05PV04QABIcChhRVUVVRV9FTkFCTEVNRU5UX0VOQUJMRUQQARIdChlRVUVVRV9FTkFCTEVNRU5UX0RJU0FCTEVEEAIy5wcKCVN0b3ZlcGlwZRJbCgRQaW5nEicudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuUGluZ1JlcXVlc3QaKC51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5QaW5nUmVzcG9uc2UiABJhCgZJbmdlc3QSKS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5Jbmdlc3RSZXF1ZXN0GioudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuSW5nZXN0UmVzcG9uc2UiABKOAQoVR2V0UmVxdWVzdEhpc3RvcnlCeUlEEjgudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UmVxdWVzdEhpc3RvcnlCeUlEUmVxdWVzdBo5LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFJlcXVlc3RIaXN0b3J5QnlJRFJlc3BvbnNlIgASkQEKFkdldFJlcXVlc3RIaXN0b3J5QnlVUkkSOS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRSZXF1ZXN0SGlzdG9yeUJ5VVJJUmVxdWVzdBo6LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFJlcXVlc3RIaXN0b3J5QnlVUklSZXNwb25zZSIAEosBChRHZXRQcm9qZWN0U3RhdHVzQnlJRBI3LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeUlEUmVxdWVzdBo4LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeUlEUmVzcG9uc2UiABKOAQoVR2V0UHJvamVjdFN0YXR1c0J5VVJJEjgudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuR2V0UHJvamVjdFN0YXR1c0J5VVJJUmVxdWVzdBo5LnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkdldFByb2plY3RTdGF0dXNCeVVSSVJlc3BvbnNlIgASWwoETGlzdBInLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlLkxpc3RSZXF1ZXN0GigudWJlci5zdWJtaXRxdWV1ZS5zdG92ZXBpcGUuTGlzdFJlc3BvbnNlIgASeQoOR2V0UXVldWVTdGF0dXMSMS51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRRdWV1ZVN0YXR1c1JlcXVlc3QaMi51YmVyLnN1Ym1pdHF1ZXVlLnN0b3ZlcGlwZS5HZXRRdWV1ZVN0YXR1c1Jlc3BvbnNlIgBCZQoeY29tLnViZXIuc3VibWl0cXVldWUuc3RvdmVwaXBlQg5TdG92ZXBpcGVQcm90b1ABWjFnaXRodWIuY29tL3ViZXIvc3VibWl0cXVldWUvYXBpL3N0b3ZlcGlwZS9wcm90b3BiYgZwcm90bzM");
 
 /**
  * PingRequest is the request for the Ping method
@@ -238,6 +238,13 @@ export type HistoryEvent = Message<"uber.submitqueue.stovepipe.HistoryEvent"> & 
    * @generated from field: string outcome_reason = 5;
    */
   outcomeReason: string;
+
+  /**
+   * Typed context retained with this occurrence. Absent when no supported metadata is available.
+   *
+   * @generated from field: uber.submitqueue.stovepipe.HistoryEventData data = 6;
+   */
+  data?: HistoryEventData | undefined;
 };
 
 /**
@@ -246,6 +253,166 @@ export type HistoryEvent = Message<"uber.submitqueue.stovepipe.HistoryEvent"> & 
  */
 export const HistoryEventSchema: GenMessage<HistoryEvent> = /*@__PURE__*/
   messageDesc(file_api_stovepipe_proto_stovepipe, 6);
+
+/**
+ * HistoryEventData exposes known occurrence metadata without exposing the internal metadata map.
+ *
+ * @generated from message uber.submitqueue.stovepipe.HistoryEventData
+ */
+export type HistoryEventData = Message<"uber.submitqueue.stovepipe.HistoryEventData"> & {
+  /**
+   * The payload corresponds to request_state or the event string on the containing HistoryEvent.
+   *
+   * @generated from oneof uber.submitqueue.stovepipe.HistoryEventData.payload
+   */
+  payload: {
+    /**
+     * Context recorded with a request-state transition.
+     *
+     * @generated from field: uber.submitqueue.stovepipe.HistoryRequestStateData request_state = 1;
+     */
+    value: HistoryRequestStateData;
+    case: "requestState";
+  } | {
+    /**
+     * Context recorded when a build became durable.
+     *
+     * @generated from field: uber.submitqueue.stovepipe.HistoryBuildData build_triggered = 2;
+     */
+    value: HistoryBuildData;
+    case: "buildTriggered";
+  } | {
+    /**
+     * Context recorded when a build reached a terminal status.
+     *
+     * @generated from field: uber.submitqueue.stovepipe.HistoryBuildData build_finished = 3;
+     */
+    value: HistoryBuildData;
+    case: "buildFinished";
+  } | {
+    /**
+     * Context recorded when a repository validation fact became durable.
+     *
+     * @generated from field: uber.submitqueue.stovepipe.HistoryValidationFactData validation_fact_recorded = 4;
+     */
+    value: HistoryValidationFactData;
+    case: "validationFactRecorded";
+  } | {
+    /**
+     * Context recorded when all project facts became durable.
+     *
+     * @generated from field: uber.submitqueue.stovepipe.HistoryProjectFactsData project_facts_recorded = 5;
+     */
+    value: HistoryProjectFactsData;
+    case: "projectFactsRecorded";
+  } | {
+    /**
+     * Context recorded when build analysis was abandoned.
+     *
+     * @generated from field: uber.submitqueue.stovepipe.HistoryBuildData build_analysis_abandoned = 6;
+     */
+    value: HistoryBuildData;
+    case: "buildAnalysisAbandoned";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.HistoryEventData.
+ * Use `create(HistoryEventDataSchema)` to create a new message.
+ */
+export const HistoryEventDataSchema: GenMessage<HistoryEventData> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 7);
+
+/**
+ * HistoryRequestStateData is retained context for a request-state transition.
+ *
+ * @generated from message uber.submitqueue.stovepipe.HistoryRequestStateData
+ */
+export type HistoryRequestStateData = Message<"uber.submitqueue.stovepipe.HistoryRequestStateData"> & {
+  /**
+   * Selected baseline URI. A present empty string means a full build; absence means unknown.
+   *
+   * @generated from field: optional string base_uri = 1;
+   */
+  baseUri?: string | undefined;
+
+  /**
+   * Build that established the terminal request state, when retained.
+   *
+   * @generated from field: optional string build_id = 2;
+   */
+  buildId?: string | undefined;
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.HistoryRequestStateData.
+ * Use `create(HistoryRequestStateDataSchema)` to create a new message.
+ */
+export const HistoryRequestStateDataSchema: GenMessage<HistoryRequestStateData> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 8);
+
+/**
+ * HistoryBuildData identifies the build associated with an occurrence.
+ *
+ * @generated from message uber.submitqueue.stovepipe.HistoryBuildData
+ */
+export type HistoryBuildData = Message<"uber.submitqueue.stovepipe.HistoryBuildData"> & {
+  /**
+   * Opaque runner-assigned build identifier.
+   *
+   * @generated from field: string build_id = 1;
+   */
+  buildId: string;
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.HistoryBuildData.
+ * Use `create(HistoryBuildDataSchema)` to create a new message.
+ */
+export const HistoryBuildDataSchema: GenMessage<HistoryBuildData> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 9);
+
+/**
+ * HistoryValidationFactData describes a retained whole-repository validation fact.
+ *
+ * @generated from message uber.submitqueue.stovepipe.HistoryValidationFactData
+ */
+export type HistoryValidationFactData = Message<"uber.submitqueue.stovepipe.HistoryValidationFactData"> & {
+  /**
+   * Breakage degree on [0.0, 1.0]. Zero is a recorded green result.
+   *
+   * @generated from field: double fact_degree = 1;
+   */
+  factDegree: number;
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.HistoryValidationFactData.
+ * Use `create(HistoryValidationFactDataSchema)` to create a new message.
+ */
+export const HistoryValidationFactDataSchema: GenMessage<HistoryValidationFactData> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 10);
+
+/**
+ * HistoryProjectFactsData describes a completed batch of project validation facts.
+ *
+ * @generated from message uber.submitqueue.stovepipe.HistoryProjectFactsData
+ */
+export type HistoryProjectFactsData = Message<"uber.submitqueue.stovepipe.HistoryProjectFactsData"> & {
+  /**
+   * Number of project facts recorded, including zero for an empty batch.
+   *
+   * @generated from field: uint64 project_fact_count = 1;
+   */
+  projectFactCount: bigint;
+};
+
+/**
+ * Describes the message uber.submitqueue.stovepipe.HistoryProjectFactsData.
+ * Use `create(HistoryProjectFactsDataSchema)` to create a new message.
+ */
+export const HistoryProjectFactsDataSchema: GenMessage<HistoryProjectFactsData> = /*@__PURE__*/
+  messageDesc(file_api_stovepipe_proto_stovepipe, 11);
 
 /**
  * RequestHistory identifies one request and contains its ordered events and current summary.
@@ -280,7 +447,7 @@ export type RequestHistory = Message<"uber.submitqueue.stovepipe.RequestHistory"
  * Use `create(RequestHistorySchema)` to create a new message.
  */
 export const RequestHistorySchema: GenMessage<RequestHistory> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 7);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 12);
 
 /**
  * GetRequestHistoryByIDResponse contains retained events and the current summary for one request.
@@ -308,7 +475,7 @@ export type GetRequestHistoryByIDResponse = Message<"uber.submitqueue.stovepipe.
  * Use `create(GetRequestHistoryByIDResponseSchema)` to create a new message.
  */
 export const GetRequestHistoryByIDResponseSchema: GenMessage<GetRequestHistoryByIDResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 8);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 13);
 
 /**
  * GetRequestHistoryByURIResponse contains all retained request histories for an exact URI.
@@ -329,7 +496,7 @@ export type GetRequestHistoryByURIResponse = Message<"uber.submitqueue.stovepipe
  * Use `create(GetRequestHistoryByURIResponseSchema)` to create a new message.
  */
 export const GetRequestHistoryByURIResponseSchema: GenMessage<GetRequestHistoryByURIResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 9);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 14);
 
 /**
  * GetProjectStatusByIDRequest selects the validation status for the ID returned from Ingest.
@@ -378,7 +545,7 @@ export type GetProjectStatusByIDRequest = Message<"uber.submitqueue.stovepipe.Ge
  * Use `create(GetProjectStatusByIDRequestSchema)` to create a new message.
  */
 export const GetProjectStatusByIDRequestSchema: GenMessage<GetProjectStatusByIDRequest> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 10);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 15);
 
 /**
  * GetProjectStatusByURIRequest selects the validation status for an exact commit URI.
@@ -427,7 +594,7 @@ export type GetProjectStatusByURIRequest = Message<"uber.submitqueue.stovepipe.G
  * Use `create(GetProjectStatusByURIRequestSchema)` to create a new message.
  */
 export const GetProjectStatusByURIRequestSchema: GenMessage<GetProjectStatusByURIRequest> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 11);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 16);
 
 /**
  * ProjectValidation contains one reported project and its recorded result, if any.
@@ -461,7 +628,7 @@ export type ProjectValidation = Message<"uber.submitqueue.stovepipe.ProjectValid
  * Use `create(ProjectValidationSchema)` to create a new message.
  */
 export const ProjectValidationSchema: GenMessage<ProjectValidation> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 12);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 17);
 
 /**
  * GetProjectStatusByIDResponse contains the selected validation's current projection.
@@ -551,7 +718,7 @@ export type GetProjectStatusByIDResponse = Message<"uber.submitqueue.stovepipe.G
  * Use `create(GetProjectStatusByIDResponseSchema)` to create a new message.
  */
 export const GetProjectStatusByIDResponseSchema: GenMessage<GetProjectStatusByIDResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 13);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 18);
 
 /**
  * GetProjectStatusByURIResponse contains the selected validation's current projection.
@@ -641,7 +808,7 @@ export type GetProjectStatusByURIResponse = Message<"uber.submitqueue.stovepipe.
  * Use `create(GetProjectStatusByURIResponseSchema)` to create a new message.
  */
 export const GetProjectStatusByURIResponseSchema: GenMessage<GetProjectStatusByURIResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 14);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 19);
 
 /**
  * RequestSummary contains one request's current materialized lifecycle state.
@@ -711,7 +878,7 @@ export type RequestSummary = Message<"uber.submitqueue.stovepipe.RequestSummary"
  * Use `create(RequestSummarySchema)` to create a new message.
  */
 export const RequestSummarySchema: GenMessage<RequestSummary> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 15);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 20);
 
 /**
  * ListRequest selects a page of retained request summaries for one queue.
@@ -772,7 +939,7 @@ export type ListRequest = Message<"uber.submitqueue.stovepipe.ListRequest"> & {
  * Use `create(ListRequestSchema)` to create a new message.
  */
 export const ListRequestSchema: GenMessage<ListRequest> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 16);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 21);
 
 /**
  * ListResponse contains a page in acceptance-time order, not a snapshot across pages.
@@ -801,7 +968,7 @@ export type ListResponse = Message<"uber.submitqueue.stovepipe.ListResponse"> & 
  * Use `create(ListResponseSchema)` to create a new message.
  */
 export const ListResponseSchema: GenMessage<ListResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 17);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 22);
 
 /**
  * @generated from message uber.submitqueue.stovepipe.GetQueueStatusRequest
@@ -827,7 +994,7 @@ export type GetQueueStatusRequest = Message<"uber.submitqueue.stovepipe.GetQueue
  * Use `create(GetQueueStatusRequestSchema)` to create a new message.
  */
 export const GetQueueStatusRequestSchema: GenMessage<GetQueueStatusRequest> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 18);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 23);
 
 /**
  * QueueEnablementStatus describes applied enablement.
@@ -869,7 +1036,7 @@ export type QueueEnablementStatus = Message<"uber.submitqueue.stovepipe.QueueEna
  * Use `create(QueueEnablementStatusSchema)` to create a new message.
  */
 export const QueueEnablementStatusSchema: GenMessage<QueueEnablementStatus> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 19);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 24);
 
 /**
  * @generated from message uber.submitqueue.stovepipe.GetQueueStatusResponse
@@ -895,7 +1062,7 @@ export type GetQueueStatusResponse = Message<"uber.submitqueue.stovepipe.GetQueu
  * Use `create(GetQueueStatusResponseSchema)` to create a new message.
  */
 export const GetQueueStatusResponseSchema: GenMessage<GetQueueStatusResponse> = /*@__PURE__*/
-  messageDesc(file_api_stovepipe_proto_stovepipe, 20);
+  messageDesc(file_api_stovepipe_proto_stovepipe, 25);
 
 /**
  * QueueEnablement is independent of validation results and execution controls.

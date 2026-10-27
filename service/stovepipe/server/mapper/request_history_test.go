@@ -15,9 +15,14 @@
 package mapper
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
@@ -170,6 +175,161 @@ func TestRequestHistoriesToProto(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, RequestHistoriesToProto(tt.histories))
+		})
+	}
+}
+
+func TestHistoryMetadataToProto(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    entity.RequestState
+		event    entity.RequestEvent
+		metadata map[string]string
+		wantData string
+	}{
+		{
+			name:     "state retains baseline and terminal build",
+			state:    entity.RequestStateSucceeded,
+			metadata: map[string]string{"base_uri": "git://repo/base", "build_id": "build/1", "private": "hidden"},
+			wantData: `{"requestState":{"baseUri":"git://repo/base","buildId":"build/1"}}`,
+		},
+		{
+			name:     "full build has an explicitly empty baseline",
+			state:    entity.RequestStateProcessing,
+			metadata: map[string]string{"base_uri": ""},
+			wantData: `{"requestState":{"baseUri":""}}`,
+		},
+		{
+			name:     "baseline without terminal build",
+			state:    entity.RequestStateProcessing,
+			metadata: map[string]string{"base_uri": "git://repo/base"},
+			wantData: `{"requestState":{"baseUri":"git://repo/base"}}`,
+		},
+		{
+			name:     "terminal build with unknown baseline",
+			state:    entity.RequestStateFailed,
+			metadata: map[string]string{"build_id": "build/1"},
+			wantData: `{"requestState":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "triggered build",
+			event:    entity.RequestEventBuildTriggered,
+			metadata: map[string]string{"build_id": "build/1", "base_uri": "not state context"},
+			wantData: `{"buildTriggered":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "finished build",
+			event:    entity.RequestEventBuildFinished,
+			metadata: map[string]string{"build_id": "build/1"},
+			wantData: `{"buildFinished":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "abandoned build analysis",
+			event:    entity.RequestEventBuildAnalysisAbandoned,
+			metadata: map[string]string{"build_id": "build/1"},
+			wantData: `{"buildAnalysisAbandoned":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "green validation degree is known zero",
+			event:    entity.RequestEventValidationFactRecorded,
+			metadata: map[string]string{"fact_degree": "0"},
+			wantData: `{"validationFactRecorded":{}}`,
+		},
+		{
+			name:     "partial validation degree",
+			event:    entity.RequestEventValidationFactRecorded,
+			metadata: map[string]string{"fact_degree": "0.5"},
+			wantData: `{"validationFactRecorded":{"factDegree":0.5}}`,
+		},
+		{
+			name:     "broken validation degree",
+			event:    entity.RequestEventValidationFactRecorded,
+			metadata: map[string]string{"fact_degree": "1"},
+			wantData: `{"validationFactRecorded":{"factDegree":1}}`,
+		},
+		{
+			name:     "empty project fact batch is known zero",
+			event:    entity.RequestEventProjectFactsRecorded,
+			metadata: map[string]string{"project_fact_count": "0"},
+			wantData: `{"projectFactsRecorded":{}}`,
+		},
+		{
+			name:     "project fact count",
+			event:    entity.RequestEventProjectFactsRecorded,
+			metadata: map[string]string{"project_fact_count": "42"},
+			wantData: `{"projectFactsRecorded":{"projectFactCount":"42"}}`,
+		},
+		{
+			name:     "large project fact count preserves precision",
+			event:    entity.RequestEventProjectFactsRecorded,
+			metadata: map[string]string{"project_fact_count": "9007199254740993"},
+			wantData: `{"projectFactsRecorded":{"projectFactCount":"9007199254740993"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadataBefore := maps.Clone(tt.metadata)
+			history := entity.RequestHistory{RequestID: "1", Events: []entity.RequestLog{{
+				ID: "occurrence", State: tt.state, Event: tt.event, Metadata: tt.metadata,
+			}}}
+			byID := RequestHistoryByIDToProto(history).Events[0]
+			byURI := RequestHistoriesToProto([]entity.RequestHistory{history})[0].Events[0]
+			require.NotNil(t, byID.Data)
+			assert.True(t, proto.Equal(byID, byURI))
+			assert.Equal(t, metadataBefore, tt.metadata)
+
+			jsonData, err := protojson.Marshal(byID.Data)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.wantData, string(jsonData))
+
+			encoded, err := proto.Marshal(byID)
+			require.NoError(t, err)
+			var decoded pb.HistoryEvent
+			require.NoError(t, proto.Unmarshal(encoded, &decoded))
+			assert.True(t, proto.Equal(byID, &decoded))
+
+			jsonEvent, err := protojson.Marshal(byID)
+			require.NoError(t, err)
+			var decodedJSON pb.HistoryEvent
+			require.NoError(t, protojson.Unmarshal(jsonEvent, &decodedJSON))
+			assert.True(t, proto.Equal(byID, &decodedJSON))
+		})
+	}
+}
+
+func TestHistoryMetadataUnavailable(t *testing.T) {
+	type testCase struct {
+		name string
+		log  entity.RequestLog
+	}
+	tests := []testCase{
+		{name: "state without metadata", log: entity.RequestLog{State: entity.RequestStateAccepted}},
+		{name: "state without recognized metadata", log: entity.RequestLog{State: entity.RequestStateFailed, Metadata: map[string]string{"private": "hidden", "build_id": ""}}},
+		{name: "triggered build without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildTriggered}},
+		{name: "finished build with empty ID", log: entity.RequestLog{Event: entity.RequestEventBuildFinished, Metadata: map[string]string{"build_id": ""}}},
+		{name: "abandoned analysis without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildAnalysisAbandoned}},
+		{name: "validation without degree", log: entity.RequestLog{Event: entity.RequestEventValidationFactRecorded}},
+		{name: "project facts without count", log: entity.RequestLog{Event: entity.RequestEventProjectFactsRecorded}},
+		{name: "metadata for another event", log: entity.RequestLog{Event: entity.RequestEventRecordAbandoned, Metadata: map[string]string{"build_id": "build/1", "fact_degree": "1", "project_fact_count": "2"}}},
+		{name: "unknown event metadata", log: entity.RequestLog{Event: entity.RequestEvent("future_event"), Metadata: map[string]string{"build_id": "build/1"}}},
+	}
+	for _, degree := range []string{"invalid", "NaN", "+Inf", "-Inf", "-0.1", "1.1"} {
+		tests = append(tests, testCase{name: "invalid degree " + degree, log: entity.RequestLog{
+			Event: entity.RequestEventValidationFactRecorded, Metadata: map[string]string{"fact_degree": degree},
+		}})
+	}
+	for _, count := range []string{"invalid", "-1", "1.5", "18446744073709551616"} {
+		tests = append(tests, testCase{name: "invalid count " + count, log: entity.RequestLog{
+			Event: entity.RequestEventProjectFactsRecorded, Metadata: map[string]string{"project_fact_count": count},
+		}})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := HistoryEventsToProto([]entity.RequestLog{tt.log})[0]
+			assert.Nil(t, event.Data)
+			assert.Equal(t, string(tt.log.State), event.GetRequestState())
+			assert.Equal(t, string(tt.log.Event), event.GetEvent())
 		})
 	}
 }

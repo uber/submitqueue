@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//api/stovepipe/protopb:go_default_library",
+        "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/entity:go_default_library",
     ],
 )
@@ -32,5 +33,7 @@ go_test(
         "//stovepipe/entity:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
     ],
 )

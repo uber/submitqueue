@@ -84,6 +84,53 @@ message HistoryEvent {
     }
     // Stable domain reason for a terminal request outcome. Empty otherwise.
     string outcome_reason = 5;
+    // Typed context retained with this occurrence. Absent when no supported metadata is available.
+    HistoryEventData data = 6;
+}
+
+// HistoryEventData exposes known occurrence metadata without exposing the internal metadata map.
+message HistoryEventData {
+    // The payload corresponds to request_state or the event string on the containing HistoryEvent.
+    oneof payload {
+        // Context recorded with a request-state transition.
+        HistoryRequestStateData request_state = 1;
+        // Context recorded when a build became durable.
+        HistoryBuildData build_triggered = 2;
+        // Context recorded when a build reached a terminal status.
+        HistoryBuildData build_finished = 3;
+        // Context recorded when a repository validation fact became durable.
+        HistoryValidationFactData validation_fact_recorded = 4;
+        // Context recorded when all project facts became durable.
+        HistoryProjectFactsData project_facts_recorded = 5;
+        // Context recorded when build analysis was abandoned.
+        HistoryBuildData build_analysis_abandoned = 6;
+    }
+}
+
+// HistoryRequestStateData is retained context for a request-state transition.
+message HistoryRequestStateData {
+    // Selected baseline URI. A present empty string means a full build; absence means unknown.
+    optional string base_uri = 1;
+    // Build that established the terminal request state, when retained.
+    optional string build_id = 2;
+}
+
+// HistoryBuildData identifies the build associated with an occurrence.
+message HistoryBuildData {
+    // Opaque runner-assigned build identifier.
+    string build_id = 1;
+}
+
+// HistoryValidationFactData describes a retained whole-repository validation fact.
+message HistoryValidationFactData {
+    // Breakage degree on [0.0, 1.0]. Zero is a recorded green result.
+    double fact_degree = 1;
+}
+
+// HistoryProjectFactsData describes a completed batch of project validation facts.
+message HistoryProjectFactsData {
+    // Number of project facts recorded, including zero for an empty batch.
+    uint64 project_fact_count = 1;
 }
 
 // RequestHistory identifies one request and contains its ordered events and current summary.
