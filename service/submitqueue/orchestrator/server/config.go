@@ -271,7 +271,7 @@ type tangoAnalyzerConfig struct {
 	// repository remote in Tango's own configuration.
 	Remote string `yaml:"remote"`
 	// Strategy is how Tango computes the base target graph: "unset", "shell"
-	// or "native". Defaults to "unset".
+	// or "native". Required.
 	Strategy string `yaml:"strategy"`
 }
 
@@ -412,22 +412,11 @@ func (c profilesConfig) usesTango() bool {
 	return false
 }
 
-// validateTango rejects a tango analyzer on a queue that has no repository
-// clone to read the base revision from, and a tango analyzer without the
-// process-level setup it needs. The defaults count as a queue, since queues
-// without an override inherit them.
+// validateTango rejects a tango analyzer without the process-level setup it
+// needs. The defaults count as a queue, since queues without an override
+// inherit them.
 func (c profilesConfig) validateTango() error {
-	used := false
-	for _, p := range c.namedProfiles() {
-		if p.profile.Analyzer.Type != analyzerTypeTango {
-			continue
-		}
-		used = true
-		if p.profile.ChangeProvider.Type != changeProviderTypeGit {
-			return fmt.Errorf("%s: the tango analyzer needs the git change provider, got %q", p.where, p.profile.ChangeProvider.Type)
-		}
-	}
-	if !used {
+	if !c.usesTango() {
 		return nil
 	}
 	if c.Tango.Address == "" {
@@ -703,7 +692,7 @@ func (a *analyzerConfig) normalizeAndValidate(where string) error {
 			return fmt.Errorf("%s: tango analyzer needs a tango block with a remote", where)
 		}
 		if a.Tango.Strategy == "" {
-			a.Tango.Strategy = "unset"
+			return fmt.Errorf("%s: tango analyzer needs a strategy: unset, shell or native", where)
 		}
 		if !tangoclient.ValidStrategy(a.Tango.Strategy) {
 			return fmt.Errorf("%s: unknown tango strategy %q", where, a.Tango.Strategy)

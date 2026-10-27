@@ -308,6 +308,9 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	}
 	var analyzer conflict.Factory
 	if cfg.Analyzer.Type == analyzerTypeTango {
+		if cfg.ChangeProvider.Git == nil {
+			return Profile{}, fmt.Errorf("%s: the tango analyzer needs the git change provider, got %q", where, cfg.ChangeProvider.Type)
+		}
 		analyzer, err = reuse(b, tangoAnalyzerKey{Analyzer: cfg.Analyzer, Git: *cfg.ChangeProvider.Git}, where, b.newTangoAnalyzerFactory)
 	} else {
 		analyzer, err = reuse(b, cfg.Analyzer, where, b.newAnalyzerFactory)
@@ -742,8 +745,8 @@ type tangoAnalyzerKey struct {
 }
 
 // newTangoAnalyzerFactory builds a factory for tango analyzers that read the
-// base revision from the queue's own clone. Validation guarantees the queue
-// uses the git change provider and that the process-level pieces are set.
+// base revision from the queue's own clone. Validation guarantees the
+// process-level pieces are set.
 func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where string) (conflict.Factory, error) {
 	if b.tango.Connection == nil || b.tango.Cache == nil || b.tango.DB == nil {
 		return nil, fmt.Errorf("%s: the tango analyzer needs a tango connection, signature cache and database", where)

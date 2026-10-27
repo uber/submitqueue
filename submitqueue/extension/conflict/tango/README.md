@@ -24,7 +24,7 @@ The analyzer owns no connection. A deployment supplies the Tango client adapter,
 
 ## Reference orchestrator
 
-A queue selects this analyzer with `analyzer: {type: tango, tango: {remote, strategy}}`. `remote` must equal the repository remote Tango is configured with, and `strategy` is `unset`, `shell` or `native` (default `unset`). The top-level `tango` block sets `address`, the Tango gRPC endpoint, and `signatureCacheBytes`, the size of the one signature cache every queue shares. Two limits apply:
+A queue selects this analyzer with `analyzer: {type: tango, tango: {remote, strategy}}`. `remote` must equal the repository remote Tango is configured with, and `strategy` is required and is `unset`, `shell` or `native`. The top-level `tango` block sets `address`, the Tango gRPC endpoint, and `signatureCacheBytes`, the size of the one signature cache every queue shares. Two limits apply:
 
 - The queue must use the git change provider, because the base revision is read from its clone. GitHub-backed queues are not supported until a base revision can be read from the GitHub API.
 - Tango's native strategy resolves changes only from canonical `github://` URIs, while the git change provider emits `git://` URIs, so `native` does not work on a git-provider queue.

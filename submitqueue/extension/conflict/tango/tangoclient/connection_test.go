@@ -47,8 +47,8 @@ func TestConnection_ChangedTargetsClient(t *testing.T) {
 		strategy  string
 		wantError bool
 	}{
-		{name: "empty strategy means unset"},
 		{name: "named strategy", strategy: "native"},
+		{name: "empty strategy fails", strategy: "", wantError: true},
 		{name: "unknown strategy fails", strategy: "fast", wantError: true},
 	}
 	for _, tt := range tests {

@@ -530,7 +530,7 @@ func TestLoadProfilesConfig_Tango(t *testing.T) {
 			name: "accepted with a git change provider and a connection",
 			contents: `
 tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
-defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
 `,
 		},
 		{
@@ -538,6 +538,14 @@ defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
 			contents: `
 tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
 defaults:` + git + `  analyzer: {type: tango}
+`,
+			wantErr: true,
+		},
+		{
+			name: "rejected without a strategy",
+			contents: `
+tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
 `,
 			wantErr: true,
 		},
@@ -553,7 +561,7 @@ defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: 
 			name: "rejected without a connection address",
 			contents: `
 tango: {signatureCacheBytes: 1048576}
-defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
 `,
 			wantErr: true,
 		},
@@ -561,19 +569,7 @@ defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
 			name: "rejected without a cache size",
 			contents: `
 tango: {address: "127.0.0.1:8081"}
-defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
-`,
-			wantErr: true,
-		},
-		{
-			name: "rejected on a queue that does not use the git change provider",
-			contents: `
-tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
-defaults:` + git + `  analyzer: {type: none}
-queues:
-  - name: a
-    changeProvider: {type: fake}
-    analyzer: {type: tango, tango: {remote: origin}}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
 `,
 			wantErr: true,
 		},
@@ -588,15 +584,12 @@ defaults:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := loadProfilesConfig(writeProfiles(t, tt.contents))
+			_, err := loadProfilesConfig(writeProfiles(t, tt.contents))
 			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			if cfg.Defaults.Analyzer.Type == analyzerTypeTango {
-				assert.Equal(t, "unset", cfg.Defaults.Analyzer.Tango.Strategy)
-			}
 		})
 	}
 }
@@ -975,6 +968,19 @@ func TestNewTangoAnalyzerFactory(t *testing.T) {
 	}
 }
 
+func TestNewProfiles_TangoRequiresTheGitChangeProvider(t *testing.T) {
+	cfg, err := loadProfilesConfig(writeProfiles(t, `
+tango: {address: "127.0.0.1:0", signatureCacheBytes: 1048576}
+defaults:
+  changeProvider: {type: fake}
+  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
+`))
+	require.NoError(t, err)
+
+	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
+	require.Error(t, err)
+}
+
 func TestNewProfiles_TangoQueuesShareTheirCloneWithTheGitProvider(t *testing.T) {
 	git := gitexectest.Git(t)
 	root := t.TempDir()
@@ -1006,7 +1012,7 @@ defaults:
       remoteUrl: %s
       target: main
       repoPath: %s
-  analyzer: {type: tango, tango: {remote: origin}}
+  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
 queues:
   - name: a
   - name: b

@@ -68,11 +68,8 @@ func Dial(address string) (*Connection, error) {
 }
 
 // ChangedTargetsClient returns an adapter for the repository Tango knows as
-// remote. An empty strategy means unset.
+// remote. The strategy must be unset, shell or native.
 func (c *Connection) ChangedTargetsClient(remote, strategy string) (tango.ChangedTargetsClient, error) {
-	if strategy == "" {
-		strategy = "unset"
-	}
 	computation, ok := strategies[strategy]
 	if !ok {
 		return nil, fmt.Errorf("unknown Tango computation strategy %q", strategy)
