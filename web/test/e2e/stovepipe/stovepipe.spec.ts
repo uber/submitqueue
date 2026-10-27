@@ -25,7 +25,7 @@ test.describe("server-rendered styling", () => {
     const rows = status.locator("dl > div");
     await expect(rows).toHaveCount(7);
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
-    await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
+    await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     const layout = await rows.evaluateAll(fields => fields.map(field => ({
       height: field.getBoundingClientRect().height,
       labelGap: field.querySelector("dd")!.getBoundingClientRect().top - field.querySelector("dt")!.getBoundingClientRect().bottom,
@@ -337,11 +337,16 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await expect(projects.locator("tbody tr").nth(1).getByRole("cell", { name: "project-01", exact: true })).toBeVisible();
     await expect(projects.locator("tbody tr").nth(2).getByRole("cell", { name: "project-02", exact: true })).toBeVisible();
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
-    await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
+    await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     await expect(projects.getByText(/Repository|%/)).toHaveCount(0);
     await expect(
       projects.getByRole("row").filter({
         has: page.getByRole("cell", { name: "project-01", exact: true }),
+      }).getByRole("cell", { name: "Partial Breakage", exact: true }),
+    ).toBeVisible();
+    await expect(
+      projects.getByRole("row").filter({
+        has: page.getByRole("cell", { name: "project-50", exact: true }),
       }).getByRole("cell", { name: "Breakage", exact: true }),
     ).toBeVisible();
     await expect(
@@ -358,7 +363,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     expect(cursor).toBeTruthy();
     await page.reload();
     await expect(projects.locator("tbody tr")).toHaveCount(1);
-    await expect(status.getByText("Breakage", { exact: true })).toBeVisible();
+    await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
     await expect(section.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
     await section.getByRole("link", { name: "First projects", exact: true }).click();

@@ -114,7 +114,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     expected.remove();
     if (route === "/repo%2Fmain/request/1") {
       assert.match(container.textContent, /example-project/u);
-      assert.match(container.textContent, /Repository resultBreakage/u);
+      assert.match(container.textContent, /Repository resultPartial Breakage/u);
       assert.match(container.textContent, /example-projectGreen/u);
       assert.doesNotMatch(container.textContent, /%/u);
     }
