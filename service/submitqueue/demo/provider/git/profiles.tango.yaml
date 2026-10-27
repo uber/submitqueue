@@ -41,3 +41,5 @@ queues:
       tango:
         # The fake serves one repository and ignores the remote.
         remote: sandbox
+        # The fake ignores the strategy too.
+        strategy: unset
