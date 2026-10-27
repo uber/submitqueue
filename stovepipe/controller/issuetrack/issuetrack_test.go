@@ -16,6 +16,7 @@ package issuetrack
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"testing"
 
@@ -32,7 +33,6 @@ import (
 
 const testQueue = "validation/main"
 
-type issueKey struct{ task, unit string }
 type logKey struct {
 	issueKey
 	build string
@@ -40,26 +40,34 @@ type logKey struct {
 }
 
 type fixture struct {
-	mu            sync.Mutex
-	t             *testing.T
-	mocks         *gomock.Controller
-	controller    *Controller
-	factory       *storagemock.MockFactory
-	store         storage.Storage
-	states        map[issueKey]entity.IssueState
-	logs          map[logKey]entity.IssueLog
-	progress      entity.IssueTrackingState
-	hasProgress   bool
-	failures      map[string]int
-	beforeCreate  func()
-	beforeUpdate  func()
-	beforeHistory func()
+	mu                   sync.Mutex
+	t                    *testing.T
+	mocks                *gomock.Controller
+	controller           *Controller
+	factory              *storagemock.MockFactory
+	store                storage.Storage
+	states               map[issueKey]entity.IssueState
+	logs                 map[logKey]entity.IssueLog
+	progress             entity.IssueTrackingState
+	hasProgress          bool
+	failures             map[string]int
+	beforeCreate         func()
+	beforeUpdate         func()
+	beforeHistory        func()
+	beforeProgressUpdate func(entity.IssueTrackingState)
+	builds               map[string]entity.Build
+	requests             map[string]entity.Request
+	buildIssues          map[string]map[issueKey]entity.BuildIssue
+	sequence             int
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{t: t, mocks: gomock.NewController(t), states: map[issueKey]entity.IssueState{}, logs: map[logKey]entity.IssueLog{}, failures: map[string]int{}}
 	f.factory = storagemock.NewMockFactory(f.mocks)
+	f.builds = map[string]entity.Build{}
+	f.requests = map[string]entity.Request{}
+	f.buildIssues = map[string]map[issueKey]entity.BuildIssue{}
 	store := storagemock.NewMockStorage(f.mocks)
 	f.store = store
 	states := storagemock.NewMockIssueStateStore(f.mocks)
@@ -157,6 +165,9 @@ func newFixture(t *testing.T) *fixture {
 		return nil
 	}).AnyTimes()
 	tracking.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state entity.IssueTrackingState, oldVersion, newVersion int32) error {
+		if f.beforeProgressUpdate != nil {
+			f.beforeProgressUpdate(state)
+		}
 		if err := f.fail("progress/update"); err != nil {
 			return err
 		}
@@ -169,7 +180,95 @@ func newFixture(t *testing.T) *fixture {
 		f.progress = state
 		return nil
 	}).AnyTimes()
+
+	builds := storagemock.NewMockBuildStore(f.mocks)
+	requests := storagemock.NewMockRequestStore(f.mocks)
+	buildIssues := storagemock.NewMockBuildIssueStore(f.mocks)
+	store.EXPECT().GetBuildStore().Return(builds).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+	store.EXPECT().GetBuildIssueStore().Return(buildIssues).AnyTimes()
+	builds.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, id string) (entity.Build, error) {
+		if err := f.fail("build/get"); err != nil {
+			return entity.Build{}, err
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		value, ok := f.builds[id]
+		if !ok {
+			return entity.Build{}, storage.ErrNotFound
+		}
+		return value, nil
+	}).AnyTimes()
+	requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, id string) (entity.Request, error) {
+		if err := f.fail("request/get"); err != nil {
+			return entity.Request{}, err
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		value, ok := f.requests[id]
+		if !ok {
+			return entity.Request{}, storage.ErrNotFound
+		}
+		return value, nil
+	}).AnyTimes()
+	buildIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, build, task, unit string) (entity.BuildIssue, error) {
+		if err := f.fail("build-issues/get"); err != nil {
+			return entity.BuildIssue{}, err
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		value, ok := f.buildIssues[build][issueKey{task, unit}]
+		if !ok {
+			return entity.BuildIssue{}, storage.ErrNotFound
+		}
+		return value, nil
+	}).AnyTimes()
+	buildIssues.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, build string, bounds storage.BuildIssueRange) ([]entity.BuildIssue, error) {
+		if err := f.fail("build-issues/list"); err != nil {
+			return nil, err
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		keys := make([]issueKey, 0)
+		for key := range f.buildIssues[build] {
+			if key.task > bounds.After.TaskID || (key.task == bounds.After.TaskID && key.unit > bounds.After.UnitID) {
+				keys = append(keys, key)
+			}
+		}
+		sortKeys(keys)
+		if len(keys) > bounds.Limit {
+			keys = keys[:bounds.Limit]
+		}
+		result := make([]entity.BuildIssue, 0, len(keys))
+		for _, key := range keys {
+			result = append(result, f.buildIssues[build][key])
+		}
+		return result, nil
+	}).AnyTimes()
+	states.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, bounds storage.IssueStateRange) ([]entity.IssueState, error) {
+		if err := f.fail("issue/list"); err != nil {
+			return nil, err
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		keys := make([]issueKey, 0)
+		for key := range f.states {
+			if key.task > bounds.After.TaskID || (key.task == bounds.After.TaskID && key.unit > bounds.After.UnitID) {
+				keys = append(keys, key)
+			}
+		}
+		sortKeys(keys)
+		if len(keys) > bounds.Limit {
+			keys = keys[:bounds.Limit]
+		}
+		result := make([]entity.IssueState, 0, len(keys))
+		for _, key := range keys {
+			result = append(result, f.states[key])
+		}
+		return result, nil
+	}).AnyTimes()
 	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, messagequeue.TopicKeyIssueTrack, "test")
+	f.controller.nowMs = func() int64 { return 1000 }
 	return f
 }
 
@@ -320,4 +419,13 @@ func TestPlannedChangeWaitsForReplayVerification(t *testing.T) {
 	_, err = f.apply(progress)
 	require.NoError(t, err)
 	require.Len(t, f.logs, 1)
+}
+
+func sortKeys(keys []issueKey) {
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].task != keys[j].task {
+			return keys[i].task < keys[j].task
+		}
+		return keys[i].unit < keys[j].unit
+	})
 }

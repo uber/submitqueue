@@ -115,6 +115,8 @@ func TestMySQLStorage(t *testing.T) {
 		testIssueStateList(t, ctx, factory)
 	})
 
+	t.Run("IssueTrackingDelivery", func(t *testing.T) { resetStorage(t, db); testIssueTrackingDelivery(t, ctx, db, factory) })
+	t.Run("IssueTrackingLeaseTakeover", func(t *testing.T) { resetStorage(t, db); testIssueTrackingLeaseTakeover(t, ctx, db, factory) })
 	t.Run("IssueTrackingStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testIssueTrackingStore(t, ctx, factory)

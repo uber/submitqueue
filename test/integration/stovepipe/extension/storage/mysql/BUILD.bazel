@@ -9,6 +9,7 @@ go_test(
         "issue_log_test.go",
         "issue_state_list_test.go",
         "issue_state_test.go",
+        "issue_tracking_delivery_test.go",
         "issue_tracking_test.go",
         "project_fact_by_degree_test.go",
         "queue_state_transitions_test.go",
@@ -18,6 +19,7 @@ go_test(
     ],
     data = [
         "docker-compose.yml",
+        "//platform/extension/messagequeue/mysql/schema",
         "//stovepipe/extension/storage/mysql/schema",
     ],
     tags = [
@@ -25,6 +27,14 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/extension/consumergate/noop:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/publish:go_default_library",
+        "//stovepipe/controller/issuetrack:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/queuelog:go_default_library",
         "//stovepipe/core/queuestate:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",
@@ -40,5 +50,6 @@ go_test(
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_stretchr_testify//suite:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
