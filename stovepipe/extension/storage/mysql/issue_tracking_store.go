@@ -41,8 +41,17 @@ func (s *issueTrackingStore) Get(ctx context.Context) (state entity.IssueTrackin
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 	err := s.db.QueryRowContext(ctx,
-		`SELECT request_id, build_id, notification_id, after_task_id, after_unit_id, phase, version FROM issue_tracking WHERE queue = ?`, s.queue).
-		Scan(&state.RequestID, &state.BuildID, &state.NotificationID, &state.AfterTaskID, &state.AfterUnitID, &state.Phase, &state.Version)
+		`SELECT request_id, build_id, notification_id,
+            cursor_task_id, cursor_unit_id,
+            planned_status, planned_first_seen_build_id,
+            planned_expected_version, planned_timestamp_ms, phase, version
+         FROM issue_tracking WHERE queue = ?`, s.queue).
+		Scan(
+			&state.RequestID, &state.BuildID, &state.NotificationID,
+			&state.CursorTaskID, &state.CursorUnitID,
+			&state.PlannedChange.Status, &state.PlannedChange.FirstSeenBuildID,
+			&state.PlannedChange.ExpectedVersion, &state.PlannedChange.TimestampMs, &state.Phase, &state.Version,
+		)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.IssueTrackingState{}, storage.WrapNotFound(err)
 	}
@@ -59,8 +68,15 @@ func (s *issueTrackingStore) Create(ctx context.Context, state entity.IssueTrack
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id, after_task_id, after_unit_id, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.queue, state.RequestID, state.BuildID, state.NotificationID, state.AfterTaskID, state.AfterUnitID, state.Phase, state.Version)
+		`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id,
+            cursor_task_id, cursor_unit_id,
+            planned_status, planned_first_seen_build_id,
+            planned_expected_version, planned_timestamp_ms, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.queue, state.RequestID, state.BuildID, state.NotificationID,
+		state.CursorTaskID, state.CursorUnitID,
+		state.PlannedChange.Status, state.PlannedChange.FirstSeenBuildID,
+		state.PlannedChange.ExpectedVersion, state.PlannedChange.TimestampMs, state.Phase, state.Version,
+	)
 	if isDuplicateEntry(err) {
 		return storage.ErrAlreadyExists
 	}
@@ -82,8 +98,17 @@ func (s *issueTrackingStore) Update(ctx context.Context, state entity.IssueTrack
 		return fmt.Errorf("issue tracking guard version must be positive")
 	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?, after_task_id = ?, after_unit_id = ?, phase = ?, version = ? WHERE queue = ? AND version = ?`,
-		state.RequestID, state.BuildID, state.NotificationID, state.AfterTaskID, state.AfterUnitID, state.Phase, newVersion, s.queue, oldVersion)
+		`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?,
+            cursor_task_id = ?, cursor_unit_id = ?,
+            planned_status = ?, planned_first_seen_build_id = ?,
+            planned_expected_version = ?, planned_timestamp_ms = ?, phase = ?, version = ?
+         WHERE queue = ? AND version = ?`,
+		state.RequestID, state.BuildID, state.NotificationID,
+		state.CursorTaskID, state.CursorUnitID,
+		state.PlannedChange.Status, state.PlannedChange.FirstSeenBuildID,
+		state.PlannedChange.ExpectedVersion, state.PlannedChange.TimestampMs, state.Phase, newVersion,
+		s.queue, oldVersion,
+	)
 	if err != nil {
 		return fmt.Errorf("update issue tracking state: %w", err)
 	}
@@ -105,7 +130,11 @@ func (s *issueTrackingStore) validateState(state entity.IssueTrackingState) erro
 	if len(state.NotificationID) > 1020 {
 		return fmt.Errorf("issue tracking notification ID exceeds 1020-byte limit")
 	}
-	return validateBuildIssueKey(s.queue, state.BuildID, state.AfterTaskID, state.AfterUnitID)
+	if err := validateBuildIssueKey(s.queue, state.BuildID, state.CursorTaskID, state.CursorUnitID); err != nil {
+		return err
+	}
+	change := state.PlannedChange
+	return validateBuildIssueKey(s.queue, change.FirstSeenBuildID, state.CursorTaskID, state.CursorUnitID)
 }
 
 var _ storage.IssueTrackingStore = (*issueTrackingStore)(nil)

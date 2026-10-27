@@ -25,7 +25,7 @@ func TestIssueTrackingState(t *testing.T) {
 		t.Run(string(phase), func(t *testing.T) {
 			state := IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: phase, Version: 1}
 			require.NoError(t, state.Validate())
-			require.Equal(t, phase == IssueTrackingPhaseRefreshing || phase == IssueTrackingPhaseFinalizing, state.IsPending())
+			require.False(t, state.HasPlannedChange())
 		})
 	}
 	for _, tt := range []struct {
@@ -36,7 +36,7 @@ func TestIssueTrackingState(t *testing.T) {
 		{"noncanonical request", func(s *IssueTrackingState) { s.RequestID = "010" }},
 		{"nonnumeric request", func(s *IssueTrackingState) { s.RequestID = "request/10" }},
 		{"missing notification", func(s *IssueTrackingState) { s.NotificationID = "" }},
-		{"unit cursor without task", func(s *IssueTrackingState) { s.AfterUnitID = "unit" }},
+		{"unit cursor without task", func(s *IssueTrackingState) { s.CursorUnitID = "unit" }},
 		{"missing build", func(s *IssueTrackingState) { s.BuildID = "" }},
 		{"unknown phase", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseUnknown }},
 		{"unsupported phase", func(s *IssueTrackingState) { s.Phase = "other" }},

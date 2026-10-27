@@ -39,7 +39,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	require.NoError(t, err)
 	require.Equal(t, state, got)
 
-	state.AfterTaskID, state.AfterUnitID = "task", "unit"
+	state.CursorTaskID, state.CursorUnitID = "task", "unit"
 	state.Phase = entity.IssueTrackingPhaseRefreshed
 	require.NoError(t, store.Update(ctx, state, 1, 2))
 	state.Version = 2
@@ -61,6 +61,26 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	require.NoError(t, err)
 	require.Empty(t, opens)
 
+	t.Run("clearing a planned change retains its cursor", func(t *testing.T) {
+		bound, err := factory.For(storage.Config{QueueName: "tracking/planned"})
+		require.NoError(t, err)
+		store := bound.GetIssueTrackingStore()
+		progress := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notice", CursorTaskID: "task", CursorUnitID: "unit", Phase: entity.IssueTrackingPhaseFinalizing, Version: 1,
+			PlannedChange: entity.PlannedIssueChange{Status: entity.IssueStatusClosed, FirstSeenBuildID: "older", ExpectedVersion: 7, TimestampMs: 1234}}
+		require.NoError(t, store.Create(ctx, progress))
+		retained, err := store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, progress, retained)
+		next := progress
+		next.PlannedChange = entity.PlannedIssueChange{}
+		require.NoError(t, store.Update(ctx, next, 1, 2))
+		require.ErrorIs(t, store.Update(ctx, progress, 1, 2), storage.ErrVersionMismatch)
+		retained, err = store.Get(ctx)
+		require.NoError(t, err)
+		require.False(t, retained.HasPlannedChange())
+		require.Equal(t, "task", retained.CursorTaskID)
+		require.Equal(t, "unit", retained.CursorUnitID)
+	})
 	t.Run("queue isolation", func(t *testing.T) {
 		other, err := factory.For(storage.Config{QueueName: "Tracking/main"})
 		require.NoError(t, err)
@@ -105,7 +125,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		bound, err := factory.For(storage.Config{QueueName: strings.Repeat("q", 255)})
 		require.NoError(t, err)
 		store := bound.GetIssueTrackingStore()
-		value := entity.IssueTrackingState{RequestID: "9223372036854775807", BuildID: strings.Repeat("😀", 255), NotificationID: strings.Repeat("😀", 255), AfterTaskID: strings.Repeat("t", 255), AfterUnitID: strings.Repeat("u", 1024), Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
+		value := entity.IssueTrackingState{RequestID: "9223372036854775807", BuildID: strings.Repeat("😀", 255), NotificationID: strings.Repeat("😀", 255), CursorTaskID: strings.Repeat("t", 255), CursorUnitID: strings.Repeat("u", 1024), Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
 		require.NoError(t, store.Create(ctx, value))
 		got, err := store.Get(ctx)
 		require.NoError(t, err)
