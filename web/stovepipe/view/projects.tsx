@@ -22,7 +22,7 @@ export function ProjectResults({ model }: { model: ProjectStatusModel }) {
   return (
     <>
       <ProjectPagination model={model} position="top" />
-      <Table label="Recorded project results" headers={["Project", "Recorded result"]}>
+      <Table label="Recorded project results" headers={["Project", "Recorded result"]} height="clamp(16rem, 55vh, 36rem)">
         {model.projects.map((entry) => (
           <StyledTableBodyRow key={entry.project}>
             <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
@@ -45,8 +45,8 @@ function ProjectPagination({ model, position }: { model: ProjectStatusModel; pos
   return <Block as="nav" aria-label={`Project pages (${position})`} display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale400" marginBottom="scale300">
     <ParagraphSmall margin="0" color="contentSecondary">{model.projects.length} projects on this page{model.nextHref ? " · More results available" : " · Last page"}</ParagraphSmall>
     <Block display="flex" flexWrap gridGap="scale500">
-      {model.firstHref && <Link href={model.firstHref}>First projects</Link>}
-      {model.nextHref && <Link href={model.nextHref}>Next projects →</Link>}
+      {model.firstHref && <Link href={model.firstHref} scroll={false}>First projects</Link>}
+      {model.nextHref && <Link href={model.nextHref} scroll={false}>Next projects →</Link>}
     </Block>
   </Block>;
 }

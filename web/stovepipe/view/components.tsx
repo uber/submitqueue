@@ -9,9 +9,9 @@ import { ParagraphSmall } from "baseui/typography";
 
 export { Table } from "@submitqueue/web-platform";
 
-export function Link({ className = "", ...props }: WebLinkProps) {
+export function Link({ className = "", scroll, ...props }: WebLinkProps) {
   const { Link: HostLink } = useWebNavigation();
-  return <StyledLink $as={HostLink ?? "a"} className={className} {...props} />;
+  return <StyledLink $as={HostLink ?? "a"} className={className} {...(HostLink ? { scroll } : {})} {...props} />;
 }
 export function Section<T>({
   result,

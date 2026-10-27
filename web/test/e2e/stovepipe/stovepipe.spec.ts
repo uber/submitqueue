@@ -398,9 +398,11 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
 
 
 test("pages through project results and switches views without reloading the document", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 650 });
   await page.goto("/web%2Fpagination/request/51");
   const views = page.getByRole("navigation", { name: "Request views" });
   const projects = page.getByRole("table", { name: "Recorded project results", exact: true });
+  const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
   const topPager = page.getByRole("navigation", { name: "Project pages (top)" });
   const bottomPager = page.getByRole("navigation", { name: "Project pages (bottom)" });
   await expect(projects.locator("tbody tr")).toHaveCount(50);
@@ -409,8 +411,18 @@ test("pages through project results and switches views without reloading the doc
   page.on("request", request => {
     if (request.isNavigationRequest() && request.resourceType() === "document") documentRequests++;
   });
-  await topPager.getByRole("link", { name: "Next projects →", exact: true }).click();
+  await projectScroll.focus();
+  await page.keyboard.press("End");
+  await expect.poll(() => projectScroll.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await bottomPager.scrollIntoViewIfNeeded();
+  const documentScroll = await page.evaluate(() => window.scrollY);
+  expect(documentScroll).toBeGreaterThan(0);
+  const resultHeight = await projectScroll.evaluate(element => element.clientHeight);
+  await bottomPager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(documentScroll);
+  expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
+  expect(await projectScroll.evaluate(element => element.clientHeight)).toBe(resultHeight);
   await expect(projects.getByRole("cell", { name: "project-51", exact: true })).toBeVisible();
   const cursor = new URL(page.url()).searchParams.get("projects");
   expect(cursor).toBeTruthy();
@@ -432,7 +444,13 @@ test("pages through project results and switches views without reloading the doc
   await expect(projects.locator("tbody tr")).toHaveCount(1);
   await bottomPager.getByRole("link", { name: "First projects", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(50);
-  expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(documentScroll);
+  await topPager.scrollIntoViewIfNeeded();
+  const topPagerScroll = await page.evaluate(() => window.scrollY);
+  await topPager.getByRole("link", { name: "Next projects →", exact: true }).click();
+  await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(topPagerScroll);
+  expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
   expect(documentRequests).toBe(0);
   expect(await page.evaluate(() => document.documentElement.dataset.pageSession)).toBe("retained");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);

@@ -2,7 +2,11 @@
 
 import { createContext, useContext, type AnchorHTMLAttributes, type ComponentType, type ReactNode } from "react";
 
-export type WebLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string };
+export type WebLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  href: string;
+  /** Whether the host router should scroll the document after navigation. */
+  scroll?: boolean;
+};
 
 /**
  * Host-supplied navigation, usually backed by the host framework's router.

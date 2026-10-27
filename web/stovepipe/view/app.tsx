@@ -95,8 +95,8 @@ function Page({ model }: { model: StovepipePageModel }) {
                       <RequestDetails request={history?.request ?? null} repositoryResult={projects && <RecordedResult degree={projects.repositoryBreakageDegree} />} />
                     </section>
                     <RequestViewNavigation aria-label="Request views">
-                      <RequestViewLink $active={!views.historySelected} href={views.projectsHref} aria-current={!views.historySelected ? "page" : undefined}>Project results</RequestViewLink>
-                      <RequestViewLink $active={views.historySelected} href={views.historyHref} aria-current={views.historySelected ? "page" : undefined}>History</RequestViewLink>
+                      <RequestViewLink $active={!views.historySelected} href={views.projectsHref} scroll={false} aria-current={!views.historySelected ? "page" : undefined}>Project results</RequestViewLink>
+                      <RequestViewLink $active={views.historySelected} href={views.historyHref} scroll={false} aria-current={views.historySelected ? "page" : undefined}>History</RequestViewLink>
                     </RequestViewNavigation>
                     <section aria-label="History" hidden={!views.historySelected}>
                       <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">History</HeadingSmall>

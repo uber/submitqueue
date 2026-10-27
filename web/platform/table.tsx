@@ -10,12 +10,13 @@ import {
 } from "baseui/table-semantic";
 import type { ReactNode } from "react";
 
-export function Table({ label, headers, children }: {
+export function Table({ label, headers, children, height }: {
   label: string;
   headers: string[];
   children: ReactNode;
+  height?: string;
 }) {
-  return <StyledRoot tabIndex={0} role="region" aria-label={label}>
+  return <StyledRoot tabIndex={0} role="region" aria-label={label} $style={height ? { height, overscrollBehavior: "contain" } : {}}>
     <StyledTable aria-label={label}>
       <StyledTableHead><StyledTableHeadRow>
         {headers.map(header => <StyledTableHeadCell key={header} scope="col">{header}</StyledTableHeadCell>)}
