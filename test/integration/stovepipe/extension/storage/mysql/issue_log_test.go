@@ -35,7 +35,7 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 		Event: entity.IssueEventOpened, BuildID: "build/1", TimestampMs: 1000}
 
 	t.Run("history survives closure and reopening", func(t *testing.T) {
-		issue := entity.IssueState{TaskID: opened.TaskID, UnitID: opened.UnitID, FirstSeenBuildID: opened.BuildID, Status: entity.IssueStatusOpen, Version: 1}
+		issue := entity.IssueState{TaskID: opened.TaskID, UnitID: opened.UnitID, FirstSeenBuildID: opened.BuildID, Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: opened.BuildID, LastChangedBuildID: opened.BuildID, ChangedAtMs: 1000}
 		require.NoError(t, bound.GetIssueStateStore().Create(ctx, issue))
 		require.NoError(t, bound.GetBuildIssueStore().Create(ctx, opened.BuildID, entity.BuildIssue{TaskID: opened.TaskID, UnitID: opened.UnitID}))
 		require.NoError(t, store.Create(ctx, opened))

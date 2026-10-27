@@ -39,6 +39,12 @@ type IssueState struct {
 	Status IssueStatus `json:"status"`
 	// FirstSeenBuildID identifies the current or most recent opening.
 	FirstSeenBuildID string `json:"first_seen_build_id"`
+	// LastProcessedBuildID identifies the most recent build applied to this issue.
+	LastProcessedBuildID string `json:"last_processed_build_id"`
+	// LastChangedBuildID identifies the build responsible for the current open or closed status.
+	LastChangedBuildID string `json:"last_changed_build_id"`
+	// ChangedAtMs is the latest status transition's timestamp in Unix milliseconds.
+	ChangedAtMs int64 `json:"changed_at_ms"`
 	// Version is the positive optimistic-lock version; it never resets on reopening.
 	Version int32 `json:"version"`
 }
@@ -47,6 +53,12 @@ type IssueState struct {
 func (s IssueState) Validate() error {
 	if s.TaskID == "" || s.FirstSeenBuildID == "" {
 		return fmt.Errorf("issue state requires task and first-seen build IDs")
+	}
+	if s.LastProcessedBuildID == "" || s.LastChangedBuildID == "" {
+		return fmt.Errorf("issue state requires last-processed and last-changed build IDs")
+	}
+	if s.ChangedAtMs <= 0 {
+		return fmt.Errorf("issue state requires a positive change timestamp")
 	}
 	if s.Status != IssueStatusOpen && s.Status != IssueStatusClosed {
 		return fmt.Errorf("invalid issue status %q", s.Status)

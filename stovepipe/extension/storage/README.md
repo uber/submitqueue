@@ -42,7 +42,7 @@ Existing MySQL deployments must add `fix_id VARCHAR(255) NOT NULL DEFAULT ''` an
 
 ## Issue state
 
-`IssueStateStore` retains the latest open or closed state for each task/unit within its queue. The primary key remains `(queue, task, unit)`; status is a value, not a key component. A closed record retains its first-seen build and positive CAS version. Reopening updates the same record with a new first-seen build and a higher version. Records are never deleted, so a stale create cannot reuse an empty key after closure.
+`IssueStateStore` retains the latest open or closed state for each task/unit within its queue. The primary key remains `(queue, task, unit)`; status is a value, not a key component. A closed record retains its first-seen build, last-processed build, last-changing build, transition timestamp, and positive CAS version. Reopening updates the same record with a new first-seen build and a higher version. Records are never deleted, so a stale create cannot reuse an empty key after closure.
 
 Create is conditional on absence, including closed records. Update checks the supplied old version and writes the caller's replacement version. Controllers compute versions and update their in-memory values only after success. The store does not decide which source build is allowed to change an issue; that decision belongs to the issue-tracking controller.
 
@@ -62,8 +62,12 @@ History persistence does not alter issue state or validate transitions against i
 
 ## Issue reconciliation progress
 
-`IssueTrackingStore` retains one queue-scoped operational `IssueTrackingState`, independently of open-issue membership and user-facing summaries. It records the source request and build, whether refresh or final writes are pending or complete, the owning notification, an exclusive task/unit cursor, and its optimistic version. The zero cursor starts a pass. A cursor checkpoint follows the writes for every processed key; notification identity lets the controller distinguish its own continuation from helping another pass. Keeping it after the last open row is removed preserves the source-order boundary. The MySQL table is keyed only by queue; creates, reads, and updates use complete primary keys with no secondary indexes or cross-table transaction.
+`IssueTrackingStore` retains one queue-scoped operational `IssueTrackingState`, independently of open-issue membership and user-facing summaries. It records the source request and build, the refresh or finalization phase, the owning notification, one task/unit cursor, and its optimistic version. The zero cursor starts a pass. An active pass revisits the cursor issue before scanning later keys, including when the previous delivery already finished that issue. Notification identity lets the controller distinguish its own continuation from helping another pass. The record remains after all issues close to preserve the source-order boundary. The MySQL table is keyed only by queue; creates, reads, and updates use complete primary keys with no secondary indexes or cross-table transaction.
 
-The store does not decide source ordering, apply issue transitions, or advance versions. Its caller supplies the guard version and replacement version. A later controller will own acceptance, resumption of pending writes, and completion; no runtime writer is enabled here.
+The store does not decide source ordering, apply issue transitions, or advance versions. Its caller supplies the guard version and replacement version. A later controller will own acceptance, resumption of cursor work, and completion; no runtime writer is enabled here.
 
 The issue-tracking table must include the notification and cursor columns before updated readers or writers are deployed. No runtime writer is enabled by the storage layer. Notification IDs allow up to 1020 bytes, matching the queue message ID byte capacity; cursor limits match the issue stores.
+
+### Applied transition facts
+
+`IssueState.LastProcessedBuildID` identifies the most recent build applied to an issue, including unchanged results. `LastChangedBuildID` and `ChangedAtMs` identify the actual opening or closing and supply its history identity and timestamp. They do not advance when only the processed build changes. `FirstSeenBuildID` remains the opening identity across closure and changes on reopening. These references must remain readable while used for source ordering. The current-issue cursor and the row's processed source provide the storage needed for retry-safe application without retaining a future write payload.

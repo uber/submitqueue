@@ -52,6 +52,9 @@ func testIssueStateList(t *testing.T, ctx context.Context, factory storage.Facto
 	}
 	for i := range expected {
 		expected[i].FirstSeenBuildID = fmt.Sprintf("build/%d", i)
+		expected[i].LastProcessedBuildID = expected[i].FirstSeenBuildID
+		expected[i].LastChangedBuildID = expected[i].FirstSeenBuildID
+		expected[i].ChangedAtMs = 1000
 		expected[i].Version = 1
 		expected[i].Status = entity.IssueStatusOpen
 		if i%2 == 0 {
@@ -72,7 +75,7 @@ func testIssueStateList(t *testing.T, ctx context.Context, factory storage.Facto
 	require.NoError(t, err)
 	require.NoError(t, other.GetIssueStateStore().Create(ctx, entity.IssueState{
 		TaskID: "other", UnitID: "unit", FirstSeenBuildID: "other-build", Status: entity.IssueStatusOpen, Version: 1,
-	}))
+		LastProcessedBuildID: "other-build", LastChangedBuildID: "other-build", ChangedAtMs: 1000}))
 
 	for _, limit := range []int{1, 2, 3, len(expected), len(expected) + 1} {
 		t.Run(fmt.Sprintf("page size %d", limit), func(t *testing.T) {
@@ -96,7 +99,7 @@ func testIssueStateList(t *testing.T, ctx context.Context, factory storage.Facto
 
 	t.Run("empty task IDs are rejected", func(t *testing.T) {
 		for _, unitID := range []string{"", "unit"} {
-			issue := entity.IssueState{UnitID: unitID, FirstSeenBuildID: "build/invalid"}
+			issue := entity.IssueState{UnitID: unitID, FirstSeenBuildID: "build/invalid", LastProcessedBuildID: "build/invalid", LastChangedBuildID: "build/invalid", ChangedAtMs: 1000}
 			require.Error(t, store.Create(ctx, issue))
 			_, err := store.Get(ctx, "", unitID)
 			require.Error(t, err)
@@ -115,7 +118,7 @@ func testIssueStateList(t *testing.T, ctx context.Context, factory storage.Facto
 		store := bound.GetIssueStateStore()
 		var expected []entity.IssueState
 		for _, unit := range []string{"a", "b", "c"} {
-			issue := entity.IssueState{TaskID: "task", UnitID: unit, FirstSeenBuildID: "build/1", Status: entity.IssueStatusOpen, Version: 1}
+			issue := entity.IssueState{TaskID: "task", UnitID: unit, FirstSeenBuildID: "build/1", Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: "build/1", LastChangedBuildID: "build/1", ChangedAtMs: 1000}
 			expected = append(expected, issue)
 			require.NoError(t, store.Create(ctx, issue))
 		}
@@ -143,7 +146,7 @@ func testIssueStateList(t *testing.T, ctx context.Context, factory storage.Facto
 		require.NoError(t, err)
 		store := bound.GetIssueStateStore()
 		issue := entity.IssueState{TaskID: strings.Repeat("t", 255), UnitID: strings.Repeat("😀", 256),
-			FirstSeenBuildID: strings.Repeat("😀", 255), Status: entity.IssueStatusOpen, Version: 1}
+			FirstSeenBuildID: strings.Repeat("😀", 255), Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: strings.Repeat("😀", 255), LastChangedBuildID: strings.Repeat("😀", 255), ChangedAtMs: 1000}
 		require.NoError(t, store.Create(ctx, issue))
 		page, err := store.List(ctx, storage.IssueStateRange{Limit: 1})
 		require.NoError(t, err)

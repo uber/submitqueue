@@ -21,13 +21,13 @@ import (
 )
 
 func TestIssueStateValidate(t *testing.T) {
-	valid := IssueState{TaskID: "task", FirstSeenBuildID: "build", Status: IssueStatusOpen, Version: 1}
+	valid := IssueState{TaskID: "task", FirstSeenBuildID: "build", Status: IssueStatusOpen, Version: 1, LastProcessedBuildID: "build", LastChangedBuildID: "build", ChangedAtMs: 1000}
 	for _, status := range []IssueStatus{IssueStatusOpen, IssueStatusClosed} {
 		value := valid
 		value.Status = status
 		require.NoError(t, value.Validate())
 	}
-	for _, field := range []string{"task", "build", "status", "version"} {
+	for _, field := range []string{"task", "build", "status", "version", "processed build", "changed build", "timestamp"} {
 		t.Run(field, func(t *testing.T) {
 			value := valid
 			switch field {
@@ -37,6 +37,12 @@ func TestIssueStateValidate(t *testing.T) {
 				value.FirstSeenBuildID = ""
 			case "status":
 				value.Status = IssueStatusUnknown
+			case "processed build":
+				value.LastProcessedBuildID = ""
+			case "changed build":
+				value.LastChangedBuildID = ""
+			case "timestamp":
+				value.ChangedAtMs = 0
 			case "version":
 				value.Version = 0
 			}

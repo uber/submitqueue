@@ -29,7 +29,7 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 	bound, err := factory.For(storage.Config{QueueName: "issue-state/main"})
 	require.NoError(t, err)
 	store := bound.GetIssueStateStore()
-	issue := entity.IssueState{TaskID: "validation", UnitID: "unit", Status: entity.IssueStatusOpen, FirstSeenBuildID: "build/1", Version: 1}
+	issue := entity.IssueState{TaskID: "validation", UnitID: "unit", Status: entity.IssueStatusOpen, FirstSeenBuildID: "build/1", Version: 1, LastProcessedBuildID: "build/1", LastChangedBuildID: "build/1", ChangedAtMs: 1000}
 	require.NoError(t, store.Create(ctx, issue))
 	require.ErrorIs(t, store.Create(ctx, issue), storage.ErrAlreadyExists)
 	got, err := store.Get(ctx, issue.TaskID, issue.UnitID)
@@ -38,6 +38,8 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 
 	closed := issue
 	closed.Status = entity.IssueStatusClosed
+	closed.LastProcessedBuildID, closed.LastChangedBuildID = "build/2", "build/2"
+	closed.ChangedAtMs = 2000
 	require.NoError(t, store.Update(ctx, closed, 1, 2))
 	closed.Version = 2
 	got, err = store.Get(ctx, issue.TaskID, issue.UnitID)
@@ -49,6 +51,8 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 	reopened := closed
 	reopened.Status = entity.IssueStatusOpen
 	reopened.FirstSeenBuildID = "build/3"
+	reopened.LastProcessedBuildID, reopened.LastChangedBuildID = "build/3", "build/3"
+	reopened.ChangedAtMs = 3000
 	require.NoError(t, store.Update(ctx, reopened, 2, 3))
 	reopened.Version = 3
 	require.ErrorIs(t, store.Update(ctx, closed, 2, 3), storage.ErrVersionMismatch)

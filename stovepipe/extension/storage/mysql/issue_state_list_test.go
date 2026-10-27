@@ -61,15 +61,15 @@ func TestIssueStateList(t *testing.T) {
 			if tt.dbErr != nil {
 				expectation.WillReturnError(tt.dbErr)
 			} else {
-				rows := sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "version"})
+				rows := sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version"})
 				if !tt.empty {
 					var firstBuild any = issue.FirstSeenBuildID
 					if tt.scanError {
 						firstBuild = nil
 					}
-					rows.AddRow(issue.TaskID, issue.UnitID, issue.Status, firstBuild, issue.Version)
+					rows.AddRow(issue.TaskID, issue.UnitID, issue.Status, firstBuild, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version)
 					if tt.rowError {
-						rows.AddRow("task", "unit-2", entity.IssueStatusClosed, "build/2", 2).RowError(1, assert.AnError)
+						rows.AddRow("task", "unit-2", entity.IssueStatusClosed, "build/2", "build/2", "build/2", int64(1000), 2).RowError(1, assert.AnError)
 					}
 				}
 				expectation.WillReturnRows(rows).RowsWillBeClosed()
@@ -124,7 +124,7 @@ func TestIssueStateListRejectsInvalidRange(t *testing.T) {
 				queue = "queue"
 			}
 			store := NewIssueStateStore(db, testMetrics(), queue)
-			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "version"}))
+			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version"}))
 
 			got, err := store.List(context.Background(), tt.bounds)
 			require.Error(t, err)

@@ -31,7 +31,7 @@ import (
 )
 
 func trackingFixture() entity.IssueTrackingState {
-	return entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
+	return entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", CursorTaskID: "task", CursorUnitID: "unit", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
 }
 
 func TestIssueTrackingStoreGet(t *testing.T) {
@@ -43,7 +43,7 @@ func TestIssueTrackingStoreGet(t *testing.T) {
 
 			state := trackingFixture()
 			store := NewIssueTrackingStore(db, testMetrics(), "queue")
-			query := mock.ExpectQuery(regexp.QuoteMeta(`SELECT request_id, build_id, notification_id, after_task_id, after_unit_id, phase, version FROM issue_tracking WHERE queue = ?`)).WithArgs("queue")
+			query := mock.ExpectQuery(regexp.QuoteMeta(`SELECT request_id, build_id, notification_id, cursor_task_id, cursor_unit_id,  phase, version FROM issue_tracking WHERE queue = ?`)).WithArgs("queue")
 			switch kind {
 			case "missing":
 				query.WillReturnError(sql.ErrNoRows)
@@ -54,7 +54,7 @@ func TestIssueTrackingStoreGet(t *testing.T) {
 				if kind == "scan error" {
 					request = nil
 				}
-				query.WillReturnRows(sqlmock.NewRows([]string{"request_id", "build_id", "notification_id", "after_task_id", "after_unit_id", "phase", "version"}).AddRow(request, state.BuildID, state.NotificationID, state.AfterTaskID, state.AfterUnitID, state.Phase, state.Version))
+				query.WillReturnRows(sqlmock.NewRows([]string{"request_id", "build_id", "notification_id", "cursor_task_id", "cursor_unit_id", "phase", "version"}).AddRow(request, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Phase, state.Version))
 			}
 
 			got, err := store.Get(context.Background())
@@ -94,8 +94,8 @@ func TestIssueTrackingStoreCreate(t *testing.T) {
 
 			state := trackingFixture()
 			store := NewIssueTrackingStore(db, testMetrics(), "queue")
-			query := mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id, after_task_id, after_unit_id, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)).
-				WithArgs("queue", state.RequestID, state.BuildID, state.NotificationID, state.AfterTaskID, state.AfterUnitID, state.Phase, state.Version)
+			query := mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id, cursor_task_id, cursor_unit_id,  phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)).
+				WithArgs("queue", state.RequestID, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Phase, state.Version)
 			if tt.dbErr != nil {
 				query.WillReturnError(tt.dbErr)
 			} else {
@@ -133,8 +133,8 @@ func TestIssueTrackingStoreUpdate(t *testing.T) {
 
 			state := trackingFixture()
 			store := NewIssueTrackingStore(db, testMetrics(), "queue")
-			query := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?, after_task_id = ?, after_unit_id = ?, phase = ?, version = ? WHERE queue = ? AND version = ?`)).
-				WithArgs(state.RequestID, state.BuildID, state.NotificationID, state.AfterTaskID, state.AfterUnitID, state.Phase, int32(7), "queue", int32(1))
+			query := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?, cursor_task_id = ?, cursor_unit_id = ?,  phase = ?, version = ? WHERE queue = ? AND version = ?`)).
+				WithArgs(state.RequestID, state.BuildID, state.NotificationID, state.CursorTaskID, state.CursorUnitID, state.Phase, int32(7), "queue", int32(1))
 			switch {
 			case tt.dbErr != nil:
 				query.WillReturnError(tt.dbErr)
@@ -165,11 +165,12 @@ func TestIssueTrackingStoreRejectsInvalidState(t *testing.T) {
 		{"invalid request", func(s *entity.IssueTrackingState, _ *string) { s.RequestID = "invalid" }},
 		{"empty notification", func(s *entity.IssueTrackingState, _ *string) { s.NotificationID = "" }},
 		{"oversized notification", func(s *entity.IssueTrackingState, _ *string) { s.NotificationID = strings.Repeat("n", 1021) }},
-		{"oversized task cursor", func(s *entity.IssueTrackingState, _ *string) { s.AfterTaskID = strings.Repeat("t", 256) }},
+		{"oversized task cursor", func(s *entity.IssueTrackingState, _ *string) { s.CursorTaskID = strings.Repeat("t", 256) }},
 		{"oversized unit cursor", func(s *entity.IssueTrackingState, _ *string) {
-			s.AfterTaskID = "task"
-			s.AfterUnitID = strings.Repeat("u", 1025)
+			s.CursorTaskID = "task"
+			s.CursorUnitID = strings.Repeat("u", 1025)
 		}},
+
 		{"empty build", func(s *entity.IssueTrackingState, _ *string) { s.BuildID = "" }},
 		{"oversized build", func(s *entity.IssueTrackingState, _ *string) { s.BuildID = strings.Repeat("b", 1021) }},
 		{"unknown phase", func(s *entity.IssueTrackingState, _ *string) { s.Phase = entity.IssueTrackingPhaseUnknown }},

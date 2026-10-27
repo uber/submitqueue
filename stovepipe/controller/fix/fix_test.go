@@ -74,7 +74,7 @@ func testIssue() entity.OpenIssue {
 }
 
 func storedIssue(issue entity.OpenIssue) entity.IssueState {
-	return entity.IssueState{TaskID: issue.TaskID, UnitID: issue.UnitID, FirstSeenBuildID: issue.FirstSeenBuildID, Status: entity.IssueStatusOpen, Version: 1}
+	return entity.IssueState{TaskID: issue.TaskID, UnitID: issue.UnitID, FirstSeenBuildID: issue.FirstSeenBuildID, Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: issue.FirstSeenBuildID, LastChangedBuildID: issue.FirstSeenBuildID, ChangedAtMs: 1000}
 }
 
 func issueIdentity(issue entity.OpenIssue) entity.BuildIssue {
@@ -140,7 +140,7 @@ func TestProcessBuildFindsCandidateOnLaterPage(t *testing.T) {
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).
 			Return([]entity.BuildIssue{older}, nil),
 		m.issues.EXPECT().Get(gomock.Any(), older.TaskID, older.UnitID).
-			Return(entity.IssueState{TaskID: older.TaskID, FirstSeenBuildID: "older-build", Status: entity.IssueStatusOpen, Version: 1}, nil),
+			Return(entity.IssueState{TaskID: older.TaskID, FirstSeenBuildID: "older-build", Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: "older-build", LastChangedBuildID: "older-build", ChangedAtMs: 1000}, nil),
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(older)).
 			Return([]entity.BuildIssue{issueIdentity(issue)}, nil),
 		m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil),
@@ -203,7 +203,7 @@ func TestProcessBuildWithoutEligibleIssue(t *testing.T) {
 				m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(entity.IssueState{}, storage.ErrNotFound)
 			} else {
 				m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).
-					Return(entity.IssueState{TaskID: issue.TaskID, FirstSeenBuildID: firstSeenBuildID, Status: entity.IssueStatusOpen, Version: 1}, nil)
+					Return(entity.IssueState{TaskID: issue.TaskID, FirstSeenBuildID: firstSeenBuildID, Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: firstSeenBuildID, LastChangedBuildID: firstSeenBuildID, ChangedAtMs: 1000}, nil)
 			}
 			m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issue)).Return(nil, nil)
 

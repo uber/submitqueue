@@ -27,12 +27,12 @@ import (
 )
 
 const listIssueStatesQuery = `
-	SELECT task_id, unit_id, status, first_seen_build_id, version
+	SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
 	FROM issue_state WHERE queue = ?
 	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
 
 const listIssueStatesAfterCursorQuery = `
-	SELECT task_id, unit_id, status, first_seen_build_id, version
+	SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
 	FROM issue_state WHERE queue = ?
 		AND (task_id > ? OR (task_id = ? AND unit_id > ?))
 	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
@@ -57,9 +57,9 @@ func (s *issueStateStore) Create(ctx context.Context, issue entity.IssueState) (
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, version)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-		s.queue, issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.Version)
+		`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.queue, issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version)
 	if err != nil {
 		if isDuplicateEntry(err) {
 			return fmt.Errorf("issue state task=%q unit=%q: %w", issue.TaskID, issue.UnitID, storage.ErrAlreadyExists)
@@ -84,10 +84,10 @@ func (s *issueStateStore) Get(ctx context.Context, taskID, unitID string) (ret e
 
 	var issue entity.IssueState
 	err := s.db.QueryRowContext(ctx,
-		`SELECT task_id, unit_id, status, first_seen_build_id, version
+		`SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
          FROM issue_state WHERE queue = ? AND task_id = ? AND unit_id = ?`,
 		s.queue, taskID, unitID,
-	).Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.Version)
+	).Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.LastProcessedBuildID, &issue.LastChangedBuildID, &issue.ChangedAtMs, &issue.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.IssueState{}, storage.WrapNotFound(err)
 	}
@@ -131,7 +131,7 @@ func (s *issueStateStore) List(ctx context.Context, bounds storage.IssueStateRan
 	issues := make([]entity.IssueState, 0)
 	for rows.Next() {
 		var issue entity.IssueState
-		if err := rows.Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.Version); err != nil {
+		if err := rows.Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.LastProcessedBuildID, &issue.LastChangedBuildID, &issue.ChangedAtMs, &issue.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan issue state: %w", err)
 		}
 		issues = append(issues, issue)
@@ -155,8 +155,8 @@ func (s *issueStateStore) Update(ctx context.Context, issue entity.IssueState, o
 		return fmt.Errorf("issue state guard version must be positive")
 	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE issue_state SET status = ?, first_seen_build_id = ?, version = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`,
-		issue.Status, issue.FirstSeenBuildID, newVersion, s.queue, issue.TaskID, issue.UnitID, oldVersion)
+		`UPDATE issue_state SET status = ?, first_seen_build_id = ?, last_processed_build_id = ?, last_changed_build_id = ?, changed_at_ms = ?, version = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`,
+		issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, newVersion, s.queue, issue.TaskID, issue.UnitID, oldVersion)
 	if err != nil {
 		return fmt.Errorf("update issue state: %w", err)
 	}
@@ -176,6 +176,11 @@ func (s *issueStateStore) validateIssue(issue entity.IssueState) error {
 	}
 	if err := validateBuildIssueKey(s.queue, issue.FirstSeenBuildID, issue.TaskID, issue.UnitID); err != nil {
 		return err
+	}
+	for _, buildID := range []string{issue.LastProcessedBuildID, issue.LastChangedBuildID} {
+		if err := validateBuildIssueKey(s.queue, buildID, issue.TaskID, issue.UnitID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

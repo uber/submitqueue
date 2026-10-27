@@ -39,7 +39,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	require.NoError(t, err)
 	require.Equal(t, state, got)
 
-	state.AfterTaskID, state.AfterUnitID = "task", "unit"
+	state.CursorTaskID, state.CursorUnitID = "task", "unit"
 	state.Phase = entity.IssueTrackingPhaseRefreshed
 	require.NoError(t, store.Update(ctx, state, 1, 2))
 	state.Version = 2
@@ -105,7 +105,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		bound, err := factory.For(storage.Config{QueueName: strings.Repeat("q", 255)})
 		require.NoError(t, err)
 		store := bound.GetIssueTrackingStore()
-		value := entity.IssueTrackingState{RequestID: "9223372036854775807", BuildID: strings.Repeat("😀", 255), NotificationID: strings.Repeat("😀", 255), AfterTaskID: strings.Repeat("t", 255), AfterUnitID: strings.Repeat("u", 1024), Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
+		value := entity.IssueTrackingState{RequestID: "9223372036854775807", BuildID: strings.Repeat("😀", 255), NotificationID: strings.Repeat("😀", 255), CursorTaskID: strings.Repeat("t", 255), CursorUnitID: strings.Repeat("u", 1024), Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
 		require.NoError(t, store.Create(ctx, value))
 		got, err := store.Get(ctx)
 		require.NoError(t, err)

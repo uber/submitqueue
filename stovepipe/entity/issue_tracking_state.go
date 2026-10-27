@@ -20,7 +20,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/id"
 )
 
-// IssueTrackingPhase describes whether one source build's issue updates are pending or complete.
+// IssueTrackingPhase describes whether one source build's issue updates are underway or complete.
 type IssueTrackingPhase string
 
 const (
@@ -30,7 +30,7 @@ const (
 	IssueTrackingPhaseRefreshing IssueTrackingPhase = "refreshing"
 	// IssueTrackingPhaseRefreshed means a refresh pass completed; later refresh notifications remain eligible.
 	IssueTrackingPhaseRefreshed IssueTrackingPhase = "refreshed"
-	// IssueTrackingPhaseFinalizing means final opening and closing updates are pending.
+	// IssueTrackingPhaseFinalizing means final opening and closing updates are underway.
 	IssueTrackingPhaseFinalizing IssueTrackingPhase = "finalizing"
 	// IssueTrackingPhaseFinalized means final reconciliation completed; later refresh notifications are ignored.
 	IssueTrackingPhaseFinalized IssueTrackingPhase = "finalized"
@@ -40,24 +40,19 @@ const (
 type IssueTrackingState struct {
 	// RequestID is the newest accepted source request, compared by ingest order.
 	RequestID string `json:"request_id"`
-	// BuildID identifies the source build whose pass is pending or most recently completed.
+	// BuildID identifies the source build whose pass is underway or most recently completed.
 	BuildID string `json:"build_id"`
 	// NotificationID identifies the message that owns this reconciliation pass.
 	NotificationID string `json:"notification_id"`
-	// AfterTaskID is the exclusive task cursor after fully processed issue keys.
-	// Empty with an empty AfterUnitID starts a pass.
-	AfterTaskID string `json:"after_task_id"`
-	// AfterUnitID is the unit component of the exclusive cursor; empty is task-wide.
-	AfterUnitID string `json:"after_unit_id"`
-	// Phase distinguishes pending work from completed refresh or final passes.
+	// CursorTaskID identifies the current issue's task; active passes revisit it on continuation.
+	// Empty with an empty CursorUnitID starts a pass.
+	CursorTaskID string `json:"cursor_task_id"`
+	// CursorUnitID identifies the unit at the cursor; empty is task-wide.
+	CursorUnitID string `json:"cursor_unit_id"`
+	// Phase distinguishes running passes from completed refresh or final passes.
 	Phase IssueTrackingPhase `json:"phase"`
 	// Version is the positive optimistic-lock version of this state.
 	Version int32 `json:"version"`
-}
-
-// IsPending reports whether the phase represents unfinished reconciliation.
-func (s IssueTrackingState) IsPending() bool {
-	return s.Phase == IssueTrackingPhaseRefreshing || s.Phase == IssueTrackingPhaseFinalizing
 }
 
 // Validate verifies the identity, phase, and version of a persisted state.
@@ -71,16 +66,16 @@ func (s IssueTrackingState) Validate() error {
 	if s.NotificationID == "" {
 		return fmt.Errorf("issue tracking notification ID must not be empty")
 	}
-	if s.AfterTaskID == "" && s.AfterUnitID != "" {
+	if s.CursorTaskID == "" && s.CursorUnitID != "" {
 		return fmt.Errorf("issue tracking cursor unit requires a task")
 	}
 	if s.Version <= 0 {
 		return fmt.Errorf("issue tracking version must be positive")
 	}
 	switch s.Phase {
-	case IssueTrackingPhaseRefreshing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalizing, IssueTrackingPhaseFinalized:
-		return nil
+	case IssueTrackingPhaseRefreshing, IssueTrackingPhaseFinalizing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalized:
 	default:
 		return fmt.Errorf("invalid issue tracking phase %q", s.Phase)
 	}
+	return nil
 }
