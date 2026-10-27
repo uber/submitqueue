@@ -39,6 +39,7 @@ type logKey struct {
 }
 
 type fixture struct {
+	failOnPhase entity.IssueTrackingPhase
 	t           *testing.T
 	mocks       *gomock.Controller
 	controller  *Controller
@@ -145,6 +146,10 @@ func newFixture(t *testing.T) *fixture {
 	tracking.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state entity.IssueTrackingState, oldVersion, newVersion int32) error {
 		if err := f.fail("progress/update"); err != nil {
 			return err
+		}
+		if f.failOnPhase != "" && state.Phase == f.failOnPhase {
+			f.failOnPhase = ""
+			return assert.AnError
 		}
 		if !f.hasProgress || f.progress.Version != oldVersion {
 			return storage.ErrVersionMismatch

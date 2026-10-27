@@ -20,15 +20,23 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
+	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
+
+// Each delivery processes at most this many keys, including a revisited cursor and closed records.
+const _issueBatchSize = 100
 
 type issueKey struct{ task, unit string }
 
@@ -51,6 +59,213 @@ func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.
 		consumerGroup: consumerGroup,
 		nowMs:         func() int64 { return time.Now().UnixMilli() },
 	}
+}
+
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
+	msg := delivery.Message()
+	notification := &stovepipemq.IssueTrack{}
+	if err := stovepipemq.Unmarshal(msg.Payload, notification); err != nil {
+		return fmt.Errorf("deserialize issue tracking notification: %w", err)
+	}
+	queue := notification.GetQueueName()
+	if err := entityqueue.ValidatePayloadQueue(msg, queue); err != nil {
+		return fmt.Errorf("invalid message identity: %w", err)
+	}
+	if msg.ID == "" || queue == "" || notification.GetBuildId() == "" {
+		return fmt.Errorf("issue tracking requires message, queue, and build identifiers")
+	}
+	if msg.PartitionKey != queue {
+		return fmt.Errorf("issue tracking must be partitioned by queue %q", queue)
+	}
+	store, err := c.stores.For(storage.Config{QueueName: queue})
+	if err != nil {
+		return fmt.Errorf("resolve issue tracking storage: %w", err)
+	}
+	return c.trackBuild(ctx, delivery, store, notification, msg.ID)
+}
+
+func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery, store storage.Storage, notification *stovepipemq.IssueTrack, notificationID string) error {
+	queue := notification.GetQueueName()
+	build, request, err := loadBuildAndRequest(ctx, store, queue, notification.GetBuildId())
+	if err != nil {
+		return err
+	}
+
+	tracking := store.GetIssueTrackingStore()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		progress, err := tracking.Get(ctx)
+		if errors.Is(err, storage.ErrNotFound) {
+			progress = entity.IssueTrackingState{}
+		} else if err != nil {
+			return fmt.Errorf("load issue tracking progress: %w", err)
+		}
+
+		if progress.Phase != entity.IssueTrackingPhaseRefreshing && progress.Phase != entity.IssueTrackingPhaseFinalizing {
+			if request.TerminalBuildID != "" && request.TerminalBuildID != build.ID {
+				return nil
+			}
+			if progress.Version != 0 {
+				if progress.NotificationID == notificationID {
+					return nil
+				}
+				order, err := entity.CompareRequestID(request.ID, progress.RequestID)
+				if err != nil {
+					return err
+				}
+				if order < 0 || (order == 0 && progress.Phase == entity.IssueTrackingPhaseFinalized) {
+					c.logger.Debugw("ignoring superseded issue tracking notification",
+						"queue", queue, "build_id", build.ID, "request_id", request.ID, "current_request_id", progress.RequestID)
+					return nil
+				}
+			}
+
+			if progress.Version == math.MaxInt32 {
+				return fmt.Errorf("issue tracking version exhausted")
+			}
+			next := entity.IssueTrackingState{
+				RequestID:      request.ID,
+				BuildID:        build.ID,
+				NotificationID: notificationID,
+				Phase:          entity.IssueTrackingPhaseRefreshing,
+				Version:        progress.Version + 1,
+			}
+			if notification.GetFinalize() {
+				if !build.Status.IsTerminal() || request.TerminalBuildID != build.ID {
+					return fmt.Errorf("final issue tracking requires the request's terminal build")
+				}
+				next.Phase = entity.IssueTrackingPhaseFinalizing
+			}
+
+			if progress.Version == 0 {
+				err = tracking.Create(ctx, next)
+			} else {
+				err = tracking.Update(ctx, next, progress.Version, next.Version)
+			}
+			if errors.Is(err, storage.ErrAlreadyExists) || errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("start issue tracking pass: %w", err)
+			}
+			progress = next
+		}
+
+		checkpoint, err := c.reconcileBatch(ctx, store, queue, progress)
+		if err != nil {
+			return err
+		}
+		if checkpoint.NotificationID != notificationID ||
+			checkpoint.Phase == entity.IssueTrackingPhaseRefreshing ||
+			checkpoint.Phase == entity.IssueTrackingPhaseFinalizing {
+			delivery.Hold(0)
+		}
+		return nil
+	}
+}
+
+func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState) (checkpoint entity.IssueTrackingState, retErr error) {
+	op := metrics.Begin(c.metricsScope, "batch", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
+	defer func() { op.Complete(retErr) }()
+
+	limit := _issueBatchSize
+
+	build, request, err := loadBuildAndRequest(ctx, store, queue, progress.BuildID)
+	if err != nil {
+		return entity.IssueTrackingState{}, err
+	}
+	switch progress.Phase {
+	case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing:
+	default:
+		return entity.IssueTrackingState{}, fmt.Errorf("issue batch requires a refreshing or finalizing pass")
+	}
+	if request.ID != progress.RequestID {
+		return entity.IssueTrackingState{}, fmt.Errorf("issue batch does not match its source request")
+	}
+	finalizing := progress.Phase == entity.IssueTrackingPhaseFinalizing
+	if finalizing && (!build.Status.IsTerminal() || request.TerminalBuildID != build.ID) {
+		return entity.IssueTrackingState{}, fmt.Errorf("final issue tracking requires the request's terminal build")
+	}
+
+	if progress.CursorTaskID != "" {
+		next, err := c.processIssue(ctx, store, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false)
+		if err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+		progress = next
+		limit--
+	}
+
+	buildIssues, err := store.GetBuildIssueStore().List(ctx, build.ID, storage.BuildIssueRange{
+		After: storage.BuildIssueCursor{TaskID: progress.CursorTaskID, UnitID: progress.CursorUnitID},
+		Limit: limit,
+	})
+	if err != nil {
+		return entity.IssueTrackingState{}, fmt.Errorf("list build issues: %w", err)
+	}
+
+	var states []entity.IssueState
+	// Cancellation may have skipped validation, so absence cannot close an existing issue.
+	if finalizing && build.Status != entity.BuildStatusCancelled {
+		states, err = store.GetIssueStateStore().List(ctx, storage.IssueStateRange{
+			After: storage.IssueStateCursor{TaskID: progress.CursorTaskID, UnitID: progress.CursorUnitID},
+			Limit: limit,
+		})
+		if err != nil {
+			return entity.IssueTrackingState{}, fmt.Errorf("list issue states: %w", err)
+		}
+	}
+
+	reported := make(map[issueKey]bool, len(buildIssues)+len(states))
+	for _, issue := range states {
+		reported[issueKey{issue.TaskID, issue.UnitID}] = false
+	}
+	for _, issue := range buildIssues {
+		reported[issueKey{issue.TaskID, issue.UnitID}] = true
+	}
+	keys := make([]issueKey, 0, len(reported))
+	for key := range reported {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].task != keys[j].task {
+			return keys[i].task < keys[j].task
+		}
+		return keys[i].unit < keys[j].unit
+	})
+	complete := len(buildIssues) < limit && len(states) < limit && len(keys) <= limit
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+
+	cursorNeedsCheckpoint := false
+	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+		previousVersion := progress.Version
+		progress, err = c.processIssue(ctx, store, progress, key, reported[key])
+		if err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+		cursorNeedsCheckpoint = progress.Version == previousVersion
+	}
+
+	if complete {
+		next := progress
+		next.Phase = entity.IssueTrackingPhaseRefreshed
+		if finalizing {
+			next.Phase = entity.IssueTrackingPhaseFinalized
+		}
+		return saveProgress(ctx, store.GetIssueTrackingStore(), next)
+	}
+	if cursorNeedsCheckpoint {
+		return saveProgress(ctx, store.GetIssueTrackingStore(), progress)
+	}
+
+	return progress, nil
 }
 
 func (c *Controller) processIssue(ctx context.Context, store storage.Storage, progress entity.IssueTrackingState, key issueKey, reported bool) (entity.IssueTrackingState, error) {
@@ -182,6 +397,26 @@ func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next en
 	return next, nil
 }
 
+func loadBuildAndRequest(ctx context.Context, store storage.Storage, queue, buildID string) (entity.Build, entity.Request, error) {
+	build, err := loader.ByID(ctx, buildID, store.GetBuildStore().Get, "build")
+	if err != nil {
+		return entity.Build{}, entity.Request{}, err
+	}
+	request, err := loader.ByID(ctx, build.RequestID, store.GetRequestStore().Get, "request")
+	if err != nil {
+		return entity.Build{}, entity.Request{}, err
+	}
+	if request.Queue != queue {
+		return entity.Build{}, entity.Request{}, fmt.Errorf("issue tracking request belongs to another queue")
+	}
+	if err := id.Validate(request.ID); err != nil {
+		return entity.Build{}, entity.Request{}, fmt.Errorf("invalid issue tracking request ID: %w", err)
+	}
+	return build, request, nil
+}
+
 func (c *Controller) Name() string                { return "issuetrack" }
 func (c *Controller) TopicKey() consumer.TopicKey { return c.topicKey }
 func (c *Controller) ConsumerGroup() string       { return c.consumerGroup }
+
+var _ consumer.Controller = (*Controller)(nil)
