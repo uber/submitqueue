@@ -161,6 +161,11 @@ func requestWithState(state entity.RequestState) entity.Request {
 	}
 	if state.HasBuildOutcome() {
 		request.TerminalBuildID = testBuildID
+		request.OutcomeReason = map[entity.RequestState]entity.RequestOutcomeReason{
+			entity.RequestStateSucceeded: entity.RequestOutcomeReasonBuildSucceeded,
+			entity.RequestStateFailed:    entity.RequestOutcomeReasonBuildFailed,
+			entity.RequestStateCancelled: entity.RequestOutcomeReasonBuildCancelled,
+		}[state]
 	}
 	return request
 }
@@ -225,14 +230,9 @@ func expectFinish(m buildsignalMocks, state entity.RequestState) *gomock.Call {
 }
 
 func expectOutcomeLog(m buildsignalMocks, state entity.RequestState, version int32) *gomock.Call {
-	reason := map[entity.RequestState]entity.RequestOutcomeReason{
-		entity.RequestStateSucceeded: entity.RequestOutcomeReasonBuildSucceeded,
-		entity.RequestStateFailed:    entity.RequestOutcomeReasonBuildFailed,
-		entity.RequestStateCancelled: entity.RequestOutcomeReasonBuildCancelled,
-	}[state]
 	request := requestWithState(state)
 	request.Version = version
-	log := requestlog.NewRequestStateLog(request, reason)
+	log := requestlog.NewRequestStateLog(request, request.OutcomeReason)
 	log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
@@ -400,6 +400,47 @@ func TestProcess(t *testing.T) {
 				queue.LastGreenURI = request.URI
 				getCall := m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queue, nil).After(eventCall)
 				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2).After(getCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
+			},
+		},
+		{
+			name: "late poll preserves the saved polling failure reason",
+			setup: func(m buildsignalMocks) {
+				request := requestWithState(entity.RequestStateProcessing)
+				request.State, request.OutcomeReason, request.Version = entity.RequestStateFailed, "build_polling_exhausted", 2
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				eventCall := expectBuildFinished(m)
+				logCall := m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, entity.RequestLog{
+					ID: publish.IntentID("state", "2"), Queue: testQueue, RequestID: testID,
+					State: "failed", RequestVersion: 2, OutcomeReason: "build_polling_exhausted", Metadata: map[string]string{},
+				}).Return(nil).After(eventCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
+			},
+		},
+		{
+			name: "lost terminal CAS preserves the winning polling failure reason",
+			setup: func(m buildsignalMocks) {
+				request := requestWithState(entity.RequestStateProcessing)
+				winner := request
+				winner.State, winner.OutcomeReason, winner.Version = entity.RequestStateFailed, "build_polling_exhausted", 2
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				eventCall := expectBuildFinished(m)
+				gomock.InOrder(
+					m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall),
+					m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil),
+					m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(entity.RequestStateSucceeded), int32(1), int32(2)).Return(storage.ErrVersionMismatch),
+					m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(winner, nil),
+				)
+				logCall := m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, entity.RequestLog{
+					ID: publish.IntentID("state", "2"), Queue: testQueue, RequestID: testID,
+					State: "failed", RequestVersion: 2, OutcomeReason: "build_polling_exhausted", Metadata: map[string]string{},
+				}).Return(nil)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
