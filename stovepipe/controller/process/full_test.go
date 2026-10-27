@@ -68,6 +68,7 @@ func TestProcessForcedFullRequest(t *testing.T) {
 				first := request
 				if tc.supersedeRace {
 					first.State = entity.RequestStateSuperseded
+					first.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				} else {
 					m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 					m.sourceControl.EXPECT().IsAncestor(gomock.Any(), queue.LastGreenURI, testURI).Return(true, nil)

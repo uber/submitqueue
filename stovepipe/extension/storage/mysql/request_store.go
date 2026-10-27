@@ -60,8 +60,8 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 		return err
 	}
 	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, build_id, version, metadata)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, build_id, outcome_reason, version, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.ID,
 		request.Queue,
 		request.URI,
@@ -69,6 +69,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 		request.BuildStrategy,
 		request.BaseURI,
 		request.BuildID,
+		request.OutcomeReason,
 		request.Version,
 		metadata,
 	)
@@ -90,7 +91,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	var req entity.Request
 	var metadata []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, queue, uri, state, build_strategy, base_uri, build_id, COALESCE(terminal_build_id, ''), version, metadata
+		`SELECT id, queue, uri, state, build_strategy, base_uri, build_id, COALESCE(terminal_build_id, ''), outcome_reason, version, metadata
 		 FROM request WHERE queue = ? AND id = ?`,
 		r.queue, id,
 	).Scan(
@@ -102,6 +103,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 		&req.BaseURI,
 		&req.BuildID,
 		&req.TerminalBuildID,
+		&req.OutcomeReason,
 		&req.Version,
 		&metadata,
 	)
@@ -121,7 +123,8 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 }
 
 // Update persists the mutable fields of request (URI, state, build strategy,
-// base URI, associated build ID, terminal build ID, metadata) if the oldVersion, writing newVersion. Returns
+// base URI, associated and terminal build IDs, outcome reason, metadata) if the
+// oldVersion matches, writing newVersion. Returns
 // ErrVersionMismatch if the stored version does not match (including when the
 // request does not exist). This is a pure conditional write; the caller owns
 // version arithmetic.
@@ -139,7 +142,7 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	}
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE request
-		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, build_id = ?, terminal_build_id = NULLIF(?, ''), version = ?, metadata = ?
+		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, build_id = ?, terminal_build_id = NULLIF(?, ''), outcome_reason = ?, version = ?, metadata = ?
 		 WHERE queue = ? AND id = ? AND version = ?`,
 		request.URI,
 		request.State,
@@ -147,6 +150,7 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 		request.BaseURI,
 		request.BuildID,
 		request.TerminalBuildID,
+		request.OutcomeReason,
 		newVersion,
 		metadata,
 		request.Queue,
