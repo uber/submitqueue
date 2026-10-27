@@ -238,7 +238,7 @@ func TestServedOverGRPC(t *testing.T) {
 	connection, err := tangoclient.Dial(listener.Addr().String())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = connection.Close() })
-	client, err := connection.ChangedTargetsClient("org/repo", "")
+	client, err := connection.ChangedTargetsClient("org/repo", "unset")
 	require.NoError(t, err)
 
 	got, err := client.ChangedTargets(context.Background(), tango.ChangedTargetsRequest{
