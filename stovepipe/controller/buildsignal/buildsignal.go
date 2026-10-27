@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -150,8 +151,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Anything else is terminal without a build outcome, which today means only
 	// `superseded` — and process supersedes solely from `accepted` (see
 	// supersedeRequest), so a superseded request can never reach this point. It
-	// is guarded rather than assumed away because finishRequest would otherwise
-	// release a build slot the request never claimed: superseding consumes none.
+	// is guarded rather than assumed away because the terminal path below has no
+	// build outcome to record for such a request.
 	if request.State != entity.RequestStateProcessing && !request.State.HasBuildOutcome() {
 		return nil
 	}
@@ -232,25 +233,14 @@ func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.
 	return nil
 }
 
-// finishRequest releases the queue's build slot and projects the build's
-// terminal status and ID onto the request, leaving it terminal. It is a no-op
-// when the request already carries an outcome, so a redelivery neither
-// double-releases the slot nor rewrites the state.
-//
-// The slot is released *before* the terminal write, and a failed release aborts
-// the write, matching the DLQ reconciler (see stovepipe/controller/dlq/dlq.go).
-// Both rules exist for the same reason: the request must not go terminal while
-// still holding a slot, because a terminal request is skipped on redelivery and
-// by the reconciler, so nothing would ever decrement it. Failing this way leaves
-// the request non-terminal, so redelivery re-runs both steps and decrements again
-// — transiently over-admitting by one until releaseBuildSlot's zero clamp
-// reconverges, which is the failure mode this pipeline prefers.
+// finishRequest releases the request's build slot before recording the outcome, since nothing
+// releases a terminal request; slots are keyed by request ID, so a retry cannot free another's.
 func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, buildID string, status entity.BuildStatus) error {
 	if request.State.HasBuildOutcome() {
 		return nil
 	}
 
-	if err := c.releaseBuildSlot(ctx, store, request.Queue); err != nil {
+	if err := c.releaseBuildSlot(ctx, store, *request); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
@@ -336,31 +326,29 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 	}
 }
 
-// releaseBuildSlot CAS-decrements the queue's in_flight_count, reopening the process
-// concurrency gate now that this request's build is over. It decrements relatively
-// (preserving concurrent updates), clamps at zero, and retries on version conflicts.
-// Unlike process's unwind-path release this is not best-effort: the caller must not
-// mark the request terminal if the slot was not freed, so a hard failure is returned.
-func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) error {
+// releaseBuildSlot CAS-removes request's ID from the queue's in_flight_request_ids, writing nothing
+// when it is absent. A hard failure is returned so the caller does not mark the request terminal.
+func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, request entity.Request) error {
 	queueStore := store.GetQueueStore()
 
 	for {
-		queueRow, err := queueStore.Get(ctx, queueName)
+		queueRow, err := queueStore.Get(ctx, request.Queue)
 		if err != nil {
-			return fmt.Errorf("failed to load queue %s to release build slot: %w", queueName, err)
+			return fmt.Errorf("failed to load queue %s to release build slot: %w", request.Queue, err)
 		}
-		if queueRow.InFlightCount <= 0 {
+		ownerIndex := slices.Index(queueRow.InFlightRequestIDs, request.ID)
+		if ownerIndex < 0 {
 			return nil
 		}
 
 		updated := queueRow
-		updated.InFlightCount = queueRow.InFlightCount - 1
+		updated.InFlightRequestIDs = slices.Delete(slices.Clone(queueRow.InFlightRequestIDs), ownerIndex, ownerIndex+1)
 		newVersion := queueRow.Version + 1
 		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				continue
 			}
-			return fmt.Errorf("failed to release build slot for queue %s: %w", queueName, err)
+			return fmt.Errorf("failed to release build slot for request %s in queue %s: %w", request.ID, request.Queue, err)
 		}
 		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
 		return nil

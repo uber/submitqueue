@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -47,13 +48,17 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 	if queue.Name != q.queue {
 		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
 	}
+	inFlightRequestIDs, err := marshalInFlightRequestIDs(queue)
+	if err != nil {
+		return err
+	}
 
-	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms)
+	_, err = q.db.ExecContext(ctx,
+		`INSERT INTO queue (name, last_green_uri, in_flight_request_ids, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		queue.Name,
 		queue.LastGreenURI,
-		queue.InFlightCount,
+		inFlightRequestIDs,
 		queue.LatestRequestID,
 		queue.Version,
 		queue.LastGreenRequestID,
@@ -78,13 +83,14 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 	}
 
 	var queue entity.Queue
+	var inFlightRequestIDs []byte
 	err := q.db.QueryRowContext(ctx,
-		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue WHERE name = ?",
+		"SELECT name, last_green_uri, in_flight_request_ids, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue WHERE name = ?",
 		name,
 	).Scan(
 		&queue.Name,
 		&queue.LastGreenURI,
-		&queue.InFlightCount,
+		&inFlightRequestIDs,
 		&queue.LatestRequestID,
 		&queue.Version,
 		&queue.LastGreenRequestID,
@@ -96,6 +102,14 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 	}
 	if err != nil {
 		return entity.Queue{}, fmt.Errorf("failed to get queue name=%s from the database: %w", name, err)
+	}
+	var ids []string
+	if err := json.Unmarshal(inFlightRequestIDs, &ids); err != nil {
+		return entity.Queue{}, fmt.Errorf("failed to decode in_flight_request_ids for queue name=%s: %w", name, err)
+	}
+	// An empty set reads back as nil so a zero-valued Queue round-trips unchanged.
+	if len(ids) > 0 {
+		queue.InFlightRequestIDs = ids
 	}
 
 	return queue, nil
@@ -110,13 +124,17 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 	if queue.Name != q.queue {
 		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
 	}
+	inFlightRequestIDs, err := marshalInFlightRequestIDs(queue)
+	if err != nil {
+		return err
+	}
 
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue
-		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?, last_green_request_id = ?, enablement = ?, enablement_version = ?, effective_from_commit_uri = ?, enablement_changed_at_ms = ?
+		 SET last_green_uri = ?, in_flight_request_ids = ?, latest_request_id = ?, version = ?, last_green_request_id = ?, enablement = ?, enablement_version = ?, effective_from_commit_uri = ?, enablement_changed_at_ms = ?
 		 WHERE name = ? AND version = ?`,
 		queue.LastGreenURI,
-		queue.InFlightCount,
+		inFlightRequestIDs,
 		queue.LatestRequestID,
 		newVersion,
 		queue.LastGreenRequestID,
@@ -147,4 +165,18 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 	}
 
 	return nil
+}
+
+// marshalInFlightRequestIDs encodes the queue's in-flight request IDs as a JSON array,
+// writing [] rather than null for an empty set.
+func marshalInFlightRequestIDs(queue entity.Queue) ([]byte, error) {
+	ids := queue.InFlightRequestIDs
+	if ids == nil {
+		ids = []string{}
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode in_flight_request_ids for queue name=%s: %w", queue.Name, err)
+	}
+	return encoded, nil
 }

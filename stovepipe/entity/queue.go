@@ -36,8 +36,9 @@ type Queue struct {
 	// than the candidate's, compared by ingest order via CompareRequestID.
 	LastGreenRequestID string `json:"last_green_request_id"`
 
-	// InFlightCount is the number of trunk validations admitted by process but not yet terminal.
-	InFlightCount int32 `json:"in_flight_count"`
+	// InFlightRequestIDs holds the IDs of requests admitted to a build slot and not yet released,
+	// each present at most once. Its length is the queue's in-flight count.
+	InFlightRequestIDs []string `json:"in_flight_request_ids"`
 
 	// LatestRequestID is the request id of the newest head ingest accepted for this queue.
 	// Empty until the first request is created. Coalescing compares IDs via CompareRequestID.

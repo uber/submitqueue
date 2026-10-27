@@ -463,7 +463,7 @@ func TestStateChangesPreserveOperationalQueueUpdates(t *testing.T) {
 			mutateQueue := func() {
 				f.queue.Version++
 				f.queue.LastGreenURI = "green"
-				f.queue.InFlightCount = 3
+				f.queue.InFlightRequestIDs = []string{"6"}
 				f.queue.LatestRequestID = "7"
 			}
 			if duringWrite {
@@ -476,7 +476,7 @@ func TestStateChangesPreserveOperationalQueueUpdates(t *testing.T) {
 			require.Equal(t, int64(2), applied.Version)
 			require.Equal(t, int32(3), f.queue.Version)
 			require.Equal(t, "green", f.queue.LastGreenURI)
-			require.Equal(t, int32(3), f.queue.InFlightCount)
+			require.Equal(t, []string{"6"}, f.queue.InFlightRequestIDs)
 			require.Equal(t, "7", f.queue.LatestRequestID)
 			require.Equal(t, applied, f.summary.Snapshot())
 			require.Len(t, f.logs, 2)
@@ -486,11 +486,11 @@ func TestStateChangesPreserveOperationalQueueUpdates(t *testing.T) {
 
 func TestStateInitializationAdoptsExistingOperationalQueue(t *testing.T) {
 	f := newStateFixture()
-	f.queue = entity.Queue{Name: "repo/main", Version: 12, InFlightCount: 2, LastGreenURI: "green", LatestRequestID: "9"}
+	f.queue = entity.Queue{Name: "repo/main", Version: 12, InFlightRequestIDs: []string{"8", "9"}, LastGreenURI: "green", LatestRequestID: "9"}
 	initial := initializeFixture(t, f)
 	require.Equal(t, int64(1), initial.Version)
 	require.Equal(t, int32(13), f.queue.Version)
-	require.Equal(t, int32(2), f.queue.InFlightCount)
+	require.Equal(t, []string{"8", "9"}, f.queue.InFlightRequestIDs)
 	require.Equal(t, "green", f.queue.LastGreenURI)
 	require.Equal(t, "9", f.queue.LatestRequestID)
 	require.Equal(t, initial, f.summary.Snapshot())

@@ -45,7 +45,6 @@ func TestQueueStore_Create(t *testing.T) {
 		Name:               "monorepo/main",
 		LastGreenURI:       "git://remote/monorepo/main/green",
 		LastGreenRequestID: "1",
-		InFlightCount:      0,
 		LatestRequestID:    "1",
 		Version:            1,
 	}
@@ -60,7 +59,7 @@ func TestQueueStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue").
-					WithArgs(queue.Name, queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, queue.Version, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs).
+					WithArgs(queue.Name, queue.LastGreenURI, []byte("[]"), queue.LatestRequestID, queue.Version, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -68,7 +67,7 @@ func TestQueueStore_Create(t *testing.T) {
 			name: "duplicate name returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue").
-					WithArgs(queue.Name, queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, queue.Version, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs).
+					WithArgs(queue.Name, queue.LastGreenURI, []byte("[]"), queue.LatestRequestID, queue.Version, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -78,7 +77,7 @@ func TestQueueStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue").
-					WithArgs(queue.Name, queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, queue.Version, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs).
+					WithArgs(queue.Name, queue.LastGreenURI, []byte("[]"), queue.LatestRequestID, queue.Version, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -111,7 +110,7 @@ func TestQueueStore_Get(t *testing.T) {
 		Name:               "monorepo/main",
 		LastGreenURI:       "git://remote/monorepo/main/green",
 		LastGreenRequestID: "2",
-		InFlightCount:      2,
+		InFlightRequestIDs: []string{"2", "3"},
 		LatestRequestID:    "3",
 		Version:            3,
 	}
@@ -128,9 +127,9 @@ func TestQueueStore_Get(t *testing.T) {
 			name:      "found",
 			queueName: want.Name,
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"name", "last_green_uri", "in_flight_count", "latest_request_id", "version", "last_green_request_id", "enablement", "enablement_version", "effective_from_commit_uri", "enablement_changed_at_ms"}).
-					AddRow(want.Name, want.LastGreenURI, want.InFlightCount, want.LatestRequestID, want.Version, want.LastGreenRequestID, want.Enablement, want.EnablementVersion, want.EffectiveFromCommitURI, want.EnablementChangedAtMs)
-				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue").
+				rows := sqlmock.NewRows([]string{"name", "last_green_uri", "in_flight_request_ids", "latest_request_id", "version", "last_green_request_id", "enablement", "enablement_version", "effective_from_commit_uri", "enablement_changed_at_ms"}).
+					AddRow(want.Name, want.LastGreenURI, []byte(`["2","3"]`), want.LatestRequestID, want.Version, want.LastGreenRequestID, want.Enablement, want.EnablementVersion, want.EffectiveFromCommitURI, want.EnablementChangedAtMs)
+				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_request_ids, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue").
 					WithArgs(want.Name).
 					WillReturnRows(rows)
 			},
@@ -140,7 +139,7 @@ func TestQueueStore_Get(t *testing.T) {
 			name:      "not found",
 			queueName: want.Name,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue").
+				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_request_ids, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue").
 					WithArgs(want.Name).
 					WillReturnError(sql.ErrNoRows)
 			},
@@ -151,7 +150,7 @@ func TestQueueStore_Get(t *testing.T) {
 			name:      "query error",
 			queueName: want.Name,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue").
+				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_request_ids, latest_request_id, version, last_green_request_id, enablement, enablement_version, effective_from_commit_uri, enablement_changed_at_ms FROM queue").
 					WithArgs(want.Name).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
@@ -186,7 +185,7 @@ func TestQueueStore_Update(t *testing.T) {
 		Name:               "monorepo/main",
 		LastGreenURI:       "git://remote/monorepo/main/green",
 		LastGreenRequestID: "1",
-		InFlightCount:      1,
+		InFlightRequestIDs: []string{"2"},
 		LatestRequestID:    "2",
 	}
 	const oldVersion, newVersion = int32(1), int32(2)
@@ -201,7 +200,7 @@ func TestQueueStore_Update(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue").
-					WithArgs(queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
+					WithArgs(queue.LastGreenURI, []byte(`["2"]`), queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -209,7 +208,7 @@ func TestQueueStore_Update(t *testing.T) {
 			name: "version mismatch",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue").
-					WithArgs(queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
+					WithArgs(queue.LastGreenURI, []byte(`["2"]`), queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -219,7 +218,7 @@ func TestQueueStore_Update(t *testing.T) {
 			name: "exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue").
-					WithArgs(queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
+					WithArgs(queue.LastGreenURI, []byte(`["2"]`), queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -228,7 +227,7 @@ func TestQueueStore_Update(t *testing.T) {
 			name: "rows affected error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue").
-					WithArgs(queue.LastGreenURI, queue.InFlightCount, queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
+					WithArgs(queue.LastGreenURI, []byte(`["2"]`), queue.LatestRequestID, newVersion, queue.LastGreenRequestID, queue.Enablement, queue.EnablementVersion, queue.EffectiveFromCommitURI, queue.EnablementChangedAtMs, queue.Name, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,

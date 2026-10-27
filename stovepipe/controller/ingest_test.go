@@ -594,7 +594,7 @@ func TestIngestInitializesQueueEnablement(t *testing.T) {
 				f := newIngestEnablementFixture(t)
 				f.queue = entity.Queue{}
 				if existing {
-					f.queue = entity.Queue{Name: testQueue, Version: 5, InFlightCount: 3, LastGreenRequestID: "4"}
+					f.queue = entity.Queue{Name: testQueue, Version: 5, InFlightRequestIDs: []string{"1", "2", "3"}, LastGreenRequestID: "4"}
 				}
 				f.summary = entity.QueueSummary{}
 				clear(f.logs)
@@ -613,7 +613,7 @@ func TestIngestInitializesQueueEnablement(t *testing.T) {
 				require.Len(t, f.logs, int(decision.version))
 				require.Equal(t, "7", f.queue.LatestRequestID)
 				if existing {
-					require.Equal(t, int32(3), f.queue.InFlightCount)
+					require.Equal(t, []string{"1", "2", "3"}, f.queue.InFlightRequestIDs)
 					require.Equal(t, "4", f.queue.LastGreenRequestID)
 				}
 				retry, err := f.controller.Ingest(context.Background(), request)
