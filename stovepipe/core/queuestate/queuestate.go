@@ -15,6 +15,8 @@
 // Package queuestate applies enablement to internal queue snapshots and repairs their read models.
 package queuestate
 
+//go:generate mockgen -source=queuestate.go -destination=mock/queuestate_mock.go -package=mock
+
 import (
 	"context"
 	"errors"
@@ -40,11 +42,11 @@ type PreparedChange struct {
 // TransitionController changes internal queue enablement and repairs its history and summary.
 type TransitionController interface {
 	// Initialize explicitly registers disabled enablement while preserving existing state.
-	Initialize(context.Context, string) (entity.QueueState, error)
-	// Prepare pins the enablement sequence and boundary; same-state decisions are no-ops.
-	Prepare(context.Context, string, entity.QueueEnablement) (PreparedChange, error)
+	Initialize(ctx context.Context, queue string) (state entity.QueueState, err error)
+	// Prepare pins the enablement sequence at the supplied commit URI; same-state decisions are no-ops.
+	Prepare(ctx context.Context, queue string, enablement entity.QueueEnablement, boundaryURI string) (change PreparedChange, err error)
 	// Apply commits a prepared change; competing stale decisions are never rebased.
-	Apply(context.Context, PreparedChange) (entity.QueueState, error)
+	Apply(ctx context.Context, change PreparedChange) (state entity.QueueState, err error)
 }
 
 type transitionController struct {
@@ -111,7 +113,7 @@ func (c *transitionController) Initialize(ctx context.Context, name string) (ent
 	}
 }
 
-func (c *transitionController) Prepare(ctx context.Context, queue string, enablement entity.QueueEnablement) (PreparedChange, error) {
+func (c *transitionController) Prepare(ctx context.Context, queue string, enablement entity.QueueEnablement, boundary string) (PreparedChange, error) {
 	if enablement != entity.QueueEnablementEnabled && enablement != entity.QueueEnablementDisabled {
 		return PreparedChange{}, fmt.Errorf("prepare queue %q: unsupported enablement %q: %w", queue, enablement, ErrInvalidChange)
 	}
@@ -131,18 +133,14 @@ func (c *transitionController) Prepare(ctx context.Context, queue string, enable
 	if current.Version == math.MaxInt64 {
 		return PreparedChange{}, fmt.Errorf("prepare queue %q: enablement version %d exhausted: %w", queue, current.Version, ErrInvalidChange)
 	}
-	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: queue})
-	if err != nil {
-		return PreparedChange{}, err
-	}
-	boundary, err := sc.Latest(ctx)
-	if err != nil {
-		return PreparedChange{}, err
-	}
 	if boundary == "" || len(boundary) > 255 {
 		return PreparedChange{}, fmt.Errorf("prepare queue %q: invalid boundary URI %q (length %d): %w", queue, boundary, len(boundary), ErrInvalidChange)
 	}
 	if current.EffectiveFromCommitURI != "" {
+		sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: queue})
+		if err != nil {
+			return PreparedChange{}, err
+		}
 		forward, err := sc.IsAncestor(ctx, current.EffectiveFromCommitURI, boundary)
 		if err != nil {
 			return PreparedChange{}, err

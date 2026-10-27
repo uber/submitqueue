@@ -28,10 +28,14 @@ import (
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queuelog"
+	"github.com/uber/submitqueue/stovepipe/core/queuestate"
+	queuestatemock "github.com/uber/submitqueue/stovepipe/core/queuestate/mock"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	scfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	scmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
@@ -46,15 +50,16 @@ const (
 
 // ingestMocks bundles the mocks an Ingest test case wires expectations on.
 type ingestMocks struct {
-	counter      *countermock.MockCounter
-	factory      *scmock.MockFactory
-	sc           *scmock.MockSourceControl
-	reqStore     *storagemock.MockRequestStore
-	uriStore     *storagemock.MockRequestURIStore
-	queueStore   *storagemock.MockQueueStore
-	store        *storagemock.MockStorage
-	materializer *requestlogmock.MockMaterializer
-	publisher    *mqmock.MockPublisher
+	queueEnablementController *queuestatemock.MockTransitionController
+	counter                   *countermock.MockCounter
+	factory                   *scmock.MockFactory
+	sc                        *scmock.MockSourceControl
+	reqStore                  *storagemock.MockRequestStore
+	uriStore                  *storagemock.MockRequestURIStore
+	queueStore                *storagemock.MockQueueStore
+	store                     *storagemock.MockStorage
+	materializer              *requestlogmock.MockMaterializer
+	publisher                 *mqmock.MockPublisher
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -73,14 +78,15 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	t.Helper()
 
 	m := ingestMocks{
-		counter:      countermock.NewMockCounter(ctrl),
-		factory:      scmock.NewMockFactory(ctrl),
-		sc:           scmock.NewMockSourceControl(ctrl),
-		reqStore:     storagemock.NewMockRequestStore(ctrl),
-		uriStore:     storagemock.NewMockRequestURIStore(ctrl),
-		queueStore:   storagemock.NewMockQueueStore(ctrl),
-		materializer: requestlogmock.NewMockMaterializer(ctrl),
-		publisher:    mqmock.NewMockPublisher(ctrl),
+		queueEnablementController: queuestatemock.NewMockTransitionController(ctrl),
+		counter:                   countermock.NewMockCounter(ctrl),
+		factory:                   scmock.NewMockFactory(ctrl),
+		sc:                        scmock.NewMockSourceControl(ctrl),
+		reqStore:                  storagemock.NewMockRequestStore(ctrl),
+		uriStore:                  storagemock.NewMockRequestURIStore(ctrl),
+		queueStore:                storagemock.NewMockQueueStore(ctrl),
+		materializer:              requestlogmock.NewMockMaterializer(ctrl),
+		publisher:                 mqmock.NewMockPublisher(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -97,7 +103,7 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	})
 	require.NoError(t, err)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, m.materializer, registry, []string{testQueue})
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, m.materializer, registry, []string{testQueue}, m.queueEnablementController)
 	return c, m
 }
 
@@ -119,10 +125,10 @@ func expectMaterializeAccepted(m ingestMocks, id string) {
 	).Return(nil)
 }
 
-// expectResolve wires the SourceControl factory + Latest happy path returning testURI.
-func expectResolve(m ingestMocks) {
+func expectHeadAndEnablement(m ingestMocks) {
 	m.factory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sc, nil)
 	m.sc.EXPECT().Latest(gomock.Any()).Return(testURI, nil)
+	m.queueEnablementController.EXPECT().Initialize(gomock.Any(), testQueue).Return(entity.QueueState{Queue: testQueue, State: entity.QueueEnablementDisabled, Version: 1}, nil)
 }
 
 // expectAdvanceLatestRequestID wires Get + Create + Update for queue.latest_request_id.
@@ -172,7 +178,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "happy path mints persists and publishes",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "7").Return(nil)
@@ -188,7 +194,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "legacy latest pointer prevents advancement and publish",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(1), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "1").Return(nil)
@@ -205,7 +211,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "retry rejects legacy latest pointer",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("1", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "1").Return(acceptedRequest("1"), nil)
 				expectMaterializeAccepted(m, "1")
@@ -219,7 +225,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "dedup with existing accepted request republishes without minting",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(acceptedRequest("3"), nil)
 				expectMaterializeAccepted(m, "3")
@@ -232,7 +238,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "heals when uri mapped but request missing",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
@@ -246,7 +252,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "dedup race returns winner id and completes",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "7").Return(storage.ErrAlreadyExists)
@@ -295,7 +301,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "counter error",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("counter unavailable"))
 			},
@@ -305,7 +311,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "non-positive counter value",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), nil)
 			},
@@ -315,7 +321,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "request store create error",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, gomock.Any()).Return(nil)
@@ -328,7 +334,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "publish error",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
 				m.counter.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, gomock.Any()).Return(nil)
@@ -344,7 +350,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "request log error prevents advancement and publish",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				expectResolve(m)
+				expectHeadAndEnablement(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "3").Return(acceptedRequest("3"), nil)
 				m.materializer.EXPECT().PersistLog(
@@ -372,6 +378,255 @@ func TestIngestController_Ingest(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantID, result.ID)
+		})
+	}
+}
+
+const nextIngestURI = "git://repo/monorepo/main/def456"
+
+type ingestEnablementFixture struct {
+	controller         *IngestController
+	mocks              ingestMocks
+	queue              entity.Queue
+	summary            entity.QueueSummary
+	logs               map[string]entity.QueueLog
+	head               string
+	beforeUpdate       func()
+	logErr, summaryErr error
+}
+
+func newIngestEnablementFixture(t *testing.T) *ingestEnablementFixture {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	c, m := newIngestController(t, ctrl)
+	f := &ingestEnablementFixture{controller: c, mocks: m, head: testURI,
+		queue:   entity.Queue{Name: testQueue, Version: 1, Enablement: entity.QueueEnablementDisabled, EnablementVersion: 1, EnablementChangedAtMs: 1000},
+		summary: entity.QueueSummary{Queue: testQueue, State: entity.QueueEnablementDisabled, QueueStateVersion: 1, StateTimestampMs: 1000, Version: 1},
+		logs:    make(map[string]entity.QueueLog),
+	}
+	f.logs[entity.QueueLogID(1)] = queuelog.NewQueueStateLog(f.queue)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		return f.queue, nil
+	}).AnyTimes()
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, row entity.Queue, oldVersion, newVersion int32) error {
+		if hook := f.beforeUpdate; hook != nil {
+			f.beforeUpdate = nil
+			hook()
+		}
+		if f.queue.Version != oldVersion {
+			return storage.ErrVersionMismatch
+		}
+		row.Version = newVersion
+		f.queue = row
+		return nil
+	}).AnyTimes()
+	logs := storagemock.NewMockQueueLogStore(ctrl)
+	m.store.EXPECT().GetQueueLogStore().Return(logs).AnyTimes()
+	logs.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, id string) (entity.QueueLog, error) {
+		log, ok := f.logs[id]
+		if !ok {
+			return entity.QueueLog{}, storage.ErrNotFound
+		}
+		return log, nil
+	}).AnyTimes()
+	logs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.QueueLog) error {
+		if f.logErr != nil {
+			return f.logErr
+		}
+		if _, ok := f.logs[log.ID]; ok {
+			return storage.ErrAlreadyExists
+		}
+		f.logs[log.ID] = log
+		return nil
+	}).AnyTimes()
+	summaries := storagemock.NewMockQueueSummaryStore(ctrl)
+	m.store.EXPECT().GetQueueSummaryStore().Return(summaries).AnyTimes()
+	summaries.EXPECT().Get(gomock.Any()).DoAndReturn(func(context.Context) (entity.QueueSummary, error) {
+		return f.summary, nil
+	}).AnyTimes()
+	summaries.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.QueueSummary, oldVersion, newVersion int64) error {
+		if f.summaryErr != nil {
+			return f.summaryErr
+		}
+		if f.summary.Version != oldVersion {
+			return storage.ErrVersionMismatch
+		}
+		summary.Version = newVersion
+		f.summary = summary
+		return nil
+	}).AnyTimes()
+	m.factory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sc, nil).AnyTimes()
+	m.sc.EXPECT().Latest(gomock.Any()).DoAndReturn(func(context.Context) (string, error) { return f.head, nil }).AnyTimes()
+	history := scfake.New(sourcecontrol.Config{QueueName: testQueue}, []string{nextIngestURI, testURI})
+	m.sc.EXPECT().IsAncestor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(history.IsAncestor).AnyTimes()
+	c.queueEnablementController = queuestate.NewTransitionController(staticStorageFactory{store: m.store}, m.factory, queuelog.NewMaterializer(tally.NoopScope))
+	return f
+}
+
+func TestIngestEnablementDoesNotPauseWork(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		explicit bool
+		state    entity.QueueEnablement
+		repeated bool
+	}{
+		{"ordinary disabled", false, entity.QueueEnablementDisabled, false},
+		{"ordinary enabled", false, entity.QueueEnablementEnabled, false},
+		{"explicit disable", true, entity.QueueEnablementDisabled, false},
+		{"explicit enable", true, entity.QueueEnablementEnabled, false},
+		{"repeated disable", true, entity.QueueEnablementDisabled, true},
+		{"repeated enable", true, entity.QueueEnablementEnabled, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newIngestEnablementFixture(t)
+			c, m := f.controller, f.mocks
+			if (!tc.explicit && tc.state == entity.QueueEnablementEnabled) || (tc.explicit && tc.state == entity.QueueEnablementDisabled) {
+				_, err := c.applyEnablementDecision(context.Background(), testQueue, entity.QueueEnablementEnabled, testURI)
+				require.NoError(t, err)
+			}
+			if tc.repeated {
+				_, err := c.applyEnablementDecision(context.Background(), testQueue, tc.state, testURI)
+				require.NoError(t, err)
+				f.head = nextIngestURI
+			} else if tc.explicit {
+				// The head advances during application; the request must retain the captured boundary.
+				f.beforeUpdate = func() { f.head = nextIngestURI }
+			}
+			uri := f.head
+			m.uriStore.EXPECT().GetIDByURI(gomock.Any(), uri).Return("", storage.ErrNotFound)
+			m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
+			m.uriStore.EXPECT().Create(gomock.Any(), uri, "7").Return(nil)
+			m.reqStore.EXPECT().Get(gomock.Any(), "7").Return(entity.Request{}, storage.ErrNotFound)
+			request := acceptedRequest("7")
+			request.URI = uri
+			m.reqStore.EXPECT().Create(gomock.Any(), request).Return(nil)
+			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)).Return(nil)
+			m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
+
+			result, err := c.Ingest(context.Background(), entity.IngestRequest{Queue: testQueue, HasEnablement: tc.explicit, Enablement: tc.state})
+			require.NoError(t, err)
+			require.Equal(t, "7", result.ID)
+			require.Equal(t, tc.state, result.Enablement.State)
+			require.Equal(t, f.queue.EnablementState(), result.Enablement)
+			require.Equal(t, result.Enablement, f.summary.Snapshot())
+			require.Equal(t, "7", f.queue.LatestRequestID)
+			if tc.explicit {
+				require.Equal(t, nextIngestURI, f.head)
+				require.Equal(t, testURI, result.Enablement.EffectiveFromCommitURI)
+			}
+		})
+	}
+}
+
+func TestIngestEnablementFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		explicit bool
+		err      error
+	}{
+		{"invalid decision", true, queuestate.ErrInvalidChange},
+		{"transition storage unavailable", true, errors.New("unavailable")},
+		{"observed state unavailable", false, errors.New("unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, m := newIngestController(t, gomock.NewController(t))
+			m.factory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sc, nil)
+			m.sc.EXPECT().Latest(gomock.Any()).Return(testURI, nil)
+			if tc.explicit {
+				m.queueEnablementController.EXPECT().Prepare(gomock.Any(), testQueue, entity.QueueEnablementUnknown, testURI).Return(queuestate.PreparedChange{}, tc.err)
+			} else {
+				m.queueEnablementController.EXPECT().Initialize(gomock.Any(), testQueue).Return(entity.QueueState{}, tc.err)
+			}
+			_, err := c.Ingest(context.Background(), entity.IngestRequest{Queue: testQueue, HasEnablement: tc.explicit})
+			require.ErrorIs(t, err, tc.err)
+		})
+	}
+}
+
+func TestIngestEnablementDecisionsPreserveBoundaries(t *testing.T) {
+	ctx := context.Background()
+	f := newIngestEnablementFixture(t)
+	initial := f.queue.EnablementState()
+	disabled, err := f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementDisabled, testURI)
+	require.NoError(t, err)
+	require.Equal(t, initial, disabled)
+	enabled, err := f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementEnabled, testURI)
+	require.NoError(t, err)
+	require.Equal(t, entity.QueueEnablementEnabled, enabled.State)
+	require.Equal(t, int64(2), enabled.Version)
+	require.Equal(t, testURI, enabled.EffectiveFromCommitURI)
+	f.head = nextIngestURI
+	unchanged, err := f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementEnabled, nextIngestURI)
+	require.NoError(t, err)
+	require.Equal(t, enabled, unchanged)
+	disabled, err = f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementDisabled, nextIngestURI)
+	require.NoError(t, err)
+	require.Equal(t, entity.QueueEnablementDisabled, disabled.State)
+	require.Equal(t, nextIngestURI, disabled.EffectiveFromCommitURI)
+	require.Equal(t, int64(3), disabled.Version)
+	_, err = f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementUnknown, nextIngestURI)
+	require.ErrorIs(t, err, queuestate.ErrInvalidChange)
+}
+
+func TestIngestEnablementRetriesCompetingChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		capturedURI       string
+		competingURI      string
+		wantInvalidChange bool
+	}{
+		{"competing boundary before captured head", nextIngestURI, testURI, false},
+		{"competing boundary after captured head", testURI, nextIngestURI, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newIngestEnablementFixture(t)
+			f.head = nextIngestURI
+			f.beforeUpdate = func() {
+				for _, desired := range []entity.QueueEnablement{entity.QueueEnablementEnabled, entity.QueueEnablementDisabled} {
+					_, err := f.controller.applyEnablementDecision(context.Background(), testQueue, desired, tc.competingURI)
+					require.NoError(t, err)
+				}
+			}
+			applied, err := f.controller.applyEnablementDecision(context.Background(), testQueue, entity.QueueEnablementEnabled, tc.capturedURI)
+			if tc.wantInvalidChange {
+				require.ErrorIs(t, err, queuestate.ErrInvalidChange)
+				require.Equal(t, int64(3), f.queue.EnablementVersion)
+				require.Equal(t, entity.QueueEnablementDisabled, f.queue.Enablement)
+				require.Equal(t, nextIngestURI, f.queue.EffectiveFromCommitURI)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, entity.QueueEnablementEnabled, applied.State)
+			require.Equal(t, int64(4), applied.Version)
+			require.Equal(t, tc.capturedURI, applied.EffectiveFromCommitURI)
+			require.Equal(t, applied, f.summary.Snapshot())
+		})
+	}
+}
+
+func TestIngestEnablementRepairsAnAppliedTransition(t *testing.T) {
+	for _, stage := range []string{"history", "summary"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx := context.Background()
+			f := newIngestEnablementFixture(t)
+			failure := errors.New("unavailable")
+			f.beforeUpdate = func() {
+				if stage == "history" {
+					f.logErr = failure
+				} else {
+					f.summaryErr = failure
+				}
+			}
+			_, err := f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementEnabled, testURI)
+			require.ErrorIs(t, err, failure)
+			require.Equal(t, int64(2), f.queue.EnablementVersion)
+			f.logErr, f.summaryErr = nil, nil
+			f.head = nextIngestURI
+			applied, err := f.controller.applyEnablementDecision(ctx, testQueue, entity.QueueEnablementEnabled, nextIngestURI)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), applied.Version)
+			require.Equal(t, testURI, applied.EffectiveFromCommitURI)
+			require.Equal(t, applied, f.summary.Snapshot())
 		})
 	}
 }

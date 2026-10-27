@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -44,14 +45,15 @@ const counterDomainRequest = "request"
 // the request ID onto the process stage. Ingestion is idempotent: a re-reported head resolves to
 // the already-minted request and republishes it only while it remains accepted.
 type IngestController struct {
-	logger           *zap.SugaredLogger
-	metricsScope     tally.Scope
-	counters         counter.Factory
-	sourceControl    sourcecontrol.Factory
-	stores           storage.Factory
-	materializer     requestlog.Materializer
-	registry         consumer.TopicRegistry
-	configuredQueues map[string]struct{}
+	logger                    *zap.SugaredLogger
+	metricsScope              tally.Scope
+	counters                  counter.Factory
+	sourceControl             sourcecontrol.Factory
+	stores                    storage.Factory
+	materializer              requestlog.Materializer
+	registry                  consumer.TopicRegistry
+	configuredQueues          map[string]struct{}
+	queueEnablementController queuestate.TransitionController
 }
 
 // NewIngestController creates a new instance of the stovepipe ingest controller. It publishes
@@ -65,25 +67,28 @@ func NewIngestController(
 	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
 	configuredQueues []string,
+	queueEnablementController queuestate.TransitionController,
 ) *IngestController {
 	queueNames := make(map[string]struct{}, len(configuredQueues))
 	for _, queue := range configuredQueues {
 		queueNames[queue] = struct{}{}
 	}
 	return &IngestController{
-		logger:           logger,
-		metricsScope:     scope.SubScope("ingest_controller"),
-		counters:         counters,
-		sourceControl:    sourceControl,
-		stores:           stores,
-		materializer:     materializer,
-		registry:         registry,
-		configuredQueues: queueNames,
+		logger:                    logger,
+		metricsScope:              scope.SubScope("ingest_controller"),
+		counters:                  counters,
+		sourceControl:             sourceControl,
+		stores:                    stores,
+		materializer:              materializer,
+		registry:                  registry,
+		configuredQueues:          queueNames,
+		queueEnablementController: queueEnablementController,
 	}
 }
 
 // Ingest admits a queue's newly observed commit into the validation pipeline and returns the
-// request ID validating it.
+// request ID validating it, with the applied or observed enablement status.
+// An optional enablement decision records coverage; it does not pause ingestion or processing.
 //
 // It is idempotent and runs to completion on every call, each step tolerant of having already
 // run: it resolves (or claims) the (queue, URI) mapping, ensures the Request row and accepted log
@@ -110,8 +115,6 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 		return entity.IngestResult{}, fmt.Errorf("failed to resolve storage for queue %q: %w", queue, err)
 	}
 
-	// Resolve the queue's current head commit to its opaque URI via SourceControl.
-	// An unresolvable queue/ref is a caller error (unknown queue), not infrastructure.
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: queue})
 	if err != nil {
 		return entity.IngestResult{}, fmt.Errorf("failed to resolve source control for queue=%s: %w", queue, err)
@@ -122,6 +125,16 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 			return entity.IngestResult{}, fmt.Errorf("could not resolve head for queue=%s: %w: %w", queue, err, ErrInvalidRequest)
 		}
 		return entity.IngestResult{}, fmt.Errorf("failed to resolve head for queue=%s: %w", queue, err)
+	}
+
+	var state entity.QueueState
+	if req.HasEnablement {
+		state, err = c.applyEnablementDecision(ctx, queue, req.Enablement, uri)
+	} else {
+		state, err = c.queueEnablementController.Initialize(ctx, queue)
+	}
+	if err != nil {
+		return entity.IngestResult{}, fmt.Errorf("resolve enablement for queue %q: %w", queue, err)
 	}
 
 	// The (queue, URI) mapping is the dedup gate and the source of truth for "does this head
@@ -166,7 +179,21 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 		"state", request.State,
 	)
 
-	return entity.IngestResult{ID: id}, nil
+	return entity.IngestResult{ID: id, Enablement: state}, nil
+}
+
+func (c *IngestController) applyEnablementDecision(ctx context.Context, queue string, desired entity.QueueEnablement, uri string) (entity.QueueState, error) {
+	for {
+		change, err := c.queueEnablementController.Prepare(ctx, queue, desired, uri)
+		if err != nil {
+			return entity.QueueState{}, err
+		}
+		applied, err := c.queueEnablementController.Apply(ctx, change)
+		if errors.Is(err, storage.ErrVersionMismatch) {
+			continue
+		}
+		return applied, err
+	}
 }
 
 // resolveID returns the request id mapped to (queue, URI), minting and claiming a new one if the

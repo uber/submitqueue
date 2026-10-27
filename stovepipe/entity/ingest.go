@@ -19,11 +19,16 @@ package entity
 type IngestRequest struct {
 	// Queue is the name of the queue whose head commit should be ingested.
 	Queue string
+	// HasEnablement distinguishes an explicit decision from ordinary ingestion.
+	HasEnablement bool
+	// Enablement is the optional explicit enabled or disabled setting.
+	Enablement QueueEnablement
 }
 
 // IngestResult is the outcome of a successful ingest operation.
 type IngestResult struct {
 	// ID is the canonical decimal request identifier assigned within the selected queue.
-	// The value is a canonical positive decimal string scoped by the request queue.
 	ID string
+	// Enablement is the applied decision or the observed durable enablement.
+	Enablement QueueState
 }

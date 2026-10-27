@@ -43,7 +43,7 @@ func (queueStateSourceFactory) For(cfg sourcecontrol.Config) (sourcecontrol.Sour
 	return scfake.New(cfg, []string{"git://" + cfg.QueueName + "/HEAD"}), nil
 }
 
-func (s *StovepipeE2ESuite) TestQueueStatusWithoutValidation() {
+func (s *StovepipeE2ESuite) TestQueueStatusViaIngest() {
 	t := s.T()
 	queue := queueStateTestQueue
 	uri := "git://" + queue + "/HEAD"
@@ -53,32 +53,48 @@ func (s *StovepipeE2ESuite) TestQueueStatusWithoutValidation() {
 	require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, initial.Enablement.State)
 	require.Equal(t, int64(1), initial.Enablement.Version)
 	require.Positive(t, initial.Enablement.ChangedAtMs)
+	ordinary, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})
+	require.NoError(t, err)
+	require.NotEmpty(t, ordinary.Id)
+	require.Equal(t, initial.Enablement, ordinary.Enablement)
 	manager := queuestate.NewTransitionController(queueStateStorageFactory{backend: s.appStorage}, queueStateSourceFactory{}, queuelog.NewMaterializer(tally.NoopScope))
 	for _, tc := range []struct {
 		name    string
-		state   entity.QueueEnablement
 		wire    pb.QueueEnablement
 		version int64
 	}{
-		{"enable", entity.QueueEnablementEnabled, pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED, 2},
-		{"disable", entity.QueueEnablementDisabled, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, 3},
-		{"reenable", entity.QueueEnablementEnabled, pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED, 4},
+		{"enable", pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED, 2},
+		{"disable", pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, 3},
+		{"reenable", pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED, 4},
 	} {
 		s.Run(tc.name, func() {
 			t := s.T()
-			change, err := manager.Prepare(s.ctx, queue, tc.state)
+			request := &pb.IngestRequest{Queue: queue, Enablement: tc.wire}
+			applied, err := s.client.Ingest(s.ctx, request)
 			require.NoError(t, err)
-			applied, err := manager.Apply(s.ctx, change)
+			require.NotNil(t, applied.Enablement)
+			require.Equal(t, tc.wire, applied.Enablement.State)
+			require.Equal(t, tc.version, applied.Enablement.Version)
+			require.Equal(t, ordinary.Id, applied.Id)
+			retry, err := s.client.Ingest(s.ctx, request)
 			require.NoError(t, err)
+			require.Equal(t, applied, retry)
 			result, err := s.client.GetQueueStatus(s.ctx, &pb.GetQueueStatusRequest{Queue: queue, ChangeUri: uri})
 			require.NoError(t, err)
 			require.NotNil(t, result.Enablement)
 			require.Equal(t, tc.version, result.Enablement.Version)
 			require.Equal(t, tc.wire, result.Enablement.State)
 			require.Equal(t, uri, result.Enablement.EffectiveFromCommitUri)
-			require.Equal(t, applied.ChangedAtMs, result.Enablement.ChangedAtMs)
+			require.Equal(t, applied.Enablement.ChangedAtMs, result.Enablement.ChangedAtMs)
 		})
 	}
+	unchanged, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue, Enablement: pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN})
+	require.NoError(t, err)
+	require.Equal(t, ordinary.Id, unchanged.Id)
+	require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED, unchanged.Enablement.State)
+	require.Equal(t, int64(4), unchanged.Enablement.Version)
+	_, err = s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue, Enablement: pb.QueueEnablement(99)})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	_, err = s.db.ExecContext(s.ctx, "DELETE FROM queue_log WHERE queue = ? AND log_id = ?", queue, entity.QueueLogID(4))
 	require.NoError(t, err)
 	result, err := s.client.GetQueueStatus(s.ctx, &pb.GetQueueStatusRequest{Queue: queue})
@@ -96,7 +112,7 @@ func (s *StovepipeE2ESuite) TestQueueStatusWithoutValidation() {
 	require.Equal(t, entity.QueueEnablementEnabled, repaired.State)
 	var count int
 	require.NoError(t, s.db.QueryRowContext(s.ctx, "SELECT COUNT(*) FROM request WHERE queue = ?", queue).Scan(&count))
-	require.Zero(t, count)
+	require.Equal(t, 1, count)
 }
 
 func (s *StovepipeE2ESuite) TestQueueStatusErrors() {

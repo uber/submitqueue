@@ -45,12 +45,17 @@ message IngestRequest {
     // Logical queue name to validate (e.g. "monorepo/main"). Together with the minted
     // request ID it identifies the request and is the stable handle for the repo+ref.
     string queue = 1;
+    // Optional ENABLED or DISABLED coverage decision, independent of pause or processing.
+    // Omission or UNKNOWN preserves durable enablement.
+    QueueEnablement enablement = 2;
 }
 
 // IngestResponse is the response for the Ingest method.
 message IngestResponse {
     // Canonical decimal request ID, unique within the selected queue.
     string id = 1;
+    // Applied decision, or observed state when no decision was supplied.
+    QueueEnablementStatus enablement = 2;
 }
 
 // GetRequestHistoryByIDRequest selects one request history by the ID returned from Ingest.

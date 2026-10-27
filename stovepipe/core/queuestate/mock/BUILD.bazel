@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    testonly = True,
+    srcs = ["queuestate_mock.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/queuestate/mock",
+    visibility = ["//stovepipe/controller:__pkg__"],
+    deps = [
+        "//stovepipe/core/queuestate:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+    ],
+)

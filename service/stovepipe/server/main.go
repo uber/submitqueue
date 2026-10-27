@@ -251,9 +251,9 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
-	stateTransitions := queuestate.NewTransitionController(storageFty, sourceControl, queuelog.NewMaterializer(scope))
+	queueEnablementController := queuestate.NewTransitionController(storageFty, sourceControl, queuelog.NewMaterializer(scope))
 	for _, queue := range tenants {
-		if _, err := stateTransitions.Initialize(ctx, queue); err != nil {
+		if _, err := queueEnablementController.Initialize(ctx, queue); err != nil {
 			return fmt.Errorf("initialize queue enablement %q: %w", queue, err)
 		}
 	}
@@ -295,6 +295,7 @@ func run() error {
 		materializer,
 		registry,
 		tenants,
+		queueEnablementController,
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	projectStatusController := controller.NewProjectStatusController(logger.Sugar(), scope, storageFty)

@@ -57,12 +57,12 @@ func TestIngestResultToProto(t *testing.T) {
 		{
 			name:     "maps ID",
 			result:   entity.IngestResult{ID: "7"},
-			expected: &pb.IngestResponse{Id: "7"},
+			expected: &pb.IngestResponse{Id: "7", Enablement: &pb.QueueEnablementStatus{}},
 		},
 		{
 			name:     "zero value result yields empty response",
 			result:   entity.IngestResult{},
-			expected: &pb.IngestResponse{},
+			expected: &pb.IngestResponse{Enablement: &pb.QueueEnablementStatus{}},
 		},
 	}
 
@@ -72,4 +72,27 @@ func TestIngestResultToProto(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestIngestDecisionMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		wire  pb.QueueEnablement
+		state entity.QueueEnablement
+	}{
+		{"enable", pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED, entity.QueueEnablementEnabled},
+		{"disable", pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, entity.QueueEnablementDisabled},
+		{"unknown", pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN, entity.QueueEnablementUnknown},
+		{"future enum", pb.QueueEnablement(99), entity.QueueEnablementUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ProtoToIngestRequest(&pb.IngestRequest{Queue: "repo/main", Enablement: tc.wire})
+			assert.Equal(t, tc.wire != pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN, got.HasEnablement)
+			assert.Equal(t, tc.state, got.Enablement)
+		})
+	}
+	assert.Equal(t, entity.IngestRequest{}, ProtoToIngestRequest(nil))
+	assert.False(t, ProtoToIngestRequest(&pb.IngestRequest{Enablement: pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN}).HasEnablement)
+	state := entity.QueueState{State: entity.QueueEnablementDisabled, Version: 3, EffectiveFromCommitURI: "D", ChangedAtMs: 1000}
+	assert.Equal(t, &pb.QueueEnablementStatus{State: pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, Version: 3, EffectiveFromCommitUri: "D", ChangedAtMs: 1000}, IngestResultToProto(entity.IngestResult{Enablement: state}).Enablement)
 }
