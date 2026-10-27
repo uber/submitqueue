@@ -29,14 +29,14 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-func openIssueFixture() entity.OpenIssue {
-	return entity.OpenIssue{
+func issueStateFixture() entity.IssueState {
+	return entity.IssueState{
 		TaskID: "task", UnitID: "unit",
-		FirstSeenBuildID: "build/1",
+		FirstSeenBuildID: "build/1", Status: entity.IssueStatusOpen, Version: 1,
 	}
 }
 
-func TestOpenIssueCreate(t *testing.T) {
+func TestIssueStateCreate(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		dbErr   error
@@ -50,13 +50,13 @@ func TestOpenIssueCreate(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
 			defer db.Close()
-			issue := openIssueFixture()
-			store := NewOpenIssueStore(db, testMetrics(), "queue")
+			issue := issueStateFixture()
+			store := NewIssueStateStore(db, testMetrics(), "queue")
 
 			q := mock.ExpectExec(regexp.QuoteMeta(
-				`INSERT INTO open_issue (queue, task_id, unit_id, first_seen_build_id)
-                 VALUES (?, ?, ?, ?)`)).
-				WithArgs("queue", issue.TaskID, issue.UnitID, issue.FirstSeenBuildID)
+				`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, version)
+                 VALUES (?, ?, ?, ?, ?, ?)`)).
+				WithArgs("queue", issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.Version)
 			if tt.dbErr != nil {
 				q.WillReturnError(tt.dbErr)
 			} else {
@@ -75,18 +75,18 @@ func TestOpenIssueCreate(t *testing.T) {
 	}
 }
 
-func TestOpenIssueGet(t *testing.T) {
+func TestIssueStateGet(t *testing.T) {
 	for _, kind := range []string{"found", "missing", "database error", "scan error"} {
 		t.Run(kind, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
 			defer db.Close()
-			issue := openIssueFixture()
-			store := NewOpenIssueStore(db, testMetrics(), "queue")
+			issue := issueStateFixture()
+			store := NewIssueStateStore(db, testMetrics(), "queue")
 
 			q := mock.ExpectQuery(regexp.QuoteMeta(
-				`SELECT task_id, unit_id, first_seen_build_id
-                 FROM open_issue WHERE queue = ? AND task_id = ? AND unit_id = ?`)).
+				`SELECT task_id, unit_id, status, first_seen_build_id, version
+                 FROM issue_state WHERE queue = ? AND task_id = ? AND unit_id = ?`)).
 				WithArgs("queue", issue.TaskID, issue.UnitID)
 			switch kind {
 			case "missing":
@@ -99,8 +99,8 @@ func TestOpenIssueGet(t *testing.T) {
 					firstBuild = nil
 				}
 
-				q.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "first_seen_build_id"}).
-					AddRow(issue.TaskID, issue.UnitID, firstBuild))
+				q.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "version"}).
+					AddRow(issue.TaskID, issue.UnitID, issue.Status, firstBuild, issue.Version))
 			}
 
 			got, err := store.Get(context.Background(), issue.TaskID, issue.UnitID)
@@ -117,7 +117,7 @@ func TestOpenIssueGet(t *testing.T) {
 			}
 
 			if kind != "found" {
-				assert.Equal(t, entity.OpenIssue{}, got)
+				assert.Equal(t, entity.IssueState{}, got)
 			}
 
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -125,54 +125,55 @@ func TestOpenIssueGet(t *testing.T) {
 	}
 }
 
-func TestOpenIssueDelete(t *testing.T) {
+func TestIssueStateUpdate(t *testing.T) {
 	for _, tt := range []struct {
-		name  string
-		rows  int64
-		dbErr error
+		name           string
+		rows           int64
+		dbErr, wantErr error
+		resultError    bool
 	}{
-		{name: "matching opening", rows: 1},
-		{name: "already absent"},
-		{name: "different opening"},
-		{name: "database error", dbErr: assert.AnError},
+		{name: "updated", rows: 1},
+		{name: "stale version", wantErr: storage.ErrVersionMismatch},
+		{name: "database error", dbErr: assert.AnError, wantErr: assert.AnError},
+		{name: "result error", resultError: true, wantErr: assert.AnError},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
 			defer db.Close()
-			issue := openIssueFixture()
-			store := NewOpenIssueStore(db, testMetrics(), "queue")
-
-			q := mock.ExpectExec(regexp.QuoteMeta(
-				`DELETE FROM open_issue
-                 WHERE queue = ? AND task_id = ? AND unit_id = ? AND first_seen_build_id = ?`)).
-				WithArgs("queue", issue.TaskID, issue.UnitID, issue.FirstSeenBuildID)
-			if tt.dbErr != nil {
-				q.WillReturnError(tt.dbErr)
-			} else {
-				q.WillReturnResult(sqlmock.NewResult(0, tt.rows))
+			issue := issueStateFixture()
+			issue.Status = entity.IssueStatusClosed
+			expectation := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_state SET status = ?, first_seen_build_id = ?, version = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`)).
+				WithArgs(issue.Status, issue.FirstSeenBuildID, int32(2), "queue", issue.TaskID, issue.UnitID, int32(1))
+			switch {
+			case tt.dbErr != nil:
+				expectation.WillReturnError(tt.dbErr)
+			case tt.resultError:
+				expectation.WillReturnResult(sqlmock.NewErrorResult(assert.AnError))
+			default:
+				expectation.WillReturnResult(sqlmock.NewResult(0, tt.rows))
 			}
-
-			err = store.Delete(context.Background(), issue)
-			if tt.dbErr != nil {
-				require.ErrorIs(t, err, tt.dbErr)
+			before := issue
+			err = NewIssueStateStore(db, testMetrics(), "queue").Update(context.Background(), issue, 1, 2)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
 			} else {
 				require.NoError(t, err)
 			}
-
+			require.Equal(t, before, issue)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
 
-func TestOpenIssueRejectsInvalidIdentifiers(t *testing.T) {
-	for _, kind := range []string{"queue", "task", "empty task", "unit", "first build", "empty first build"} {
+func TestIssueStateRejectsInvalidIdentifiers(t *testing.T) {
+	for _, kind := range []string{"queue", "task", "empty task", "unit", "first build", "empty first build", "unknown status", "zero version"} {
 		t.Run(kind, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
 			defer db.Close()
 			queue := "queue"
-			issue := openIssueFixture()
+			issue := issueStateFixture()
 
 			switch kind {
 			case "queue":
@@ -187,19 +188,23 @@ func TestOpenIssueRejectsInvalidIdentifiers(t *testing.T) {
 				issue.FirstSeenBuildID = strings.Repeat("b", 1021)
 			case "empty first build":
 				issue.FirstSeenBuildID = ""
+			case "unknown status":
+				issue.Status = entity.IssueStatusUnknown
+			case "zero version":
+				issue.Version = 0
 			}
 
 			mock.MatchExpectationsInOrder(false)
-			mock.ExpectExec("INSERT INTO open_issue").WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec("DELETE FROM open_issue").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("INSERT INTO issue_state").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("UPDATE issue_state").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery("SELECT task_id, unit_id").WillReturnRows(
-				sqlmock.NewRows([]string{"task_id", "unit_id", "first_seen_build_id"}).
-					AddRow(issue.TaskID, issue.UnitID, issue.FirstSeenBuildID),
+				sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "version"}).
+					AddRow(issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.Version),
 			)
-			store := NewOpenIssueStore(db, testMetrics(), queue)
+			store := NewIssueStateStore(db, testMetrics(), queue)
 
 			require.Error(t, store.Create(context.Background(), issue))
-			require.Error(t, store.Delete(context.Background(), issue))
+			require.Error(t, store.Update(context.Background(), issue, 1, issue.Version))
 
 			switch kind {
 			case "queue", "task", "empty task", "unit":

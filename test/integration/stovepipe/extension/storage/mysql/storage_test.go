@@ -105,14 +105,14 @@ func TestMySQLStorage(t *testing.T) {
 		testBuildIssueUpdate(t, ctx, db, factory)
 	})
 
-	t.Run("OpenIssueStore", func(t *testing.T) {
+	t.Run("IssueStateStore", func(t *testing.T) {
 		resetStorage(t, db)
-		testOpenIssueStore(t, ctx, factory)
+		testIssueStateStore(t, ctx, factory)
 	})
 
-	t.Run("OpenIssueList", func(t *testing.T) {
+	t.Run("IssueStateList", func(t *testing.T) {
 		resetStorage(t, db)
-		testOpenIssueList(t, ctx, factory)
+		testIssueStateList(t, ctx, factory)
 	})
 
 	t.Run("IssueTrackingStore", func(t *testing.T) {
@@ -183,7 +183,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 	t.Helper()
 
 	for _, statement := range []string{
-		"TRUNCATE TABLE open_issue",
+		"TRUNCATE TABLE issue_state",
 		"TRUNCATE TABLE issue_log",
 		"TRUNCATE TABLE issue_tracking",
 		"TRUNCATE TABLE queue_log",

@@ -16,7 +16,7 @@ package entity
 
 // OpenIssue is a currently open validation issue within a queue.
 // Its task and unit identify the condition; the first-seen build identifies
-// this opening and is immutable until removal.
+// this opening.
 type OpenIssue struct {
 	// TaskID identifies the logical validation task and must be nonempty.
 	TaskID string `json:"task_id"`

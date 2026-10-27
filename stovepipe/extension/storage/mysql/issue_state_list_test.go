@@ -28,20 +28,20 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-func TestOpenIssueList(t *testing.T) {
+func TestIssueStateList(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
-		after     storage.OpenIssueCursor
+		after     storage.IssueStateCursor
 		empty     bool
 		dbErr     error
 		scanError bool
 		rowError  bool
 	}{
 		{name: "first page"},
-		{name: "after task-wide issue", after: storage.OpenIssueCursor{TaskID: "task"}},
+		{name: "after task-wide issue", after: storage.IssueStateCursor{TaskID: "task"}},
 		{name: "empty page", empty: true},
 		{name: "query error", dbErr: assert.AnError},
-		{name: "cancelled", dbErr: context.Canceled},
+		{name: "canceled", dbErr: context.Canceled},
 		{name: "scan error", scanError: true},
 		{name: "iteration error", rowError: true},
 	} {
@@ -49,33 +49,33 @@ func TestOpenIssueList(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
 			defer db.Close()
-			store := NewOpenIssueStore(db, testMetrics(), "queue")
-			issue := openIssueFixture()
-			query := listOpenIssuesQuery
+			store := NewIssueStateStore(db, testMetrics(), "queue")
+			issue := issueStateFixture()
+			query := listIssueStatesQuery
 			args := []driver.Value{"queue", int64(2)}
 			if tt.after.TaskID != "" {
-				query = listOpenIssuesAfterCursorQuery
+				query = listIssueStatesAfterCursorQuery
 				args = []driver.Value{"queue", tt.after.TaskID, tt.after.TaskID, tt.after.UnitID, int64(2)}
 			}
 			expectation := mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(args...)
 			if tt.dbErr != nil {
 				expectation.WillReturnError(tt.dbErr)
 			} else {
-				rows := sqlmock.NewRows([]string{"task_id", "unit_id", "first_seen_build_id"})
+				rows := sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "version"})
 				if !tt.empty {
 					var firstBuild any = issue.FirstSeenBuildID
 					if tt.scanError {
 						firstBuild = nil
 					}
-					rows.AddRow(issue.TaskID, issue.UnitID, firstBuild)
+					rows.AddRow(issue.TaskID, issue.UnitID, issue.Status, firstBuild, issue.Version)
 					if tt.rowError {
-						rows.AddRow("task", "unit-2", "build/2").RowError(1, assert.AnError)
+						rows.AddRow("task", "unit-2", entity.IssueStatusClosed, "build/2", 2).RowError(1, assert.AnError)
 					}
 				}
 				expectation.WillReturnRows(rows).RowsWillBeClosed()
 			}
 
-			got, err := store.List(context.Background(), storage.OpenIssueRange{After: tt.after, Limit: 2})
+			got, err := store.List(context.Background(), storage.IssueStateRange{After: tt.after, Limit: 2})
 			switch {
 			case tt.dbErr != nil:
 				require.ErrorIs(t, err, tt.dbErr)
@@ -92,28 +92,28 @@ func TestOpenIssueList(t *testing.T) {
 				require.Empty(t, got)
 			default:
 				require.NoError(t, err)
-				require.Equal(t, []entity.OpenIssue{issue}, got)
+				require.Equal(t, []entity.IssueState{issue}, got)
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
 
-func TestOpenIssueListRejectsInvalidRange(t *testing.T) {
+func TestIssueStateListRejectsInvalidRange(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		queue  string
-		bounds storage.OpenIssueRange
+		bounds storage.IssueStateRange
 	}{
-		{name: "zero limit", bounds: storage.OpenIssueRange{}},
-		{name: "negative limit", bounds: storage.OpenIssueRange{Limit: -1}},
-		{name: "unit without task", bounds: storage.OpenIssueRange{Limit: 1,
-			After: storage.OpenIssueCursor{UnitID: "unit"}}},
-		{name: "oversized task", bounds: storage.OpenIssueRange{Limit: 1,
-			After: storage.OpenIssueCursor{TaskID: strings.Repeat("t", 256)}}},
-		{name: "oversized unit", bounds: storage.OpenIssueRange{Limit: 1,
-			After: storage.OpenIssueCursor{TaskID: "task", UnitID: strings.Repeat("😀", 257)}}},
-		{name: "oversized queue", queue: strings.Repeat("q", 256), bounds: storage.OpenIssueRange{Limit: 1}},
+		{name: "zero limit", bounds: storage.IssueStateRange{}},
+		{name: "negative limit", bounds: storage.IssueStateRange{Limit: -1}},
+		{name: "unit without task", bounds: storage.IssueStateRange{Limit: 1,
+			After: storage.IssueStateCursor{UnitID: "unit"}}},
+		{name: "oversized task", bounds: storage.IssueStateRange{Limit: 1,
+			After: storage.IssueStateCursor{TaskID: strings.Repeat("t", 256)}}},
+		{name: "oversized unit", bounds: storage.IssueStateRange{Limit: 1,
+			After: storage.IssueStateCursor{TaskID: "task", UnitID: strings.Repeat("😀", 257)}}},
+		{name: "oversized queue", queue: strings.Repeat("q", 256), bounds: storage.IssueStateRange{Limit: 1}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
@@ -123,8 +123,8 @@ func TestOpenIssueListRejectsInvalidRange(t *testing.T) {
 			if queue == "" {
 				queue = "queue"
 			}
-			store := NewOpenIssueStore(db, testMetrics(), queue)
-			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "first_seen_build_id"}))
+			store := NewIssueStateStore(db, testMetrics(), queue)
+			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "version"}))
 
 			got, err := store.List(context.Background(), tt.bounds)
 			require.Error(t, err)

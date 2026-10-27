@@ -42,7 +42,7 @@ type controllerMocks struct {
 	ctrl         *gomock.Controller
 	stores       *storagemock.MockFactory
 	store        *storagemock.MockStorage
-	issues       *storagemock.MockOpenIssueStore
+	issues       *storagemock.MockIssueStateStore
 	observations *storagemock.MockBuildIssueStore
 	executors    *fixermock.MockFactory
 	executor     *fixermock.MockRepairExecutor
@@ -57,13 +57,13 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 		ctrl:         ctrl,
 		stores:       storagemock.NewMockFactory(ctrl),
 		store:        storagemock.NewMockStorage(ctrl),
-		issues:       storagemock.NewMockOpenIssueStore(ctrl),
+		issues:       storagemock.NewMockIssueStateStore(ctrl),
 		observations: storagemock.NewMockBuildIssueStore(ctrl),
 		executors:    fixermock.NewMockFactory(ctrl),
 		executor:     fixermock.NewMockRepairExecutor(ctrl),
 		logs:         logs,
 	}
-	m.store.EXPECT().GetOpenIssueStore().Return(m.issues).AnyTimes()
+	m.store.EXPECT().GetIssueStateStore().Return(m.issues).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.observations).AnyTimes()
 	return NewController(zap.New(core).Sugar(), tally.NoopScope, m.stores, m.executors,
 		consumer.TopicKey("fix"), "stovepipe-fix"), m
@@ -71,6 +71,10 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 
 func testIssue() entity.OpenIssue {
 	return entity.OpenIssue{TaskID: "test", UnitID: "unit/1 ", FirstSeenBuildID: testBuildID}
+}
+
+func storedIssue(issue entity.OpenIssue) entity.IssueState {
+	return entity.IssueState{TaskID: issue.TaskID, UnitID: issue.UnitID, FirstSeenBuildID: issue.FirstSeenBuildID, Status: entity.IssueStatusOpen, Version: 1}
 }
 
 func issueIdentity(issue entity.OpenIssue) entity.BuildIssue {
@@ -94,7 +98,7 @@ func (m controllerMocks) expectIssue(issue entity.OpenIssue) {
 	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
 	m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).
 		Return([]entity.BuildIssue{issueIdentity(issue)}, nil)
-	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(issue, nil)
+	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil)
 	m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue))).Return(nil, nil)
 	m.executors.EXPECT().For(fixer.Config{QueueName: testQueue}).Return(m.executor, nil)
 }
@@ -108,7 +112,7 @@ func TestProcessBuildSubmitsOneIssueAndAssociatesFixAfterCall(t *testing.T) {
 	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
 	m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).
 		Return([]entity.BuildIssue{observation, another}, nil)
-	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(issue, nil)
+	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil)
 	m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(another)).Return(nil, nil)
 	m.executors.EXPECT().For(fixer.Config{QueueName: testQueue}).Return(m.executor, nil)
 	updated := observation
@@ -136,10 +140,10 @@ func TestProcessBuildFindsCandidateOnLaterPage(t *testing.T) {
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).
 			Return([]entity.BuildIssue{older}, nil),
 		m.issues.EXPECT().Get(gomock.Any(), older.TaskID, older.UnitID).
-			Return(entity.OpenIssue{TaskID: older.TaskID, FirstSeenBuildID: "older-build"}, nil),
+			Return(entity.IssueState{TaskID: older.TaskID, FirstSeenBuildID: "older-build", Status: entity.IssueStatusOpen, Version: 1}, nil),
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(older)).
 			Return([]entity.BuildIssue{issueIdentity(issue)}, nil),
-		m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(issue, nil),
+		m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil),
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue))).Return(nil, nil),
 	)
 	m.executors.EXPECT().For(fixer.Config{QueueName: testQueue}).Return(m.executor, nil)
@@ -156,7 +160,7 @@ func TestProcessBuildChecksLaterPagesForRecordedFix(t *testing.T) {
 	gomock.InOrder(
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).
 			Return([]entity.BuildIssue{issueIdentity(issue)}, nil),
-		m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(issue, nil),
+		m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil),
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue))).
 			Return([]entity.BuildIssue{{TaskID: "resolved", FixID: "fix/1"}}, nil),
 	)
@@ -172,7 +176,7 @@ func TestProcessBuildDoesNotResubmitAfterRecordedFixID(t *testing.T) {
 		DoAndReturn(func(context.Context, string, storage.BuildIssueRange) ([]entity.BuildIssue, error) {
 			return []entity.BuildIssue{record}, nil
 		}).Times(2)
-	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(issue, nil)
+	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil)
 	m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(record)).Return(nil, nil)
 	m.executors.EXPECT().For(fixer.Config{QueueName: testQueue}).Return(m.executor, nil)
 	m.executor.EXPECT().Submit(gomock.Any(), issue).Return("fix/1", nil)
@@ -196,10 +200,10 @@ func TestProcessBuildWithoutEligibleIssue(t *testing.T) {
 			m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).
 				Return([]entity.BuildIssue{issue}, nil)
 			if firstSeenBuildID == "" {
-				m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(entity.OpenIssue{}, storage.ErrNotFound)
+				m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(entity.IssueState{}, storage.ErrNotFound)
 			} else {
 				m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).
-					Return(entity.OpenIssue{TaskID: issue.TaskID, FirstSeenBuildID: firstSeenBuildID}, nil)
+					Return(entity.IssueState{TaskID: issue.TaskID, FirstSeenBuildID: firstSeenBuildID, Status: entity.IssueStatusOpen, Version: 1}, nil)
 			}
 			m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issue)).Return(nil, nil)
 
@@ -303,10 +307,10 @@ func TestProcessBuildReturnsErrorsBeforeSubmission(t *testing.T) {
 				first.Return([]entity.BuildIssue{issueIdentity(issue)}, nil)
 				lookup := m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID)
 				if step == "open issue lookup" {
-					lookup.Return(entity.OpenIssue{}, assert.AnError)
+					lookup.Return(entity.IssueState{}, assert.AnError)
 					return
 				}
-				lookup.Return(issue, nil)
+				lookup.Return(storedIssue(issue), nil)
 				last := m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue)))
 				if step == "later page" {
 					last.Return(nil, assert.AnError)
@@ -319,4 +323,16 @@ func TestProcessBuildReturnsErrorsBeforeSubmission(t *testing.T) {
 			require.ErrorIs(t, controller.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
 		})
 	}
+}
+
+func TestProcessBuildSkipsClosedIssue(t *testing.T) {
+	controller, m := newTestController(t)
+	issue := testIssue()
+	closed := storedIssue(issue)
+	closed.Status = entity.IssueStatusClosed
+	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
+	m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{issueIdentity(issue)}, nil)
+	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(closed, nil)
+	m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue))).Return(nil, nil)
+	require.NoError(t, controller.processBuild(context.Background(), testQueue, testBuildID))
 }

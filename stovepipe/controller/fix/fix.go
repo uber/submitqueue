@@ -63,7 +63,7 @@ func (c *Controller) processBuild(ctx context.Context, queueName, buildID string
 	if err != nil {
 		return fmt.Errorf("failed to resolve repair storage: %w", err)
 	}
-	observation, found, err := findIssueToFix(ctx, store.GetBuildIssueStore(), store.GetOpenIssueStore(), buildID)
+	observation, found, err := findIssueToFix(ctx, store.GetBuildIssueStore(), store.GetIssueStateStore(), buildID)
 	if err != nil {
 		return fmt.Errorf("failed to select an issue for build %q: %w", buildID, err)
 	}
@@ -126,7 +126,7 @@ func (c *Controller) TopicKey() consumer.TopicKey { return c.topicKey }
 
 func (c *Controller) ConsumerGroup() string { return c.consumerGroup }
 
-func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, openIssues storage.OpenIssueStore, buildID string) (entity.BuildIssue, bool, error) {
+func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, issues storage.IssueStateStore, buildID string) (entity.BuildIssue, bool, error) {
 	bounds := storage.BuildIssueRange{Limit: buildIssuePageSize}
 	var candidate entity.BuildIssue
 	found := false
@@ -145,14 +145,14 @@ func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, o
 			if found {
 				continue
 			}
-			issue, err := openIssues.Get(ctx, record.TaskID, record.UnitID)
+			issue, err := issues.Get(ctx, record.TaskID, record.UnitID)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
 			if err != nil {
 				return entity.BuildIssue{}, false, err
 			}
-			if issue.FirstSeenBuildID == buildID {
+			if issue.Status == entity.IssueStatusOpen && issue.FirstSeenBuildID == buildID {
 				candidate, found = record, true
 			}
 		}

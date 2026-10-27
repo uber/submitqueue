@@ -26,17 +26,17 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-func testOpenIssueList(t *testing.T, ctx context.Context, factory storage.Factory) {
+func testIssueStateList(t *testing.T, ctx context.Context, factory storage.Factory) {
 	t.Helper()
 
-	bound, err := factory.For(storage.Config{QueueName: "open-issue-list/main"})
+	bound, err := factory.For(storage.Config{QueueName: "issue-state-list/main"})
 	require.NoError(t, err)
-	store := bound.GetOpenIssueStore()
-	empty, err := store.List(ctx, storage.OpenIssueRange{Limit: 2})
+	store := bound.GetIssueStateStore()
+	empty, err := store.List(ctx, storage.IssueStateRange{Limit: 2})
 	require.NoError(t, err)
 	require.Empty(t, empty)
 
-	expected := []entity.OpenIssue{
+	expected := []entity.IssueState{
 		{TaskID: "A", UnitID: ""},
 		{TaskID: "a", UnitID: ""},
 		{TaskID: "a", UnitID: "\x00"},
@@ -52,6 +52,11 @@ func testOpenIssueList(t *testing.T, ctx context.Context, factory storage.Factor
 	}
 	for i := range expected {
 		expected[i].FirstSeenBuildID = fmt.Sprintf("build/%d", i)
+		expected[i].Version = 1
+		expected[i].Status = entity.IssueStatusOpen
+		if i%2 == 0 {
+			expected[i].Status = entity.IssueStatusClosed
+		}
 	}
 	for i := len(expected) - 1; i >= 0; i-- {
 		require.NoError(t, store.Create(ctx, expected[i]))
@@ -63,16 +68,16 @@ func testOpenIssueList(t *testing.T, ctx context.Context, factory storage.Factor
 		return expected[i].UnitID < expected[j].UnitID
 	})
 
-	other, err := factory.For(storage.Config{QueueName: "Open-issue-list/main"})
+	other, err := factory.For(storage.Config{QueueName: "Issue-state-list/main"})
 	require.NoError(t, err)
-	require.NoError(t, other.GetOpenIssueStore().Create(ctx, entity.OpenIssue{
-		TaskID: "other", UnitID: "unit", FirstSeenBuildID: "other-build",
+	require.NoError(t, other.GetIssueStateStore().Create(ctx, entity.IssueState{
+		TaskID: "other", UnitID: "unit", FirstSeenBuildID: "other-build", Status: entity.IssueStatusOpen, Version: 1,
 	}))
 
 	for _, limit := range []int{1, 2, 3, len(expected), len(expected) + 1} {
 		t.Run(fmt.Sprintf("page size %d", limit), func(t *testing.T) {
-			bounds := storage.OpenIssueRange{Limit: limit}
-			var got []entity.OpenIssue
+			bounds := storage.IssueStateRange{Limit: limit}
+			var got []entity.IssueState
 			for {
 				page, err := store.List(ctx, bounds)
 				require.NoError(t, err)
@@ -83,7 +88,7 @@ func testOpenIssueList(t *testing.T, ctx context.Context, factory storage.Factor
 				got = append(got, page...)
 				require.LessOrEqual(t, len(got), len(expected))
 				last := page[len(page)-1]
-				bounds.After = storage.OpenIssueCursor{TaskID: last.TaskID, UnitID: last.UnitID}
+				bounds.After = storage.IssueStateCursor{TaskID: last.TaskID, UnitID: last.UnitID}
 			}
 			require.Equal(t, expected, got)
 		})
@@ -91,36 +96,38 @@ func testOpenIssueList(t *testing.T, ctx context.Context, factory storage.Factor
 
 	t.Run("empty task IDs are rejected", func(t *testing.T) {
 		for _, unitID := range []string{"", "unit"} {
-			issue := entity.OpenIssue{UnitID: unitID, FirstSeenBuildID: "build/invalid"}
+			issue := entity.IssueState{UnitID: unitID, FirstSeenBuildID: "build/invalid"}
 			require.Error(t, store.Create(ctx, issue))
 			_, err := store.Get(ctx, "", unitID)
 			require.Error(t, err)
-			require.Error(t, store.Delete(ctx, issue))
+			require.Error(t, store.Update(ctx, issue, 1, 2))
 		}
 
-		_, err := store.List(ctx, storage.OpenIssueRange{
-			After: storage.OpenIssueCursor{UnitID: "unit"}, Limit: 1,
+		_, err := store.List(ctx, storage.IssueStateRange{
+			After: storage.IssueStateCursor{UnitID: "unit"}, Limit: 1,
 		})
 		require.Error(t, err)
 	})
 
-	t.Run("cursor row need not exist", func(t *testing.T) {
-		bound, err := factory.For(storage.Config{QueueName: "open-issue-list/deletion"})
+	t.Run("closed cursor and absent boundaries remain traversable", func(t *testing.T) {
+		bound, err := factory.For(storage.Config{QueueName: "issue-state-list/deletion"})
 		require.NoError(t, err)
-		store := bound.GetOpenIssueStore()
-		var expected []entity.OpenIssue
+		store := bound.GetIssueStateStore()
+		var expected []entity.IssueState
 		for _, unit := range []string{"a", "b", "c"} {
-			issue := entity.OpenIssue{TaskID: "task", UnitID: unit, FirstSeenBuildID: "build/1"}
+			issue := entity.IssueState{TaskID: "task", UnitID: unit, FirstSeenBuildID: "build/1", Status: entity.IssueStatusOpen, Version: 1}
 			expected = append(expected, issue)
 			require.NoError(t, store.Create(ctx, issue))
 		}
-		first, err := store.List(ctx, storage.OpenIssueRange{Limit: 1})
+		first, err := store.List(ctx, storage.IssueStateRange{Limit: 1})
 		require.NoError(t, err)
 		require.Equal(t, expected[:1], first)
-		require.NoError(t, store.Delete(ctx, first[0]))
+		closed := first[0]
+		closed.Status = entity.IssueStatusClosed
+		require.NoError(t, store.Update(ctx, closed, 1, 2))
 
-		bounds := storage.OpenIssueRange{Limit: 2,
-			After: storage.OpenIssueCursor{TaskID: first[0].TaskID, UnitID: first[0].UnitID}}
+		bounds := storage.IssueStateRange{Limit: 2,
+			After: storage.IssueStateCursor{TaskID: first[0].TaskID, UnitID: first[0].UnitID}}
 		rest, err := store.List(ctx, bounds)
 		require.NoError(t, err)
 		require.Equal(t, expected[1:], rest)
@@ -134,16 +141,16 @@ func testOpenIssueList(t *testing.T, ctx context.Context, factory storage.Factor
 	t.Run("identifier boundaries", func(t *testing.T) {
 		bound, err := factory.For(storage.Config{QueueName: strings.Repeat("q", 255)})
 		require.NoError(t, err)
-		store := bound.GetOpenIssueStore()
-		issue := entity.OpenIssue{TaskID: strings.Repeat("t", 255), UnitID: strings.Repeat("😀", 256),
-			FirstSeenBuildID: strings.Repeat("😀", 255)}
+		store := bound.GetIssueStateStore()
+		issue := entity.IssueState{TaskID: strings.Repeat("t", 255), UnitID: strings.Repeat("😀", 256),
+			FirstSeenBuildID: strings.Repeat("😀", 255), Status: entity.IssueStatusOpen, Version: 1}
 		require.NoError(t, store.Create(ctx, issue))
-		page, err := store.List(ctx, storage.OpenIssueRange{Limit: 1})
+		page, err := store.List(ctx, storage.IssueStateRange{Limit: 1})
 		require.NoError(t, err)
-		require.Equal(t, []entity.OpenIssue{issue}, page)
+		require.Equal(t, []entity.IssueState{issue}, page)
 
-		bounds := storage.OpenIssueRange{Limit: 1,
-			After: storage.OpenIssueCursor{TaskID: issue.TaskID, UnitID: issue.UnitID}}
+		bounds := storage.IssueStateRange{Limit: 1,
+			After: storage.IssueStateCursor{TaskID: issue.TaskID, UnitID: issue.UnitID}}
 		page, err = store.List(ctx, bounds)
 		require.NoError(t, err)
 		require.Empty(t, page)

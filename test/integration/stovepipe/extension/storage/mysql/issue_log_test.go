@@ -34,23 +34,26 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 	opened := entity.IssueLog{TaskID: "validation", UnitID: "unit",
 		Event: entity.IssueEventOpened, BuildID: "build/1", TimestampMs: 1000}
 
-	t.Run("history survives resolution and reopening", func(t *testing.T) {
-		issue := entity.OpenIssue{TaskID: opened.TaskID, UnitID: opened.UnitID, FirstSeenBuildID: opened.BuildID}
-		require.NoError(t, bound.GetOpenIssueStore().Create(ctx, issue))
+	t.Run("history survives closure and reopening", func(t *testing.T) {
+		issue := entity.IssueState{TaskID: opened.TaskID, UnitID: opened.UnitID, FirstSeenBuildID: opened.BuildID, Status: entity.IssueStatusOpen, Version: 1}
+		require.NoError(t, bound.GetIssueStateStore().Create(ctx, issue))
 		require.NoError(t, bound.GetBuildIssueStore().Create(ctx, opened.BuildID, entity.BuildIssue{TaskID: opened.TaskID, UnitID: opened.UnitID}))
 		require.NoError(t, store.Create(ctx, opened))
 
 		resolved := opened
 		resolved.Event, resolved.BuildID, resolved.TimestampMs = entity.IssueEventResolved, "build/2", 2000
 		require.NoError(t, store.Create(ctx, resolved))
-		require.NoError(t, bound.GetOpenIssueStore().Delete(ctx, issue))
-		_, err := bound.GetOpenIssueStore().Get(ctx, issue.TaskID, issue.UnitID)
-		require.ErrorIs(t, err, storage.ErrNotFound)
+		issue.Status = entity.IssueStatusClosed
+		require.NoError(t, bound.GetIssueStateStore().Update(ctx, issue, 1, 2))
+		retained, err := bound.GetIssueStateStore().Get(ctx, issue.TaskID, issue.UnitID)
+		require.NoError(t, err)
+		require.Equal(t, entity.IssueStatusClosed, retained.Status)
 
 		reopened := opened
 		reopened.BuildID, reopened.TimestampMs = "build/3", 3000
 		issue.FirstSeenBuildID = reopened.BuildID
-		require.NoError(t, bound.GetOpenIssueStore().Create(ctx, issue))
+		issue.Status = entity.IssueStatusOpen
+		require.NoError(t, bound.GetIssueStateStore().Update(ctx, issue, 2, 3))
 		require.NoError(t, store.Create(ctx, reopened))
 
 		for _, want := range []entity.IssueLog{opened, resolved, reopened} {

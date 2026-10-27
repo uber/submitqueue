@@ -44,9 +44,10 @@ func testBuildIssueUpdate(t *testing.T, ctx context.Context, db *sql.DB, factory
 	require.ErrorIs(t, store.Update(ctx, "Build ", issue, 0, 1), storage.ErrVersionMismatch)
 	require.ErrorIs(t, store.Create(ctx, "Build ", issue), storage.ErrAlreadyExists)
 
-	open := entity.OpenIssue{TaskID: issue.TaskID, UnitID: issue.UnitID, FirstSeenBuildID: "Build "}
-	require.NoError(t, bound.GetOpenIssueStore().Create(ctx, open))
-	require.NoError(t, bound.GetOpenIssueStore().Delete(ctx, open))
+	open := entity.IssueState{TaskID: issue.TaskID, UnitID: issue.UnitID, FirstSeenBuildID: "Build ", Status: entity.IssueStatusOpen, Version: 1}
+	require.NoError(t, bound.GetIssueStateStore().Create(ctx, open))
+	open.Status = entity.IssueStatusClosed
+	require.NoError(t, bound.GetIssueStateStore().Update(ctx, open, 1, 2))
 	page, err := store.List(ctx, "Build ", storage.BuildIssueRange{Limit: 1})
 	require.NoError(t, err)
 	require.Equal(t, []entity.BuildIssue{updated}, page)

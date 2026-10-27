@@ -57,7 +57,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	got, err = store.Get(ctx)
 	require.NoError(t, err)
 	require.Equal(t, state, got)
-	opens, err := bound.GetOpenIssueStore().List(ctx, storage.OpenIssueRange{Limit: 1})
+	opens, err := bound.GetIssueStateStore().List(ctx, storage.IssueStateRange{Limit: 1})
 	require.NoError(t, err)
 	require.Empty(t, opens)
 
