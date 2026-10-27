@@ -24,13 +24,18 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// Result is one project status result. The record stage supplies the request
-// identity and recording timestamp when it persists this result.
-type Result struct {
-	// Project identifies the project to which this result applies.
-	Project string
+// ProjectInfo identifies a project and its provider-defined metadata.
+type ProjectInfo struct {
+	// Name identifies the project within its repository.
+	Name string
 	// ProjectType is a provider-defined classification; empty means unknown.
 	ProjectType string
+}
+
+// Result is one project status result.
+type Result struct {
+	// ProjectInfo identifies and describes the project.
+	ProjectInfo ProjectInfo
 	// Degree describes how broken the project is, on the closed interval [0, 1].
 	Degree float64
 }

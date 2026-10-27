@@ -208,8 +208,8 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 	for _, result := range results {
 		fact, _, err := c.recordValidationFact(ctx, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:         request.URI,
-			Project:     result.Project,
-			ProjectType: result.ProjectType,
+			Project:     result.ProjectInfo.Name,
+			ProjectType: result.ProjectInfo.ProjectType,
 			Degree:      result.Degree,
 			RequestID:   request.ID,
 			CreatedAt:   time.Now().UnixMilli(),
@@ -233,15 +233,15 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 func validateProjectStatusResults(request entity.Request, results []projectstatus.Result) error {
 	seen := make(map[string]struct{}, len(results))
 	for _, result := range results {
-		if result.Project == "" {
+		if result.ProjectInfo.Name == "" {
 			return fmt.Errorf("project status result for request %q has an empty project", request.ID)
 		}
-		if _, ok := seen[result.Project]; ok {
-			return fmt.Errorf("project status result for request %q contains duplicate project %q", request.ID, result.Project)
+		if _, ok := seen[result.ProjectInfo.Name]; ok {
+			return fmt.Errorf("project status result for request %q contains duplicate project %q", request.ID, result.ProjectInfo.Name)
 		}
-		seen[result.Project] = struct{}{}
+		seen[result.ProjectInfo.Name] = struct{}{}
 		if math.IsNaN(result.Degree) || result.Degree < entity.DegreeGreen || result.Degree > entity.DegreeBroken {
-			return fmt.Errorf("project status result for request %q and project %q has invalid degree %v", request.ID, result.Project, result.Degree)
+			return fmt.Errorf("project status result for request %q and project %q has invalid degree %v", request.ID, result.ProjectInfo.Name, result.Degree)
 		}
 	}
 	return nil
