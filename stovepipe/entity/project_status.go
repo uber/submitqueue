@@ -40,7 +40,7 @@ type GetProjectStatusResult struct {
 	HasRepositoryValidationFact bool
 	// ProjectResultsComplete reports whether the implementation has finished its project-result set.
 	ProjectResultsComplete bool
-	// ProjectValidationFacts contains recorded results in request order, or project-ID order when Projects is empty.
+	// ProjectValidationFacts contains recorded results in request order, or descending degree then ascending project ID when Projects is empty.
 	ProjectValidationFacts []ValidationFact
 	// NextPageToken continues requested-project result pagination when another page exists.
 	NextPageToken string

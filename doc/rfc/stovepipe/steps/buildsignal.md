@@ -1,6 +1,6 @@
 # Buildsignal stage
 
-`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, and publishes the **request id** to `record`. See [workflow.md](../workflow.md) for where it sits in the pipeline and [build.md](build.md) for how the build it polls was triggered.
+`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, advances a successful Request's last-green build baseline, and publishes the **request id** to `record`. See [workflow.md](../workflow.md) for where it sits in the pipeline and [build.md](build.md) for how the build it polls was triggered.
 
 It handles only the poll loop: it does not decide build strategy, write greenness, or map targets to projects — those are `process`'s, `record`'s, and `analyze`'s jobs. It reports the *fact* (this request's build ended succeeded, failed, or cancelled); `record` derives what that fact *means* for greenness.
 
@@ -60,11 +60,14 @@ For a delivery carrying build id `B`:
      - with the write-once rule, accepted -> running -> {succeeded|failed|cancelled} is monotonic
        by mechanism, not by assumption about the backend.
 
-7. If the stored status is terminal, and R does not already carry an outcome:
-   a. Release the queue's build slot: CAS-decrement Queue.in_flight_count, clamped at zero.
+7. If the stored status is terminal:
+   a. If R does not already carry an outcome, release the queue's build slot:
+      CAS-decrement Queue.in_flight_count, clamped at zero.
       - failure here aborts the step: R must not go terminal while still holding a slot.
-   b. CAS R from processing to the outcome the stored status projects onto it and persist B as R's terminal build id:
+   b. If R does not already carry an outcome, CAS R from processing to the outcome the stored status projects onto it and persist B as R's terminal build id:
       succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
+   c. If the winning durable R.State is succeeded, advance the last-green bookmark
+      in a CAS retry loop, even on a terminal redelivery. Preserve a newer bookmark.
    Then publish R.ID to the record topic, partitioned by request id; ack, return.
    No re-publish to buildsignal.
    - record loads the Request directly by this key, derives greenness from its outcome, and
@@ -83,6 +86,8 @@ For a delivery carrying build id `B`:
 ```
 
 **Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever decrement it. Failing this way leaves the request non-terminal: redelivery re-runs both steps and decrements again, transiently over-admitting by one slot until the zero clamp reconverges. Over-admission is the failure mode this pipeline already prefers, for the same reason and in the same words as the DLQ reconciler (see [process.md](process.md#in_flight_count-integrity)).
+
+**Baseline timing.** After the winning Request outcome is durable, a successful Request advances `last_green_uri` and `last_green_request_id` in a CAS retry loop before publishing to `record`. Older candidates never regress the bookmark. A terminal redelivery retries the advance without releasing capacity again. Slot release and bookmark advancement are separate updates, so an admission between them can still select the previous baseline. Project resolution, facts, and Git promotion remain in `record`.
 
 **Why `buildsignal` releases the slot rather than `record`**: the gate `process` claims is a *build* slot — it exists to bound concurrent builds per Queue — and once the build is terminal the build is over. Releasing here also keeps the invariant *a terminal `Request` has already released its slot*, which is what makes the DLQ reconciler's early-return on terminal requests safe.
 

@@ -15,8 +15,9 @@
 // Package buildsignal holds the buildsignal-stage queue controller. It consumes
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
-// releases the queue's build slot, projects the outcome onto the request, and
-// publishes the request id to record. See
+// releases the queue's build slot, projects the outcome onto the request,
+// advances the successful-build bookmark, and publishes directly to record plus
+// terminal analysis. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
 
@@ -28,6 +29,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
@@ -68,9 +70,6 @@ type Controller struct {
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
-
-// Verify Controller implements consumer.Controller interface at compile time.
-var _ consumer.Controller = (*Controller)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "buildsignal"
@@ -180,11 +179,23 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.finishRequest(ctx, store, &request, build.ID, effective); err != nil {
 			return err
 		}
+		if request.State == entity.RequestStateSucceeded {
+			if err := c.advanceLastGreen(ctx, store, request); err != nil {
+				metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+				return err
+			}
+		}
 		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
 			return err
 		}
-		if err := c.publishRecord(ctx, request.ID, request.Queue); err != nil {
-			return fmt.Errorf("failed to publish record for request %s: %w", request.ID, err)
+		recordErr := c.publishRecord(ctx, request.ID, request.Queue)
+		if recordErr != nil {
+			recordErr = fmt.Errorf("failed to publish record for request %s: %w", request.ID, recordErr)
+		}
+
+		analysisErr := c.publishBuildAnalysis(ctx, build.ID, request.Queue)
+		if err := errs.Group(recordErr, analysisErr); err != nil {
+			return err
 		}
 		c.logger.Infow("build reached terminal status",
 			"build_id", build.ID,
@@ -356,6 +367,62 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 	}
 }
 
+// advanceLastGreen points the queue's bookmark at the successful request, retrying
+// on version conflicts. The bookmark only moves forward and can precede facts.
+// Capacity is already released, so another admission may use the prior baseline.
+func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) error {
+	queueStore := store.GetQueueStore()
+
+	for {
+		queueRow, err := queueStore.Get(ctx, request.Queue)
+		if err != nil {
+			return fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
+		}
+
+		cmp, err := compareToBookmark(request.Queue, request.ID, queueRow.LastGreenRequestID)
+		if err != nil {
+			// Non-retryable: re-parsing the same ids cannot start succeeding.
+			return err
+		}
+		if cmp <= 0 {
+			return nil
+		}
+
+		updated := queueRow
+		updated.LastGreenURI = request.URI
+		updated.LastGreenRequestID = request.ID
+		newVersion := queueRow.Version + 1
+		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			return fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
+		}
+
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Infow("advanced last green bookmark",
+			"queue", request.Queue,
+			"request_id", request.ID,
+			"last_green_uri", request.URI,
+		)
+		return nil
+	}
+}
+
+// compareToBookmark orders candidate against the request id currently holding the
+// bookmark, by ingest order, using the sign convention of entity.CompareRequestID.
+// An empty current means the bookmark has never been set, so any candidate is newer.
+func compareToBookmark(queue, candidate, current string) (int, error) {
+	if current == "" {
+		return 1, nil
+	}
+	cmp, err := entity.CompareRequestID(candidate, current)
+	if err != nil {
+		return 0, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
+	}
+	return cmp, nil
+}
+
 // reconcile persists a real status transition and returns the status that
 // should drive the rest of Process: the polled status when persisted (or
 // already unchanged), or the stored status when a stored terminal status is
@@ -432,3 +499,23 @@ func (c *Controller) TopicKey() consumer.TopicKey {
 func (c *Controller) ConsumerGroup() string {
 	return c.consumerGroup
 }
+
+func (c *Controller) publishBuildAnalysis(ctx context.Context, buildID, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildAnalysis{Id: buildID, QueueName: queue})
+	if err != nil {
+		return fmt.Errorf("failed to serialize build analysis: %w", err)
+	}
+
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuildAnalysis, publish.MessageParams{
+		Tenant:       queue,
+		ID:           publish.IntentID(buildID, "finished"),
+		Payload:      payload,
+		PartitionKey: buildID,
+	}); err != nil {
+		return fmt.Errorf("failed to publish build analysis for %s: %w", buildID, err)
+	}
+
+	return nil
+}
+
+var _ consumer.Controller = (*Controller)(nil)

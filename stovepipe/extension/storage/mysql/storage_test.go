@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
@@ -47,6 +48,10 @@ func TestNewStorage(t *testing.T) {
 	assert.NotNil(t, bound.GetRequestSummaryStore())
 	assert.NotNil(t, bound.GetQueueStore())
 	assert.NotNil(t, bound.GetBuildStore())
+	assert.NotNil(t, bound.GetBuildIssueStore())
+	assert.NotNil(t, bound.GetIssueStateStore())
+	assert.NotNil(t, bound.GetIssueLogStore())
+	assert.NotNil(t, bound.GetIssueTrackingStore())
 
 	_, err = s.For("")
 	assert.Error(t, err, "resolving an empty queue name must fail")
@@ -128,10 +133,50 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			},
 		},
 		{
+			name: "build_issue_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetBuildIssueStore().Get(context.Background(), "build-id", "task", "unit")
+				return err
+			},
+		},
+		{
+			name: "issue_state_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetIssueStateStore().Get(context.Background(), "task-id", "unit-id")
+				return err
+			},
+		},
+		{
+			name: "issue_log_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetIssueLogStore().Get(context.Background(), "task", "unit", "build-id", entity.IssueEventOpened)
+				return err
+			},
+		},
+		{
+			name: "issue_tracking_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetIssueTrackingStore().Get(context.Background())
+				return err
+			},
+		},
+		{
 			name: "validation_fact_store",
 			op:   "get",
 			read: func(bound storage.Storage, _ string) error {
 				_, err := bound.GetValidationFactStore().Get(context.Background(), "change-uri", "project")
+				return err
+			},
+		},
+		{
+			name: "project_fact_by_degree_store",
+			op:   "list",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetProjectFactByDegreeStore().List(context.Background(), "change-uri", entity.ProjectFactByDegree{}, 1)
 				return err
 			},
 		},

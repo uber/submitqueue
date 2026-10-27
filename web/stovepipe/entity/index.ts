@@ -23,6 +23,12 @@ export interface RequestSummaryModel {
   /** Stable backend outcome reason, empty when absent. */
   outcomeReason: string;
 }
+export interface QueueRequestsModel {
+  /** Requests on this page, newest accepted first. */
+  requests: RequestSummaryModel[];
+  /** Opaque continuation URL; null on the final page. */
+  nextHref: string | null;
+}
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
   id: string;
@@ -75,10 +81,7 @@ export type StovepipePageModel = PageBase &
   (
     | {
         kind: "queue";
-        requests: ReadResult<{
-          requests: RequestSummaryModel[];
-          nextHref: string | null;
-        }>;
+        requests: ReadResult<QueueRequestsModel>;
       }
     | {
         kind: "request";

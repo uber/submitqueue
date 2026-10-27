@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "dlq.go",
+        "facts.go",
         "record.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/controller/record",

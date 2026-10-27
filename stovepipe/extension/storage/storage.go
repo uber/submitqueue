@@ -94,6 +94,20 @@ type Storage interface {
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 
+	// GetBuildIssueStore returns the BuildIssueStore instance.
+	GetBuildIssueStore() BuildIssueStore
+
+	// GetIssueStateStore returns the IssueStateStore instance.
+	GetIssueStateStore() IssueStateStore
+
+	// GetIssueLogStore returns the IssueLogStore instance.
+	GetIssueLogStore() IssueLogStore
+
+	// GetIssueTrackingStore returns the operational reconciliation progress store.
+	GetIssueTrackingStore() IssueTrackingStore
+
 	// GetValidationFactStore returns the ValidationFactStore instance.
 	GetValidationFactStore() ValidationFactStore
+
+	GetProjectFactByDegreeStore() ProjectFactByDegreeStore
 }

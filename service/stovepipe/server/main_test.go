@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -60,10 +61,10 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	deadLetter := &recordingConsumer{}
 
 	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
-		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{})
+		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New())
 	require.NoError(t, err)
 
-	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope))
+	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry)
 	require.NoError(t, err)
 
 	return registry, primary.controllers, deadLetter.controllers
@@ -129,6 +130,7 @@ func TestPipelineSubscriptionRetryPolicies(t *testing.T) {
 		{name: "process", topicKey: stovepipemq.TopicKeyProcess, consumerGroup: "stovepipe-process", wantRetry: defaultRetry},
 		{name: "build", topicKey: stovepipemq.TopicKeyBuild, consumerGroup: "stovepipe-build", wantRetry: defaultRetry},
 		{name: "buildsignal", topicKey: stovepipemq.TopicKeyBuildSignal, consumerGroup: "stovepipe-buildsignal", wantRetry: extendedRetry},
+		{name: "buildanalysis", topicKey: stovepipemq.TopicKeyBuildAnalysis, consumerGroup: "stovepipe-buildanalysis", wantRetry: extendedRetry},
 		{name: "record", topicKey: stovepipemq.TopicKeyRecord, consumerGroup: "stovepipe-record", wantRetry: extendedRetry},
 		{name: "hook", topicKey: basehook.TopicKeyHook, consumerGroup: "stovepipe-hook", wantRetry: defaultRetry},
 	}
@@ -153,4 +155,19 @@ func TestDLQSubscriptionRetryPoliciesRemainUnlimited(t *testing.T) {
 			assert.False(t, config.DLQ.Enabled)
 		})
 	}
+}
+
+func TestBuildAnalysisRegistration(t *testing.T) {
+	registry, primary, deadLetter := registeredControllers(t)
+	assert.Contains(t, topicKeys(primary), stovepipemq.TopicKeyBuildAnalysis)
+	assert.Contains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyBuildAnalysis))
+
+	dlqName, ok := registry.TopicName(dlq.TopicKey(stovepipemq.TopicKeyBuildAnalysis))
+	require.True(t, ok)
+	assert.Equal(t, "buildanalysis_dlq", dlqName)
+
+	cfg, ok := registry.SubscriptionConfig(stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	require.True(t, ok)
+	assert.True(t, cfg.DLQ.Enabled)
+	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
 }

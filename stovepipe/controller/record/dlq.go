@@ -23,6 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -32,13 +33,14 @@ import (
 
 const _dlqOpName = "record_dlq"
 
-// DLQController records that record-stage work was abandoned without replaying
-// any of the stage's durable writes or outbound calls.
+// DLQController retains abandoned record work and ensures failed requests have
+// a repository fact without requiring project attribution.
 type DLQController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	stores        storage.Factory
 	materializer  requestlog.Materializer
+	registry      consumer.TopicRegistry
+	stores        storage.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -51,6 +53,7 @@ func NewDLQController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *DLQController {
@@ -58,8 +61,9 @@ func NewDLQController(
 	return &DLQController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
-		stores:        stores,
 		materializer:  materializer,
+		registry:      registry,
+		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -67,7 +71,7 @@ func NewDLQController(
 
 // Process retains an observable abandonment occurrence for record work that the
 // primary consumer could not finish. Deterministic poison is acknowledged;
-// failures reading durable state or retaining history are returned for retry.
+// failures recording facts, retaining history, or publishing are retried.
 func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 	rec := &stovepipemq.Record{}
@@ -123,11 +127,31 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		metrics.NamedCounter(c.metricsScope, _dlqOpName, "request_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to load request %s for record dlq: %w", rec.GetId(), err)
 	}
+	if rec.GetQueueName() != "" && rec.GetQueueName() != request.Queue {
+		metrics.NamedCounter(c.metricsScope, _dlqOpName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Errorw("discarding record dlq message with mismatched request queue",
+			"message_id", msg.ID, "request_id", request.ID,
+			"payload_queue", rec.GetQueueName(), "request_queue", request.Queue)
+		return nil
+	}
 	originalFailure, hasFailure := delivery.Failure()
 	log := requestlog.NewRequestEventLog(request, entity.RequestEventRecordAbandoned, "repository", nil)
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		metrics.NamedCounter(c.metricsScope, _dlqOpName, "history_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to retain abandoned record work for request %s: %w", request.ID, err)
+	}
+
+	if request.State == entity.RequestStateFailed {
+		fact, _, err := recordFact(ctx, c.logger, c.metricsScope, store, request, nil)
+		if err != nil {
+			return err
+		}
+		if err := persistValidationFactRecordedLog(ctx, c.materializer, store, request, fact); err != nil {
+			return err
+		}
+		if err := publishHookEvent(ctx, c.logger, c.metricsScope, c.registry, request, hookevent.NewValidationRepositoryRecorded(request)); err != nil {
+			return err
+		}
 	}
 
 	metrics.NamedCounter(c.metricsScope, _dlqOpName, "requests_abandoned", 1, metrics.TagsFromContext(ctx)...)

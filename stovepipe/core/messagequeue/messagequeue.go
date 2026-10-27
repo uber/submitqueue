@@ -50,6 +50,15 @@ type (
 	// buildsignal re-publishes to itself while polling: the build id to poll.
 	BuildSignal = protopb.BuildSignal
 
+	// BuildAnalysis identifies the build whose issue observations are polled.
+	BuildAnalysis = protopb.BuildAnalysis
+
+	// IssueTrack identifies persisted build observations for queue-scoped reconciliation.
+	IssueTrack = protopb.IssueTrack
+
+	// FixRequest identifies the build whose issues should be considered for repair.
+	FixRequest = protopb.FixRequest
+
 	// Record is the payload buildsignal publishes to the record stage once a
 	// build reaches a terminal status: the build id to record.
 	Record = protopb.Record

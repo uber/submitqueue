@@ -48,6 +48,7 @@ import (
 	"github.com/uber/submitqueue/service/stovepipe/server/handler"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/build"
+	"github.com/uber/submitqueue/stovepipe/controller/buildanalysis"
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
@@ -56,6 +57,8 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/queuelog"
 	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
+	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
 	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
@@ -214,6 +217,7 @@ func run() error {
 		subscriberName = fmt.Sprintf("stovepipe-%d", time.Now().Unix())
 	}
 
+	detectorFactory := buildissuenoop.New()
 	registry, err := newTopicRegistry(mysqlQueue, subscriberName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic registry: %w", err)
@@ -254,11 +258,11 @@ func run() error {
 		}
 	}
 	materializer := requestlog.NewMaterializer(scope)
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{})
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory)
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer, registry)
 	if err != nil {
 		return err
 	}
@@ -373,6 +377,7 @@ func registerPrimaryControllers(
 	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
 	hooks hookext.Hooks,
+	detectorFactory buildissue.DetectorFactory,
 ) (int, error) {
 	var count int
 
@@ -404,6 +409,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	if err := c.Register(analysisController); err != nil {
+		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
+	}
+	count++
+
 	recordController := record.NewController(logger, scope, store, materializer, projectstatusnoop.New(), sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
@@ -427,6 +438,7 @@ func registerDLQControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	materializer requestlog.Materializer,
+	registry consumer.TopicRegistry,
 ) (int, error) {
 	var count int
 
@@ -448,7 +460,13 @@ func registerDLQControllers(
 	}
 	count++
 
-	recordDLQController := record.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	analysisDLQController := buildanalysis.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyBuildAnalysis), "stovepipe-buildanalysis-dlq")
+	if err := c.Register(analysisDLQController); err != nil {
+		return count, fmt.Errorf("failed to register buildanalysis dlq controller: %w", err)
+	}
+	count++
+
+	recordDLQController := record.NewDLQController(logger, scope, store, materializer, registry, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
 	if err := c.Register(recordDLQController); err != nil {
 		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}
@@ -543,6 +561,18 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Name:         "stovepipe-hook_dlq",
 			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-hook-dlq"),
+		},
+		{
+			Key:          stovepipemq.TopicKeyBuildAnalysis,
+			Name:         "buildanalysis",
+			Queue:        q,
+			Subscription: extqueue.ExtendedSubscriptionConfig(subscriberName, "stovepipe-buildanalysis"),
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyBuildAnalysis),
+			Name:         "buildanalysis_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-buildanalysis-dlq"),
 		},
 	})
 }

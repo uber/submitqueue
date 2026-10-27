@@ -90,6 +90,41 @@ func TestMySQLStorage(t *testing.T) {
 		suite.Run(t, testSuite)
 	})
 
+	t.Run("BuildIssueStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testBuildIssueStore(t, ctx, db, factory)
+	})
+
+	t.Run("BuildIssueList", func(t *testing.T) {
+		resetStorage(t, db)
+		testBuildIssueList(t, ctx, factory)
+	})
+
+	t.Run("BuildIssueUpdate", func(t *testing.T) {
+		resetStorage(t, db)
+		testBuildIssueUpdate(t, ctx, db, factory)
+	})
+
+	t.Run("IssueStateStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testIssueStateStore(t, ctx, factory)
+	})
+
+	t.Run("IssueStateList", func(t *testing.T) {
+		resetStorage(t, db)
+		testIssueStateList(t, ctx, factory)
+	})
+
+	t.Run("IssueTrackingStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testIssueTrackingStore(t, ctx, factory)
+	})
+
+	t.Run("IssueLogStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testIssueLogStore(t, ctx, factory)
+	})
+
 	t.Run("BuildStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLBuildStoreSuite)
@@ -108,6 +143,11 @@ func TestMySQLStorage(t *testing.T) {
 		testSuite.SetFactory(factory)
 		testSuite.SetLogger(testutil.NewTestLogger(t))
 		suite.Run(t, testSuite)
+	})
+
+	t.Run("ProjectFactByDegree", func(t *testing.T) {
+		resetStorage(t, db)
+		testProjectFactByDegree(t, ctx, backend)
 	})
 
 	t.Run("RequestLogStore", func(t *testing.T) {
@@ -143,6 +183,9 @@ func resetStorage(t *testing.T, db *sql.DB) {
 	t.Helper()
 
 	for _, statement := range []string{
+		"TRUNCATE TABLE issue_state",
+		"TRUNCATE TABLE issue_log",
+		"TRUNCATE TABLE issue_tracking",
 		"TRUNCATE TABLE queue_log",
 		"TRUNCATE TABLE queue_summary",
 		"TRUNCATE TABLE request_log",
@@ -151,8 +194,10 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE request_uri",
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
+		"TRUNCATE TABLE build_issue",
 		"TRUNCATE TABLE queue",
 		"TRUNCATE TABLE validation_fact",
+		"TRUNCATE TABLE project_fact_by_degree",
 	} {
 		_, err := db.ExecContext(context.Background(), statement)
 		require.NoError(t, err)

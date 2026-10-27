@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "../../platform/test/rtl.js";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WebPageModel } from "../entity/index.js";
 import { WebNavigationProvider, type WebNavigation } from "@submitqueue/web-platform";
@@ -21,15 +21,21 @@ function Page({ model }: { model: WebPageModel }) {
 }
 
 function renderApp(model: WebPageModel, navigation: WebNavigation) {
-  return render(<WebNavigationProvider value={navigation}><WebApp model={model} Page={Page} /></WebNavigationProvider>);
+  return render(<WebNavigationProvider value={navigation}><WebApp model={model}><Page model={model} /></WebApp></WebNavigationProvider>);
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe("WebApp", () => {
   it("refreshes through the host, moving a snapshot page to its refresh target", async () => {
+    vi.useFakeTimers();
     const refresh = vi.fn(async () => undefined);
     renderApp(pageModel("Snapshot", "/latest"), { refresh });
 
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
+    await act(async () => vi.advanceTimersByTime(30_000));
+    expect(refresh).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Auto refresh every 10s" }));
+    await act(async () => vi.advanceTimersByTime(10_000));
 
     expect(refresh).toHaveBeenCalledWith("/latest");
   });
@@ -47,14 +53,15 @@ describe("WebApp", () => {
     const navigation = {};
     const { rerender } = renderApp(pageModel("First"), navigation);
 
-    rerender(<WebNavigationProvider value={navigation}><WebApp model={pageModel("Second")} Page={Page} /></WebNavigationProvider>);
+    const second = pageModel("Second");
+    rerender(<WebNavigationProvider value={navigation}><WebApp model={second}><Page model={second} /></WebApp></WebNavigationProvider>);
 
     expect(screen.getByRole("heading").textContent).toBe("Second");
   });
 
-  it("offers only manual refresh when the host cannot refresh in place", () => {
+  it("omits auto-refresh when the host cannot refresh in place", () => {
     renderApp(pageModel("First"), {});
-    expect(screen.getByText("Manual refresh")).toBeDefined();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 });
 

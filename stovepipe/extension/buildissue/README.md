@@ -10,4 +10,4 @@ Each detection returns issues discoverable at that time and may repeat earlier o
 
 Detectors must support concurrent calls. Dependency failures return plain errors; issue results returned with an error must not be used.
 
-`Factory` resolves the detector for a validation queue.
+`DetectorFactory` resolves the detector for a validation queue.

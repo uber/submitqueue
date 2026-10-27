@@ -6,7 +6,7 @@ import { renderToString } from "react-dom/server";
 import { BaseProvider, createTheme, DarkTheme, LightTheme } from "baseui";
 import { Client, Server } from "styletron-engine-atomic";
 import { Provider } from "styletron-react";
-import { SubmitQueueApp, SubmitQueueShell } from "@submitqueue/web-submitqueue";
+import { SubmitQueueApp } from "@submitqueue/web-submitqueue";
 import { createSubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
 
@@ -44,7 +44,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   for (const route of routes) {
     const result = await web.handle(route);
     assert.equal(result.kind, "render", `${JSON.stringify(route)} did not render`);
-    const page = createElement(SubmitQueueShell, null, createElement(SubmitQueueApp, { model: result.model }));
+    const page = createElement(SubmitQueueApp, { model: result.model });
     addPage(route, page);
   }
 
@@ -106,13 +106,15 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     document.body.append(expected);
     assert.equal(dom.window.getComputedStyle(container.querySelector(".sq-app")).backgroundColor,
       dom.window.getComputedStyle(expected).backgroundColor, "the page must inherit its host's background");
-    expected.style.backgroundColor = theme.colors.buttonPrimaryFill;
-    assert.equal(dom.window.getComputedStyle(container.querySelector("button")).backgroundColor,
-      dom.window.getComputedStyle(expected).backgroundColor, "refresh must inherit its host's button theme");
+    expected.style.color = theme.colors.contentPrimary;
+    const selectedTimeZone = container.querySelector('[role="option"][aria-selected="true"]');
+    assert.ok(selectedTimeZone);
+    assert.equal(dom.window.getComputedStyle(selectedTimeZone).color,
+      dom.window.getComputedStyle(expected).color, "the selected time zone must inherit its host's text color");
     expected.remove();
     if (route === "/repo%2Fmain/request/1") {
       assert.match(container.textContent, /example-project/u);
-      assert.match(container.textContent, /Repository resultBreakage/u);
+      assert.match(container.textContent, /Repository resultPartial Breakage/u);
       assert.match(container.textContent, /example-projectGreen/u);
       assert.doesNotMatch(container.textContent, /%/u);
     }

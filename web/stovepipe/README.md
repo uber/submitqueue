@@ -12,6 +12,8 @@ Instrumentation belongs in the host: wrap `handle` to observe page results and i
 
 Use the server entry's `createStovepipeWeb` to load a page and render its model with `StovepipeApp`. Mount beneath `WebNavigationProvider` when the host supplies client navigation and refresh. Without it, links and refresh use ordinary document navigation. Import `@submitqueue/web-stovepipe/styles.css` for long-identifier wrapping, and supply BaseUI's `BaseProvider` and Styletron's `Provider`. The host owns the theme and styling engine, including SSR stylesheet extraction and hydration; the library creates neither. BaseUI, React, React DOM, and Styletron React are peer dependencies.
 
+Mount `StovepipeQueueProvider` above route changes with a `loadPage(href, signal)` callback that returns a `QueueRequestsModel` through the host's authenticated transport. Queue lists then load older rows automatically near the bottom, with a keyboard-accessible Load more button and explicit retry after failure. The provider retains loaded rows and scroll positions across detail visits. Without JavaScript or a loader, continuation links navigate normally. The reference host supplies an authenticated, uncached JSON route.
+
 ## Routes and data
 
 Request pages use `/<queue>/request/<request-id>` and load both the current summary and events with `GetRequestHistoryByID`. The summary is displayed above history and is not reconstructed from retained events. Queue pagination uses the backend's opaque continuations, and the latest URL carries no time window.
@@ -22,7 +24,7 @@ projects; `?projects=<opaque-token>` carries its continuation and can be shared.
 First-page navigation removes the cursor. Pages are live rather than a snapshot;
 return to the first page to see newly recorded projects.
 
-The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green or Breakage without percentages.
+The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green at zero, Partial Breakage between zero and one, and Breakage at one, without percentages.
 
 Repository breakage, per-project breakage, and recording completion are separate.
 Zero breakage is green; absent results are never treated as green. Completion
@@ -33,4 +35,6 @@ in this package; hosts only adapt their transport representation.
 
 ## Refresh and presentation
 
-Refresh is manual by default, with optional ten-second polling. Failed refreshes retain successful results on the same route; changing routes clears them. Timestamps use UTC. Lifecycle labels and outcome reasons come from the backend and are displayed verbatim.
+The header offers optional ten-second auto-refresh, off by default. Use browser reload for manual updates. Polling pauses while the page is hidden or offline. Failed refreshes retain successful results on the same route; request-detail results are scoped to their route. Timestamps default to the browser's time zone, with a Browser/UTC segmented control in the header. The browser remembers the selection across navigation and reloads when local storage is available. Server-rendered timestamps use UTC until the browser resolves its time zone and preference. Lifecycle labels and outcome reasons come from the backend and are displayed verbatim.
+
+Queue refreshes update the status of matching displayed requests while preserving their positions and loaded older pages. New arrivals appear behind a Show latest requests action that starts a fresh list. A full browser reload also starts a fresh list; older-page URLs retain their explicit cursor.

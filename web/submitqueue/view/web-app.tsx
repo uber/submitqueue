@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useRef, type ComponentType } from "react";
+import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 import type { WebPageModel } from "../entity/index.js";
 import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
 import { StyledLink } from "baseui/link";
@@ -21,9 +21,9 @@ export function useWebApp(): WebAppControls | null {
   return useContext(AppContext);
 }
 
-export interface WebAppProps<Model extends WebPageModel> {
-  model: Model;
-  Page: ComponentType<{ model: Model }>;
+export interface WebAppProps {
+  model: WebPageModel;
+  children: ReactNode;
 }
 
 /**
@@ -31,7 +31,7 @@ export interface WebAppProps<Model extends WebPageModel> {
  * and refresh through the host's `WebNavigationProvider`. The host owns the
  * model: a refresh or navigation re-renders `WebApp` with a new one.
  */
-export function WebApp<Model extends WebPageModel>({ model, Page }: WebAppProps<Model>) {
+export function WebApp({ model, children }: WebAppProps) {
   const navigation = useWebNavigation();
   const modelRef = useRef(model);
   modelRef.current = model;
@@ -55,7 +55,7 @@ export function WebApp<Model extends WebPageModel>({ model, Page }: WebAppProps<
     },
   }), [navigation]);
 
-  return <AppContext.Provider value={controls}><Page key={model.key} model={model} /></AppContext.Provider>;
+  return <AppContext.Provider value={controls}>{children}</AppContext.Provider>;
 }
 
 /** An in-app link styled by BaseUI, using the host's router when supplied. */

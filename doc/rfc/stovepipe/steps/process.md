@@ -9,7 +9,7 @@ It handles everything *before* the first build is triggered: it does not run bui
 Ingest publishes a `ProcessRequest` (request id only — producer and consumer share the store) to the process topic, **partitioned by Queue name**. Two consequences the design relies on:
 
 1. **One partition per Queue**, and `BatchSize = 1` (strict serialization; see [sql-queue-rfc.md](../../sql-queue-rfc.md#strict-serialization-opt-in)) — so at most one `process` invocation runs per Queue at a time. The read-modify-write on the Queue row (gate check, count increment) is therefore race-free **without** a transaction, the same property SubmitQueue's `validate` gets from per-queue partition leasing.
-2. **`process` is not the only Queue-row writer.** `ingest` stamps `latest_request_id` (the request id of the newest accepted head, not a URI; see [Backlog coalescing](#backlog-coalescing)) and `buildsignal` releases slots when a build goes terminal, and `record` advances the `last_green_uri` bookmark. They touch different fields under optimistic-locking CAS, so concurrent writes converge instead of clobbering.
+2. **`process` is not the only Queue-row writer.** `ingest` stamps `latest_request_id` (the request id of the newest accepted head, not a URI; see [Backlog coalescing](#backlog-coalescing)) and `buildsignal` releases slots when a build goes terminal, then advances the `last_green_uri` bookmark for a successful Request. They touch different fields under optimistic-locking CAS, so concurrent writes converge instead of clobbering.
 
 ## Process algorithm
 
@@ -59,7 +59,7 @@ Validation is expensive and shares a baseline, so heads arriving while an earlie
 
 | Source | Field | Meaning |
 |---|---|---|
-| Queue row | `last_green_uri` | Bookmark `record` advances on whole-repo green; empty until first green. |
+| Queue row | `last_green_uri` | Bookmark `buildsignal` advances on a successful build; empty until first green. |
 | Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
 | Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
 
@@ -80,7 +80,7 @@ The scheme: each admit pins its baseline to last-green *at admit time*; a green 
 Correctness rests on four rules, all with MVP primitives already in place:
 
 1. **Pin to last-green at admit** — a known-green baseline, which `process` already reads.
-2. **Advance last-green by ingest order, monotonically** — `record` adopts the highest-counter green (per `CompareRequestID`) and never regresses. (Free at N=1, since verdicts land in order; explicit at N > 1.)
+2. **Advance last-green by ingest order, monotonically** — `buildsignal` adopts the highest-counter green (per `CompareRequestID`) and never regresses. (Free at N=1, since verdicts land in order; explicit at N > 1.)
 3. **Coalesce to the latest N** instead of the latest 1 — otherwise intermediates are superseded on sight and nothing overlaps.
 4. **Fall back to serial on a rewrite** — the linear/superset property is what makes "adopt highest green" sound; rewrites already force a full build with no baseline.
 
@@ -191,7 +191,7 @@ Runtime coordination only — fields the pipeline writes under CAS:
 | Field | Role | Written by |
 |---|---|---|
 | `name` | Stable logical id (`monorepo/main`); the string ingest accepts | ingest (create) |
-| `last_green_uri` | Bookmark; empty until first green | record |
+| `last_green_uri` | Bookmark; empty until first green | buildsignal |
 | `in_flight_count` | Active Phase 1 validations | process (+1), record/DLQ (−1) |
 | `latest_request_id` | Request id of the newest head ingest accepted | ingest |
 | `version` | Optimistic-locking version | all writers |

@@ -57,32 +57,32 @@ func (mr *MockDetectorMockRecorder) Detect(ctx, buildID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Detect", reflect.TypeOf((*MockDetector)(nil).Detect), ctx, buildID)
 }
 
-// MockFactory is a mock of Factory interface.
-type MockFactory struct {
+// MockDetectorFactory is a mock of DetectorFactory interface.
+type MockDetectorFactory struct {
 	ctrl     *gomock.Controller
-	recorder *MockFactoryMockRecorder
+	recorder *MockDetectorFactoryMockRecorder
 	isgomock struct{}
 }
 
-// MockFactoryMockRecorder is the mock recorder for MockFactory.
-type MockFactoryMockRecorder struct {
-	mock *MockFactory
+// MockDetectorFactoryMockRecorder is the mock recorder for MockDetectorFactory.
+type MockDetectorFactoryMockRecorder struct {
+	mock *MockDetectorFactory
 }
 
-// NewMockFactory creates a new mock instance.
-func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
-	mock := &MockFactory{ctrl: ctrl}
-	mock.recorder = &MockFactoryMockRecorder{mock}
+// NewMockDetectorFactory creates a new mock instance.
+func NewMockDetectorFactory(ctrl *gomock.Controller) *MockDetectorFactory {
+	mock := &MockDetectorFactory{ctrl: ctrl}
+	mock.recorder = &MockDetectorFactoryMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+func (m *MockDetectorFactory) EXPECT() *MockDetectorFactoryMockRecorder {
 	return m.recorder
 }
 
 // For mocks base method.
-func (m *MockFactory) For(cfg buildissue.Config) (buildissue.Detector, error) {
+func (m *MockDetectorFactory) For(cfg buildissue.DetectorConfig) (buildissue.Detector, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "For", cfg)
 	ret0, _ := ret[0].(buildissue.Detector)
@@ -91,7 +91,7 @@ func (m *MockFactory) For(cfg buildissue.Config) (buildissue.Detector, error) {
 }
 
 // For indicates an expected call of For.
-func (mr *MockFactoryMockRecorder) For(cfg any) *gomock.Call {
+func (mr *MockDetectorFactoryMockRecorder) For(cfg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), cfg)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockDetectorFactory)(nil).For), cfg)
 }

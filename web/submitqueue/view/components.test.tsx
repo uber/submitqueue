@@ -170,7 +170,7 @@ describe("request components", () => {
     };
     const page = { key: "change", title: "PR #123", refresh: { terminal: true, transientFailureCount: 0, refreshHref: null } };
     render(<WebNavigationProvider value={{ push }}>
-      <WebApp model={page} Page={() => <ChangeSubmissions model={change} />} />
+      <WebApp model={page}><ChangeSubmissions model={change} /></WebApp>
     </WebNavigationProvider>);
     fireEvent.click(screen.getByRole("combobox"));
     fireEvent.click(screen.getByRole("option", { name: version }));

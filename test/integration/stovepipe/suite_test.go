@@ -36,7 +36,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/entity"
+	mysqlstorage "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -347,27 +351,58 @@ func (s *StovepipeIntegrationSuite) TestProjectStatusAPI() {
 		VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
 		queue, uri, "project-green", 0.0, id, 4000, queue, uri, "project-b", 1.0, id, 5000)
 	require.NoError(t, err)
+	indexStore := mysqlstorage.NewProjectFactByDegreeStore(s.db, tally.NoopScope, queue)
+	for _, fact := range []entity.ValidationFact{
+		{URI: uri, Project: "project-a", Degree: 0.5},
+		{URI: uri, Project: "project-b", Degree: 1},
+		{URI: uri, Project: "project-green", Degree: 0},
+	} {
+		entry, err := entity.NewProjectFactByDegree(fact)
+		require.NoError(t, err)
+		require.NoError(t, indexStore.Create(s.ctx, entry))
+	}
 	firstPage, err := s.client.GetProjectStatusByURI(s.ctx, &pb.GetProjectStatusByURIRequest{
 		Queue: queue, ChangeUri: uri, PageSize: 1,
 	})
 	require.NoError(t, err)
 	require.Len(t, firstPage.Projects, 1)
-	assert.Equal(t, "project-a", firstPage.Projects[0].GetProject())
-	assert.Equal(t, 0.5, firstPage.Projects[0].GetBreakageDegree())
-	assert.Equal(t, int64(3000), firstPage.GetUpdatedAtMs())
+	assert.Equal(t, "project-b", firstPage.Projects[0].GetProject())
+	assert.Equal(t, 1.0, firstPage.Projects[0].GetBreakageDegree())
+	assert.Equal(t, int64(5000), firstPage.GetUpdatedAtMs())
 	require.NotEmpty(t, firstPage.NextPageToken)
 	remaining, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
 		Queue: queue, RequestId: id, PageToken: firstPage.NextPageToken,
 	})
 	require.NoError(t, err)
 	require.Len(t, remaining.Projects, 2)
-	assert.Equal(t, "project-b", remaining.Projects[0].GetProject())
-	assert.Equal(t, 1.0, remaining.Projects[0].GetBreakageDegree())
+	assert.Equal(t, "project-a", remaining.Projects[0].GetProject())
+	assert.Equal(t, 0.5, remaining.Projects[0].GetBreakageDegree())
 	assert.Equal(t, "project-green", remaining.Projects[1].GetProject())
 	assert.Zero(t, remaining.Projects[1].GetBreakageDegree())
-	assert.Equal(t, int64(5000), remaining.GetUpdatedAtMs())
+	assert.Equal(t, int64(4000), remaining.GetUpdatedAtMs())
 	assert.Empty(t, remaining.NextPageToken)
 	assert.False(t, remaining.ProjectResultsComplete)
+	completion := requestlog.NewRequestEventLog(entity.Request{Queue: queue, ID: id}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{requestlog.MetadataKeyProjectFactCount: "3"})
+	completion.TimestampMs = 6000
+	backend, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	stores, err := backend.For(queue)
+	require.NoError(t, err)
+	require.NoError(t, requestlog.NewMaterializer(tally.NoopScope).PersistLog(s.ctx, stores, completion))
+	completed, err := s.client.GetProjectStatusByURI(s.ctx, &pb.GetProjectStatusByURIRequest{
+		Queue: queue, ChangeUri: uri, PageSize: 1,
+	})
+	require.NoError(t, err)
+	assert.True(t, completed.ProjectResultsComplete)
+	assert.Equal(t, int64(6000), completed.UpdatedAtMs)
+	assert.NotEmpty(t, completed.NextPageToken)
+	completedRemainder, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
+		Queue: queue, RequestId: id, PageToken: completed.NextPageToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, completedRemainder.ProjectResultsComplete)
+	assert.Equal(t, int64(6000), completedRemainder.UpdatedAtMs)
+	assert.Empty(t, completedRemainder.NextPageToken)
 
 	for _, selector := range []struct{ queue, id string }{{queue, "999"}, {"project-status-api/other", id}} {
 		_, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
@@ -375,6 +410,33 @@ func (s *StovepipeIntegrationSuite) TestProjectStatusAPI() {
 		})
 		require.Error(t, err)
 	}
+}
+
+func (s *StovepipeIntegrationSuite) TestUnindexedFactsRemainAvailableByExplicitProject() {
+	t := s.T()
+	const queue, id, uri = "fresh-index/main", "9", "git://fresh-index/main/older-commit"
+	_, err := s.db.Exec(`INSERT INTO request_summary
+		(queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, queue, id, uri, "", "succeeded", 1, 1000, 1)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO validation_fact (queue, uri, project, degree, request_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, queue, uri, "old-project", 0.5, id, 2000)
+	require.NoError(t, err)
+
+	listed, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
+		Queue: queue, RequestId: id,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, listed.Projects)
+	assert.Empty(t, listed.NextPageToken)
+
+	explicit, err := s.client.GetProjectStatusByID(s.ctx, &pb.GetProjectStatusByIDRequest{
+		Queue: queue, RequestId: id, Projects: []string{"old-project"},
+	})
+	require.NoError(t, err)
+	require.Len(t, explicit.Projects, 1)
+	assert.Equal(t, "old-project", explicit.Projects[0].GetProject())
+	assert.Equal(t, 0.5, explicit.Projects[0].GetBreakageDegree())
 }
 
 func assertHistoryEvents(t *testing.T, events []*pb.HistoryEvent) {

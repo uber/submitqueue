@@ -3,7 +3,12 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
+        "build_issue_store.go",
         "build_store.go",
+        "issue_log_store.go",
+        "issue_state_store.go",
+        "issue_tracking_store.go",
+        "project_fact_by_degree_store.go",
         "queue_log_store.go",
         "queue_store.go",
         "queue_summary_store.go",
@@ -29,7 +34,15 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "build_issue_list_test.go",
+        "build_issue_store_test.go",
+        "build_issue_update_test.go",
         "build_store_test.go",
+        "issue_log_store_test.go",
+        "issue_state_list_test.go",
+        "issue_state_store_test.go",
+        "issue_tracking_store_test.go",
+        "project_fact_by_degree_store_test.go",
         "queue_store_test.go",
         "queue_summary_store_test.go",
         "request_acceptance_store_test.go",

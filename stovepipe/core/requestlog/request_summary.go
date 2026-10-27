@@ -29,6 +29,9 @@ func materializeRequestSummary(ctx context.Context, stores storage.Storage, log 
 	for {
 		currentSummary, err := summaryStore.Get(ctx, log.RequestID)
 		if storage.IsNotFound(err) {
+			if log.State == entity.RequestStateUnknown {
+				return entity.RequestSummary{}, fmt.Errorf("request summary required to project event request_id=%q: %w", log.RequestID, err)
+			}
 			initial, createErr := createInitialRequestSummary(ctx, stores.GetRequestStore(), summaryStore, log)
 			if errors.Is(createErr, storage.ErrAlreadyExists) {
 				continue
@@ -113,17 +116,25 @@ func projectRequestSummaryFacts(summary entity.RequestSummary, log entity.Reques
 			log.RequestID, summary.RequestID, log.Queue, summary.Queue,
 		)
 	}
-	if log.State != entity.RequestStateAccepted {
-		return summary, nil
+	if log.Event == entity.RequestEventProjectFactsRecorded {
+		if log.TimestampMs <= 0 || (summary.ProjectResultsCompletedAtMs != 0 && summary.ProjectResultsCompletedAtMs != log.TimestampMs) {
+			return entity.RequestSummary{}, fmt.Errorf("request summary completion time conflicts with retained log request_id=%q", log.RequestID)
+		}
+		summary.ProjectResultsCompletedAtMs = log.TimestampMs
 	}
-	if summary.AcceptedAtMs != 0 && summary.AcceptedAtMs != log.TimestampMs {
-		return entity.RequestSummary{}, fmt.Errorf("request summary acceptance time conflicts with retained log request_id=%q", log.RequestID)
+	if log.State == entity.RequestStateAccepted {
+		if summary.AcceptedAtMs != 0 && summary.AcceptedAtMs != log.TimestampMs {
+			return entity.RequestSummary{}, fmt.Errorf("request summary acceptance time conflicts with retained log request_id=%q", log.RequestID)
+		}
+		summary.AcceptedAtMs = log.TimestampMs
 	}
-	summary.AcceptedAtMs = log.TimestampMs
 	return summary, nil
 }
 
 func projectRequestSummaryState(summary entity.RequestSummary, log entity.RequestLog) (entity.RequestSummary, error) {
+	if log.State == entity.RequestStateUnknown {
+		return summary, nil
+	}
 	if log.RequestVersion < summary.RequestVersion {
 		return summary, nil
 	}
