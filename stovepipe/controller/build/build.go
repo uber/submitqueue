@@ -21,6 +21,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -49,6 +50,7 @@ type Controller struct {
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
+	now           func() time.Time
 }
 
 // _opName is the metric operation name shared by every emit in this file.
@@ -74,6 +76,7 @@ func NewController(
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
+		now:           time.Now,
 	}
 }
 
@@ -143,6 +146,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		ID:        buildID.ID,
 		RequestID: request.ID,
 		Status:    entity.BuildStatusAccepted,
+		CreatedAt: c.now().UnixMilli(),
 		Version:   1,
 	}
 	if err := store.GetBuildStore().Create(ctx, build); err != nil {

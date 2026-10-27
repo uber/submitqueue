@@ -20,6 +20,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,7 @@ const (
 	testHeadURI = "git://repo/monorepo/main/head"
 	testBaseURI = "git://repo/monorepo/main/base"
 	testBuildID = "bk-1"
+	testNowMs   = int64(1700000000000)
 )
 
 func queueContext() context.Context {
@@ -105,6 +107,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 	require.NoError(t, err)
 
 	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	c.now = func() time.Time { return time.UnixMilli(testNowMs) }
 	return c, m
 }
 
@@ -225,6 +228,7 @@ func TestProcess(t *testing.T) {
 					ID:        testBuildID,
 					RequestID: testID,
 					Status:    entity.BuildStatusAccepted,
+					CreatedAt: testNowMs,
 					Version:   1,
 				}
 				createCall := m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
@@ -244,6 +248,7 @@ func TestProcess(t *testing.T) {
 					ID:        testBuildID,
 					RequestID: testID,
 					Status:    entity.BuildStatusAccepted,
+					CreatedAt: testNowMs,
 					Version:   1,
 				}
 				createCall := m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)

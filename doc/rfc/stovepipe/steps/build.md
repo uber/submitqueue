@@ -52,7 +52,7 @@ For a delivery carrying request id `R`:
      either domain — the shape is deferred until then, not decided here.
    - failure -> return raw; classifier decides (transient runner blip retryable, bad URI not).
 
-6. Persist Build{ID: buildID.ID, RequestID: R.ID, Status: accepted, Version: 1}
+6. Persist Build{ID: buildID.ID, RequestID: R.ID, Status: accepted, CreatedAt: now, Version: 1}
    via BuildStore.Create.
    - the row carries no scope; it is recoverable from the Request's immutable fields
      (see the entity table).
@@ -301,6 +301,7 @@ Either could be adopted independently: the idempotency token, if a backend that 
 | `ID` | The build's own key — the runner-assigned id returned by `Trigger` (a Buildkite build number, a CI-gateway job id); opaque, never parsed or derived | no |
 | `RequestID` | The `Request` this build validates (`Build`→`Request` navigation) | no |
 | `Status` | `accepted / running / succeeded / failed / cancelled` | **yes** — `buildsignal` |
+| `CreatedAt` | Unix milliseconds when the row was created; zero on rows created before it was recorded | no |
 | `Version` | `int32` optimistic-locking version | **yes** — with `Status` |
 
 The row deliberately carries no scope: `R.URI`, `R.BaseURI`, and `R.BuildStrategy` — immutable and reachable through `RequestID` — fully determine what a build ran against.

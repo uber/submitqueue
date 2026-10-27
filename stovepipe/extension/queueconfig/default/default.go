@@ -19,6 +19,7 @@ package defaultconfig
 
 import (
 	"context"
+	"time"
 
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
@@ -27,6 +28,8 @@ import (
 const (
 	_defaultMaxConcurrent   = 1
 	_defaultGateWaitDelayMs = 5000
+	// Bounds a hung build without cutting a long full-repository validation short.
+	_defaultMaxValidationMs = int64(2 * time.Hour / time.Millisecond)
 )
 
 // Store is a queueconfig.Store that returns the same defaults for every queue.
@@ -46,6 +49,7 @@ func (Store) Get(_ context.Context, name string) (entity.QueueConfig, error) {
 		Name:            name,
 		MaxConcurrent:   _defaultMaxConcurrent,
 		GateWaitDelayMs: _defaultGateWaitDelayMs,
+		MaxValidationMs: _defaultMaxValidationMs,
 	}, nil
 }
 

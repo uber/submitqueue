@@ -30,6 +30,10 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 
 Existing MySQL deployments must add `outcome_reason VARCHAR(64) NOT NULL DEFAULT ''` to `request` before deploying the new readers and writers.
 
+## Builds
+
+Existing MySQL deployments must add `created_at BIGINT NOT NULL DEFAULT 0` to `build` before deploying the new readers and writers.
+
 ## Build issue observations
 
 `BuildIssueStore` accumulates observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.

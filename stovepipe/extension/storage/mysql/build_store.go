@@ -46,12 +46,13 @@ func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	defer func() { op.Complete(retErr) }()
 
 	_, err := b.db.ExecContext(ctx,
-		`INSERT INTO build (queue, id, request_id, status, version)
-		 VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO build (queue, id, request_id, status, created_at, version)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
 		b.queue,
 		build.ID,
 		build.RequestID,
 		build.Status,
+		build.CreatedAt,
 		build.Version,
 	)
 	if err != nil {
@@ -71,13 +72,14 @@ func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 
 	var build entity.Build
 	err := b.db.QueryRowContext(ctx,
-		`SELECT id, request_id, status, version
+		`SELECT id, request_id, status, created_at, version
 		 FROM build WHERE queue = ? AND id = ?`,
 		b.queue, id,
 	).Scan(
 		&build.ID,
 		&build.RequestID,
 		&build.Status,
+		&build.CreatedAt,
 		&build.Version,
 	)
 

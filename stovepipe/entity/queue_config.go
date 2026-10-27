@@ -26,4 +26,8 @@ type QueueConfig struct {
 	MaxConcurrent int32 `json:"max_concurrent" yaml:"max_concurrent"`
 	// GateWaitDelayMs is the redelivery delay while the latest head waits for a slot.
 	GateWaitDelayMs int64 `json:"gate_wait_delay_ms" yaml:"gate_wait_delay_ms"`
+	// MaxValidationMs is the maximum time in milliseconds from build creation to a
+	// terminal build status, past which the validation fails by timeout. Zero
+	// disables the deadline.
+	MaxValidationMs int64 `json:"max_validation_ms" yaml:"max_validation_ms"`
 }

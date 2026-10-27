@@ -48,6 +48,7 @@ go_test(
         "//stovepipe/extension/buildissue/mock:go_default_library",
         "//stovepipe/extension/buildrunner:go_default_library",
         "//stovepipe/extension/buildrunner/mock:go_default_library",
+        "//stovepipe/extension/queueconfig/mock:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mock:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",

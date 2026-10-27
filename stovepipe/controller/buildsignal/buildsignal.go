@@ -14,7 +14,8 @@
 
 // Package buildsignal holds the buildsignal-stage queue controller. It consumes
 // BuildSignal messages (a build id), polls the build-runner until the build
-// reaches a terminal status, persists that status, and — once terminal —
+// reaches a terminal status, persists that status, and — once terminal, or once
+// the build outlives the queue's max_validation_ms, which fails the request —
 // releases the queue's build slot, projects the outcome onto the request,
 // advances the successful-build bookmark, and publishes directly to record plus
 // terminal analysis. See
@@ -25,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -37,6 +39,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -65,6 +68,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	materializer  requestlog.Materializer
+	queueConfigs  queueconfig.Store
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -80,6 +84,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
+	queueConfigs queueconfig.Store,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -90,6 +95,7 @@ func NewController(
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		stores:        stores,
 		materializer:  materializer,
+		queueConfigs:  queueConfigs,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -172,11 +178,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return err
 	}
 
-	if effective.IsTerminal() {
-		if err := c.persistBuildFinishedLog(ctx, store, request, build.ID); err != nil {
+	// A timed-out build established nothing: it keeps its polled status, is not the request's
+	// terminal build, and has no final analysis. The request's stored outcome carries the
+	// decision, and a retry re-derives the same one.
+	timedOut := false
+	if !effective.IsTerminal() {
+		if timedOut, err = c.validationDeadlinePassed(ctx, request, build); err != nil {
 			return err
 		}
-		if err := c.finishRequest(ctx, store, &request, build.ID, effective); err != nil {
+	}
+
+	if effective.IsTerminal() || timedOut {
+		state, reason, terminalBuildID := entity.RequestStateFailed, entity.RequestOutcomeReasonValidationTimeout, ""
+		if !timedOut {
+			state = outcomeState(effective)
+			reason = buildOutcomeReason(state)
+			terminalBuildID = build.ID
+			if err := c.persistBuildFinishedLog(ctx, store, request, build.ID); err != nil {
+				return err
+			}
+		}
+		if err := c.finishRequest(ctx, store, &request, terminalBuildID, state, reason); err != nil {
 			return err
 		}
 		if request.State == entity.RequestStateSucceeded {
@@ -193,11 +215,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			recordErr = fmt.Errorf("failed to publish record for request %s: %w", request.ID, recordErr)
 		}
 
-		analysisErr := c.publishBuildAnalysis(ctx, build.ID, request.Queue)
+		var analysisErr error
+		if !timedOut {
+			analysisErr = c.publishBuildAnalysis(ctx, build.ID, request.Queue)
+		}
 		if err := errs.Group(recordErr, analysisErr); err != nil {
 			return err
 		}
-		c.logger.Infow("build reached terminal status",
+		c.logger.Infow("recorded request outcome",
 			"build_id", build.ID,
 			"request_id", request.ID,
 			"status", string(effective),
@@ -232,8 +257,8 @@ func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.
 	return nil
 }
 
-// finishRequest releases the queue's build slot and projects the build's
-// terminal status and ID onto the request, leaving it terminal. It is a no-op
+// finishRequest releases the queue's build slot and records state, reason, and
+// buildID on the request, leaving it terminal. It is a no-op
 // when the request already carries an outcome, so a redelivery neither
 // double-releases the slot nor rewrites the state.
 //
@@ -245,7 +270,7 @@ func (c *Controller) persistBuildFinishedLog(ctx context.Context, store storage.
 // the request non-terminal, so redelivery re-runs both steps and decrements again
 // — transiently over-admitting by one until releaseBuildSlot's zero clamp
 // reconverges, which is the failure mode this pipeline prefers.
-func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, buildID string, status entity.BuildStatus) error {
+func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, buildID string, state entity.RequestState, reason entity.RequestOutcomeReason) error {
 	if request.State.HasBuildOutcome() {
 		return nil
 	}
@@ -255,12 +280,35 @@ func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, r
 		return err
 	}
 
-	state := outcomeState(status)
-	if err := c.markOutcome(ctx, store, request, buildID, state, buildOutcomeReason(state)); err != nil {
+	if err := c.markOutcome(ctx, store, request, buildID, state, reason); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 	return nil
+}
+
+// validationDeadlinePassed reports whether build has outlived its queue's max_validation_ms.
+// A zero limit or a zero creation time means the build has no deadline.
+func (c *Controller) validationDeadlinePassed(ctx context.Context, request entity.Request, build entity.Build) (bool, error) {
+	if build.CreatedAt == 0 {
+		return false, nil
+	}
+	cfg, err := c.queueConfigs.Get(ctx, request.Queue)
+	if err != nil {
+		return false, fmt.Errorf("failed to load queue config for %s: %w", request.Queue, err)
+	}
+	if cfg.MaxValidationMs <= 0 || time.Now().UnixMilli()-build.CreatedAt < cfg.MaxValidationMs {
+		return false, nil
+	}
+
+	metrics.NamedCounter(c.metricsScope, _opName, "validation_timeouts", 1, metrics.TagsFromContext(ctx)...)
+	c.logger.Warnw("failing build that exceeded the queue's max validation time",
+		"build_id", build.ID,
+		"request_id", request.ID,
+		"created_at", build.CreatedAt,
+		"max_validation_ms", cfg.MaxValidationMs,
+	)
+	return true, nil
 }
 
 func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) error {

@@ -347,6 +347,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAndGet() {
 		ID:        id,
 		RequestID: "1",
 		Status:    entity.BuildStatusAccepted,
+		CreatedAt: 1700000000000,
 		Version:   1,
 	}
 	require.NoError(t, s.buildStore.Create(s.ctx, build))

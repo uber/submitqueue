@@ -10,7 +10,7 @@ Pipeline stages read mutable runtime state from storage and read knobs such as `
 
 ## Entities
 
-Queue configuration entity lives in `stovepipe/entity/queue_config.go` and carries deployment knobs (`max_concurrent`, `gate_wait_delay_ms`) separate from the mutable `Queue` row.
+Queue configuration entity lives in `stovepipe/entity/queue_config.go` and carries deployment knobs (`max_concurrent`, `gate_wait_delay_ms`, `max_validation_ms`) separate from the mutable `Queue` row.
 
 ## Implementations
 

@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuemock "github.com/uber/submitqueue/stovepipe/extension/buildissue/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -121,7 +122,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
 		staticStorageFactory{store: m.store}, detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
 	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
+		staticStorageFactory{store: m.store}, m.materializer, queueconfigmock.NewMockStore(ctrl), m.runnerFactory, buildController.registry,
 		stovepipemq.TopicKeyBuildSignal, "signal")
 
 	delivered := func(msg entityqueue.Message) *consumermock.MockDelivery {

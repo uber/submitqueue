@@ -39,6 +39,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnermock "github.com/uber/submitqueue/stovepipe/extension/buildrunner/mock"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -64,6 +65,7 @@ type buildsignalMocks struct {
 	queueStore    *storagemock.MockQueueStore
 	store         *storagemock.MockStorage
 	materializer  *requestlogmock.MockMaterializer
+	queueConfigs  *queueconfigmock.MockStore
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
@@ -86,6 +88,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		store:         storagemock.NewMockStorage(ctrl),
 		materializer:  requestlogmock.NewMockMaterializer(ctrl),
+		queueConfigs:  queueconfigmock.NewMockStore(ctrl),
 		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
 		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
@@ -106,7 +109,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.queueConfigs, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
 	return c, m
 }
 
@@ -226,14 +229,15 @@ func expectBuildFinished(m buildsignalMocks) *gomock.Call {
 }
 
 func expectFinish(m buildsignalMocks, state entity.RequestState) *gomock.Call {
-	return expectOutcomeLog(m, state, 2).After(expectFinishWrites(m, state))
+	return expectOutcomeLog(m, requestWithState(state), 2).After(expectFinishWrites(m, state))
 }
 
-func expectOutcomeLog(m buildsignalMocks, state entity.RequestState, version int32) *gomock.Call {
-	request := requestWithState(state)
+func expectOutcomeLog(m buildsignalMocks, request entity.Request, version int32) *gomock.Call {
 	request.Version = version
 	log := requestlog.NewRequestStateLog(request, request.OutcomeReason)
-	log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
+	if request.TerminalBuildID != "" {
+		log.Metadata[requestlog.MetadataKeyBuildID] = request.TerminalBuildID
+	}
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
 		m.store,
@@ -347,6 +351,39 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
+			name:       "nonterminal poll holds when the queue disables the validation deadline",
+			wantHoldMs: PollDelayRunningMs,
+			setup: func(m buildsignalMocks) {
+				running := build(entity.BuildStatusRunning, 2)
+				running.CreatedAt = 1
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(running, nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusRunning, nil, nil)
+				m.queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(entity.QueueConfig{Name: testQueue}, nil)
+			},
+		},
+		{
+			name: "nonterminal poll past the validation deadline fails the request without holding, failing the build or analyzing it",
+			setup: func(m buildsignalMocks) {
+				running := build(entity.BuildStatusRunning, 2)
+				running.CreatedAt = 1
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(running, nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusRunning, nil, nil)
+				m.queueConfigs.EXPECT().Get(gomock.Any(), testQueue).Return(entity.QueueConfig{Name: testQueue, MaxValidationMs: 1}, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
+				outcome := requestWithState(entity.RequestStateFailed)
+				outcome.TerminalBuildID = ""
+				outcome.OutcomeReason = entity.RequestOutcomeReasonValidationTimeout
+				outcomeCall := m.reqStore.EXPECT().Update(gomock.Any(), outcome, int32(1), int32(2)).Return(nil)
+				logCall := expectOutcomeLog(m, outcome, 2).After(outcomeCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+			},
+		},
+		{
 			name: "succeeded build frees the slot, marks the request and publishes to record",
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
@@ -401,7 +438,7 @@ func TestProcess(t *testing.T) {
 				queue.LastGreenRequestID = testID
 				queue.LastGreenURI = request.URI
 				getCall := m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queue, nil).After(eventCall)
-				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2).After(getCall)
+				logCall := expectOutcomeLog(m, requestWithState(entity.RequestStateSucceeded), 2).After(getCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil).After(logCall)
 			},

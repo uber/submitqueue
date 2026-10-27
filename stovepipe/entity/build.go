@@ -67,6 +67,9 @@ type Build struct {
 	RequestID string `json:"request_id"`
 	// Status is the build's lifecycle state.
 	Status BuildStatus `json:"status"`
+	// CreatedAt is the Unix time in milliseconds at which the build was created.
+	// It is zero on builds created before creation times were recorded.
+	CreatedAt int64 `json:"created_at"`
 	// Version is used for optimistic locking. Versioning starts at 1 and
 	// is incremented for each change to the object.
 	Version int32 `json:"version"`
