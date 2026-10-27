@@ -32,7 +32,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	store := bound.GetIssueTrackingStore()
 	_, err = store.Get(ctx)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	state := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1, HasNewIssues: true}
+	state := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
 	require.NoError(t, store.Create(ctx, state))
 	require.ErrorIs(t, store.Create(ctx, state), storage.ErrAlreadyExists)
 	got, err := store.Get(ctx)
@@ -41,7 +41,6 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 
 	state.CursorTaskID, state.CursorUnitID = "task", "unit"
 	state.Phase = entity.IssueTrackingPhaseRefreshed
-	state.HasNewIssues = false
 	require.NoError(t, store.Update(ctx, state, 1, 2))
 	state.Version = 2
 	require.ErrorIs(t, store.Update(ctx, state, 1, 3), storage.ErrVersionMismatch)

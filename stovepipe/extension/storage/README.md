@@ -68,8 +68,6 @@ The store does not decide source ordering, apply issue transitions, or advance v
 
 The issue-tracking table must include the notification, cursor, `finalize`, and `has_task_wide_issues` columns before updated readers or writers are deployed. Both boolean columns default to false. They describe one pass, not analysis state for every build in the queue; terminal intent is required before absence-based reconciliation is permitted. No runtime writer is enabled by the storage layer. Notification IDs allow up to 1020 bytes, matching the queue message ID byte capacity; cursor limits match the issue stores.
 
-Existing MySQL deployments must append `has_new_issues BOOLEAN NOT NULL DEFAULT FALSE` at the end of `issue_tracking` before deploying the repair handoff. The flag retains openings across batches and retries until the opening pass can publish its build-scoped repair request. `CREATE TABLE IF NOT EXISTS` does not alter existing tables.
-
 ### Applied transition facts
 
 `IssueState.LastProcessedBuildID` identifies the most recent build applied to an issue, including unchanged results. `LastChangedBuildID` and `ChangedAtMs` identify the actual opening or closing and supply its history identity and timestamp. They do not advance when only the processed build changes. `FirstSeenBuildID` remains the opening identity across closure and changes on reopening. These references must remain readable while used for source ordering. The current-issue cursor and the row's processed source provide the storage needed for retry-safe application without retaining a future write payload.

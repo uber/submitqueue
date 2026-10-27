@@ -69,45 +69,59 @@ func TestOpeningPassPublishesOneBuildRepairRequest(t *testing.T) {
 	}
 }
 
-func TestOpeningPassWithoutNewIssuesDoesNotPublishRepair(t *testing.T) {
-	for _, reportExisting := range []bool{false, true} {
-		t.Run(fmt.Sprint(reportExisting), func(t *testing.T) {
+func TestRepairHandoffSkipsEmptyPassAndPublishesLaterPasses(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		reportExisting   bool
+		initialPublishes int
+	}{
+		{name: "empty pass"},
+		{name: "previously open issues", reportExisting: true, initialPublishes: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.source("build", "10", entity.BuildStatusRunning)
 			f.seedIssue("existing", "unit", entity.IssueStatusOpen)
-			if reportExisting {
+			if tt.reportExisting {
 				f.reportIssue("build", "existing", "unit")
 			}
 			require.NoError(t, f.deliver(f.message("build", false), false))
-			require.Empty(t, f.fixMessages)
+			require.Len(t, f.fixMessages, tt.initialPublishes)
 			f.reportIssue("build", "new", "unit")
 			require.NoError(t, f.deliver(f.message("build", false), false))
-			require.Len(t, f.fixMessages, 1)
+			require.Len(t, f.fixMessages, tt.initialPublishes+1)
+			if tt.initialPublishes != 0 {
+				require.NotEqual(t, f.fixMessages[0].ID, f.fixMessages[1].ID)
+				require.Equal(t, f.fixMessages[0].PartitionKey, f.fixMessages[1].PartitionKey)
+			}
 		})
 	}
 }
 
 func TestRepairHandoffWaitsForAllOpeningBatches(t *testing.T) {
-	f := newFixture(t)
-	f.source("build", "10", entity.BuildStatusRunning)
-	f.reportIssue("build", "a-new", "unit")
-	for i := 0; i < 100; i++ {
-		unit := fmt.Sprintf("unit/%03d", i)
-		f.seedIssue("existing", unit, entity.IssueStatusOpen)
-		f.reportIssue("build", "existing", unit)
-	}
-	msg := f.message("build", false)
-	require.NoError(t, f.deliver(msg, true))
-	require.Empty(t, f.fixMessages)
-	require.True(t, f.progress.HasNewIssues)
+	for _, issueCount := range []int{_issueBatchSize, _issueBatchSize + 1} {
+		t.Run(fmt.Sprintf("%d issues", issueCount), func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build", "10", entity.BuildStatusRunning)
+			f.reportIssue("build", "a-new", "unit")
+			for i := 1; i < issueCount; i++ {
+				unit := fmt.Sprintf("unit/%03d", i)
+				f.seedIssue("existing", unit, entity.IssueStatusOpen)
+				f.reportIssue("build", "existing", unit)
+			}
+			msg := f.message("build", false)
+			require.NoError(t, f.deliver(msg, true))
+			require.Empty(t, f.fixMessages)
 
-	f.onFixPublish = func(entityqueue.Message) {
-		for _, issue := range f.states {
-			require.Equal(t, "build", issue.LastProcessedBuildID)
-		}
+			f.onFixPublish = func(entityqueue.Message) {
+				for _, issue := range f.states {
+					require.Equal(t, "build", issue.LastProcessedBuildID)
+				}
+			}
+			require.NoError(t, f.deliver(msg, false))
+			require.Len(t, f.fixMessages, 1)
+		})
 	}
-	require.NoError(t, f.deliver(msg, false))
-	require.Len(t, f.fixMessages, 1)
 }
 
 func TestRepairHandoffRetriesBeforeCompletingPass(t *testing.T) {
@@ -145,13 +159,14 @@ func TestRepairHandoffRetriesBeforeCompletingPass(t *testing.T) {
 	}
 }
 
-func TestRepairHandoffUsesResumedBuildAndBuildScopedIdentity(t *testing.T) {
+func TestRepairHandoffUsesResumedBuildAndPassIdentity(t *testing.T) {
 	f := newFixture(t)
 	f.source("build", "10", entity.BuildStatusRunning)
 	f.source("next-build", "11", entity.BuildStatusRunning)
 	f.reportIssue("build", "new", "unit")
 	f.failures["fix/publish"] = 1
-	require.ErrorIs(t, f.deliver(f.message("build", false), false), assert.AnError)
+	msg := f.message("build", false)
+	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 
 	nextMessage := f.message("next-build", false)
 	require.NoError(t, f.deliver(nextMessage, true))
@@ -160,19 +175,14 @@ func TestRepairHandoffUsesResumedBuildAndBuildScopedIdentity(t *testing.T) {
 	require.Equal(t, f.fixMessages[0].ID, f.fixMessages[1].ID)
 	require.Equal(t, "build", f.fixMessages[1].PartitionKey)
 
-	require.NoError(t, f.deliver(f.message("build", false), false))
-	require.Len(t, f.fixMessages, 3)
-	require.Equal(t, f.fixMessages[0].ID, f.fixMessages[2].ID)
+	require.NoError(t, f.deliver(msg, false))
+	require.Len(t, f.fixMessages, 2)
 
 	f.reportIssue("next-build", "new", "unit")
 	require.NoError(t, f.deliver(nextMessage, false))
 	require.Len(t, f.fixMessages, 3)
-	require.False(t, f.progress.HasNewIssues)
-	f.reportIssue("next-build", "another", "unit")
-	require.NoError(t, f.deliver(f.message("next-build", false), false))
-	require.Len(t, f.fixMessages, 4)
-	require.NotEqual(t, f.fixMessages[0].ID, f.fixMessages[3].ID)
-	require.Equal(t, "next-build", f.fixMessages[3].PartitionKey)
+	require.NotEqual(t, f.fixMessages[0].ID, f.fixMessages[2].ID)
+	require.Equal(t, "next-build", f.fixMessages[2].PartitionKey)
 }
 
 func TestTaskWideFailureStillPublishesRepair(t *testing.T) {

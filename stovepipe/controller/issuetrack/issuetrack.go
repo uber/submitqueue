@@ -249,8 +249,8 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	}
 
 	if len(keys) < limit {
-		if !finalizing && progress.HasNewIssues {
-			if err := fixrequest.Publish(ctx, c.registry, queue, progress.BuildID); err != nil {
+		if !finalizing && progress.CursorTaskID != "" {
+			if err := fixrequest.Publish(ctx, c.registry, queue, progress.BuildID, progress.NotificationID); err != nil {
 				return entity.IssueTrackingState{}, fmt.Errorf("publish build repair request: %w", err)
 			}
 		}
@@ -322,11 +322,6 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 		if order < 0 {
 			return entity.IssueTrackingState{}, fmt.Errorf("issue already processed a newer source: %w", storage.ErrVersionMismatch)
 		}
-	}
-
-	if progress.Phase == entity.IssueTrackingPhaseRefreshing && reported &&
-		(missing || current.Status == entity.IssueStatusClosed || current.FirstSeenBuildID == progress.BuildID) {
-		progress.HasNewIssues = true
 	}
 
 	next := progress
