@@ -212,11 +212,12 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 	brokenCount := 0
 	for _, result := range results {
 		fact, _, err := recordValidationFact(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
-			URI:       request.URI,
-			Project:   result.Project,
-			Degree:    result.Degree,
-			RequestID: request.ID,
-			CreatedAt: time.Now().UnixMilli(),
+			URI:         request.URI,
+			Project:     result.Project,
+			ProjectType: result.ProjectType,
+			Degree:      result.Degree,
+			RequestID:   request.ID,
+			CreatedAt:   time.Now().UnixMilli(),
 		})
 		if err != nil {
 			return err

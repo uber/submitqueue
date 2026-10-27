@@ -29,6 +29,8 @@ import (
 type Result struct {
 	// Project identifies the project to which this result applies.
 	Project string
+	// ProjectType is a provider-defined classification; empty means unknown.
+	ProjectType string
 	// Degree describes how broken the project is, on the closed interval [0, 1].
 	Degree float64
 }
