@@ -76,19 +76,13 @@ func RequestHistoriesToProto(histories []entity.RequestHistory) []*pb.RequestHis
 
 func historyEventDataToProto(log entity.RequestLog) *pb.HistoryEventData {
 	if log.State != entity.RequestStateUnknown {
-		baseURI, hasBaseURI := log.Metadata[requestlog.MetadataKeyBaseURI]
 		buildID := log.Metadata[requestlog.MetadataKeyBuildID]
-		if !hasBaseURI && buildID == "" {
+		if buildID == "" {
 			return nil
 		}
-		state := &pb.HistoryRequestStateData{}
-		if hasBaseURI {
-			state.BaseUri = &baseURI
-		}
-		if buildID != "" {
-			state.BuildId = &buildID
-		}
-		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_RequestState{RequestState: state}}
+		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_RequestState{
+			RequestState: &pb.HistoryRequestStateData{BuildId: buildID},
+		}}
 	}
 
 	switch log.Event {

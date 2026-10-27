@@ -32,14 +32,14 @@ Events are returned by `(timestamp_ms ASC, event_id ASC)`. URI histories are ord
 
 | Occurrence | Payload | Retained fields |
 |---|---|---|
-| Any request-state transition | `request_state` | Optional `base_uri` and `build_id` |
+| Request-state transition with a retained build ID | `request_state` | `build_id` |
 | `build_triggered` | `build_triggered` | `build_id` |
 | `build_finished` | `build_finished` | `build_id` |
 | `build_analysis_abandoned` | `build_analysis_abandoned` | `build_id` |
 | `validation_fact_recorded` | `validation_fact_recorded` | `fact_degree`, a breakage degree in [0, 1] |
 | `project_facts_recorded` | `project_facts_recorded` | `project_fact_count`, an unsigned count |
 
-A present empty `base_uri` means a full build; an absent baseline means it was not retained. State fields are independently optional. Numeric payload presence distinguishes a recorded zero from unavailable metadata. The project-fact count uses protobuf `uint64` (a decimal string in JSON) to preserve precision across clients.
+Build IDs are ordinary strings, with empty meaning unavailable. Baseline metadata is not exposed in event data. Numeric payload presence distinguishes a recorded zero from unavailable metadata. The project-fact count uses protobuf `uint64` (a decimal string in JSON) to preserve precision across clients.
 
 Missing metadata, malformed or out-of-range numbers, empty build IDs, and unsupported event metadata omit the corresponding payload without failing the history lookup. Clients tolerate absent data and unknown future payload kinds. Existing event fields and field numbers remain unchanged.
 
@@ -58,7 +58,7 @@ Authorization follows the same queue policy as other Stovepipe reads. Possession
 
 ## Testing
 
-Tests cover matching events and summaries across selectors, required summaries and retryable materialization gaps, current summaries independent of retained event subsets, queue and URI consistency, storage-read failures, histories absent despite a stored summary, stable event ordering, and unknown future state and outcome-reason strings. Metadata tests cover typed payloads, absent or malformed values, known zeros, empty baseline presence, private keys, and binary/JSON round trips.
+Tests cover matching events and summaries across selectors, required summaries and retryable materialization gaps, current summaries independent of retained event subsets, queue and URI consistency, storage-read failures, histories absent despite a stored summary, stable event ordering, and unknown future state and outcome-reason strings. Metadata tests cover typed payloads, absent or malformed values, known zeros, omitted baseline and private keys, and binary/JSON round trips.
 
 ## Alternatives Considered
 

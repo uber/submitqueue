@@ -109,10 +109,8 @@ message HistoryEventData {
 
 // HistoryRequestStateData is retained context for a request-state transition.
 message HistoryRequestStateData {
-    // Selected baseline URI. A present empty string means a full build; absence means unknown.
-    optional string base_uri = 1;
     // Build that established the terminal request state, when retained.
-    optional string build_id = 2;
+    string build_id = 1;
 }
 
 // HistoryBuildData identifies the build associated with an occurrence.

@@ -188,25 +188,13 @@ func TestHistoryMetadataToProto(t *testing.T) {
 		wantData string
 	}{
 		{
-			name:     "state retains baseline and terminal build",
+			name:     "state retains terminal build without other metadata",
 			state:    entity.RequestStateSucceeded,
 			metadata: map[string]string{"base_uri": "git://repo/base", "build_id": "build/1", "private": "hidden"},
-			wantData: `{"requestState":{"baseUri":"git://repo/base","buildId":"build/1"}}`,
+			wantData: `{"requestState":{"buildId":"build/1"}}`,
 		},
 		{
-			name:     "full build has an explicitly empty baseline",
-			state:    entity.RequestStateProcessing,
-			metadata: map[string]string{"base_uri": ""},
-			wantData: `{"requestState":{"baseUri":""}}`,
-		},
-		{
-			name:     "baseline without terminal build",
-			state:    entity.RequestStateProcessing,
-			metadata: map[string]string{"base_uri": "git://repo/base"},
-			wantData: `{"requestState":{"baseUri":"git://repo/base"}}`,
-		},
-		{
-			name:     "terminal build with unknown baseline",
+			name:     "failed state retains terminal build",
 			state:    entity.RequestStateFailed,
 			metadata: map[string]string{"build_id": "build/1"},
 			wantData: `{"requestState":{"buildId":"build/1"}}`,
@@ -306,6 +294,8 @@ func TestHistoryMetadataUnavailable(t *testing.T) {
 	tests := []testCase{
 		{name: "state without metadata", log: entity.RequestLog{State: entity.RequestStateAccepted}},
 		{name: "state without recognized metadata", log: entity.RequestLog{State: entity.RequestStateFailed, Metadata: map[string]string{"private": "hidden", "build_id": ""}}},
+		{name: "state with only baseline", log: entity.RequestLog{State: entity.RequestStateProcessing, Metadata: map[string]string{"base_uri": "git://repo/base"}}},
+		{name: "state with only full build baseline", log: entity.RequestLog{State: entity.RequestStateProcessing, Metadata: map[string]string{"base_uri": ""}}},
 		{name: "triggered build without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildTriggered}},
 		{name: "finished build with empty ID", log: entity.RequestLog{Event: entity.RequestEventBuildFinished, Metadata: map[string]string{"build_id": ""}}},
 		{name: "abandoned analysis without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildAnalysisAbandoned}},

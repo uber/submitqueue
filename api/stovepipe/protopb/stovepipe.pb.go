@@ -691,10 +691,8 @@ func (*HistoryEventData_BuildAnalysisAbandoned) isHistoryEventData_Payload() {}
 // HistoryRequestStateData is retained context for a request-state transition.
 type HistoryRequestStateData struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Selected baseline URI. A present empty string means a full build; absence means unknown.
-	BaseUri *string `protobuf:"bytes,1,opt,name=base_uri,json=baseUri,proto3,oneof" json:"base_uri,omitempty"`
 	// Build that established the terminal request state, when retained.
-	BuildId       *string `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3,oneof" json:"build_id,omitempty"`
+	BuildId       string `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -729,16 +727,9 @@ func (*HistoryRequestStateData) Descriptor() ([]byte, []int) {
 	return file_stovepipe_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *HistoryRequestStateData) GetBaseUri() string {
-	if x != nil && x.BaseUri != nil {
-		return *x.BaseUri
-	}
-	return ""
-}
-
 func (x *HistoryRequestStateData) GetBuildId() string {
-	if x != nil && x.BuildId != nil {
-		return *x.BuildId
+	if x != nil {
+		return x.BuildId
 	}
 	return ""
 }
@@ -2101,12 +2092,9 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x18validation_fact_recorded\x18\x04 \x01(\v25.uber.submitqueue.stovepipe.HistoryValidationFactDataH\x00R\x16validationFactRecorded\x12k\n" +
 	"\x16project_facts_recorded\x18\x05 \x01(\v23.uber.submitqueue.stovepipe.HistoryProjectFactsDataH\x00R\x14projectFactsRecorded\x12h\n" +
 	"\x18build_analysis_abandoned\x18\x06 \x01(\v2,.uber.submitqueue.stovepipe.HistoryBuildDataH\x00R\x16buildAnalysisAbandonedB\t\n" +
-	"\apayload\"s\n" +
-	"\x17HistoryRequestStateData\x12\x1e\n" +
-	"\bbase_uri\x18\x01 \x01(\tH\x00R\abaseUri\x88\x01\x01\x12\x1e\n" +
-	"\bbuild_id\x18\x02 \x01(\tH\x01R\abuildId\x88\x01\x01B\v\n" +
-	"\t_base_uriB\v\n" +
-	"\t_build_id\"-\n" +
+	"\apayload\"4\n" +
+	"\x17HistoryRequestStateData\x12\x19\n" +
+	"\bbuild_id\x18\x01 \x01(\tR\abuildId\"-\n" +
 	"\x10HistoryBuildData\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\"<\n" +
 	"\x19HistoryValidationFactData\x12\x1f\n" +
@@ -2327,7 +2315,6 @@ func file_stovepipe_proto_init() {
 		(*HistoryEventData_ProjectFactsRecorded)(nil),
 		(*HistoryEventData_BuildAnalysisAbandoned)(nil),
 	}
-	file_stovepipe_proto_msgTypes[8].OneofWrappers = []any{}
 	file_stovepipe_proto_msgTypes[17].OneofWrappers = []any{
 		(*ProjectValidation_BreakageDegree)(nil),
 	}
