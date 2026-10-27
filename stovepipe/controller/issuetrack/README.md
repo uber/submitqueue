@@ -1,6 +1,6 @@
 # Issue tracking
 
-Issue tracking maintains current issue state and opening/closing history from persisted build issues. Each delivery applies a bounded batch of issues and requests immediate redelivery when more work remains. No consumer is registered yet.
+Issue tracking maintains current issue state and opening/closing history from persisted build issues. Each delivery applies a bounded batch of issues and requests immediate redelivery when more work remains. The reference service registers both the normal and recovery consumers.
 
 ## Applying one issue
 
@@ -57,8 +57,10 @@ Recovery must finish fencing the current issue and retaining its history before 
 
 A notification can fail while helping an older pass. Recovery abandons that saved pass first, then requests immediate redelivery to abandon the failed notification's own work if it has not already been superseded. A delayed DLQ delivery never abandons a newer build or a different notification from the same Request.
 
-Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged. No normal or DLQ consumer is registered yet. Completed opening passes publish repair notifications; recovery does not. The host must provide a fix publication route and a repair executor when registering the fix consumer.
+Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged.
+
+The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The fix publication route is registered, but fix consumption and executor configuration remain separate.
 
 ## Analysis handoff
 
-Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host registers the publication route but does not enable either issue-tracking consumer.
+Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host uses a no-op detector; deployments supply their own detector and register the same normal and recovery paths.

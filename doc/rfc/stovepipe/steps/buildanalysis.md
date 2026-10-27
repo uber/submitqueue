@@ -1,6 +1,6 @@
 # Build issue detection
 
-Build analysis runs alongside status polling and recording. Hosts supply a queue-resolved detector factory. The reference service uses a no-op detector so the analysis stage is always wired without inspecting provider output; deployments replace the factory with their integration. No-op results do not establish build success. The reference host registers an issue-tracking publication route but does not yet consume those notifications.
+Build analysis runs alongside status polling and recording. Hosts supply a queue-resolved detector factory. The reference service uses a no-op detector so the analysis stage is always wired without inspecting provider output; deployments replace the factory with their integration. No-op results do not establish build success. The reference host consumes issue-tracking notifications and registers their DLQ recovery alongside analysis.
 
 ## Start and completion notices
 

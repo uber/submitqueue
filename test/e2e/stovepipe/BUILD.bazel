@@ -5,6 +5,7 @@ go_test(
     srcs = [
         "harness_test.go",
         "ingest_test.go",
+        "issuetrack_test.go",
         "list_test.go",
         "queue_status_test.go",
         "suite_test.go",
@@ -23,8 +24,14 @@ go_test(
     ],
     deps = [
         "//api/stovepipe/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/publish:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/queuelog:go_default_library",
         "//stovepipe/core/queuestate:go_default_library",
+        "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/sourcecontrol:go_default_library",
         "//stovepipe/extension/sourcecontrol/fake:go_default_library",
@@ -40,5 +47,6 @@ go_test(
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
         "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )

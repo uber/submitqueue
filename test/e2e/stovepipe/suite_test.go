@@ -65,6 +65,7 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	t.Setenv("MQ_TENANTS", strings.Join([]string{
 		"monorepo/main", "monorepo/release", "monorepo/slow?buildrunner-fake=build-slow",
 		listPaginationQueue, listTimeBoundsQueue, listPrimaryQueue, listOtherQueue, listValidationQueue, queueStateTestQueue,
+		issueTrackingQueue, issueTrackingDLQQueue,
 	}, ","))
 
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")

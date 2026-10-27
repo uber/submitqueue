@@ -92,13 +92,32 @@ func TestEveryRegisteredControllerResolvesInTheTopicRegistry(t *testing.T) {
 	}
 }
 
-func TestIssueTrackingHasPublicationRouteWithoutConsumption(t *testing.T) {
+func TestIssueTrackingRegistration(t *testing.T) {
 	registry, primary, deadLetter := registeredControllers(t)
 	name, ok := registry.TopicName(stovepipemq.TopicKeyIssueTrack)
 	require.True(t, ok)
 	assert.Equal(t, "issuetrack", name)
-	assert.NotContains(t, topicKeys(primary), stovepipemq.TopicKeyIssueTrack)
-	assert.NotContains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyIssueTrack))
+	assert.Contains(t, topicKeys(primary), stovepipemq.TopicKeyIssueTrack)
+	assert.Contains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyIssueTrack))
+
+	dlqName, ok := registry.TopicName(dlq.TopicKey(stovepipemq.TopicKeyIssueTrack))
+	require.True(t, ok)
+	assert.Equal(t, "issuetrack_dlq", dlqName)
+
+	cfg, ok := registry.SubscriptionConfig(stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	require.True(t, ok)
+	assert.True(t, cfg.DLQ.Enabled)
+	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
+}
+
+func TestEveryPrimaryStageHasRecovery(t *testing.T) {
+	_, primary, deadLetter := registeredControllers(t)
+	recoveryKeys := topicKeys(deadLetter)
+	for _, controller := range primary {
+		t.Run(controller.Name(), func(t *testing.T) {
+			assert.Contains(t, recoveryKeys, dlq.TopicKey(controller.TopicKey()))
+		})
+	}
 }
 
 func TestFixHasPublicationRouteWithoutConsumption(t *testing.T) {
@@ -148,6 +167,7 @@ func TestPipelineSubscriptionRetryPolicies(t *testing.T) {
 		{name: "build", topicKey: stovepipemq.TopicKeyBuild, consumerGroup: "stovepipe-build", wantRetry: defaultRetry},
 		{name: "buildsignal", topicKey: stovepipemq.TopicKeyBuildSignal, consumerGroup: "stovepipe-buildsignal", wantRetry: extendedRetry},
 		{name: "buildanalysis", topicKey: stovepipemq.TopicKeyBuildAnalysis, consumerGroup: "stovepipe-buildanalysis", wantRetry: extendedRetry},
+		{name: "issuetrack", topicKey: stovepipemq.TopicKeyIssueTrack, consumerGroup: "stovepipe-issuetrack", wantRetry: extendedRetry},
 		{name: "record", topicKey: stovepipemq.TopicKeyRecord, consumerGroup: "stovepipe-record", wantRetry: extendedRetry},
 		{name: "hook", topicKey: basehook.TopicKeyHook, consumerGroup: "stovepipe-hook", wantRetry: defaultRetry},
 	}

@@ -9,9 +9,11 @@ Runnable wiring for the **Stovepipe** domain — a single-service domain (the do
 - **process consumer** (`TopicKeyProcess`) — reloads the persisted `Request` from storage and runs the process stage (`stovepipe/controller/process`).
 - **build consumer** (`TopicKeyBuild`) — reloads the persisted `Request` and triggers the build-runner, then publishes to `buildsignal`.
 - **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.
+- **buildanalysis consumer** (`TopicKeyBuildAnalysis`) — periodically detects and persists build issues, then publishes queue-partitioned issue-tracking notifications.
+- **issuetrack consumer** (`TopicKeyIssueTrack`) — applies reported build issues to current issue state and history, closing absent issues only when final reconciliation permits it.
 - **record consumer** (`TopicKeyRecord`) — writes the whole-repository validation fact and, for a green fact, advances the queue's last-green bookmark and promotion ref.
 - **hook consumer** (`TopicKeyHook`) — receives `validation.repository.started` from process and `validation.repository.recorded` or `validation.repository.cancelled` from record. The current resolver invokes only `noop`, so these events have no external side effect. Its topic name is domain-qualified (`stovepipe-hook`) because the key is shared across domains.
-- **DLQ consumers** — registered for process, build, buildsignal, record, and hook, with stage-specific reconciliation behavior.
+- **DLQ consumers** — registered for process, build, buildsignal, buildanalysis, issuetrack, record, and hook, with stage-specific recovery behavior. Issue-tracking recovery abandons incomplete passes while preserving accepted changes; it does not rerun their remaining batches.
 
 The ingest → process → build → buildsignal → record flow stays inside one service and one store, so messages carry thin identifiers: request IDs on process, build, and record; a build ID on buildsignal. Consumers reload the full entity from storage, which keeps messages small and redelivery idempotent. The topic keys and internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
 

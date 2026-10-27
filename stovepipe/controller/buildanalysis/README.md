@@ -36,4 +36,4 @@ State-read and history-write errors are returned for retry. Hosts must run recov
 
 ## Host integration
 
-The reference service supplies a no-op detector and publishes analysis notices at build start and completion. It also registers a publish-only issue-tracking topic; issue-tracking consumption and recovery are not enabled yet. It registers the normal analysis controller with bounded retries and the recovery controller with the existing DLQ consumer. See [build issue detection](../../../doc/rfc/stovepipe/steps/buildanalysis.md) for the publication rules and retry configuration.
+The reference service supplies a no-op detector and publishes analysis notices at build start and completion. It registers both analysis and issue tracking with bounded normal retries and the existing DLQ consumer for recovery. See [issue tracking](../issuetrack/README.md) for reconciliation and recovery behavior and [build issue detection](../../../doc/rfc/stovepipe/steps/buildanalysis.md) for the publication rules and retry configuration.

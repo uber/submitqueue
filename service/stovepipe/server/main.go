@@ -51,6 +51,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/buildanalysis"
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
+	"github.com/uber/submitqueue/stovepipe/controller/issuetrack"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -415,6 +416,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	issueTrackController := issuetrack.NewController(logger, scope, store, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	if err := c.Register(issueTrackController); err != nil {
+		return count, fmt.Errorf("failed to register issuetrack controller: %w", err)
+	}
+	count++
+
 	recordController := record.NewController(logger, scope, store, materializer, projectstatusnoop.New(), sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
@@ -463,6 +470,12 @@ func registerDLQControllers(
 	analysisDLQController := buildanalysis.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyBuildAnalysis), "stovepipe-buildanalysis-dlq")
 	if err := c.Register(analysisDLQController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis dlq controller: %w", err)
+	}
+	count++
+
+	issueTrackDLQController := issuetrack.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyIssueTrack), "stovepipe-issuetrack-dlq")
+	if err := c.Register(issueTrackDLQController); err != nil {
+		return count, fmt.Errorf("failed to register issuetrack dlq controller: %w", err)
 	}
 	count++
 
@@ -563,9 +576,16 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-hook-dlq"),
 		},
 		{
-			Key:   stovepipemq.TopicKeyIssueTrack,
-			Name:  "issuetrack",
-			Queue: q,
+			Key:          stovepipemq.TopicKeyIssueTrack,
+			Name:         "issuetrack",
+			Queue:        q,
+			Subscription: extqueue.ExtendedSubscriptionConfig(subscriberName, "stovepipe-issuetrack"),
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyIssueTrack),
+			Name:         "issuetrack_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-issuetrack-dlq"),
 		},
 		{
 			Key:   stovepipemq.TopicKeyFix,
