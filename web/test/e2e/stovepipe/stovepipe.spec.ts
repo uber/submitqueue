@@ -22,6 +22,8 @@ test.describe("server-rendered styling", () => {
   test("renders request status and views without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination/request/51");
     const status = page.getByRole("region", { name: "Request status" });
+    await expect(status.getByText("Broken projects", { exact: true })).toBeVisible();
+    await expect(status.getByText("2 of 51", { exact: true })).toBeVisible();
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
@@ -280,6 +282,8 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
       .getByRole("link", { name: "web/pagination", exact: true })
       .click();
     await expect(requests.locator("tbody tr")).toHaveCount(50);
+    await expect(requests.getByRole("columnheader", { name: "Broken projects", exact: true })).toBeVisible();
+    await expect(requests.getByText("2 of 51", { exact: true })).toBeVisible();
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-queue.png`,
       fullPage: true,
@@ -310,6 +314,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     await expect(status.getByText("Accepted", { exact: true })).toBeVisible();
     await expect(status.getByText("Updated", { exact: true })).toBeVisible();
+    await expect(status.getByText("2 of 51", { exact: true })).toBeVisible();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(
       page.getByRole("table", { name: "Request history" }).getByText("accepted", {

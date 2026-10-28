@@ -31,11 +31,12 @@ def _pagination_fixture_sql() -> str:
             "?file=src%2Fmain#fragment" if i == 51 else ""
         )
         state = "failed" if i == 51 else "succeeded"
+        project_count, broken_project_count = (51, 2) if i == 51 else (0, 0)
         statements.append(
             "INSERT INTO request_summary "
             "(queue,request_id,uri,base_uri,state,request_version,"
-            "state_timestamp_ms,version,accepted_at_ms,outcome_reason) "
-            f"VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'');"
+            "state_timestamp_ms,version,accepted_at_ms,outcome_reason,project_count,broken_project_count) "
+            f"VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'',{project_count},{broken_project_count});"
         )
         statements.append(
             f"INSERT INTO request_acceptance VALUES ('web/pagination',{1000+i},'{i}');"

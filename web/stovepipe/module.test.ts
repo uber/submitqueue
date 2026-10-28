@@ -16,6 +16,8 @@ const summary: RequestSummary = {
   stateUpdatedAtMs: 9007199254740993n,
   acceptedAtMs: 100n,
   outcomeReason: "future_reason",
+  projectCount: 51,
+  brokenProjectCount: 2,
 };
 function createPageTestContext() {
   const service: StovepipeService = {
@@ -157,6 +159,10 @@ describe("Stovepipe page loading", () => {
     ]);
     expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
     expect(service.getProjectStatusByID).not.toHaveBeenCalled();
+    expect(result.model.requests.data.requests).toEqual([
+      expect.objectContaining({ projectCount: 51, brokenProjectCount: 2 }),
+      expect.objectContaining({ projectCount: 51, brokenProjectCount: 2 }),
+    ]);
   });
   it("loads the current summary and events by ID without reconstructing state from history", async () => {
     const { app, service, paths } = createPageTestContext();
@@ -190,6 +196,8 @@ describe("Stovepipe page loading", () => {
               updatedAtMs: "9007199254740993",
               acceptedAtMs: "100",
               outcomeReason: "future_reason",
+              projectCount: 51,
+              brokenProjectCount: 2,
             },
             events: [{ label: "future_event", outcomeReason: "event_reason" }],
           },

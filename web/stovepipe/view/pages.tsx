@@ -19,6 +19,12 @@ function RequestTimestamp({ value }: { value: string }) {
   return <Timestamp value={value} />;
 }
 
+function formatBrokenProjectCounts(request: RequestSummaryModel) {
+  return request.projectCount > 0
+    ? `${request.brokenProjectCount} of ${request.projectCount}`
+    : "—";
+}
+
 export function RequestList({
   requests,
 }: {
@@ -37,6 +43,7 @@ export function RequestList({
           "Accepted",
           "Updated",
           "Outcome",
+          "Broken projects",
         ]}
       >
         {requests.map((request) => (
@@ -59,6 +66,7 @@ export function RequestList({
               <RequestTimestamp value={request.updatedAtMs} />
             </StyledTableBodyCell>
             <StyledTableBodyCell>{request.outcomeReason || "—"}</StyledTableBodyCell>
+            <StyledTableBodyCell>{formatBrokenProjectCounts(request)}</StyledTableBodyCell>
           </StyledTableBodyRow>
         ))}
       </Table>
@@ -68,7 +76,7 @@ export function RequestList({
 export function RequestDetails({ request, repositoryResult }: { request: RequestSummaryModel | null; repositoryResult: ReactNode }) {
   return (
     <>
-      <Block as="dl" margin="0" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))", "repeat(3, minmax(0, 1fr))", "repeat(5, minmax(0, 1fr))"]} gridGap="scale400">
+      <Block as="dl" margin="0" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))", "repeat(3, minmax(0, 1fr))", "repeat(6, minmax(0, 1fr))"]} gridGap="scale400">
         {request && <Fact label="State" compact>
           <Tag closeable={false} kind="neutral" size="small">
             {request.state || "Unknown"}
@@ -79,6 +87,7 @@ export function RequestDetails({ request, repositoryResult }: { request: Request
           <Fact label="Accepted" compact><RequestTimestamp value={request.acceptedAtMs} /></Fact>
           <Fact label="Updated" compact><RequestTimestamp value={request.updatedAtMs} /></Fact>
           <Fact label="Outcome" compact>{request.outcomeReason || "—"}</Fact>
+          <Fact label="Broken projects" compact>{formatBrokenProjectCounts(request)}</Fact>
         </>}
       </Block>
       {request && <Block as="dl" marginTop="scale300" marginBottom="scale400" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale400">

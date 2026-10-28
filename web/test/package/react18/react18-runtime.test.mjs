@@ -56,7 +56,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
       projectResultsComplete: true, nextPageToken: "",
       projects: [{ project: "example-project", result: { case: "breakageDegree", value: 0 } }],
     }),
-    getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "" }, events: [] }),
+    getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 }, events: [] }),
   } });
   for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history"]) {
     const url = new URL(href, "https://submitqueue.test");

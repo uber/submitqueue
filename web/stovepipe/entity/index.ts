@@ -22,6 +22,10 @@ export interface RequestSummaryModel {
   acceptedAtMs: string;
   /** Stable backend outcome reason, empty when absent. */
   outcomeReason: string;
+  /** Total recorded project results; zero means no ratio to display. */
+  projectCount: number;
+  /** Recorded project results with nonzero breakage. */
+  brokenProjectCount: number;
 }
 export interface QueueRequestsModel {
   /** Requests on this page, newest accepted first. */

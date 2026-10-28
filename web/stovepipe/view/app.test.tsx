@@ -45,6 +45,8 @@ const model: StovepipePageModel = {
         updatedAtMs: "1000",
         acceptedAtMs: "100",
         outcomeReason: "all_targets_passed",
+        projectCount: 51,
+        brokenProjectCount: 2,
       },
       events: [
         {
@@ -65,6 +67,7 @@ it("displays request summary data", () => {
   expect(within(status).getByText("git://repo/sha")).toBeVisible();
   expect(within(status).getByText("git://repo/base")).toBeVisible();
   expect(within(status).getByText("all_targets_passed")).toBeVisible();
+  expect(within(status).getByText("2 of 51")).toBeVisible();
   expect(within(status).getByText("Accepted")).toBeVisible();
   expect(within(status).getByText("Updated")).toBeVisible();
   expect(within(status).getByText("Repository result")).toBeVisible();
@@ -104,6 +107,7 @@ it("retains the summary and history after a failed refresh", async () => {
   );
   expect(screen.getByText("git://repo/sha")).toBeVisible();
   expect(screen.getByText("all_targets_passed")).toBeVisible();
+  expect(screen.getByText("2 of 51")).toBeVisible();
   expect(screen.getByText("accepted")).toBeInTheDocument();
   await waitFor(() => expect(screen.getAllByText("Showing the last successful result.")).toHaveLength(2));
   expect(screen.getByText("green-project")).toBeVisible();
@@ -124,6 +128,7 @@ it("discards previous results when the request changes", () => {
   expect(screen.getByRole("heading", { name: "Request 8" })).toBeVisible();
   expect(screen.queryByText("git://repo/sha")).toBeNull();
   expect(screen.queryByText("all_targets_passed")).toBeNull();
+  expect(screen.queryByText("2 of 51")).toBeNull();
   expect(screen.queryByText("green-project")).toBeNull();
 });
 
@@ -138,6 +143,8 @@ it("renders recorded project results, completion and shareable pagination", () =
   expect(within(projects).getByText("Breakage")).toBeVisible();
   expect(within(projects).getByText("No result recorded")).toBeVisible();
   expect(within(projects).queryByText(/%/)).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Request status" }))
+    .getByText("2 of 51")).toBeVisible();
   expect(within(projects).getByText(/still in progress/)).toBeVisible();
   for (const link of within(projects).getAllByRole("link", { name: /Next projects/ })) {
     expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
