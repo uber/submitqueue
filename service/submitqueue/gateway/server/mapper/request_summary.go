@@ -45,6 +45,7 @@ func RequestSummaryToProto(summary entity.RequestSummary) *pb.RequestSummary {
 		Status:       string(summary.Status),
 		LastError:    summary.LastError,
 		Metadata:     cloneStringMap(summary.Metadata),
+		UpdatedAtMs:  summary.StatusTimestampMs,
 	}
 }
 

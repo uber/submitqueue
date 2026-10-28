@@ -220,7 +220,11 @@ func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 func (r *Repo) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cfg.Git, args...)
 	cmd.Dir = r.cfg.Path
-	cmd.Env = gitexec.Env(gitexec.EnvOptions{Transport: true, Passthrough: []string{"HOME"}})
+	cmd.Env = gitexec.Env(gitexec.EnvOptions{
+		Transport:   true,
+		Passthrough: []string{"HOME"},
+		Literal:     []string{"PATH=" + gitexec.PathWithGitFirst(r.cfg.Git)},
+	})
 	return cmd
 }
 

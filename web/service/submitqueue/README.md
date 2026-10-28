@@ -5,8 +5,8 @@ A local/demo Next.js host for the SubmitQueue module, and the composition root t
 | Path | Holds |
 |---|---|
 | `src/server/` | Wiring, free of Next.js: environment config, demo Basic auth, the Connect gateway client and transport, pino, opt-in Prometheus, and `resolveReferenceWebHost` |
-| `src/next/` | Everything Next.js-specific: catch-all page and metadata, the per-request auth check, navigation provider (`next/link` without prefetch, transition-aware refresh), readiness route |
-| `src/app/` | Routes: one optional catch-all page, `/healthz`, layouts, not-found and unauthorized pages |
+| `src/next/` | Everything Next.js-specific: catch-all page and metadata, the per-request auth check, navigation provider (`next/link` without prefetch, transition-aware refresh), queue-page loader for older requests, readiness route |
+| `src/app/` | Routes: one optional catch-all page, `/healthz`, the authenticated uncached `/api/queue/<queue>/requests` JSON route, layouts, not-found and unauthorized pages |
 | `src/proxy.ts` | Challenges anonymous browsers with HTTP Basic auth |
 
 Two Next.js specifics: `next.config.ts` sets `htmlLimitedBots: /.*/` so page titles resolve before streaming, and Next leaves pino unbundled, so the image's runtime layer declares it.

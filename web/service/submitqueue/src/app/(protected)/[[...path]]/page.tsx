@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const page = createNextPage({
-  shell: { environmentLabel: "Local demo · read-only", footer: "Read-only demo" },
+  shell: { environmentLabel: "Local demo" },
   web: resolveReferenceWeb,
   authenticate: requireAuthorization,
   onLog: resolveReferenceLogCallback(),

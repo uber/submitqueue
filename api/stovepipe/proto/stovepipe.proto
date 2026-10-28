@@ -45,12 +45,17 @@ message IngestRequest {
     // Logical queue name to validate (e.g. "monorepo/main"). Together with the minted
     // request ID it identifies the request and is the stable handle for the repo+ref.
     string queue = 1;
+    // Optional ENABLED or DISABLED coverage decision, independent of pause or processing.
+    // Omission or UNKNOWN preserves durable enablement.
+    QueueEnablement enablement = 2;
 }
 
 // IngestResponse is the response for the Ingest method.
 message IngestResponse {
     // Canonical decimal request ID, unique within the selected queue.
     string id = 1;
+    // Applied decision, or observed state when no decision was supplied.
+    QueueEnablementStatus enablement = 2;
 }
 
 // GetRequestHistoryByIDRequest selects one request history by the ID returned from Ingest.
@@ -218,6 +223,10 @@ message RequestSummary {
     int64 accepted_at_ms = 7;
     // Stable reason for the represented state. Empty when unavailable or inapplicable.
     string outcome_reason = 8;
+    // Total recorded project results; zero when no project results have been recorded.
+    int32 project_count = 9;
+    // Recorded project results with degree above zero.
+    int32 broken_project_count = 10;
 }
 
 // ListRequest selects a page of retained request summaries for one queue.

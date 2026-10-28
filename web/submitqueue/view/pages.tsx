@@ -1,11 +1,10 @@
 "use client";
 
 import { WebShell, type WebShellProps } from "./shell.js";
-import { Timestamp } from "@submitqueue/web-platform";
 import { Block } from "baseui/block";
-import { HeadingLarge, ParagraphSmall, ParagraphXSmall } from "baseui/typography";
+import { HeadingMedium, ParagraphSmall, ParagraphXSmall } from "baseui/typography";
 import { WebLink } from "./web-app.js";
-import { ChangeSubmissions, LastSuccessfulData, QueueDirectory, RequestDetailView, RequestListView } from "./components.js";
+import { ChangeSubmissions, LastSuccessfulData, QueueBreadcrumb, QueueDirectory, QueueRequests, QueueStatusFilter, RequestDetailView } from "./components.js";
 import type { SubmitQueuePageModel } from "../entity/index.js";
 
 export type SubmitQueueShellProps = Omit<WebShellProps, "brandMark" | "homeLabel">;
@@ -20,18 +19,20 @@ export interface SubmitQueuePageProps {
 
 /** Renders one page model; version controls appear only inside a `WebApp` such as `SubmitQueueApp`. */
 export function SubmitQueuePage({ model }: SubmitQueuePageProps) {
-  return <Block as="main" paddingTop="scale600" paddingBottom="scale600">
+  return <Block as="main" paddingTop="28px" paddingBottom="48px">
     {model.kind === "queue" ? <>
-      <Block display="flex" justifyContent="space-between" alignItems="flex-start" flexWrap gridGap="scale600" marginBottom="scale600">
+      <QueueBreadcrumb queue={model.queue} basePath={model.basePath} />
+      <Block display="flex" justifyContent="space-between" alignItems="flex-end" flexWrap gridGap="scale600" marginBottom="scale600">
         <div>
-          <ParagraphXSmall color="contentSecondary" marginTop="0">Queue activity</ParagraphXSmall><HeadingLarge as="h1" marginTop="0" marginBottom="scale300">{model.queue}</HeadingLarge>
-          <ParagraphXSmall color="contentSecondary">{model.paged ? "Older requests · snapshot" : "Last 24 hours · updates on refresh"}: <Timestamp value={model.window.fromMs} /> — <Timestamp value={model.window.toMs} /></ParagraphXSmall>
+          <HeadingMedium as="h1" marginTop="0" marginBottom="scale300">{model.queue}</HeadingMedium>
+          <ParagraphSmall margin="0" color="contentSecondary">Requests ordered by receipt time, newest first.</ParagraphSmall>
         </div>
-        <WebLink href={model.latestHref}>Latest 24 hours</WebLink>
+        <QueueStatusFilter queue={model.queue} statuses={model.statuses} basePath={model.basePath} />
       </Block>
+      {model.paged ? <ParagraphSmall><WebLink href={model.latestHref}>Latest requests</WebLink></ParagraphSmall> : null}
       <section className="panel" aria-label="Queue requests">
-        <RequestListView key={model.key} result={model.result} basePath={model.basePath}
-          changeLinks={model.changeLinks} changeLabels={model.changeLabels} />
+        <QueueRequests key={model.key} queue={model.queue} result={model.result} routeKey={model.key} basePath={model.basePath}
+          filtered={model.statuses.length > 0} />
       </section>
     </> : model.kind === "request" ?
       <RequestDetailView key={model.key} result={model.result} view={model.view} basePath={model.basePath}
@@ -53,7 +54,7 @@ export function SubmitQueueStatePage({ kind, homeHref = "/", message }: {
     <Block as="main" display="grid" placeItems="center" paddingTop="scale600" paddingBottom="scale600">
       <section aria-labelledby="state-title">
         <ParagraphXSmall color="contentSecondary">{notFound ? "Request lookup" : "SubmitQueue"}</ParagraphXSmall>
-        <HeadingLarge as="h1" marginTop="0" marginBottom="scale300" id="state-title">{notFound ? "Request not found" : "Authentication required"}</HeadingLarge>
+        <HeadingMedium as="h1" marginTop="0" marginBottom="scale300" id="state-title">{notFound ? "Request not found" : "Authentication required"}</HeadingMedium>
         <ParagraphSmall>{message ?? (notFound ? "The queue or request may not exist, or its retained data may have expired." : "Use the credentials configured for this host.")}</ParagraphSmall>
         {notFound ? <WebLink href={homeHref}>Return to queues</WebLink> : null}
       </section>

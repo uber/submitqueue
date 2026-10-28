@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
@@ -32,6 +33,10 @@ import (
 const (
 	defaultListPageSize = 50
 	maxListPageSize     = 200
+	// maxListStatuses bounds the filter a page token must carry.
+	maxListStatuses = 32
+	// maxFilteredListReceipts bounds the summary reads one filtered call spends looking for matches.
+	maxFilteredListReceipts = 500
 )
 
 // ListController handles bounded queue receipt-history queries.
@@ -80,7 +85,7 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 	if pageSize < 0 || pageSize > maxListPageSize {
 		return entity.ListResult{}, fmt.Errorf("page_size must be between 0 and %d: %w", maxListPageSize, ErrInvalidRequest)
 	}
-	query, err := resolveListRange(req, pageSize)
+	query, statuses, err := resolveListRange(req)
 	if err != nil {
 		return entity.ListResult{}, err
 	}
@@ -90,34 +95,22 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 		return entity.ListResult{}, fmt.Errorf("failed to resolve storage for queue %q: %w", req.Queue, err)
 	}
 
-	receipts, err := store.GetRequestReceiptStore().List(ctx, query)
+	scan, err := scanListPage(ctx, store, req.Queue, query, statuses, pageSize)
 	if err != nil {
-		return entity.ListResult{}, fmt.Errorf("failed to list request receipts queue=%q: %w", req.Queue, err)
+		return entity.ListResult{}, err
 	}
-
-	visible := receipts[:min(len(receipts), pageSize)]
 	result.ReceivedAtOrAfterMs = query.ReceivedAtOrAfterMs
 	result.ReceivedBeforeMs = query.ReceivedBeforeMs
-	result.Requests = make([]entity.RequestSummary, 0, len(visible))
-	if len(visible) > 0 {
-		summaries := store.GetRequestSummaryStore()
-		for _, receipt := range visible {
-			summary, err := readListSummary(ctx, summaries, req.Queue, receipt)
-			if err != nil {
-				return entity.ListResult{}, err
-			}
-			result.Requests = append(result.Requests, summary)
-		}
-	}
-	if len(receipts) > pageSize {
-		last := visible[len(visible)-1]
+	result.Requests = scan.requests
+	if scan.hasMore {
 		token, err := encodeListPageToken(listPageToken{
 			Version:             listPageTokenVersion,
 			Queue:               req.Queue,
 			ReceivedAtOrAfterMs: query.ReceivedAtOrAfterMs,
 			ReceivedBeforeMs:    query.ReceivedBeforeMs,
-			LastReceivedAtMs:    last.ReceivedAtMs,
-			LastRequestID:       last.RequestID,
+			LastReceivedAtMs:    scan.last.ReceivedAtMs,
+			LastRequestID:       scan.last.RequestID,
+			Statuses:            statusStrings(statuses),
 		})
 		if err != nil {
 			return entity.ListResult{}, fmt.Errorf("failed to encode page token queue=%q: %w", req.Queue, err)
@@ -126,6 +119,54 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 	}
 	c.logger.Debugw("queue requests listed", "queue", req.Queue, "request_count", len(result.Requests), "has_next_page", result.NextPageToken != "")
 	return result, nil
+}
+
+type listPageScan struct {
+	requests []entity.RequestSummary
+	// last is the final receipt read, matched or not; a continuation resumes after it.
+	last    entity.RequestReceipt
+	hasMore bool
+}
+
+// scanListPage reads receipts newest first until pageSize summaries match, the range is exhausted, or the read
+// budget is spent. Without a status filter the budget equals pageSize, so it is a single read of pageSize+1 receipts.
+func scanListPage(ctx context.Context, store storage.Storage, queue string, query basestorage.RequestReceiptRange, statuses []entity.RequestStatus, pageSize int) (listPageScan, error) {
+	budget := pageSize
+	if len(statuses) > 0 {
+		budget = maxFilteredListReceipts
+	}
+	receipts := store.GetRequestReceiptStore()
+	summaries := store.GetRequestSummaryStore()
+	scan := listPageScan{requests: make([]entity.RequestSummary, 0, pageSize)}
+	scanned := 0
+	for {
+		want := min(pageSize-len(scan.requests), budget-scanned)
+		// One receipt beyond want tells whether the range continues past this read.
+		query.Limit = want + 1
+		batch, err := receipts.List(ctx, query)
+		if err != nil {
+			return listPageScan{}, fmt.Errorf("failed to list request receipts queue=%q: %w", queue, err)
+		}
+		for _, receipt := range batch[:min(len(batch), want)] {
+			summary, err := readListSummary(ctx, summaries, queue, receipt)
+			if err != nil {
+				return listPageScan{}, err
+			}
+			if len(statuses) == 0 || slices.Contains(statuses, summary.Status) {
+				scan.requests = append(scan.requests, summary)
+			}
+			scan.last = receipt
+			scanned++
+		}
+		if len(batch) <= want {
+			return scan, nil
+		}
+		if len(scan.requests) == pageSize || scanned == budget {
+			scan.hasMore = true
+			return scan, nil
+		}
+		query.Before = basestorage.RequestReceiptCursor{ReceivedAtMs: scan.last.ReceivedAtMs, RequestID: scan.last.RequestID}
+	}
 }
 
 func readListSummary(ctx context.Context, summaries basestorage.RequestSummaryStore, queue string, receipt entity.RequestReceipt) (entity.RequestSummary, error) {

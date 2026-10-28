@@ -304,6 +304,8 @@ func TestProcess_WaitsForProjectResolutionBeforeRecordingOrPromotion(t *testing.
 	resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(nil, assert.AnError)
 	require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))), assert.AnError)
 	assert.Empty(t, m.hooks.events)
+	assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", "error")
+	assert.NotContains(t, m.metricsScope.Snapshot().Counters(), "record_controller.persist_project_facts.start+queue="+testQueue)
 }
 
 func TestProcess_RejectsLegacyBookmark(t *testing.T) {
@@ -336,7 +338,7 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
 	).Return([]projectstatus.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
-		{Project: "project-b", Degree: entity.DegreeBroken},
+		{Project: "project-b", Degree: entity.DegreeGreen},
 	}, nil)
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 
@@ -377,6 +379,8 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 		assert.Equal(t, testID, fact.RequestID)
 		if fact.Project == "" {
 			assert.Equal(t, entity.DegreePartial, fact.Degree)
+		} else if fact.Project == "project-b" {
+			assert.Equal(t, entity.DegreeGreen, fact.Degree)
 		} else {
 			assert.Equal(t, entity.DegreeBroken, fact.Degree)
 		}
@@ -386,6 +390,9 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	assert.Equal(t, entity.RequestEventValidationFactRecorded, logs[0].Event)
 	assert.Equal(t, entity.RequestEventProjectFactsRecorded, logs[1].Event)
 	assert.Equal(t, "2", logs[1].Metadata[requestlog.MetadataKeyProjectFactCount])
+	assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", "success")
+	assertRecordOperationMetrics(t, m.metricsScope, "persist_project_facts", "success")
+	assert.Equal(t, "1", logs[1].Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
 }
 
 func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
@@ -403,6 +410,167 @@ func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 	results, err := c.resolveProjectResults(queueContext(), request)
 	assert.Empty(t, results)
 	require.NoError(t, err)
+}
+
+func TestResolveProjectResultsMetrics(t *testing.T) {
+	validResults := []projectstatus.Result{
+		{Project: "project-a", Degree: entity.DegreeGreen},
+		{Project: "project-b", Degree: entity.DegreeBroken},
+	}
+	for _, tt := range []struct {
+		name       string
+		results    []projectstatus.Result
+		factoryErr error
+		resolveErr error
+		invalid    bool
+		wantResult string
+	}{
+		{name: "projects", results: validResults, wantResult: "success"},
+		{name: "nil results", wantResult: "success"},
+		{name: "empty results", results: []projectstatus.Result{}, wantResult: "success"},
+		{name: "factory error", factoryErr: assert.AnError, wantResult: "error"},
+		{name: "factory cancellation", factoryErr: context.Canceled, wantResult: "cancel"},
+		{name: "resolver error with partial results", results: validResults, resolveErr: assert.AnError, wantResult: "error"},
+		{name: "resolver cancellation", resolveErr: context.Canceled, wantResult: "cancel"},
+		{name: "resolver deadline", resolveErr: context.DeadlineExceeded, wantResult: "error"},
+		{name: "invalid project", results: []projectstatus.Result{{Degree: entity.DegreeGreen}}, invalid: true, wantResult: "error"},
+		{name: "invalid degree", results: []projectstatus.Result{{Project: "project-a", Degree: math.NaN()}}, invalid: true, wantResult: "error"},
+		{name: "duplicate projects", results: []projectstatus.Result{validResults[0], validResults[0]}, invalid: true, wantResult: "error"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := failedRequest()
+			factory := projectstatusmock.NewMockResolverFactory(ctrl)
+			resolver := projectstatusmock.NewMockResolver(ctrl)
+			c.projectStatusResolverFactory = factory
+			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, tt.factoryErr)
+			if tt.factoryErr == nil {
+				resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(tt.results, tt.resolveErr)
+			}
+
+			got, err := c.resolveProjectResults(queueContext(), request)
+
+			switch {
+			case tt.factoryErr != nil:
+				require.ErrorIs(t, err, tt.factoryErr)
+			case tt.resolveErr != nil:
+				require.ErrorIs(t, err, tt.resolveErr)
+			case tt.invalid:
+				require.Error(t, err)
+			default:
+				require.NoError(t, err)
+				assert.Equal(t, tt.results, got)
+			}
+			assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", tt.wantResult)
+			histograms := m.metricsScope.Snapshot().Histograms()
+			const projectsKey = "record_controller.resolve_project_results.projects+queue=" + testQueue
+			if err != nil {
+				assert.NotContains(t, histograms, projectsKey)
+				return
+			}
+			projects, ok := histograms[projectsKey]
+			require.True(t, ok)
+			assert.EqualValues(t, 1, projects.Values()[float64(len(tt.results))])
+			var samples int64
+			for _, count := range projects.Values() {
+				samples += count
+			}
+			assert.EqualValues(t, 1, samples)
+		})
+	}
+}
+
+func TestPersistProjectFactsMetrics(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		empty         bool
+		existing      bool
+		factErr       error
+		indexErr      error
+		completionErr error
+		wantResult    string
+	}{
+		{name: "projects", wantResult: "success"},
+		{name: "empty results", empty: true, wantResult: "success"},
+		{name: "existing facts and indexes", existing: true, wantResult: "success"},
+		{name: "fact write error", factErr: assert.AnError, wantResult: "error"},
+		{name: "fact write cancellation", factErr: context.Canceled, wantResult: "cancel"},
+		{name: "index write error", indexErr: assert.AnError, wantResult: "error"},
+		{name: "index write cancellation", indexErr: context.Canceled, wantResult: "cancel"},
+		{name: "completion error", completionErr: assert.AnError, wantResult: "error"},
+		{name: "completion cancellation", completionErr: context.Canceled, wantResult: "cancel"},
+		{name: "empty completion error", empty: true, completionErr: assert.AnError, wantResult: "error"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := failedRequest()
+			var results []projectstatus.Result
+			if !tt.empty {
+				results = []projectstatus.Result{
+					{Project: "project-a", Degree: entity.DegreeGreen},
+					{Project: "project-b", Degree: entity.DegreeBroken},
+				}
+			}
+			materializer := requestlogmock.NewMockMaterializer(ctrl)
+			c.materializer = materializer
+			for _, result := range results {
+				fact := entity.ValidationFact{URI: request.URI, Project: result.Project, Degree: result.Degree, RequestID: request.ID, CreatedAt: testChangeTime.UnixMilli()}
+				createErr := tt.factErr
+				if tt.existing {
+					createErr = storage.ErrAlreadyExists
+				}
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(createErr)
+				if tt.factErr != nil {
+					break
+				}
+				indexErr := tt.indexErr
+				if tt.existing {
+					m.factStore.EXPECT().Get(gomock.Any(), request.URI, result.Project).Return(fact, nil)
+					indexErr = storage.ErrAlreadyExists
+				}
+				entry, err := entity.NewProjectFactByDegree(fact)
+				require.NoError(t, err)
+				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(indexErr)
+				if tt.indexErr != nil {
+					break
+				}
+			}
+			if tt.factErr == nil && tt.indexErr == nil {
+				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+					func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+						assert.Equal(t, entity.RequestEventProjectFactsRecorded, log.Event)
+						return tt.completionErr
+					})
+			}
+
+			err := c.persistProjectFacts(queueContext(), m.store, request, results)
+
+			switch {
+			case tt.factErr != nil:
+				require.ErrorIs(t, err, tt.factErr)
+			case tt.indexErr != nil:
+				require.ErrorIs(t, err, tt.indexErr)
+			case tt.completionErr != nil:
+				require.ErrorIs(t, err, tt.completionErr)
+			default:
+				require.NoError(t, err)
+			}
+			assertRecordOperationMetrics(t, m.metricsScope, "persist_project_facts", tt.wantResult)
+		})
+	}
+}
+
+func assertRecordOperationMetrics(t *testing.T, scope tally.TestScope, operation, result string) {
+	t.Helper()
+	snapshot := scope.Snapshot()
+	start, ok := snapshot.Counters()["record_controller."+operation+".start+queue="+testQueue]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, start.Value())
+	finish, ok := snapshot.Histograms()["record_controller."+operation+".finish+queue="+testQueue+",result="+result]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, totalSamples(finish.Durations()))
 }
 
 func TestProcessRecordsEmptyProjectCompletion(t *testing.T) {
@@ -443,6 +611,7 @@ func TestProcessRecordsEmptyProjectCompletion(t *testing.T) {
 						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
 							assert.Equal(t, "event/project_facts_recorded/all", log.ID)
 							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
+							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
 							return tt.writeErr
 						}),
 				)
@@ -652,7 +821,7 @@ func TestProcess_FullBuildFailureHasNoBaseline(t *testing.T) {
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 
 	snapshot := m.metricsScope.Snapshot()
-	assert.Empty(t, snapshot.Histograms(), "a build with no baseline has no latency to report")
+	assert.NotContains(t, snapshot.Histograms(), "record_controller.record.failure_detection_latency+queue="+testQueue+",strategy=full")
 	counter, ok := snapshot.Counters()[failureDetectionMissing]
 	require.True(t, ok)
 	assert.EqualValues(t, 1, counter.Value())
@@ -671,7 +840,7 @@ func TestProcess_RedeliveredFailureIsNotResampled(t *testing.T) {
 		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID, CreatedAt: testChangeTime.UnixMilli()}, nil)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
-	assert.Empty(t, m.metricsScope.Snapshot().Histograms())
+	assert.NotContains(t, m.metricsScope.Snapshot().Histograms(), failureDetectionLatency)
 }
 
 // TestProcess_UnobservableDetectionLatencyDoesNotFailRecord covers the observation's
@@ -729,7 +898,7 @@ func TestProcess_UnobservableDetectionLatencyDoesNotFailRecord(t *testing.T) {
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 
 			snapshot := m.metricsScope.Snapshot()
-			assert.Empty(t, snapshot.Histograms(), "no latency may be reported when it cannot be observed")
+			assert.NotContains(t, snapshot.Histograms(), failureDetectionLatency)
 			counter, ok := snapshot.Counters()[failureDetectionErrors+tt.step]
 			require.True(t, ok)
 			assert.EqualValues(t, 1, counter.Value())
@@ -932,6 +1101,9 @@ func TestProcess_TerminalWithoutFactDoesNotTouchStores(t *testing.T) {
 				got = append(got, event.GetType())
 			}
 			assert.Equal(t, tt.wantEventTypes, got)
+			for _, operation := range []string{"resolve_project_results", "persist_project_facts"} {
+				assert.NotContains(t, m.metricsScope.Snapshot().Counters(), "record_controller."+operation+".start+queue="+testQueue)
+			}
 		})
 	}
 }
@@ -1218,6 +1390,13 @@ func TestPersistProjectFactsRepairsIndexOnRetry(t *testing.T) {
 			)
 			require.ErrorIs(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: 0.25}}), writeErr)
 			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: 0.75}}))
+			snapshot := m.metricsScope.Snapshot()
+			assert.EqualValues(t, 2, snapshot.Counters()["record_controller.persist_project_facts.start+queue="+testQueue].Value())
+			for _, result := range []string{"success", "error"} {
+				finish, ok := snapshot.Histograms()["record_controller.persist_project_facts.finish+queue="+testQueue+",result="+result]
+				require.True(t, ok)
+				assert.EqualValues(t, 1, totalSamples(finish.Durations()))
+			}
 		})
 	}
 }
@@ -1322,4 +1501,42 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 	}).Return(nil)
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Len(t, m.hooks.events, 1)
+}
+
+func TestPersistProjectFactsCountsPersistedOutcomes(t *testing.T) {
+	for _, tt := range []struct {
+		name                         string
+		storedDegree, resolvedDegree float64
+		broken                       string
+	}{
+		{name: "new green", storedDegree: entity.DegreeGreen, resolvedDegree: entity.DegreeGreen, broken: "0"},
+		{name: "new partially broken", storedDegree: 0.25, resolvedDegree: 0.25, broken: "1"},
+		{name: "new fully broken", storedDegree: entity.DegreeBroken, resolvedDegree: entity.DegreeBroken, broken: "1"},
+		{name: "adopts existing green", storedDegree: entity.DegreeGreen, resolvedDegree: entity.DegreeBroken, broken: "0"},
+		{name: "adopts existing broken", storedDegree: entity.DegreeBroken, resolvedDegree: entity.DegreeGreen, broken: "1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: tt.storedDegree, RequestID: request.ID, CreatedAt: 10}
+			if tt.storedDegree != tt.resolvedDegree {
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil)
+			} else {
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			}
+			m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			materializer := requestlogmock.NewMockMaterializer(ctrl)
+			c.materializer = materializer
+			materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+				assert.Equal(t, map[string]string{
+					requestlog.MetadataKeyProjectFactCount:       "1",
+					requestlog.MetadataKeyBrokenProjectFactCount: tt.broken,
+				}, log.Metadata)
+				return nil
+			})
+			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: tt.resolvedDegree}}))
+		})
+	}
 }

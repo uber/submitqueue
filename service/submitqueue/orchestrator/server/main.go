@@ -50,6 +50,8 @@ import (
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient"
 	"github.com/uber/submitqueue/submitqueue/orchestrator"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	"go.uber.org/zap"
@@ -199,9 +201,23 @@ func run() error {
 		subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
 	}
 
+	var tangoShared tangoDeps
+	if profilesCfg.usesTango() {
+		connection, err := tangoclient.Dial(profilesCfg.Tango.Address)
+		if err != nil {
+			return fmt.Errorf("failed to connect to tango: %w", err)
+		}
+		defer connection.Close()
+		tangoShared = tangoDeps{
+			DB:         appDB,
+			Connection: connection,
+			Cache:      tango.NewSignatureCache(profilesCfg.Tango.SignatureCacheBytes),
+		}
+	}
+
 	profiles, err := newProfiles(ctx, logger, scope, changeset.New(func(queue string) (changeset.Stores, error) {
 		return storageFty.For(orchstorage.Config{QueueName: queue})
-	}), storageFty, profilesCfg)
+	}), storageFty, tangoShared, profilesCfg)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}

@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/uber/submitqueue/stovepipe/core/queuelog"
+	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -68,6 +69,10 @@ func (s *StovepipeServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Pi
 func (s *StovepipeServer) Ingest(ctx context.Context, req *pb.IngestRequest) (*pb.IngestResponse, error) {
 	result, err := s.ingestController.Ingest(ctx, mapper.ProtoToIngestRequest(req))
 	if err != nil {
+		switch {
+		case errors.Is(err, queuestate.ErrInvalidChange), controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
 		return nil, err
 	}
 	return mapper.IngestResultToProto(result), nil

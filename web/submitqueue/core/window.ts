@@ -13,3 +13,8 @@ export type RequestPageStart = Readonly<{ window: RequestWindow }> | Readonly<{ 
 export function defaultRequestWindow(nowMs = Date.now()): RequestWindow {
   return { fromMs: nowMs - REQUEST_WINDOW_MS, toMs: nowMs };
 }
+
+/** Every receipt before `nowMs`, so a queue list starts at its newest request however old it is. */
+export function allReceiptsWindow(nowMs = Date.now()): RequestWindow {
+  return { fromMs: 0, toMs: nowMs };
+}

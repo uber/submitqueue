@@ -4,7 +4,7 @@ import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/
 import { createStovepipeWeb } from "@submitqueue/web-stovepipe/server";
 
 const submitqueue = createSubmitQueueWeb({ gateway: createFakeGatewayReader() });
-const requests = await submitqueue.handle({ path: "/demo-queue", search: {} });
+const requests = await submitqueue.handle({ path: "/queue/demo-queue", search: {} });
 assert.equal(requests.kind, "render");
 assert.equal(requests.model.result.ok, true);
 assert.doesNotThrow(() => JSON.stringify(requests.model));

@@ -11,6 +11,7 @@ export function gatewayRequestFixture(
     queue: "demo-queue",
     changeUris: ["github://github.com/uber/submitqueue/pull/1/0123456789012345678901234567890123456789"],
     receivedAtMs: DEFAULT_TIMESTAMP,
+    updatedAtMs: DEFAULT_TIMESTAMP,
     status: "speculating",
     lastError: "",
     metadata: {},

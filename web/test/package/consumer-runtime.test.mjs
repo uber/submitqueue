@@ -15,7 +15,7 @@ test("renders a packaged application with its host providers", async () => {
     gateway: createFakeGatewayReader(),
     paths: new WebPaths({ basePath: "/queues" }),
   });
-  const result = await web.handle({ path: "/queues/demo-queue", search: {} });
+  const result = await web.handle({ path: "/queues/queue/demo-queue", search: {} });
   assert.equal(result.kind, "render");
   assert.equal(result.model.result.ok, true);
   assert.doesNotThrow(() => JSON.stringify(result.model));
@@ -24,7 +24,7 @@ test("renders a packaged application with its host providers", async () => {
     createElement(BaseProvider, { theme: LightTheme },
       createElement(SubmitQueueApp, { model: result.model }))));
   assert.ok(engine.getCss().length > 0);
-  assert.ok(html.includes('href="/queues/demo-queue/request/demo-queue/1"'));
+  assert.ok(html.includes('href="/queues/queue/demo-queue/request/demo-queue/1"'));
   assert.ok(html.includes('aria-label="Queue requests"'));
   const stylesheet = await readFile(new URL(import.meta.resolve("@submitqueue/web-submitqueue/styles.css")), "utf8");
   assert.ok(stylesheet.includes("@submitqueue/web-platform/styles.css"));

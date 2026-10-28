@@ -24,6 +24,43 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
+func TestBatchRejectsInvalidClosingPass(t *testing.T) {
+	for _, scenario := range []string{"missing terminal intent", "task-wide failure", "canceled build", "running build", "not terminal build"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build/100", "100", entity.BuildStatusSucceeded)
+			f.seedIssue("task", "unit", entity.IssueStatusOpen)
+			original := f.states[issueKey{"task", "unit"}]
+			progress := currentCursor()
+			progress.Phase = entity.IssueTrackingPhaseFinalizing
+			progress.Finalize = true
+
+			switch scenario {
+			case "missing terminal intent":
+				progress.Finalize = false
+			case "task-wide failure":
+				progress.HasTaskWideIssues = true
+			case "canceled build":
+				f.source("build/100", "100", entity.BuildStatusCancelled)
+			case "running build":
+				f.source("build/100", "100", entity.BuildStatusRunning)
+			case "not terminal build":
+				request := f.requests["100"]
+				request.TerminalBuildID = "another-build"
+				f.requests["100"] = request
+			}
+			f.progress = progress
+			f.hasProgress = true
+
+			_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress)
+			require.Error(t, err)
+			require.Equal(t, original, f.states[issueKey{"task", "unit"}])
+			require.Equal(t, progress, f.progress)
+			require.Empty(t, f.logs)
+		})
+	}
+}
+
 func TestProcessIssueOpensAndCloses(t *testing.T) {
 	for _, reported := range []bool{true, false} {
 		name := "close"
@@ -35,6 +72,7 @@ func TestProcessIssueOpensAndCloses(t *testing.T) {
 			f.source("build/100", "100", entity.BuildStatusSucceeded)
 			progress := currentCursor()
 			progress.Phase = entity.IssueTrackingPhaseFinalizing
+			progress.Finalize = true
 			progress.CursorTaskID, progress.CursorUnitID = "", ""
 			f.retain(progress)
 			if !reported {

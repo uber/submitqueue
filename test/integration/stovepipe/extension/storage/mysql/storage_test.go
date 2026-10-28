@@ -229,6 +229,9 @@ func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
 	updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 	updated.RequestVersion = 2
 	updated.StateTimestampMs = 2000
+	updated.ProjectResultsCompletedAtMs = 2100
+	updated.ProjectCount = 5
+	updated.BrokenProjectCount = 2
 	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))
 	updated.Version = 2
 

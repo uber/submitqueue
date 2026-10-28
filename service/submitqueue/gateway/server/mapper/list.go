@@ -29,7 +29,19 @@ func ProtoToListRequest(req *pb.ListRequest) entity.ListRequest {
 		HasReceivedBeforeMs:    req.GetReceivedUpperBound() != nil,
 		PageSize:               req.GetPageSize(),
 		PageToken:              req.GetPageToken(),
+		Statuses:               protoToRequestStatuses(req.GetStatuses()),
 	}
+}
+
+func protoToRequestStatuses(values []string) []entity.RequestStatus {
+	if len(values) == 0 {
+		return nil
+	}
+	statuses := make([]entity.RequestStatus, len(values))
+	for i, value := range values {
+		statuses[i] = entity.RequestStatus(value)
+	}
+	return statuses
 }
 
 // ListResultToProto maps the domain result to the wire response.

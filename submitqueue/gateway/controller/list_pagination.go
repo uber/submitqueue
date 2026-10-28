@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -35,33 +36,74 @@ type listPageToken struct {
 	ReceivedBeforeMs    int64  `json:"received_before_ms"`
 	LastReceivedAtMs    int64  `json:"last_received_at_ms"`
 	LastRequestID       string `json:"last_request_id"`
+	// Statuses is the canonical status filter; absent in tokens minted without one.
+	Statuses []string `json:"statuses,omitempty"`
 }
 
-// resolveListRange takes the window from the page token when one is supplied, so a continuation needs only the
-// queue and the token; a bound the caller also supplies must match the token's.
-func resolveListRange(req entity.ListRequest, pageSize int) (basestorage.RequestReceiptRange, error) {
-	query := basestorage.RequestReceiptRange{Limit: pageSize + 1}
+// resolveListRange takes the window and status filter from the page token when one is supplied, so a continuation
+// needs only the queue and the token; a bound or filter the caller also supplies must match the token's.
+func resolveListRange(req entity.ListRequest) (basestorage.RequestReceiptRange, []entity.RequestStatus, error) {
+	statuses, ok := canonicalListStatuses(req.Statuses)
+	if !ok {
+		return basestorage.RequestReceiptRange{}, nil, fmt.Errorf("statuses must be non-empty and at most %d: %w", maxListStatuses, ErrInvalidRequest)
+	}
+	var query basestorage.RequestReceiptRange
 	if req.PageToken != "" {
 		token, err := decodeListPageToken(req.PageToken)
 		if err != nil {
-			return basestorage.RequestReceiptRange{}, fmt.Errorf("invalid page token: %w", ErrInvalidRequest)
+			return basestorage.RequestReceiptRange{}, nil, fmt.Errorf("invalid page token: %w", ErrInvalidRequest)
+		}
+		tokenStatuses, ok := canonicalListStatuses(statusesFromStrings(token.Statuses))
+		if !ok || !slices.Equal(statusStrings(tokenStatuses), token.Statuses) {
+			return basestorage.RequestReceiptRange{}, nil, fmt.Errorf("invalid page token: %w", ErrInvalidRequest)
 		}
 		if token.Queue != req.Queue ||
 			(req.HasReceivedAtOrAfterMs && req.ReceivedAtOrAfterMs != token.ReceivedAtOrAfterMs) ||
-			(req.HasReceivedBeforeMs && req.ReceivedBeforeMs != token.ReceivedBeforeMs) {
-			return basestorage.RequestReceiptRange{}, fmt.Errorf("page token does not match the queue and time bounds: %w", ErrInvalidRequest)
+			(req.HasReceivedBeforeMs && req.ReceivedBeforeMs != token.ReceivedBeforeMs) ||
+			(len(statuses) > 0 && !slices.Equal(statuses, tokenStatuses)) {
+			return basestorage.RequestReceiptRange{}, nil, fmt.Errorf("page token does not match the queue, time bounds, and statuses: %w", ErrInvalidRequest)
 		}
 		query.ReceivedAtOrAfterMs = token.ReceivedAtOrAfterMs
 		query.ReceivedBeforeMs = token.ReceivedBeforeMs
 		query.Before = basestorage.RequestReceiptCursor{ReceivedAtMs: token.LastReceivedAtMs, RequestID: token.LastRequestID}
-		return query, nil
+		return query, tokenStatuses, nil
 	}
 	if !req.HasReceivedAtOrAfterMs || !req.HasReceivedBeforeMs || req.ReceivedAtOrAfterMs >= req.ReceivedBeforeMs {
-		return basestorage.RequestReceiptRange{}, fmt.Errorf("first page requires received_at_or_after_ms < received_before_ms: %w", ErrInvalidRequest)
+		return basestorage.RequestReceiptRange{}, nil, fmt.Errorf("first page requires received_at_or_after_ms < received_before_ms: %w", ErrInvalidRequest)
 	}
 	query.ReceivedAtOrAfterMs = req.ReceivedAtOrAfterMs
 	query.ReceivedBeforeMs = req.ReceivedBeforeMs
-	return query, nil
+	return query, statuses, nil
+}
+
+// canonicalListStatuses sorts and deduplicates a filter so equal filters compare equal; ok is false for an empty
+// status or a filter above maxListStatuses.
+func canonicalListStatuses(statuses []entity.RequestStatus) ([]entity.RequestStatus, bool) {
+	if len(statuses) > maxListStatuses || slices.Contains(statuses, entity.RequestStatusUnknown) {
+		return nil, false
+	}
+	canonical := slices.Clone(statuses)
+	slices.Sort(canonical)
+	return slices.Compact(canonical), true
+}
+
+func statusStrings(statuses []entity.RequestStatus) []string {
+	if len(statuses) == 0 {
+		return nil
+	}
+	values := make([]string, len(statuses))
+	for i, status := range statuses {
+		values[i] = string(status)
+	}
+	return values
+}
+
+func statusesFromStrings(values []string) []entity.RequestStatus {
+	statuses := make([]entity.RequestStatus, len(values))
+	for i, value := range values {
+		statuses[i] = entity.RequestStatus(value)
+	}
+	return statuses
 }
 
 func encodeListPageToken(token listPageToken) (string, error) {

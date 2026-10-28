@@ -38,13 +38,14 @@ func TestProtoToGetRequestSummaryByChangeURIRequest(t *testing.T) {
 
 func TestRequestSummaryToProto(t *testing.T) {
 	summary := entity.RequestSummary{
-		RequestID:    "42",
-		Queue:        "test-queue",
-		ChangeURIs:   []string{"github://uber/repo/pull/1/abc"},
-		ReceivedAtMs: 100,
-		Status:       entity.RequestStatusValidating,
-		LastError:    "validation failed",
-		Metadata:     map[string]string{"step": "lint"},
+		RequestID:         "42",
+		Queue:             "test-queue",
+		ChangeURIs:        []string{"github://uber/repo/pull/1/abc"},
+		ReceivedAtMs:      100,
+		Status:            entity.RequestStatusValidating,
+		LastError:         "validation failed",
+		Metadata:          map[string]string{"step": "lint"},
+		StatusTimestampMs: 250,
 	}
 
 	assert.Equal(t, &pb.RequestSummary{
@@ -55,6 +56,7 @@ func TestRequestSummaryToProto(t *testing.T) {
 		Status:       string(entity.RequestStatusValidating),
 		LastError:    "validation failed",
 		Metadata:     map[string]string{"step": "lint"},
+		UpdatedAtMs:  250,
 	}, RequestSummaryToProto(summary))
 }
 

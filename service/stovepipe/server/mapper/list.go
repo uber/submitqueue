@@ -44,13 +44,15 @@ func ListResultToProto(result entity.ListResult) *pb.ListResponse {
 // RequestSummaryToProto exposes public summary fields, omitting internal storage versions.
 func RequestSummaryToProto(summary entity.RequestSummary) *pb.RequestSummary {
 	return &pb.RequestSummary{
-		RequestId:        summary.RequestID,
-		Queue:            summary.Queue,
-		ChangeUri:        summary.URI,
-		BaseUri:          summary.BaseURI,
-		RequestState:     string(summary.State),
-		StateUpdatedAtMs: summary.StateTimestampMs,
-		AcceptedAtMs:     summary.AcceptedAtMs,
-		OutcomeReason:    string(summary.OutcomeReason),
+		RequestId:          summary.RequestID,
+		Queue:              summary.Queue,
+		ChangeUri:          summary.URI,
+		BaseUri:            summary.BaseURI,
+		RequestState:       string(summary.State),
+		StateUpdatedAtMs:   summary.StateTimestampMs,
+		AcceptedAtMs:       summary.AcceptedAtMs,
+		OutcomeReason:      string(summary.OutcomeReason),
+		ProjectCount:       summary.ProjectCount,
+		BrokenProjectCount: summary.BrokenProjectCount,
 	}
 }

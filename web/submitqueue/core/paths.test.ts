@@ -7,7 +7,7 @@ describe("WebPaths", () => {
     const paths = new WebPaths();
 
     expect(paths.request("demo-queue", "demo-queue/42")).toBe(
-      "/demo-queue/request/demo-queue/42",
+      "/queue/demo-queue/request/demo-queue/42",
     );
   });
 
@@ -18,7 +18,7 @@ describe("WebPaths", () => {
     });
 
     expect(href).toBe(
-      "/submitqueue/demo%20queue?page=opaque%2B%2F%3D",
+      "/submitqueue/queue/demo%20queue?page=opaque%2B%2F%3D",
     );
   });
 
@@ -26,20 +26,21 @@ describe("WebPaths", () => {
     const paths = new WebPaths();
 
     expect(paths.request("demo-queue", "opaque/id?query#fragment")).toBe(
-      "/demo-queue/request/opaque/id%3Fquery%23fragment",
+      "/queue/demo-queue/request/opaque/id%3Fquery%23fragment",
     );
   });
 
   it.each([".", "..", "~.", "~value"])("round-trips %s without URL dot normalization", (id) => {
     const paths = new WebPaths();
     const url = new URL(paths.request(id, `${id}/42`), "https://example.test");
-    const [queue, resource, ...sqid] = url.pathname.slice(1).split("/").map(decodeURIComponent);
+    const [scope, queue, resource, ...sqid] = url.pathname.slice(1).split("/").map(decodeURIComponent);
+    expect(scope).toBe("queue");
     expect(resource).toBe("request");
     expect(decodePathSegment(queue!)).toBe(id);
     expect(sqid.map(decodePathSegment).join("/")).toBe(`${id}/42`);
   });
 
   it("makes the history view shareable without consuming part of an opaque ID", () => {
-    expect(new WebPaths().request("demo-queue", "42", { view: "history" })).toBe("/demo-queue/request/42?view=history");
+    expect(new WebPaths().request("demo-queue", "42", { view: "history" })).toBe("/queue/demo-queue/request/42?view=history");
   });
 });

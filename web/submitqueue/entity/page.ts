@@ -1,7 +1,7 @@
 import type { LoadResult } from "./result.js";
 import type { ChangeDetailModel } from "./change.js";
 import type { QueueModel } from "./queue.js";
-import type { RequestDetailModel, RequestListModel } from "./request.js";
+import type { QueueRequestsModel, RequestDetailModel } from "./request.js";
 
 /** How the client keeps a rendered page current. */
 export interface WebRefreshModel {
@@ -37,24 +37,20 @@ export interface QueueDirectoryPageModel extends SubmitQueuePagePresentation {
   result: LoadResult<QueueModel[]>;
 }
 
-/** Requests one queue received in a 24-hour window. */
+/** Requests one queue received, newest first. */
 export interface QueueRequestsPageModel extends SubmitQueuePagePresentation {
   /** Page discriminator. */
   kind: "queue";
   /** Queue name. */
   queue: string;
-  /** Half-open receipt window shown, Unix epoch milliseconds. */
-  window: { fromMs: number; toMs: number };
-  /** Whether this is an older snapshot page rather than the live first page. */
+  /** Statuses the list is restricted to, sorted; empty includes every status. */
+  statuses: string[];
+  /** Whether this page starts at a continuation rather than the newest request. */
   paged: boolean;
-  /** In-app link to the live first page. */
+  /** In-app link to the newest requests under the same status filter. */
   latestHref: string;
-  /** The page of requests, or why it could not be loaded. */
-  result: LoadResult<RequestListModel>;
-  /** In-app links for change URIs that have a change page, keyed by URI. */
-  changeLinks: Record<string, string>;
-  /** Display labels for change URIs, keyed by URI; unlabeled URIs show verbatim. */
-  changeLabels: Record<string, string>;
+  /** The first displayed page of requests, or why it could not be loaded. */
+  result: LoadResult<QueueRequestsModel>;
 }
 
 /** One request's summary or history. */

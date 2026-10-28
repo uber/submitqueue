@@ -3,6 +3,7 @@
 import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 import type { WebPageModel } from "../entity/index.js";
 import { useWebNavigation, type WebLinkProps } from "@submitqueue/web-platform";
+import { styled } from "baseui";
 import { StyledLink } from "baseui/link";
 
 /** Client-side controls of the enclosing {@link WebApp}. */
@@ -58,8 +59,16 @@ export function WebApp({ model, children }: WebAppProps) {
   return <AppContext.Provider value={controls}>{children}</AppContext.Provider>;
 }
 
-/** An in-app link styled by BaseUI, using the host's router when supplied. */
+/** BaseUI link in the theme accent; extend it with `withStyle` so overrides take precedence. */
+export const AccentLink = styled(StyledLink, ({ $theme }) => ({
+  color: $theme.colors.accent500,
+  textDecoration: "none",
+  ":visited": { color: $theme.colors.accent500 },
+  ":hover": { color: $theme.colors.accent500, textDecoration: "underline" },
+}));
+
+/** An in-app link in the theme's accent color, underlined on hover, using the host's router when supplied. */
 export function WebLink({ className = "", ...props }: WebLinkProps) {
   const { Link } = useWebNavigation();
-  return <StyledLink $as={Link ?? "a"} className={className} {...props} />;
+  return <AccentLink $as={Link ?? "a"} className={className} {...props} />;
 }

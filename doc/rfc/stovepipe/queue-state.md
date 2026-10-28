@@ -50,7 +50,9 @@ Suppose commits arrive in order A through G, with enablement changes at A, D and
 
 C and F need no validation requests. Their ancestry relative to the boundaries determines the answer.
 
-Registration starts a queue as disabled version 1, with no boundary; this covers commits before its first enablement. Missing state is an error, not disabled. If changes share a boundary, the highest version wins. Versions order changes; timestamps do not.
+The first `Ingest` call initializes a configured queue as disabled version 1, with no boundary, before applying an optional enablement decision. Initialization also adopts existing queue rows without enablement and preserves their pipeline fields. No separate startup registration is required. The initial disabled state covers commits before its first enablement. Missing state is an error, not disabled. If changes share a boundary, the highest version wins. Versions order changes; timestamps do not.
+
+`Ingest` accepts optional `ENABLED` or `DISABLED` enablement and returns the applied or observed status with the request ID. Omission or `UNKNOWN` preserves state; repeating the current setting preserves its boundary and version. A change records an inclusive boundary at the commit being ingested, without backfilling earlier requests. Enablement does not pause ingestion or processing. Deploy server support before callers send decisions, since older servers ignore the field.
 
 ## Internal state, summary and history
 
@@ -64,9 +66,9 @@ Follow the model used for request summaries and history, while keeping the inter
 
 The queue row and summary each have a storage version for optimistic locking. The API exposes a separate enablement version, which advances only for enabled/disabled changes. Routine pipeline updates create no enablement history entries or gaps.
 
-The transition controller captures the queue's tip and a timestamp once when preparing a change. Retries keep those values; requesting the existing state is a no-op. Application first finishes recording the previous state, then conditionally updates the queue and records the new state through `queuelog.Materializer.PersistLog`.
+Ingest supplies its captured head URI to the transition controller, which pins that boundary and a timestamp when preparing a change. Replaying a prepared change preserves those values; requesting the existing state is a no-op. Application first finishes recording the previous state, then conditionally updates the queue and records the new state through `queuelog.Materializer.PersistLog`.
 
-History is written before its summary. If either write fails after the queue update, the queue retains the missing change. Initialization and transition retries repair the read models before another enablement change can replace it. Repeating an identical change is safe, and older changes cannot move the summary backward. Concurrent pipeline updates preserve their coordination fields; competing enablement decisions are rejected as stale.
+History is written before its summary. If either write fails after the queue update, the queue retains the missing change. Initialization and transition retries repair the read models before another enablement change can replace it. Repeating an identical change is safe, and older changes cannot move the summary backward. Concurrent pipeline updates preserve their coordination fields. Ingest retries competing enablement decisions against current state while preserving the captured commit boundary. A changed setting cannot move the boundary backward.
 
 ## Commit lookup and consistency
 
@@ -85,4 +87,4 @@ Dependency and cancellation errors retain their transport classification. An unr
 
 ## Scope
 
-This stack records enablement and exposes status lookup. It does not enforce ingestion or execution controls. Configuration freshness, administration, pause enforcement and public history access remain separate work. Validation results and last-green stay in their existing APIs.
+This stack records enablement and exposes status lookup. It does not enforce ingestion or execution controls. Configuration freshness, pause enforcement and public history access remain separate work. Validation results and last-green stay in their existing APIs.

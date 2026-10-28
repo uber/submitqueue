@@ -21,9 +21,9 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   });
   const routes = [
     { path: "/", search: {} },
-    { path: "/demo-queue", search: {} },
-    { path: "/demo-queue/request/demo-queue/1", search: {} },
-    { path: "/demo-queue/request/demo-queue/1", search: { view: "history" } },
+    { path: "/queue/demo-queue", search: {} },
+    { path: "/queue/demo-queue/request/demo-queue/1", search: {} },
+    { path: "/queue/demo-queue/request/demo-queue/1", search: { view: "history" } },
   ];
   const pages = [];
   const themes = [LightTheme, DarkTheme, createTheme({ colors: {

@@ -254,6 +254,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	assert.Equal(t, string(entity.RequestStatusError), resp.Requests[0].Status)
 	assert.Equal(t, "build failed", resp.Requests[0].LastError)
 	assert.Equal(t, map[string]string{"build": "url"}, resp.Requests[0].Metadata)
+	assert.Equal(t, int64(300), resp.Requests[0].UpdatedAtMs)
 	require.NotEmpty(t, resp.NextPageToken)
 
 	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 50}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 250}, PageSize: 1, PageToken: resp.NextPageToken})
@@ -267,6 +268,20 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	require.NoError(t, err)
 	require.Len(t, resp.Requests, 1)
 	assert.Equal(t, "901", resp.Requests[0].Sqid)
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{
+		Queue: "test-queue", PageSize: 1, Statuses: []string{string(entity.RequestStatusAccepted), string(entity.RequestStatusError)},
+		ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 50}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 250},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "902", resp.Requests[0].Sqid, "the landed request 903 is newer but filtered out")
+	require.NotEmpty(t, resp.NextPageToken)
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", PageSize: 1, PageToken: resp.NextPageToken})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "901", resp.Requests[0].Sqid)
+	assert.Empty(t, resp.NextPageToken)
 }
 
 // TestReadAPIErrorCodes verifies controller error classes reach stable gRPC codes.

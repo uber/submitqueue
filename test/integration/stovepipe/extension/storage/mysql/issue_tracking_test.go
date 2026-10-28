@@ -49,6 +49,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	require.Equal(t, state, got)
 
 	state.RequestID, state.BuildID, state.Phase = "11", "build/11", entity.IssueTrackingPhaseFinalizing
+	state.Finalize = true
 	require.NoError(t, store.Update(ctx, state, 2, 3))
 	state.Version = 3
 	state.Phase = entity.IssueTrackingPhaseFinalized
@@ -60,6 +61,24 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	opens, err := bound.GetIssueStateStore().List(ctx, storage.IssueStateRange{Limit: 1})
 	require.NoError(t, err)
 	require.Empty(t, opens)
+
+	t.Run("terminal opening checkpoint and task-wide flag", func(t *testing.T) {
+		bound, err := factory.For(storage.Config{QueueName: "tracking/terminal"})
+		require.NoError(t, err)
+		store := bound.GetIssueTrackingStore()
+		opening := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "terminal", Phase: entity.IssueTrackingPhaseRefreshing, Finalize: true, HasTaskWideIssues: true, CursorTaskID: "task", CursorUnitID: "unit", Version: 1}
+		require.NoError(t, store.Create(ctx, opening))
+		got, err := store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, opening, got)
+		finished := opening
+		finished.Phase = entity.IssueTrackingPhaseFinalized
+		require.NoError(t, store.Update(ctx, finished, 1, 2))
+		finished.Version = 2
+		got, err = store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, finished, got)
+	})
 
 	t.Run("queue isolation", func(t *testing.T) {
 		other, err := factory.For(storage.Config{QueueName: "Tracking/main"})
@@ -73,12 +92,37 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		require.Equal(t, state, got)
 	})
 
+	t.Run("recovery retains cursor and source boundary", func(t *testing.T) {
+		bound, err := factory.For(storage.Config{QueueName: "tracking/recovery"})
+		require.NoError(t, err)
+		store := bound.GetIssueTrackingStore()
+		state := entity.IssueTrackingState{
+			RequestID: "10", BuildID: "build/10", NotificationID: "failed-notification",
+			CursorTaskID: "task", CursorUnitID: "unit",
+			Finalize: true, HasTaskWideIssues: true,
+			Phase: entity.IssueTrackingPhaseAbandoning, Version: 1,
+		}
+		require.NoError(t, store.Create(ctx, state))
+		got, err := store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, state, got)
+
+		state.Phase = entity.IssueTrackingPhaseAbandoned
+		require.NoError(t, store.Update(ctx, state, 1, 2))
+		state.Version = 2
+		got, err = store.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, state, got)
+		require.ErrorIs(t, store.Update(ctx, state, 1, 2), storage.ErrVersionMismatch)
+	})
+
 	t.Run("one conditional update wins", func(t *testing.T) {
 		results := make(chan error, 2)
 		for _, requestID := range []string{"12", "13"} {
 			next := state
 			next.RequestID = requestID
 			next.Phase = entity.IssueTrackingPhaseRefreshing
+			next.Finalize = false
 			go func() { results <- store.Update(ctx, next, 4, 5) }()
 		}
 		successes, conflicts := 0, 0

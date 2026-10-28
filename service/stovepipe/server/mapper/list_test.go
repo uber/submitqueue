@@ -123,3 +123,22 @@ func TestListResultToProto(t *testing.T) {
 		})
 	}
 }
+
+func TestListResultProjectCounts(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		count, broken int32
+	}{
+		{name: "no recorded project facts"},
+		{name: "all green", count: 3},
+		{name: "mixed outcomes", count: 3, broken: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			response := ListResultToProto(entity.ListResult{Requests: []entity.RequestSummary{{
+				RequestID: "7", ProjectCount: tt.count, BrokenProjectCount: tt.broken,
+			}}})
+			require.Len(t, response.Requests, 1)
+			assert.Equal(t, &pb.RequestSummary{RequestId: "7", ProjectCount: tt.count, BrokenProjectCount: tt.broken}, response.Requests[0])
+		})
+	}
+}

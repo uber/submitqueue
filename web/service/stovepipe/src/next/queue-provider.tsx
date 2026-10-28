@@ -1,9 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { StovepipeQueueProvider, type QueuePageLoader } from "@submitqueue/web-stovepipe";
+import { RequestPagesProvider, type RequestPageLoader } from "@submitqueue/web-stovepipe";
 
-const loadPage: QueuePageLoader = async (href, signal) => {
+const loadPage: RequestPageLoader = async (href, signal) => {
   const continuation = new URL(href, window.location.origin);
   const search = new URLSearchParams({ path: continuation.pathname, page: continuation.searchParams.get("page") ?? "" });
   const response = await fetch(`/api/queue-requests?${search}`, { signal, cache: "no-store" });
@@ -12,5 +12,5 @@ const loadPage: QueuePageLoader = async (href, signal) => {
 };
 
 export function QueueProvider({ children }: { children: ReactNode }) {
-  return <StovepipeQueueProvider loadPage={loadPage}>{children}</StovepipeQueueProvider>;
+  return <RequestPagesProvider loadPage={loadPage}>{children}</RequestPagesProvider>;
 }

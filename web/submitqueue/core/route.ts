@@ -19,7 +19,8 @@ function decodeComponent(value: string): string | null {
   }
 }
 
-function decodeResourceSegment(value: string): string | null {
+/** Decodes one still percent-encoded queue or request-ID path segment; `null` when malformed. */
+export function decodeResourceSegment(value: string): string | null {
   const decoded = decodeComponent(value);
   return decoded === null ? null : decodePathSegment(decoded);
 }
@@ -32,11 +33,14 @@ export function parseRoute(segments: readonly string[], search: WebSearchParams 
   if (segments.length === 0) {
     return { kind: "queues" };
   }
-  if (segments.some(segment => segment === "")) {
+  if (segments.some(segment => segment === "") || segments[0] !== "queue") {
     return null;
   }
-  const [encodedQueue, resource, ...rest] = segments;
-  const queue = decodeResourceSegment(encodedQueue!);
+  const [, encodedQueue, resource, ...rest] = segments;
+  if (encodedQueue === undefined) {
+    return null;
+  }
+  const queue = decodeResourceSegment(encodedQueue);
   if (queue === null || queue === "") {
     return null;
   }

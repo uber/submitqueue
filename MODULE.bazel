@@ -103,6 +103,12 @@ go_sdk.download(
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
+
+# Tango ships Bazel build files written for its own workspace, so regenerate them for this one.
+go_deps.gazelle_override(
+    build_file_generation = "clean",
+    path = "github.com/uber/tango",
+)
 go_deps.module(
     path = "google.golang.org/grpc/cmd/protoc-gen-go-grpc",
     sum = "h1:F29+wU6Ee6qgu9TddPgooOdaqsxTMunOoj8KA5yuS5A=",
@@ -117,6 +123,7 @@ use_repo(
     "com_github_spf13_cobra",
     "com_github_stretchr_testify",
     "com_github_uber_go_tally",
+    "com_github_uber_tango",
     "in_gopkg_yaml_v3",
     "org_golang_google_grpc",
     "org_golang_google_grpc_cmd_protoc_gen_go_grpc",

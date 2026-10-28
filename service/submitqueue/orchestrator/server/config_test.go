@@ -24,9 +24,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	gitrepo "github.com/uber/submitqueue/platform/git/repo"
 	"go.uber.org/zap/zaptest"
 
 	"github.com/uber/submitqueue/platform/base/change"
@@ -34,6 +36,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
@@ -291,7 +295,7 @@ func TestNewProfiles_ResolvesPerQueueAnalyzers(t *testing.T) {
 	// Asserted on behavior rather than instance identity: the analyzers are
 	// stateless value types, so what matters is that each queue got the type it
 	// asked for.
-	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, defaultProfilesConfig())
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, defaultProfilesConfig())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -343,7 +347,7 @@ func TestNewProfiles_FailsWhenAForgeTokenIsMissing(t *testing.T) {
 			cfg, err := loadProfilesConfig(writeProfiles(t, tt.contents))
 			require.NoError(t, err)
 
-			_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+			_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
 			require.Error(t, err)
 		})
 	}
@@ -360,7 +364,7 @@ queues:
 `)
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
-	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
 	require.NoError(t, err)
 
 	foreignHost := entity.Request{Change: change.Change{URIs: []string{
@@ -402,7 +406,7 @@ defaults:
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
 
-	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, profiles.For("anything").ChangeProvider)
 }
@@ -448,7 +452,7 @@ func keysOf(m map[string]scorerConfig) []string {
 func TestNewProfiles_ComposesASpeculatorPerQueue(t *testing.T) {
 	// Speculation is only "on" if every queue resolves to a real speculator —
 	// a nil one leaves the stage inert and nothing ever gets built.
-	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, defaultProfilesConfig())
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, defaultProfilesConfig())
 	require.NoError(t, err)
 
 	for _, queue := range []string{"test-queue", "e2e-test-queue", "file-overlap-queue", "unlisted"} {
@@ -478,7 +482,7 @@ queues:
 `)
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
-	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
 	require.NoError(t, err)
 
 	batches := make([]entity.Batch, 0, 8)
@@ -504,6 +508,88 @@ queues:
 			proposals, err := spec.Speculate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			assert.Len(t, proposals, tt.want)
+		})
+	}
+}
+
+func TestLoadProfilesConfig_Tango(t *testing.T) {
+	const git = `
+  changeProvider:
+    type: git
+    git:
+      remoteUrl: file:///srv/git/x.git
+      target: main
+      repoPath: /var/repos/x
+`
+	tests := []struct {
+		name     string
+		contents string
+		wantErr  bool
+	}{
+		{
+			name: "accepted with a git change provider and a connection",
+			contents: `
+tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
+`,
+		},
+		{
+			name: "rejected without an analyzer block",
+			contents: `
+tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
+defaults:` + git + `  analyzer: {type: tango}
+`,
+			wantErr: true,
+		},
+		{
+			name: "rejected without a strategy",
+			contents: `
+tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin}}
+`,
+			wantErr: true,
+		},
+		{
+			name: "rejected with an unknown strategy",
+			contents: `
+tango: {address: "127.0.0.1:8081", signatureCacheBytes: 1048576}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: magic}}
+`,
+			wantErr: true,
+		},
+		{
+			name: "rejected without a connection address",
+			contents: `
+tango: {signatureCacheBytes: 1048576}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
+`,
+			wantErr: true,
+		},
+		{
+			name: "rejected without a cache size",
+			contents: `
+tango: {address: "127.0.0.1:8081"}
+defaults:` + git + `  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
+`,
+			wantErr: true,
+		},
+		{
+			name: "connection not needed when no queue uses tango",
+			contents: `
+defaults:
+  analyzer: {type: none}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadProfilesConfig(writeProfiles(t, tt.contents))
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 		})
 	}
 }
@@ -659,7 +745,7 @@ defaults:
 
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
-	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
 	require.NoError(t, err)
 
 	provider, err := profiles.ChangeProviderFactory().For(changeprovider.Config{QueueName: "q"})
@@ -695,7 +781,7 @@ defaults:
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
 
-	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
 	require.Error(t, err)
 }
 
@@ -839,4 +925,114 @@ func TestLoadProfilesConfig_QueueScorerBaseReplacesDefaultBase(t *testing.T) {
 
 	require.NotNil(t, cfg.Defaults.Scorer.Base)
 	assert.Equal(t, 0.4, cfg.Defaults.Scorer.Base.Buckets[0].Score)
+}
+
+func TestNewTangoAnalyzerFactory(t *testing.T) {
+	key := tangoAnalyzerKey{
+		Analyzer: analyzerConfig{Type: analyzerTypeTango, Tango: &tangoAnalyzerConfig{Remote: "origin", Strategy: "unset"}},
+		Git:      gitProviderConfig{RepoPath: "/var/repos/x", Remote: "origin", Target: "main"},
+	}
+	connection, err := tangoclient.Dial("127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	tests := []struct {
+		name    string
+		deps    tangoDeps
+		wantErr bool
+	}{
+		{name: "without process-level pieces", wantErr: true},
+		{
+			name: "with process-level pieces",
+			deps: tangoDeps{DB: db, Connection: connection, Cache: tango.NewSignatureCache(1 << 20)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, err := gitrepo.NewRepo(gitrepo.RepoConfig{Path: key.Git.RepoPath, RemoteURL: "file:///srv/git/x.git", Remote: "origin", Target: "main"})
+			require.NoError(t, err)
+			b := &profileBuilder{scope: tally.NoopScope, tango: tt.deps, repos: map[string]*gitrepo.Repo{key.Git.RepoPath: repo}}
+			factory, err := b.newTangoAnalyzerFactory(key, "defaults")
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			analyzer, err := factory.For(conflict.Config{QueueName: "q"})
+			require.NoError(t, err)
+			assert.NotNil(t, analyzer)
+		})
+	}
+}
+
+func TestNewProfiles_TangoRequiresTheGitChangeProvider(t *testing.T) {
+	cfg, err := loadProfilesConfig(writeProfiles(t, `
+tango: {address: "127.0.0.1:0", signatureCacheBytes: 1048576}
+defaults:
+  changeProvider: {type: fake}
+  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
+`))
+	require.NoError(t, err)
+
+	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, tangoDeps{}, cfg)
+	require.Error(t, err)
+}
+
+func TestNewProfiles_TangoQueuesShareTheirCloneWithTheGitProvider(t *testing.T) {
+	git := gitexectest.Git(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	work := filepath.Join(root, "work")
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(git, args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	run("", "init", "--bare", "-b", "main", remote)
+	run("", "clone", remote, work)
+	run(work, "config", "user.name", "Test")
+	run(work, "config", "user.email", "test@example.invalid")
+	require.NoError(t, os.WriteFile(filepath.Join(work, "seed.txt"), []byte("seed\n"), 0o644))
+	run(work, "add", ".")
+	run(work, "commit", "--no-gpg-sign", "-m", "seed")
+	run(work, "push", "origin", "main")
+
+	cfg, err := loadProfilesConfig(writeProfiles(t, fmt.Sprintf(`
+tango: {address: "127.0.0.1:0", signatureCacheBytes: 1048576}
+defaults:
+  changeProvider:
+    type: git
+    git:
+      remoteUrl: %s
+      target: main
+      repoPath: %s
+  analyzer: {type: tango, tango: {remote: origin, strategy: unset}}
+queues:
+  - name: a
+  - name: b
+`, remote, filepath.Join(root, "copy.git"))))
+	require.NoError(t, err)
+
+	connection, err := tangoclient.Dial("127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	deps := tangoDeps{DB: db, Connection: connection, Cache: tango.NewSignatureCache(1 << 20)}
+
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, deps, cfg)
+	require.NoError(t, err)
+
+	for _, queue := range []string{"a", "b"} {
+		analyzer, err := profiles.For(queue).Analyzer.For(conflict.Config{QueueName: queue})
+		require.NoError(t, err)
+		assert.NotNil(t, analyzer)
+	}
 }

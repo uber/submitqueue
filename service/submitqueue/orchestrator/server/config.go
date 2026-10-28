@@ -22,6 +22,8 @@ import (
 	"time"
 
 	yamlv3 "gopkg.in/yaml.v3"
+
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient"
 )
 
 // Change provider types selectable from configuration.
@@ -51,6 +53,7 @@ const (
 	analyzerTypeAll         = "all"
 	analyzerTypeNone        = "none"
 	analyzerTypePathOverlap = "pathoverlap"
+	analyzerTypeTango       = "tango"
 )
 
 // Granularities a pathoverlap analyzer compares paths at.
@@ -117,10 +120,24 @@ const (
 // closed set in the schema, so supporting a new provider is a new value here and
 // a new implementation behind it — not a change to the shape of this file.
 type profilesConfig struct {
+	// Tango is the process-level setup shared by every queue that uses the
+	// tango analyzer. It is required only when one does.
+	Tango tangoConfig `yaml:"tango"`
 	// Defaults applies to any queue without an override for a given extension.
 	Defaults queueProfileConfig `yaml:"defaults"`
 	// Queues holds per-queue overrides.
 	Queues []namedQueueProfileConfig `yaml:"queues"`
+}
+
+// tangoConfig is how this process reaches Tango and how much memory the
+// signature cache may use.
+type tangoConfig struct {
+	// Address is the host:port of the Tango service's gRPC inbound.
+	Address string `yaml:"address"`
+	// SignatureCacheBytes bounds the in-memory signature cache shared by every
+	// queue. It has no default, because a zero budget would silently cache
+	// nothing.
+	SignatureCacheBytes int64 `yaml:"signatureCacheBytes"`
 }
 
 // namedQueueProfileConfig is one queue's overrides. Each extension is
@@ -244,6 +261,18 @@ type analyzerConfig struct {
 	// FailAlways makes every analysis return an error, for exercising the
 	// analyzer failure path. Test-only.
 	FailAlways bool `yaml:"failAlways"`
+	// Tango names the repository Tango analyzes for this queue (tango only).
+	Tango *tangoAnalyzerConfig `yaml:"tango"`
+}
+
+// tangoAnalyzerConfig is what Tango needs to know about one queue's repository.
+type tangoAnalyzerConfig struct {
+	// Remote identifies the repository to Tango. It must equal, exactly, a
+	// repository remote in Tango's own configuration.
+	Remote string `yaml:"remote"`
+	// Strategy is how Tango computes the base target graph: "unset", "shell"
+	// or "native". Required.
+	Strategy string `yaml:"strategy"`
 }
 
 // scorerConfig selects how a queue ranks candidate speculation paths. The
@@ -352,7 +381,51 @@ func (c *profilesConfig) normalizeAndValidate() error {
 			}
 		}
 	}
-	return c.validateGitRepoPaths()
+	if err := c.validateGitRepoPaths(); err != nil {
+		return err
+	}
+	return c.validateTango()
+}
+
+type namedProfile struct {
+	where   string
+	profile queueProfileConfig
+}
+
+// namedProfiles lists the defaults followed by every queue's resolved profile,
+// in config order.
+func (c profilesConfig) namedProfiles() []namedProfile {
+	profiles := []namedProfile{{where: "defaults", profile: c.Defaults}}
+	for _, q := range c.Queues {
+		profiles = append(profiles, namedProfile{where: fmt.Sprintf("queue %q", q.Name), profile: c.resolve(q)})
+	}
+	return profiles
+}
+
+// usesTango reports whether any profile selects the tango analyzer.
+func (c profilesConfig) usesTango() bool {
+	for _, p := range c.namedProfiles() {
+		if p.profile.Analyzer.Type == analyzerTypeTango {
+			return true
+		}
+	}
+	return false
+}
+
+// validateTango rejects a tango analyzer without the process-level setup it
+// needs. The defaults count as a queue, since queues without an override
+// inherit them.
+func (c profilesConfig) validateTango() error {
+	if !c.usesTango() {
+		return nil
+	}
+	if c.Tango.Address == "" {
+		return fmt.Errorf("a queue uses the tango analyzer, so tango.address is required")
+	}
+	if c.Tango.SignatureCacheBytes <= 0 {
+		return fmt.Errorf("a queue uses the tango analyzer, so tango.signatureCacheBytes must be positive")
+	}
+	return nil
 }
 
 // validateGitRepoPaths rejects two queues keeping their copies in one directory
@@ -612,6 +685,17 @@ func (a *analyzerConfig) normalizeAndValidate(where string) error {
 		}
 		if a.By != pathOverlapByFile && a.By != pathOverlapByDirectory {
 			return fmt.Errorf("%s: unknown pathoverlap granularity %q", where, a.By)
+		}
+		return nil
+	case analyzerTypeTango:
+		if a.Tango == nil || a.Tango.Remote == "" {
+			return fmt.Errorf("%s: tango analyzer needs a tango block with a remote", where)
+		}
+		if a.Tango.Strategy == "" {
+			return fmt.Errorf("%s: tango analyzer needs a strategy: unset, shell or native", where)
+		}
+		if !tangoclient.ValidStrategy(a.Tango.Strategy) {
+			return fmt.Errorf("%s: unknown tango strategy %q", where, a.Tango.Strategy)
 		}
 		return nil
 	default:

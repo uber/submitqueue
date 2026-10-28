@@ -51,11 +51,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/buildanalysis"
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
+	"github.com/uber/submitqueue/stovepipe/controller/issuetrack"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
-	"github.com/uber/submitqueue/stovepipe/core/queuelog"
-	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
@@ -251,12 +250,6 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
-	stateTransitions := queuestate.NewTransitionController(storageFty, sourceControl, queuelog.NewMaterializer(scope))
-	for _, queue := range tenants {
-		if _, err := stateTransitions.Initialize(ctx, queue); err != nil {
-			return fmt.Errorf("initialize queue enablement %q: %w", queue, err)
-		}
-	}
 	materializer := requestlog.NewMaterializer(scope)
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory)
 	if err != nil {
@@ -409,9 +402,15 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
+	}
+	count++
+
+	issueTrackController := issuetrack.NewController(logger, scope, store, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	if err := c.Register(issueTrackController); err != nil {
+		return count, fmt.Errorf("failed to register issuetrack controller: %w", err)
 	}
 	count++
 
@@ -463,6 +462,12 @@ func registerDLQControllers(
 	analysisDLQController := buildanalysis.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyBuildAnalysis), "stovepipe-buildanalysis-dlq")
 	if err := c.Register(analysisDLQController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis dlq controller: %w", err)
+	}
+	count++
+
+	issueTrackDLQController := issuetrack.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyIssueTrack), "stovepipe-issuetrack-dlq")
+	if err := c.Register(issueTrackDLQController); err != nil {
+		return count, fmt.Errorf("failed to register issuetrack dlq controller: %w", err)
 	}
 	count++
 
@@ -561,6 +566,23 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Name:         "stovepipe-hook_dlq",
 			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-hook-dlq"),
+		},
+		{
+			Key:          stovepipemq.TopicKeyIssueTrack,
+			Name:         "issuetrack",
+			Queue:        q,
+			Subscription: extqueue.ExtendedSubscriptionConfig(subscriberName, "stovepipe-issuetrack"),
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyIssueTrack),
+			Name:         "issuetrack_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-issuetrack-dlq"),
+		},
+		{
+			Key:   stovepipemq.TopicKeyFix,
+			Name:  "fix",
+			Queue: q,
 		},
 		{
 			Key:          stovepipemq.TopicKeyBuildAnalysis,
