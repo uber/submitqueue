@@ -81,16 +81,13 @@ export function RequestDetails({ request, repositoryResult }: { request: Request
           <Fact label="Outcome" compact>{request.outcomeReason || "—"}</Fact>
         </>}
       </Block>
-      {request && <Block as="details" marginTop="scale300" marginBottom="scale400">
-        <Block as="summary" $style={{ cursor: "pointer" }}>Change and base URIs</Block>
-        <Block as="dl" marginTop="scale300" marginBottom="0" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale400">
-          <Fact label="Change URI" compact>
-            <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
-          </Fact>
-          <Fact label="Base URI" compact>
-            <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
-          </Fact>
-        </Block>
+      {request && <Block as="dl" marginTop="scale300" marginBottom="scale400" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale400">
+        <Fact label="Change URI" compact>
+          <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
+        </Fact>
+        <Fact label="Base URI" compact>
+          <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
+        </Fact>
       </Block>}
     </>
   );

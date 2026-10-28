@@ -26,12 +26,15 @@ test.describe("server-rendered styling", () => {
     await expect(rows).toHaveCount(7);
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
-    await expect(status.locator("details")).not.toHaveAttribute("open", "");
-    await status.getByText("Change and base URIs", { exact: true }).click();
     await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("view")).toBe("history");
+    for (const label of ["Build and Test Issues", "Fix Attempts"]) {
+      await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: label, exact: true }).click();
+      await expect(page.getByRole("region", { name: label, exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
+      await expect(page.getByRole("table")).toHaveCount(0);
+    }
   });
   test("keeps continuation links usable without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination");
@@ -305,7 +308,6 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     const status = page.getByRole("region", { name: "Request status" });
     await expect(status.getByText("failed", { exact: true })).toBeVisible();
-    await status.getByText("Change and base URIs", { exact: true }).click();
     await expect(
       status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", {
         exact: true,
@@ -323,7 +325,6 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request-history.png` });
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Project results", exact: true }).click();
     await expect(page.getByRole("table", { name: "Recorded project results" })).toBeVisible();
-    await status.getByText("Change and base URIs", { exact: true }).click();
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request.png`,
     });
@@ -405,8 +406,6 @@ test("pages through project results and switches views without reloading the doc
   const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
   const topPager = page.getByRole("navigation", { name: "Project pages (top)" });
   const bottomPager = page.getByRole("navigation", { name: "Project pages (bottom)" });
-  const details = page.getByRole("region", { name: "Request status" }).locator("details");
-  await details.locator("summary").click();
   await expect(projects.locator("tbody tr")).toHaveCount(50);
   await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
   let documentRequests = 0;
@@ -422,7 +421,6 @@ test("pages through project results and switches views without reloading the doc
   const resultHeight = await projectScroll.evaluate(element => element.clientHeight);
   await bottomPager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(1);
-  await expect(details).toHaveAttribute("open", "");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(documentScroll);
   expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
   expect(await projectScroll.evaluate(element => element.clientHeight)).toBe(resultHeight);
@@ -445,10 +443,11 @@ test("pages through project results and switches views without reloading the doc
   await expect(projects.locator("tbody tr")).toHaveCount(50);
   await page.goForward();
   await expect(projects.locator("tbody tr")).toHaveCount(1);
+  await bottomPager.scrollIntoViewIfNeeded();
+  const firstPagerScroll = await page.evaluate(() => window.scrollY);
   await bottomPager.getByRole("link", { name: "First projects", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(50);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(documentScroll);
-  await expect(details).toHaveAttribute("open", "");
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(firstPagerScroll);
   await topPager.scrollIntoViewIfNeeded();
   const topPagerScroll = await page.evaluate(() => window.scrollY);
   await topPager.getByRole("link", { name: "Next projects →", exact: true }).click();
@@ -497,6 +496,18 @@ test("changes project page size without reloading and retains it across paging a
   expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
   const nextProjects = await rows.locator("td:first-child").allTextContents();
   expect(nextProjects.every(project => !firstProjects.includes(project))).toBe(true);
+  const cursor = new URL(page.url()).searchParams.get("projects");
+  for (const [label, view] of [["Build and Test Issues", "issues"], ["Fix Attempts", "fix-attempts"]] as const) {
+    await views.getByRole("link", { name: label, exact: true }).click();
+    await expect(page.getByRole("region", { name: label, exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
+    await expect(views.getByRole("link", { name: label, exact: true })).toHaveAttribute("aria-current", "page");
+    expect(new URL(page.url()).searchParams.get("view")).toBe(view);
+    expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
+    expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
+    await views.getByRole("link", { name: "Project results", exact: true }).click();
+    await expect(rows).toHaveCount(25);
+    expect(await rows.locator("td:first-child").allTextContents()).toEqual(nextProjects);
+  }
   await bottomPager.getByRole("link", { name: "First projects", exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.has("projects")).toBe(false);
   expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");

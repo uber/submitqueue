@@ -22,18 +22,30 @@ const RequestViewLink = styled<typeof Link, { $active: boolean }>(Link, ({ $them
 
 const RequestViewNavigation = styled("nav", ({ $theme }) => ({
   display: "flex",
-  gap: $theme.sizing.scale700,
+  flexWrap: "wrap",
+  columnGap: $theme.sizing.scale700,
   borderBottom: `1px solid ${$theme.colors.borderOpaque}`,
 }));
+
+const requestViewTabs = [
+  { id: "projects", label: "Project results" },
+  { id: "history", label: "History" },
+  { id: "issues", label: "Build and Test Issues" },
+  { id: "fix-attempts", label: "Fix Attempts" },
+] as const;
 
 function requestViews(routeKey: string) {
   const [path, ...query] = routeKey.split("?");
   const search = new URLSearchParams(query.join("?"));
-  const historySelected = search.get("view") === "history";
+  const selected = requestViewTabs.find(tab => tab.id === search.get("view"))?.id ?? "projects";
   search.delete("view");
   const projectsHref = path + (search.size ? `?${search}` : "");
-  search.set("view", "history");
-  return { historySelected, projectsHref, historyHref: `${path}?${search}` };
+  const tabs = requestViewTabs.map(tab => {
+    const params = new URLSearchParams(search);
+    if (tab.id !== "projects") params.set("view", tab.id);
+    return { ...tab, selected: tab.id === selected, href: path + (params.size ? `?${params}` : "") };
+  });
+  return { projectsHref, tabs };
 }
 
 function Page({ model }: { model: StovepipePageModel }) {
@@ -95,17 +107,18 @@ function Page({ model }: { model: StovepipePageModel }) {
                       <RequestDetails request={history?.request ?? null} repositoryResult={projects && <RecordedResult degree={projects.repositoryBreakageDegree} />} />
                     </section>
                     <RequestViewNavigation aria-label="Request views">
-                      <RequestViewLink $active={!views.historySelected} href={views.projectsHref} scroll={false} aria-current={!views.historySelected ? "page" : undefined}>Project results</RequestViewLink>
-                      <RequestViewLink $active={views.historySelected} href={views.historyHref} scroll={false} aria-current={views.historySelected ? "page" : undefined}>History</RequestViewLink>
+                      {views.tabs.map(tab => (
+                        <RequestViewLink key={tab.id} $active={tab.selected} href={tab.href} scroll={false} aria-current={tab.selected ? "page" : undefined}>{tab.label}</RequestViewLink>
+                      ))}
                     </RequestViewNavigation>
-                    <section aria-label="History" hidden={!views.historySelected}>
-                      <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">History</HeadingSmall>
-                      {history && <History events={history.events} />}
-                    </section>
-                    <section aria-label="Project results" hidden={views.historySelected}>
-                      <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">Project results</HeadingSmall>
-                      {projects && <ProjectResults model={projects} pageKey={views.projectsHref} />}
-                    </section>
+                    {views.tabs.map(tab => (
+                      <section key={tab.id} aria-label={tab.label} hidden={!tab.selected}>
+                        <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>
+                        {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
+                          : tab.id === "history" ? history && <History events={history.events} />
+                            : <ParagraphSmall color="contentSecondary">Coming soon</ParagraphSmall>}
+                      </section>
+                    ))}
                   </Block>
                 )}
               </Section>
