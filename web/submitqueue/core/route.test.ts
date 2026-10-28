@@ -19,21 +19,23 @@ describe("parseRoute", () => {
       { kind: "request", queue: "demo-queue", sqid: "demo-queue/42", search: {} }],
     ["an escaped sqid", paths.request("demo-queue", "opaque/id?query#~."),
       { kind: "request", queue: "demo-queue", sqid: "opaque/id?query#~.", search: {} }],
-    ["a change", "/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain",
+    ["a change", "/queue/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain",
       { kind: "change", queue: "demo-queue", reference: ["git", "git.example.com", "demo", "refs/heads/main"], search: {} }],
   ])("round-trips %s produced by WebPaths", (_name, href, route) => {
     expect(parseRoute(segments(href))).toEqual(route);
   });
 
   it("carries search parameters to the page", () => {
-    expect(parseRoute(["demo-queue"], { page: "cursor" })).toEqual({ kind: "queue", queue: "demo-queue", search: { page: "cursor" } });
+    expect(parseRoute(["queue", "demo-queue"], { page: "cursor" })).toEqual({ kind: "queue", queue: "demo-queue", search: { page: "cursor" } });
   });
 
   it.each([
-    ["an unknown resource", ["demo-queue", "unknown", "1"]],
-    ["a request without an ID", ["demo-queue", "request"]],
-    ["an empty segment", ["demo-queue", "", "1"]],
-    ["malformed percent-encoding", ["demo%E0%A4%A"]],
+    ["a queue outside /queue", ["demo-queue"]],
+    ["/queue without a queue", ["queue"]],
+    ["an unknown resource", ["queue", "demo-queue", "unknown", "1"]],
+    ["a request without an ID", ["queue", "demo-queue", "request"]],
+    ["an empty segment", ["queue", "demo-queue", "", "1"]],
+    ["malformed percent-encoding", ["queue", "demo%E0%A4%A"]],
   ])("does not route %s", (_name, value) => {
     expect(parseRoute(value)).toBeNull();
   });

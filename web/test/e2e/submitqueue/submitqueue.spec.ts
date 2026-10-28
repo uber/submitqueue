@@ -48,11 +48,21 @@ function expectOrderedHistory(values: readonly string[], expected: readonly stri
 }
 
 test("challenges anonymous requests", async () => {
-  const response = await fetch(new URL(`/${queue}`, webURL), {
+  const response = await fetch(new URL(`/queue/${queue}`, webURL), {
     redirect: "manual",
   });
   expect(response.status).toBe(401);
   expect(response.headers.get("www-authenticate")).toContain("Basic");
+});
+
+test("serves a queue's filtered requests as JSON behind the same authentication", async ({ request }) => {
+  expect((await fetch(new URL(`/api/queue/${queue}/requests`, webURL))).status).toBe(401);
+  const response = await request.get(`/api/queue/${queue}/requests?status=landed`);
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  const page = await response.json() as { requests: { status: string }[]; nextHref: string | null };
+  expect(page.requests.every(request => request.status === "landed")).toBe(true);
+  expect((await request.get("/api/queue/not-a-configured-queue/requests")).status()).toBe(404);
 });
 
 test("discovers gateway queues including empty queues and rejects unknown queues", async ({ page }) => {
@@ -62,13 +72,14 @@ test("discovers gateway queues including empty queues and rejects unknown queues
   expect(emptyQueue).toBeDefined();
   await page.goto("/");
   await expect(page.locator(".sq-directory h2 a")).toHaveText(expected);
+  await page.screenshot({ path: test.info().outputPath("directory.png"), fullPage: true });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole("link", { name: emptyQueue, exact: true }).click();
   await expect(page.getByRole("heading", { name: emptyQueue, exact: true })).toBeVisible();
-  await expect(page.getByText("No requests were received in this window.")).toBeVisible();
-  await page.goto(`/${emptyQueue}/request/999999`);
+  await expect(page.getByText("No requests have been received on this queue.")).toBeVisible();
+  await page.goto(`/queue/${emptyQueue}/request/999999`);
   await expect(page.getByRole("heading", { name: "Request not found", exact: true })).toBeVisible();
-  await page.goto("/not-a-configured-queue");
+  await page.goto("/queue/not-a-configured-queue");
   await expect(page.getByRole("heading", { name: "Request not found", exact: true })).toBeVisible();
 });
 
@@ -76,7 +87,7 @@ test("shows newest requests and an accessible readable detail history", async ({
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Queues", exact: true })).toBeVisible();
   await page.getByRole("link", { name: queue, exact: true }).click();
-  await expect(page.getByText("No requests were received in this window.")).toBeVisible();
+  await expect(page.getByText("No requests have been received on this queue.")).toBeVisible();
   expect(new URL(page.url()).search).toBe("");
 
   const firstSqid = await submitRequest(
@@ -102,21 +113,24 @@ test("shows newest requests and an accessible readable detail history", async ({
   await page.screenshot({ path: test.info().outputPath("queue.png"), fullPage: true });
   await page.setViewportSize({ width: 1920, height: 1080 });
   const table = await page.getByRole("table", { name: `Requests in ${queue}` }).boundingBox();
-  expect(table?.width).toBeGreaterThan(1920 * 0.95);
+  const column = await page.getByRole("main").boundingBox();
+  expect(column?.width).toBe(1200);
+  expect(table?.width).toBeGreaterThan(1200 * 0.95);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 720 });
 
-  await page.getByRole("searchbox").fill("1111111111111111111111111111111111111111");
-  await expect(requestLinks).toHaveCount(1);
-  await page.getByRole("searchbox").fill("");
+  await page.getByRole("combobox", { name: "Filter requests by status" }).click();
+  await page.getByRole("option", { name: "Landed", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/queue/${queue}\\?status=landed$`));
+  await page.goto(`/queue/${queue}`);
 
   await requestLinks.nth(0).click();
   await expect(page.getByRole("heading", { name: repeatedSqid, exact: true })).toBeVisible();
   await expect(page.locator(".sq-request-detail .sq-status").first()).toHaveText("Landed");
 
   expect(new URL(page.url()).pathname).toBe(
-    `/${queue}/request/${repeatedSqid}`,
+    `/queue/${queue}/request/${repeatedSqid}`,
   );
 
   await expect(page.getByRole("button", { name: "Copy ID" })).toBeVisible();
@@ -127,7 +141,7 @@ test("shows newest requests and an accessible readable detail history", async ({
   expect(actionBoxes.map(box => box!.y)).toEqual([actionBoxes[0]!.y, actionBoxes[0]!.y]);
   expect(actionBoxes.map(box => box!.height)).toEqual([actionBoxes[0]!.height, actionBoxes[0]!.height]);
   const facts = page.locator(".sq-request-detail dl").first().locator(":scope > div");
-  await expect(facts).toHaveCount(5);
+  await expect(facts).toHaveCount(6);
   const factLayout = await facts.evaluateAll(rows => rows.map(row => {
     const label = row.querySelector("dt")!.getBoundingClientRect();
     const value = row.querySelector("dd")!.getBoundingClientRect();
@@ -214,7 +228,7 @@ test("shows newest requests and an accessible readable detail history", async ({
   await expect(page.getByRole("table", { name: "Change submissions" }).locator("tbody tr")).toHaveCount(2);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
-  await page.goto(`/${queue}?from=1&to=2`);
+  await page.goto(`/queue/${queue}?from=1&to=2`);
   await expect(page.getByRole("heading", { name: queue, exact: true })).toBeVisible();
   expect(new URL(page.url()).search).toBe("");
   const gitUri = "git://git.example.com/demo/refs%2Fheads%2Fweb-demo/3333333333333333333333333333333333333333";
@@ -223,7 +237,7 @@ test("shows newest requests and an accessible readable detail history", async ({
   await expect(page.getByRole("link", { name: gitRequest, exact: true })).toBeVisible();
   const changeLink = page.getByRole("link", { name: gitUri, exact: true });
   await expect(changeLink).toBeVisible();
-  await expect(changeLink).toHaveAttribute("href", `/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fweb-demo`);
+  await expect(changeLink).toHaveAttribute("href", `/queue/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fweb-demo`);
   await expect(page.getByText(/sq-files=/)).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath("queue-live.png"), fullPage: true });
   await changeLink.click();
@@ -246,7 +260,7 @@ test("shows newest requests and an accessible readable detail history", async ({
 test("preserves literal percent escapes in Git refs when opening change history", async ({ page }) => {
   const uri = "git://git.example.com/demo/refs%2Fheads%2Fweb-demo%252Fpercent/4444444444444444444444444444444444444444";
   const sqid = await submitRequest(`${uri}?sq-files=demo%2F00%2Fpercent.txt`);
-  await page.goto(`/${queue}`);
+  await page.goto(`/queue/${queue}`);
   await page.getByRole("link", { name: uri, exact: true }).click();
   await expect(page.getByRole("heading", { name: "refs/heads/web-demo%2Fpercent", exact: true })).toBeVisible();
   await expect(page.getByRole("table", { name: "Change submissions" }).getByRole("link", { name: sqid, exact: true })).toBeVisible();
@@ -255,7 +269,7 @@ test("preserves literal percent escapes in Git refs when opening change history"
 });
 
 test("paginates change history through more than 500 queue requests", async ({ page }) => {
-  const changePath = `/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
+  const changePath = `/queue/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
   const oldest = await submitRequest("git://git.example.com/demo/refs%2Fheads%2Fpagination/5555555555555555555555555555555555555555");
   const expectedIds = [oldest];
   for (let offset = 0; offset < 501; offset += 25) {
@@ -307,7 +321,7 @@ test("paginates change history through more than 500 queue requests", async ({ p
 });
 
 test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
-  await page.goto(`/${queue}`);
+  await page.goto(`/queue/${queue}`);
   const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
   await expect(automatic).not.toBeChecked();
   const now = new Date();
@@ -345,7 +359,7 @@ test.describe("time zone selection", () => {
       }, zone)).toBe(true);
     };
     const timeZones = page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true });
-    await page.goto(`/${queue}`);
+    await page.goto(`/queue/${queue}`);
     await expect(timeZones.getByRole("option", { name: "Browser", exact: true })).toHaveAttribute("aria-selected", "true");
     await expectTimeZone("America/New_York");
     await timeZones.getByRole("option", { name: "UTC", exact: true }).click();
@@ -358,7 +372,7 @@ test.describe("time zone selection", () => {
     await expect(page.getByRole("list", { name: "Request history", exact: true })).toBeVisible();
     await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
     await expectTimeZone("UTC");
-    const changePath = `/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
+    const changePath = `/queue/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
     for (const path of [changePath, `${changePath}/7777777777777777777777777777777777777777`]) {
       await page.goto(path);
       await expect(page.getByRole("table", { name: "Change submissions" })).toBeVisible();

@@ -29,6 +29,24 @@ export function instrumentSubmitQueueWeb(web: SubmitQueueWeb, meter: Meter, trac
         }).record(Math.max(0, performance.now() - started), { page, outcome }));
       }
     }),
+    queueRequests: request => withSpan(tracer, "web.queue_requests", async span => {
+      const started = performance.now();
+      let outcome: string = "exception";
+      try {
+        const result = await web.queueRequests(request);
+        outcome = result.kind === "unavailable" ? result.error.kind : result.kind;
+        if (result.kind === "unavailable") {
+          observeTelemetry(() => span?.setStatus({ code: SpanStatusCode.ERROR }));
+        }
+        return result;
+      } finally {
+        observeTelemetry(() => span?.setAttribute("web.outcome", outcome));
+        observeTelemetry(() => meter.createHistogram("web.queue_requests.duration", {
+          unit: "ms",
+          advice: { explicitBucketBoundaries: LATENCY_BUCKETS_MS },
+        }).record(Math.max(0, performance.now() - started), { outcome }));
+      }
+    }),
   };
 }
 

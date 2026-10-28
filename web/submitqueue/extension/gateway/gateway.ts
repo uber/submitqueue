@@ -18,6 +18,8 @@ export interface GatewayRequestSummary {
   queue: string;
   changeUris: readonly string[];
   receivedAtMs: Int64Value;
+  /** Time the current status was recorded; zero from gateways that predate the field. */
+  updatedAtMs: Int64Value;
   status: string;
   lastError: string;
   metadata: Readonly<Record<string, string>>;
@@ -33,7 +35,7 @@ export interface GatewayHistoryEvent {
 }
 
 export interface GatewayReader {
-  /** Bounds are sent on a first page only; a `pageToken` carries its own window. */
+  /** Bounds are sent on a first page only; a `pageToken` carries its own window and statuses. */
   list(
     input: {
       queue: string;
@@ -41,6 +43,8 @@ export interface GatewayReader {
       receivedUpperBound?: { case: "receivedBeforeMs"; value: bigint };
       pageSize: number;
       pageToken: string;
+      /** Current statuses to include; absent includes every status. */
+      statuses?: string[];
     },
     options?: GatewayCallOptions,
   ): Promise<{

@@ -10,8 +10,8 @@ const now = 1_700_000_000_000;
 const paths = new WebPaths({ basePath: "/sq" });
 const sha = "0123456789abcdef0123456789abcdef01234567";
 const gitUri = `git://git.example.com/demo/refs%2Fheads%2Fmain/${sha}`;
-const changePath = "/sq/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain";
-const githubPath = "/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123";
+const changePath = "/sq/queue/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain";
+const githubPath = "/sq/queue/demo-queue/change/github/github.com/uber/submitqueue/pull/123";
 
 function newWeb(options: Partial<SubmitQueueWebOptions> = {}) {
   const web = createSubmitQueueWeb({ gateway: createFakeGatewayReader(), paths, ...options });
@@ -19,11 +19,11 @@ function newWeb(options: Partial<SubmitQueueWebOptions> = {}) {
     web.handle({ path, search, ...extra });
 }
 
-function nextPageToken(result: Awaited<ReturnType<ReturnType<typeof newWeb>>>): string {
+function nextHref(result: Awaited<ReturnType<ReturnType<typeof newWeb>>>): string {
   if (result.kind !== "render" || result.model.kind !== "queue" || !result.model.result.ok) {
     throw new Error("Expected a queue page");
   }
-  return result.model.result.data.nextPageToken!;
+  return result.model.result.data.nextHref!;
 }
 
 describe("createSubmitQueueWeb", () => {
@@ -39,38 +39,56 @@ describe("createSubmitQueueWeb", () => {
 
   it.each([
     ["outside the mount", "/elsewhere"],
-    ["an unknown page", "/sq/demo-queue/unknown/x"],
-    ["malformed percent-encoding", "/sq/%E0%A4%A"],
+    ["an unknown page", "/sq/queue/demo-queue/unknown/x"],
+    ["malformed percent-encoding", "/sq/queue/%E0%A4%A"],
   ])("reports not-found for %s", async (_name, path) => {
     expect(await newWeb()(path)).toEqual({ kind: "not-found" });
   });
 
-  it("links the raw gateway token and resumes it without resending bounds", async () => {
+  it("starts at the newest request however old, links the raw gateway token, and resumes it without resending bounds", async () => {
     let clock = now;
     const gateway = createFakeGatewayReader({
-      nextPageToken: "opaque/gateway-token", window: { fromMs: BigInt(now - REQUEST_WINDOW_MS), toMs: BigInt(now) },
+      nextPageToken: "opaque/gateway-token", window: { fromMs: 0n, toMs: BigInt(now) },
     });
     const list = vi.spyOn(gateway, "list");
     const get = newWeb({ gateway, now: () => clock });
-    const first = await get("/sq/demo-queue");
+    const first = await get("/sq/queue/demo-queue");
     expect(first).toMatchObject({
-      kind: "render", model: { kind: "queue", paged: false, latestHref: "/sq/demo-queue", refresh: { terminal: false } },
+      kind: "render", model: { kind: "queue", paged: false, latestHref: "/sq/queue/demo-queue", refresh: { terminal: false } },
     });
     expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
-      receivedLowerBound: { case: "receivedAtOrAfterMs", value: BigInt(now - REQUEST_WINDOW_MS) },
+      receivedLowerBound: { case: "receivedAtOrAfterMs", value: 0n },
       receivedUpperBound: { case: "receivedBeforeMs", value: BigInt(now) },
     }));
-    const page = nextPageToken(first);
-    expect(page).toBe("opaque/gateway-token");
+    const href = nextHref(first);
+    expect(href).toBe("/sq/queue/demo-queue?page=opaque%2Fgateway-token");
     clock += 10_000;
-    expect(await get("/sq/demo-queue", { page })).toMatchObject({
-      kind: "render", model: {
-        kind: "queue", paged: true, window: { fromMs: now - REQUEST_WINDOW_MS, toMs: now },
-        refresh: { terminal: true, refreshHref: "/sq/demo-queue" },
-      },
+    const page = new URL(href, "http://host.invalid").searchParams.get("page")!;
+    expect(await get("/sq/queue/demo-queue", { page })).toMatchObject({
+      kind: "render", model: { kind: "queue", paged: true, refresh: { terminal: true, refreshHref: "/sq/queue/demo-queue" } },
     });
     expect(list).toHaveBeenLastCalledWith({ queue: "demo-queue", pageSize: 50, pageToken: "opaque/gateway-token" });
-    expect(await get("/sq/demo-queue")).toMatchObject({ kind: "render", model: { window: { toMs: clock } } });
+    await get("/sq/queue/demo-queue");
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      receivedUpperBound: { case: "receivedBeforeMs", value: BigInt(clock) },
+    }));
+  });
+
+  it("restricts the list to sorted statuses, keeps them on continuation links, and canonicalizes the URL", async () => {
+    const gateway = createFakeGatewayReader({ nextPageToken: "next" });
+    const list = vi.spyOn(gateway, "list");
+    const get = newWeb({ gateway, now: () => now });
+    expect(await get("/sq/queue/demo-queue", { status: ["landed", "error", "landed"] }))
+      .toEqual({ kind: "redirect", href: "/sq/queue/demo-queue?status=error&status=landed" });
+    const first = await get("/sq/queue/demo-queue", { status: ["error", "landed"] });
+    expect(first).toMatchObject({
+      kind: "render", model: { kind: "queue", statuses: ["error", "landed"], latestHref: "/sq/queue/demo-queue?status=error&status=landed" },
+    });
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ statuses: ["error", "landed"], pageToken: "" }));
+    expect(nextHref(first)).toBe("/sq/queue/demo-queue?status=error&status=landed&page=next");
+    await get("/sq/queue/demo-queue", { status: ["error", "landed"], page: "next" });
+    expect(list).toHaveBeenLastCalledWith({ queue: "demo-queue", pageSize: 50, pageToken: "next", statuses: ["error", "landed"] });
+    expect(await get("/sq/queue/demo-queue", { status: "" })).toEqual({ kind: "redirect", href: "/sq/queue/demo-queue" });
   });
 
   it.each([
@@ -78,11 +96,11 @@ describe("createSubmitQueueWeb", () => {
     { page: ["multiple", "tokens"] },
     { page: "" },
   ])("normalizes stale or invalid queue inputs to a live URL: %j", async search => {
-    expect(await newWeb()("/sq/demo-queue", search)).toEqual({ kind: "redirect", href: "/sq/demo-queue" });
+    expect(await newWeb()("/sq/queue/demo-queue", search)).toEqual({ kind: "redirect", href: "/sq/queue/demo-queue" });
   });
 
   it.each([
-    ["queue", "/sq/demo-queue"],
+    ["queue", "/sq/queue/demo-queue"],
     ["change", changePath],
   ])("restarts a %s page from the live window when the gateway rejects its token", async (_name, path) => {
     const gateway = createFakeGatewayReader({ listError: new ConnectError("bad token", Code.InvalidArgument) });
@@ -96,12 +114,12 @@ describe("createSubmitQueueWeb", () => {
       history: [gatewayHistoryFixture({ status: "landed" })],
     });
     const summary = vi.spyOn(gateway, "getRequestSummaryByID");
-    const result = await newWeb({ gateway })("/sq/demo-queue/request/legacy/id%252Fvalue", { view: "history" });
+    const result = await newWeb({ gateway })("/sq/queue/demo-queue/request/legacy/id%252Fvalue", { view: "history" });
     expect(summary).toHaveBeenCalledWith({ sqid, queue: "demo-queue" });
     expect(result).toMatchObject({
       kind: "render", model: {
         kind: "request", view: "history", title: `${sqid} · History`,
-        historyHref: "/sq/demo-queue/request/legacy/id%252Fvalue?view=history",
+        historyHref: "/sq/queue/demo-queue/request/legacy/id%252Fvalue?view=history",
         refresh: { terminal: true }, result: { ok: true, data: { request: { sqid } } },
       },
     });
@@ -109,14 +127,14 @@ describe("createSubmitQueueWeb", () => {
 
   it("returns explicit not-found decisions without exceptions for absent resources", async () => {
     const get = newWeb();
-    expect(await get("/sq/unknown")).toEqual({ kind: "not-found" });
-    expect(await get("/sq/demo-queue/change/unknown")).toEqual({ kind: "not-found" });
+    expect(await get("/sq/queue/unknown")).toEqual({ kind: "not-found" });
+    expect(await get("/sq/queue/demo-queue/change/unknown")).toEqual({ kind: "not-found" });
   });
 
   it("keeps catalog failures visible rather than declaring a configured queue missing", async () => {
     const gateway = createFakeGatewayReader({ queuesError: new ConnectError("upstream failure", Code.Unavailable) });
     const list = vi.spyOn(gateway, "list");
-    expect(await newWeb({ gateway })("/sq/demo-queue")).toMatchObject({
+    expect(await newWeb({ gateway })("/sq/queue/demo-queue")).toMatchObject({
       kind: "render", model: { result: { ok: false, error: { kind: "transient" } }, refresh: { terminal: false } },
     });
     expect(list).not.toHaveBeenCalled();
@@ -175,18 +193,18 @@ describe("createSubmitQueueWeb", () => {
     let gateway: SubmitQueueGateway = createFakeGatewayReader({ queues: [{ name: "first" }], requests: [] });
     const resolve = vi.fn(() => gateway);
     const get = newWeb({ gateway: resolve });
-    expect(await get("/sq/first", {}, { principal: "viewer" })).toMatchObject({ kind: "render", model: { result: { ok: true } } });
+    expect(await get("/sq/queue/first", {}, { principal: "viewer" })).toMatchObject({ kind: "render", model: { result: { ok: true } } });
     expect(resolve).toHaveBeenCalledWith(expect.objectContaining({ principal: "viewer" }));
     gateway = createFakeGatewayReader({ queues: [{ name: "second" }], requests: [] });
-    expect(await get("/sq/first")).toEqual({ kind: "not-found" });
-    expect(await get("/sq/second")).toMatchObject({ kind: "render", model: { result: { ok: true } } });
+    expect(await get("/sq/queue/first")).toEqual({ kind: "not-found" });
+    expect(await get("/sq/queue/second")).toMatchObject({ kind: "render", model: { result: { ok: true } } });
   });
 
   it("reports forbidden without reading the gateway when authorization fails", async () => {
     const gateway = createFakeGatewayReader();
     const listQueues = vi.spyOn(gateway, "listQueues");
     const authorize = vi.fn(() => false);
-    expect(await newWeb({ gateway, authorize })("/sq/demo-queue", {}, { principal: "viewer" })).toEqual({ kind: "forbidden" });
+    expect(await newWeb({ gateway, authorize })("/sq/queue/demo-queue", {}, { principal: "viewer" })).toEqual({ kind: "forbidden" });
     expect(authorize).toHaveBeenCalledWith("viewer", { kind: "queue", queue: "demo-queue", search: {} });
     expect(listQueues).not.toHaveBeenCalled();
   });

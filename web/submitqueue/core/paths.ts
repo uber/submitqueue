@@ -2,6 +2,8 @@ import { encodePathSegment } from "@submitqueue/web-platform/path-segment";
 
 export interface RequestsPathOptions {
   pageToken?: string | null;
+  /** Statuses a queue list is restricted to, as repeated `status` parameters. */
+  statuses?: readonly string[];
 }
 
 export interface WebPathsOptions {
@@ -29,11 +31,14 @@ export class WebPaths {
 
   requests(queue: string, options: RequestsPathOptions = {}): string {
     const parameters = new URLSearchParams();
+    for (const status of options.statuses ?? []) {
+      parameters.append("status", status);
+    }
     if (options.pageToken) {
       parameters.set("page", options.pageToken);
     }
     const query = parameters.toString();
-    const queuePath = `${this.basePath}/${encodePathSegment(queue)}`;
+    const queuePath = `${this.basePath}/queue/${encodePathSegment(queue)}`;
     return query === "" ? queuePath : `${queuePath}?${query}`;
   }
 

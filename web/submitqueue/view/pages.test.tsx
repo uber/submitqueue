@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "../../platform/test/rtl.js";
+import { fireEvent, render, screen, within } from "../../platform/test/rtl.js";
 import { describe, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { SubmitQueueApp } from "./app.js";
@@ -31,11 +31,11 @@ describe("default reusable application views", () => {
   });
 
   it.each([
-    { path: "/sq", heading: "Queues" },
-    { path: "/sq/demo-queue", heading: "demo-queue" },
-    { path: "/sq/demo-queue/request/12", heading: "12" },
-    { path: "/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123", heading: "PR #123" },
-  ])("renders a complete page at $path without Next.js", async ({ path, heading }) => {
+    { path: "/sq", heading: "Queues", breadcrumb: false },
+    { path: "/sq/queue/demo-queue", heading: "demo-queue", breadcrumb: true },
+    { path: "/sq/queue/demo-queue/request/12", heading: "12", breadcrumb: true },
+    { path: "/sq/queue/demo-queue/change/github/github.com/uber/submitqueue/pull/123", heading: "PR #123", breadcrumb: true },
+  ])("renders a complete page at $path without Next.js", async ({ path, heading, breadcrumb }) => {
     const result = await web.handle({ path, search: {} });
     if (result.kind !== "render") {
       throw new Error("Expected a rendered page");
@@ -46,7 +46,12 @@ describe("default reusable application views", () => {
     expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
     expect(refresh).not.toHaveBeenCalled();
     const queueLinks = screen.queryAllByRole("link", { name: "demo-queue" });
-    queueLinks.forEach(link => expect(link.getAttribute("href")).toBe("/sq/demo-queue"));
+    queueLinks.forEach(link => expect(link.getAttribute("href")).toBe("/sq/queue/demo-queue"));
+    const trail = screen.queryByRole("navigation", { name: "Breadcrumb" });
+    expect(trail !== null).toBe(breadcrumb);
+    if (trail !== null) {
+      expect(within(trail).getByRole("link", { name: "Queues" }).getAttribute("href")).toBe("/sq");
+    }
   });
 
   it("renders a page without refresh controls outside an app", async () => {
@@ -70,7 +75,7 @@ describe("default reusable application views", () => {
   });
 
   it("delegates change-version navigation through the host adapter", async () => {
-    const result = await web.handle({ path: "/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123", search: {} });
+    const result = await web.handle({ path: "/sq/queue/demo-queue/change/github/github.com/uber/submitqueue/pull/123", search: {} });
     if (result.kind !== "render") {
       throw new Error("Expected a change page");
     }
@@ -78,7 +83,7 @@ describe("default reusable application views", () => {
     render(<WebNavigationProvider value={{ push: navigate }}><SubmitQueueApp model={result.model} /></WebNavigationProvider>);
     fireEvent.click(screen.getByRole("combobox"));
     fireEvent.click(await screen.findByRole("option", { name: sha }));
-    expect(navigate).toHaveBeenCalledWith(`/sq/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}`);
+    expect(navigate).toHaveBeenCalledWith(`/sq/queue/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}`);
   });
 
   it.each(["not-found", "unauthorized"] as const)("renders the shared %s state", kind => {

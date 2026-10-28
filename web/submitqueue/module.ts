@@ -7,7 +7,7 @@ import type { GatewayLoadOptions } from "./controller/gateway-call.js";
 import { notFound, type PageDependencies, type SubmitQueueWebResult } from "./controller/page.js";
 import { loadQueuePage } from "./controller/queue.js";
 import { loadRequestPage } from "./controller/request.js";
-import type { LoadResult, QueueModel } from "./entity/index.js";
+import type { LoadResult, QueueModel, QueueRequestsModel, WebError } from "./entity/index.js";
 import type { GatewayErrorClassifier, SubmitQueueGateway } from "./extension/gateway/index.js";
 
 export type { SubmitQueueWebResult } from "./controller/page.js";
@@ -58,9 +58,25 @@ export interface SubmitQueueWebOptions {
   newRequestId?: () => string;
 }
 
+/** One page of a queue's requests as data, such as a continuation an older-requests loader fetches. */
+export interface SubmitQueueQueueRequestsRequest extends Omit<SubmitQueueWebRequest, "path"> {
+  /** Queue name, decoded. */
+  queue: string;
+}
+
+/** A page of a queue's requests, or why there is none; `invalid` covers a stale token or malformed filter. */
+export type QueueRequestsResult =
+  | { kind: "ok"; page: QueueRequestsModel }
+  | { kind: "not-found" }
+  | { kind: "forbidden" }
+  | { kind: "invalid" }
+  | { kind: "unavailable"; error: WebError };
+
 export interface SubmitQueueWeb {
   /** Serves one page request; never throws for expected outcomes such as missing resources. */
   handle(request: SubmitQueueWebRequest): Promise<SubmitQueueWebResult>;
+  /** Reads the same page of requests as the queue page for `search`, with the same authorization. */
+  queueRequests(request: SubmitQueueQueueRequestsRequest): Promise<QueueRequestsResult>;
 }
 
 type QueueCatalogLoader = (gateway: SubmitQueueGateway, context: SubmitQueueRequestContext) => Promise<LoadResult<QueueModel[]>>;
@@ -138,6 +154,27 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
     }
   }
 
+  async function serve(route: SubmitQueueWebRoute, request: SubmitQueueWebRequest): Promise<SubmitQueueWebResult> {
+    const requestId = request.requestId ?? newRequestId();
+    const onLog = createLogCallback(request.onLog, { requestId, path: request.path });
+    if (options.authorize && !(await options.authorize(request.principal, route))) {
+      onLog("info", "Web page request was not authorized", {});
+      return { kind: "forbidden" };
+    }
+    const context: SubmitQueueRequestContext = {
+      requestId,
+      onLog,
+      ...(request.principal === undefined ? {} : { principal: request.principal }),
+      ...(request.signal ? { signal: request.signal } : {}),
+    };
+    try {
+      return await load(route, context);
+    } catch (cause) {
+      onLog("error", "Web page load failed", { error: cause });
+      throw cause;
+    }
+  }
+
   return {
     async handle(request) {
       const segments = pathSegments(request.path);
@@ -145,26 +182,24 @@ export function createSubmitQueueWeb(options: SubmitQueueWebOptions): SubmitQueu
         return notFound;
       }
       const route = parseRoute(segments.slice(mount.length), request.search);
-      if (route === null) {
-        return notFound;
+      return route === null ? notFound : serve(route, request);
+    },
+    async queueRequests({ queue, ...request }) {
+      if (queue === "") {
+        return { kind: "not-found" };
       }
-      const requestId = request.requestId ?? newRequestId();
-      const onLog = createLogCallback(request.onLog, { requestId, path: request.path });
-      if (options.authorize && !(await options.authorize(request.principal, route))) {
-        onLog("info", "Web page request was not authorized", {});
-        return { kind: "forbidden" };
-      }
-      const context: SubmitQueueRequestContext = {
-        requestId,
-        onLog,
-        ...(request.principal === undefined ? {} : { principal: request.principal }),
-        ...(request.signal ? { signal: request.signal } : {}),
-      };
-      try {
-        return await load(route, context);
-      } catch (cause) {
-        onLog("error", "Web page load failed", { error: cause });
-        throw cause;
+      const result = await serve({ kind: "queue", queue, search: request.search }, { ...request, path: paths.requests(queue) });
+      switch (result.kind) {
+        case "render":
+          if (result.model.kind !== "queue") {
+            return { kind: "not-found" };
+          }
+          return result.model.result.ok ? { kind: "ok", page: result.model.result.data } : { kind: "unavailable", error: result.model.result.error };
+        // The queue page redirects a stale token or a non-canonical filter; as data there is nothing to redirect to.
+        case "redirect":
+          return { kind: "invalid" };
+        default:
+          return result;
       }
     },
   };
