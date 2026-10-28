@@ -339,8 +339,8 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 // releaseBuildSlot CAS-decrements the queue's in_flight_count, reopening the process
 // concurrency gate now that this request's build is over. It decrements relatively
 // (preserving concurrent updates), clamps at zero, and retries on version conflicts.
-// Unlike process's unwind-path release this is not best-effort: the caller must not
-// mark the request terminal if the slot was not freed, so a hard failure is returned.
+// It is not best-effort: the caller must not mark the request terminal if the slot
+// was not freed, so a hard failure is returned.
 func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) error {
 	queueStore := store.GetQueueStore()
 

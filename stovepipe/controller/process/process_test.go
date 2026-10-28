@@ -175,22 +175,33 @@ func TestProcessBuildPublishRequiresRegisteredTopic(t *testing.T) {
 func expectAdmit(t *testing.T, m processMocks, id string) {
 	t.Helper()
 
-	updatedQueue := entity.Queue{
-		Name:            testQueue,
-		LatestRequestID: id,
-		InFlightCount:   1,
-		Version:         1,
-	}
-	m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
+	admitted, slotCall := expectAdmitWrites(t, m, id)
+	expectProcessingLogAndHandoff(t, m, admitted).After(slotCall)
+}
 
-	updatedReq := acceptedRequest(id)
-	updatedReq.State = entity.RequestStateProcessing
-	updatedReq.BuildStrategy = entity.BuildStrategyFull
-	m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+// expectAdmitWrites expects the full-build admit of id against an idle queue row at version 1:
+// the request transition, then the slot count. It returns the admitted request and the count call.
+func expectAdmitWrites(t *testing.T, m processMocks, id string) (entity.Request, *gomock.Call) {
+	t.Helper()
 
-	loggedRequest := updatedReq
-	loggedRequest.Version = 2
-	expectStartAnnounceAndBuildPublish(t, m, loggedRequest)
+	admitted, requestCall := expectRequestAdmit(t, m, id)
+	slotCall := m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+		Name: testQueue, LatestRequestID: id, InFlightCount: 1, Version: 1,
+	}, int32(1), int32(2)).Return(nil).After(requestCall)
+	return admitted, slotCall
+}
+
+// expectRequestAdmit expects the full-build accepted→processing CAS of id at version 1 and returns
+// the admitted request with its new version.
+func expectRequestAdmit(t *testing.T, m processMocks, id string) (entity.Request, *gomock.Call) {
+	t.Helper()
+
+	admitted := acceptedRequest(id)
+	admitted.State = entity.RequestStateProcessing
+	admitted.BuildStrategy = entity.BuildStrategyFull
+	requestCall := m.reqStore.EXPECT().Update(gomock.Any(), admitted, int32(1), int32(2)).Return(nil)
+	admitted.Version = 2
+	return admitted, requestCall
 }
 
 func expectStartAnnounceAndBuildPublish(t *testing.T, m processMocks, request entity.Request) {
@@ -198,7 +209,7 @@ func expectStartAnnounceAndBuildPublish(t *testing.T, m processMocks, request en
 	expectProcessingLogAndHandoff(t, m, request)
 }
 
-func expectProcessingLogAndHandoff(t *testing.T, m processMocks, request entity.Request) {
+func expectProcessingLogAndHandoff(t *testing.T, m processMocks, request entity.Request) *gomock.Call {
 	t.Helper()
 
 	logCall := expectProcessingLog(t, m, request)
@@ -206,6 +217,7 @@ func expectProcessingLogAndHandoff(t *testing.T, m processMocks, request entity.
 	buildCall := expectBuildPublish(t, m, request.ID)
 	hookCall.After(logCall)
 	buildCall.After(hookCall)
+	return logCall
 }
 
 func expectProcessingLog(t *testing.T, m processMocks, request entity.Request) *gomock.Call {
@@ -317,11 +329,10 @@ func TestDeriveBuildStrategy(t *testing.T) {
 				tt.setup(m)
 			}
 
-			var sc sourcecontrol.SourceControl
 			if tt.queue.LastGreenURI != "" {
-				sc = m.sourceControl
+				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 			}
-			strategy, baseURI, err := c.deriveBuildStrategy(queueContext(tt.queue.Name), sc, tt.queue, acceptedRequest(testID))
+			strategy, baseURI, err := c.deriveBuildStrategy(queueContext(tt.queue.Name), tt.queue, acceptedRequest(testID))
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -362,11 +373,11 @@ func TestDeriveBuildStrategyEmitsSourceControlMetrics(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			scope := tally.NewTestScope("test", nil)
 			c, m := newControllerWithScope(t, ctrl, scope)
+			m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, tt.ancestryErr)
 
 			_, _, err := c.deriveBuildStrategy(
 				queueContext(testQueue),
-				m.sourceControl,
 				entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
 				acceptedRequest(testID),
 			)
@@ -426,73 +437,6 @@ func TestProcessEmitsSourceControlResolutionMetric(t *testing.T) {
 	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.source_control_errors+queue=monorepo/main,stage=resolve"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), counter.Value())
-}
-
-func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
-	const (
-		initialLastGreen  = "git://repo/monorepo/main/green-old"
-		reloadedLastGreen = "git://repo/monorepo/main/green-new"
-	)
-
-	tests := []struct {
-		name             string
-		initialLastGreen string
-	}{
-		{
-			name:             "rederives against changed baseline",
-			initialLastGreen: initialLastGreen,
-		},
-		{
-			name: "resolves source control after baseline appears",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
-			request := acceptedRequest(testID)
-
-			initialQueue := entity.Queue{
-				Name:            testQueue,
-				LatestRequestID: testID,
-				LastGreenURI:    tt.initialLastGreen,
-				Version:         1,
-			}
-			reloadedQueue := entity.Queue{
-				Name:            testQueue,
-				LatestRequestID: testID,
-				LastGreenURI:    reloadedLastGreen,
-				Version:         2,
-			}
-			initialClaim := initialQueue
-			initialClaim.InFlightCount = 1
-			claimedQueue := reloadedQueue
-			claimedQueue.InFlightCount = 1
-
-			updatedRequest := request
-			updatedRequest.State = entity.RequestStateProcessing
-			updatedRequest.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
-			updatedRequest.BaseURI = reloadedLastGreen
-
-			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
-			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(initialQueue, nil)
-			m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
-			if tt.initialLastGreen != "" {
-				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), tt.initialLastGreen, testURI).Return(true, nil)
-			}
-			m.queueStore.EXPECT().Update(gomock.Any(), initialClaim, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(reloadedQueue, nil)
-			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), reloadedLastGreen, testURI).Return(true, nil)
-			m.queueStore.EXPECT().Update(gomock.Any(), claimedQueue, int32(2), int32(3)).Return(nil)
-			m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-			loggedRequest := updatedRequest
-			loggedRequest.Version = 2
-			expectStartAnnounceAndBuildPublish(t, m, loggedRequest)
-
-			require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
-		})
-	}
 }
 
 func TestProcess(t *testing.T) {
@@ -611,20 +555,8 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
-				updatedQueue := entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
-				}
-				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
-				updatedRequest := acceptedRequest(testID)
-				updatedRequest.State = entity.RequestStateProcessing
-				updatedRequest.BuildStrategy = entity.BuildStrategyFull
-				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				loggedRequest := updatedRequest
-				loggedRequest.Version = 2
-				logCall := expectProcessingLog(t, m, loggedRequest)
+				admitted, slotCall := expectAdmitWrites(t, m, testID)
+				logCall := expectProcessingLog(t, m, admitted).After(slotCall)
 				m.publisher.EXPECT().
 					Publish(gomock.Any(), "stovepipe-hook", gomock.AssignableToTypeOf(entityqueue.Message{})).
 					Return(errors.New("queue unavailable")).
@@ -632,7 +564,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:    "build publish failure retains admitted request and claimed slot",
+			name:    "build publish failure retains admitted request and counted slot",
 			wantErr: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
@@ -641,20 +573,8 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
-				updatedQueue := entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
-				}
-				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
-				updatedRequest := acceptedRequest(testID)
-				updatedRequest.State = entity.RequestStateProcessing
-				updatedRequest.BuildStrategy = entity.BuildStrategyFull
-				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				loggedRequest := updatedRequest
-				loggedRequest.Version = 2
-				logCall := expectProcessingLog(t, m, loggedRequest)
+				admitted, slotCall := expectAdmitWrites(t, m, testID)
+				logCall := expectProcessingLog(t, m, admitted).After(slotCall)
 				hookCall := expectStartValidationAnnounce(t, m, testID)
 				m.publisher.EXPECT().
 					Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
@@ -664,7 +584,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:    "processing log failure retains admitted request and claimed slot",
+			name:    "processing log failure retains admitted request and counted slot",
 			wantErr: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
@@ -673,28 +593,16 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
-				updatedQueue := entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
-				}
-				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
-				updatedRequest := acceptedRequest(testID)
-				updatedRequest.State = entity.RequestStateProcessing
-				updatedRequest.BuildStrategy = entity.BuildStrategyFull
-				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				request := updatedRequest
-				request.Version = 2
+				admitted, slotCall := expectAdmitWrites(t, m, testID)
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
-					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown),
-				).Return(errors.New("db down"))
+					requestlog.NewRequestStateLog(admitted, entity.RequestOutcomeReasonUnknown),
+				).Return(errors.New("db down")).After(slotCall)
 			},
 		},
 		{
-			name:    "source control failure does not claim a build slot",
+			name:    "source control failure admits nothing",
 			wantErr: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
@@ -734,77 +642,39 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:       "gate closed after slot claim race holds",
-			wantHoldMs: 5000,
-			setup: func(m processMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					Version:         1,
-				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
-				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         2,
-				}, nil)
-			},
-		},
-		{
-			name: "claim slot retries on queue version mismatch then admits",
+			name: "slot count retries a queue version mismatch without re-gating or coalescing",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: testID, Version: 1,
 				}, nil)
-				// First claim CAS loses to a concurrent writer.
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+				admitted, requestCall := expectRequestAdmit(t, m, testID)
+				firstCount := m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
 				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				// Reload: still latest, slot still free (version advanced by an unrelated field).
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, Version: 2,
+				// A closed gate and a newer head on the reload change nothing: the admit is already durable.
+				reload := m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: "9", InFlightCount: 1, Version: 2,
 				}, nil)
-				// Retry claim succeeds, then admit.
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
+				retryCount := m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+					Name: testQueue, LatestRequestID: "9", InFlightCount: 2, Version: 2,
 				}, int32(2), int32(3)).Return(nil)
-				updatedReq := acceptedRequest(testID)
-				updatedReq.State = entity.RequestStateProcessing
-				updatedReq.BuildStrategy = entity.BuildStrategyFull
-				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
-				loggedRequest := updatedReq
-				loggedRequest.Version = 2
-				expectStartAnnounceAndBuildPublish(t, m, loggedRequest)
+				gomock.InOrder(requestCall, firstCount, reload, retryCount)
+				expectProcessingLogAndHandoff(t, m, admitted).After(retryCount)
 			},
 		},
 		{
-			name: "reload after claim mismatch supersedes a now-stale head",
+			name:    "slot count failure leaves the request admitted and uncounted",
+			wantErr: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: testID, Version: 1,
 				}, nil)
+				_, requestCall := expectRequestAdmit(t, m, testID)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
-				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				// Reload: ingest stamped a newer head — our head is no longer latest.
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: "9", Version: 2,
-				}, nil)
-				superseded := acceptedRequest(testID)
-				superseded.State = entity.RequestStateSuperseded
-				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
-				loggedRequest := superseded
-				loggedRequest.Version = 2
-				expectStateLog(t, m, loggedRequest, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+				}, int32(1), int32(2)).Return(errors.New("db down")).After(requestCall)
 			},
 		},
 		{
@@ -818,42 +688,38 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(true, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, LastGreenURI: lastGreenURI, Version: 1,
-				}, int32(1), int32(2)).Return(nil)
 
 				firstAttempt := acceptedRequest(testID)
 				firstAttempt.State = entity.RequestStateProcessing
 				firstAttempt.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
 				firstAttempt.BaseURI = lastGreenURI
-				m.reqStore.EXPECT().Update(gomock.Any(), firstAttempt, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				firstCall := m.reqStore.EXPECT().Update(gomock.Any(), firstAttempt, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 
 				reloaded := acceptedRequest(testID)
 				reloaded.Version = 2
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(reloaded, nil)
+				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(reloaded, nil)
 
 				retry := reloaded
 				retry.State = entity.RequestStateProcessing
 				retry.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
 				retry.BaseURI = lastGreenURI
-				m.reqStore.EXPECT().Update(gomock.Any(), retry, int32(2), int32(3)).Return(nil)
+				retryCall := m.reqStore.EXPECT().Update(gomock.Any(), retry, int32(2), int32(3)).Return(nil)
+				slotCall := m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, LastGreenURI: lastGreenURI, Version: 1,
+				}, int32(1), int32(2)).Return(nil)
+				gomock.InOrder(firstCall, reloadCall, retryCall, slotCall)
 				loggedRequest := retry
 				loggedRequest.Version = 3
-				expectProcessingLogAndHandoff(t, m, loggedRequest)
+				expectProcessingLogAndHandoff(t, m, loggedRequest).After(slotCall)
 			},
 		},
 		{
-			name: "mark processing lost race releases slot and skips admit",
+			name: "mark processing lost race acks without counting a slot",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: testID, Version: 1,
 				}, nil)
-				// Claim succeeds.
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
-				}, int32(1), int32(2)).Return(nil)
-				// markProcessing CAS loses, reload shows a concurrent writer already advanced it.
 				updatedReq := acceptedRequest(testID)
 				updatedReq.State = entity.RequestStateProcessing
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
@@ -861,37 +727,20 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 				}, nil)
-				// Compensating decrement of the spurious slot.
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
-				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 0, Version: 2,
-				}, int32(2), int32(3)).Return(nil)
 			},
 		},
 		{
-			name:    "mark processing error releases slot and returns error",
+			name:    "mark processing failure returns an error without counting a slot",
 			wantErr: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: testID, Version: 1,
 				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
-				}, int32(1), int32(2)).Return(nil)
 				updatedReq := acceptedRequest(testID)
 				updatedReq.State = entity.RequestStateProcessing
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(errors.New("db down"))
-				// Best-effort compensating decrement before the error propagates.
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
-				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 0, Version: 2,
-				}, int32(2), int32(3)).Return(nil)
 			},
 		},
 		{

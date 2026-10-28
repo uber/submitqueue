@@ -29,8 +29,9 @@ For a delivery carrying request id `R`:
    - defer (hold the delivery) -> re-check on redelivery until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
 7. Admit R:
    a. Derive build strategy + baseline (see "Build-strategy decision").
-   b. CAS the Queue row: in_flight_count += 1.
-   c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
+   b. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
+      - lost to another writer (no longer accepted) -> ack; that writer owns the outcome and nothing is counted.
+   c. CAS the Queue row: in_flight_count += 1, reloading and retrying on a version conflict without re-gating.
    d. Announce validation start on the hook topic (see "Hooks").
    e. Publish R to build.
    f. ack.
@@ -159,21 +160,24 @@ Only an admit announces. A Request that coalescing supersedes never reaches step
 
 Every branch is safe under redelivery:
 
-- **accepted, no strategy** → full admit path. On a crash after incrementing `in_flight_count` but before persisting `processing`, redelivery re-reads `accepted` and re-runs; the increment re-applies only if the count CAS hasn't already moved (see integrity below).
+- **accepted, no strategy** → full admit path. Nothing has been written yet: a crash before the request CAS leaves no trace, and redelivery re-runs the gate and the admit from scratch.
 - **processing** → re-announce the start event, re-publish to `build`, ack. The `build` consumer is keyed on the request id and idempotent, so a duplicate publish is harmless, and the start event's id is derived from the transition rather than the clock, so a re-announce carries the id the first attempt would have and consumers dedupe on it. Re-announcing here is what makes the event at-least-once rather than at-most-once: this is the only branch a redelivery takes once `processing` is durable, so an admit that failed after the state write would otherwise lose the event for good.
 - **terminal** (superseded / recorded) → ack, no-op.
 - **deferred (waiting for slot)** → no state or count change; pure deferral (re-enters when the held delivery comes due).
 
-The window to handle is "count incremented, state not yet `processing`". Admit does the increment and the state transition as two ordered CAS writes, and the decrement is tied to the state transition, not a side counter (see integrity below).
+The window to handle is "state `processing`, count not yet incremented". Admit does the state transition and the increment as two ordered CAS writes, and a crash between them leaves the count low by one rather than high (see integrity below).
 
 ## `in_flight_count` integrity
 
-`in_flight_count` is a cache; the source of truth is **the set of non-terminal Request rows for the Queue**. Two rules keep it from drifting:
+`in_flight_count` is a cache; the source of truth is **the set of non-terminal Request rows for the Queue**. `Queue` and `Request` are separate entities with no cross-entity transaction, so the admit's two writes cannot be atomic, and their order picks the direction the count can drift. Admit writes the request first: the `accepted → processing` CAS *is* the admit, and the increment follows it.
 
-1. **Decrement is bound to the terminal transition.** The single CAS that moves a Request non-terminal → terminal (in `record` or the DLQ reconciler) also decrements. Being CAS-guarded, it fires exactly once per Request even under redelivery.
-2. **Increment is bound to the admit transition.** `process` increments only on the `accepted → processing` CAS; a redelivery of an already-`processing` Request takes step 3 and does not increment again.
+1. **The count is a lower bound on in-flight validations, with one stalled-delivery exception.** A crash or hard failure after the request CAS and before the increment leaves an admitted Request uncounted. Its redelivery reads `processing`, takes step 3, and never increments, so the Queue over-admits by one until the drift clears. No slot is counted for a Request that is still `accepted`, so a redelivery never finds the gate closed by its own claim. The one way the count goes high is a delivery that stalls between the request CAS and the increment for longer than the visibility timeout: its redelivery takes step 3, the build runs to terminal, the zero clamp absorbs the release, and the stalled increment then lands and counts a slot nothing will release. That needs the stall to outlast the redelivery plus a whole validation. A terminal re-check of the Request right before the increment would narrow it to the gap between two reads, at the cost of one extra read per admit; the owner-keyed set (PR #966) closes it.
+2. **A low count reconverges at the zero clamp.** Every Request that reaches `processing` is released when it goes terminal (by `buildsignal` or the DLQ reconciler; see [buildsignal.md](buildsignal.md)), whether or not its increment landed. Both release paths clamp at zero, so the release of an uncounted Request is absorbed by the time the Queue drains, and the count returns to the true value.
+3. **The gate is best-effort.** It is a read of the count, not part of the increment's CAS, so two deliveries for different heads that both read an open gate before either increments are both admitted, over-admitting by one transiently. The per-Queue partition normally serializes `process` deliveries (see [the single-writer property](#input-partitioning-and-the-single-writer-property)), so the overlap this needs is rare.
 
-On a crash between admit and `record`, the Request stays non-terminal; visibility-timeout redelivery drives it forward, and the fail-closed DLQ path eventually forces it terminal, decrementing as it does. The count can drift high only transiently and self-heals as stuck Requests terminate. A reconciler that recomputes the count from non-terminal rows can be added later if drift proves real, but isn't required for MVP.
+Over-admission by one is the failure mode this pipeline prefers to a wedge, here and in the release paths.
+
+An exact count needs per-request slot ownership on the Queue row: an owner-keyed set of request ids (PR #966) that the gate counts and each terminal transition removes from, at the cost of a schema change. A count leaked high before this design (a slot claimed by a Request that never reached `processing`) cannot be told apart from a live one, so a Queue already wedged that way needs a one-time operator reset of `in_flight_count`.
 
 ## Edge cases
 

@@ -66,14 +66,10 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 // slot is released first.
 //
 // Processing is the only non-terminal state that can own a slot, so the condition is not a
-// narrowing of some broader set: process claims the slot and CAS-marks accepted→processing,
-// releasing its own claim if that CAS never lands, and the exits from processing are the
-// terminal outcomes, which release the slot themselves. Widening the release to accepted
-// would decrement for the far more common request that never claimed a slot, over-admitting
-// against MaxConcurrent. The one case that escapes both this reconciler and process's
-// compensation is a hard crash between the two admit writes, which leaves an accepted
-// request holding a slot that nothing here can tell apart from a request that never
-// claimed one; distinguishing them needs per-request slot ownership on the row.
+// narrowing of some broader set: process CAS-marks accepted→processing before it counts the
+// slot, and the exits from processing are the terminal outcomes, which release the slot
+// themselves. Widening the release to accepted would decrement for a request that never
+// counted a slot, over-admitting against MaxConcurrent.
 //
 // Queue and Request are separate entities with no cross-entity
 // transaction, so the two writes cannot be atomic and the ordering picks which crash
