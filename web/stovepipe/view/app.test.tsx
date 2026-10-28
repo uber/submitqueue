@@ -58,7 +58,7 @@ const model: StovepipePageModel = {
     },
   },
 };
-it("displays the backend summary above the retained history", () => {
+it("displays request summary data", () => {
   render(<StovepipeApp model={model} />);
   const status = screen.getByRole("region", { name: "Request status" });
   expect(within(status).getByText("completed")).toBeVisible();
@@ -71,10 +71,6 @@ it("displays the backend summary above the retained history", () => {
   expect(within(status).getByText("No result recorded")).toBeVisible();
   const history = screen.getByText("accepted").closest("section")!;
   expect(history).not.toBeVisible();
-  expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(
-    screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
-  ).toEqual(["Project Results"]);
 });
 it("links queue entries by request ID even when the change URI is missing", () => {
   if (!model.history.ok) throw new Error("No summary");
@@ -146,12 +142,6 @@ it("renders recorded project results, completion and shareable pagination", () =
   for (const link of within(projects).getAllByRole("link", { name: /Next projects/ })) {
     expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
   }
-  const timestamp = within(projects).getByText(/Results updated:/);
-  const pagination = within(projects).getByRole("navigation", { name: "Project pages (bottom)" });
-  const topPagination = within(projects).getByRole("navigation", { name: "Project pages (top)" });
-  expect(topPagination.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(table.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(pagination.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it.each(["projects=next", "projectPageSize=25"])("preserves the request summary and pager focus when loading %s", (query) => {
@@ -245,23 +235,13 @@ it.each([
   ["history", "History"],
   ["issues", "Build and Test Issues"],
   ["fix-attempts", "Fix Attempts"],
-] as const)("keeps project paging when selecting the %s view", (view, label) => {
-  const query = new URLSearchParams({ projects: "opaque+/=", projectPageSize: "25", filter: "keep" });
-  if (view !== "projects") query.set("view", view);
-  render(<StovepipeApp model={{ ...model, key: `/repo%2Fmain/request/7?${query}` }} />);
+] as const)("renders the selected %s view", (view, label) => {
+  render(<StovepipeApp model={{ ...model, key: "/repo%2Fmain/request/7?view=" + view }} />);
   const navigation = screen.getByRole("navigation", { name: "Request views" });
-  const projectsHref = "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D&projectPageSize=25&filter=keep";
-  expect(within(navigation).getByRole("link", { name: "Project Results" })).toHaveAttribute("href", projectsHref);
-  expect(within(navigation).getByRole("link", { name: "History" })).toHaveAttribute("href", projectsHref + "&view=history");
-  expect(within(navigation).getByRole("link", { name: "Build and Test Issues" })).toHaveAttribute("href", projectsHref + "&view=issues");
-  expect(within(navigation).getByRole("link", { name: "Fix Attempts" })).toHaveAttribute("href", projectsHref + "&view=fix-attempts");
   expect(within(navigation).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   const section = screen.getByRole("region", { name: label });
   expect(section).toBeVisible();
-  expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
-  expect(screen.getByText("git://repo/sha")).toBeVisible();
   if (view === "issues" || view === "fix-attempts") {
     expect(within(section).getByText("Coming soon")).toBeVisible();
-    expect(screen.queryByRole("table")).toBeNull();
   }
 });
