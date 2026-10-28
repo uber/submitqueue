@@ -224,6 +224,19 @@ build-stovepipe-linux-debug: ## Build Stovepipe Linux debug binary for Docker/de
 	 cp -f bazel-bin/service/stovepipe/server/stovepipe .docker-bin/stovepipe-debug
 	@echo "Stovepipe Linux debug binary ready at .docker-bin/stovepipe-debug"
 
+.PHONY: celebrate
+celebrate: ## Celebrate SubmitQueue PR 1000 (no services, just confetti)
+	@printf '%s\n' \
+		'           i i i i' \
+		'         .-=======-.' \
+		'         |  1000   |' \
+		'       __|_________|__' \
+		'      |_______________|' \
+		'' \
+		'1000 pull requests. Still no jump-the-queue flag.' \
+		'Exactly-once cake. At-least-once confetti.' \
+		'Please wait for eventual confectionery.'
+
 check-gazelle: ## Check BUILD.bazel files are up to date
 	@echo "Running Gazelle to check BUILD files..."
 	@$(BAZEL) run //:gazelle
