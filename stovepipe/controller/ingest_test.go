@@ -103,7 +103,8 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	})
 	require.NoError(t, err)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, m.materializer, registry, []string{testQueue}, m.queueEnablementController)
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, m.materializer, registry, []string{testQueue})
+	c.queueEnablementController = m.queueEnablementController
 	return c, m
 }
 
@@ -406,7 +407,17 @@ func newIngestEnablementFixture(t *testing.T) *ingestEnablementFixture {
 	}
 	f.logs[entity.QueueLogID(1)] = queuelog.NewQueueStateLog(f.queue)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		if f.queue.Name == "" {
+			return entity.Queue{}, storage.ErrNotFound
+		}
 		return f.queue, nil
+	}).AnyTimes()
+	m.queueStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, row entity.Queue) error {
+		if f.queue.Name != "" {
+			return storage.ErrAlreadyExists
+		}
+		f.queue = row
+		return nil
 	}).AnyTimes()
 	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, row entity.Queue, oldVersion, newVersion int32) error {
 		if hook := f.beforeUpdate; hook != nil {
@@ -442,7 +453,20 @@ func newIngestEnablementFixture(t *testing.T) *ingestEnablementFixture {
 	summaries := storagemock.NewMockQueueSummaryStore(ctrl)
 	m.store.EXPECT().GetQueueSummaryStore().Return(summaries).AnyTimes()
 	summaries.EXPECT().Get(gomock.Any()).DoAndReturn(func(context.Context) (entity.QueueSummary, error) {
+		if f.summary.Version == 0 {
+			return entity.QueueSummary{}, storage.ErrNotFound
+		}
 		return f.summary, nil
+	}).AnyTimes()
+	summaries.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.QueueSummary) error {
+		if f.summaryErr != nil {
+			return f.summaryErr
+		}
+		if f.summary.Version != 0 {
+			return storage.ErrAlreadyExists
+		}
+		f.summary = summary
+		return nil
 	}).AnyTimes()
 	summaries.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.QueueSummary, oldVersion, newVersion int64) error {
 		if f.summaryErr != nil {
@@ -459,7 +483,7 @@ func newIngestEnablementFixture(t *testing.T) *ingestEnablementFixture {
 	m.sc.EXPECT().Latest(gomock.Any()).DoAndReturn(func(context.Context) (string, error) { return f.head, nil }).AnyTimes()
 	history := scfake.New(sourcecontrol.Config{QueueName: testQueue}, []string{nextIngestURI, testURI})
 	m.sc.EXPECT().IsAncestor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(history.IsAncestor).AnyTimes()
-	c.queueEnablementController = queuestate.NewTransitionController(staticStorageFactory{store: m.store}, m.factory, queuelog.NewMaterializer(tally.NoopScope))
+	f.controller = NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: m.store}, m.materializer, c.registry, []string{testQueue})
 	return f
 }
 
@@ -520,25 +544,114 @@ func TestIngestEnablementDoesNotPauseWork(t *testing.T) {
 
 func TestIngestEnablementFailure(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		explicit bool
-		err      error
+		name            string
+		explicit        bool
+		invalid         bool
+		initializeFails bool
+		err             error
 	}{
-		{"invalid decision", true, queuestate.ErrInvalidChange},
-		{"transition storage unavailable", true, errors.New("unavailable")},
-		{"observed state unavailable", false, errors.New("unavailable")},
+		{"invalid decision", true, true, false, queuestate.ErrInvalidChange},
+		{"transition storage unavailable", true, false, false, errors.New("unavailable")},
+		{"explicit initialization unavailable", true, false, true, errors.New("unavailable")},
+		{"observed state unavailable", false, false, true, errors.New("unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, m := newIngestController(t, gomock.NewController(t))
 			m.factory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sc, nil)
 			m.sc.EXPECT().Latest(gomock.Any()).Return(testURI, nil)
-			if tc.explicit {
-				m.queueEnablementController.EXPECT().Prepare(gomock.Any(), testQueue, entity.QueueEnablementUnknown, testURI).Return(queuestate.PreparedChange{}, tc.err)
-			} else {
+			desired := entity.QueueEnablementEnabled
+			if tc.invalid {
+				desired = entity.QueueEnablementUnknown
+			} else if tc.initializeFails {
 				m.queueEnablementController.EXPECT().Initialize(gomock.Any(), testQueue).Return(entity.QueueState{}, tc.err)
+			} else {
+				m.queueEnablementController.EXPECT().Initialize(gomock.Any(), testQueue).Return(entity.QueueState{Queue: testQueue, State: entity.QueueEnablementDisabled, Version: 1}, nil)
+				m.queueEnablementController.EXPECT().Prepare(gomock.Any(), testQueue, desired, testURI).Return(queuestate.PreparedChange{}, tc.err)
 			}
-			_, err := c.Ingest(context.Background(), entity.IngestRequest{Queue: testQueue, HasEnablement: tc.explicit})
+			_, err := c.Ingest(context.Background(), entity.IngestRequest{Queue: testQueue, HasEnablement: tc.explicit, Enablement: desired})
 			require.ErrorIs(t, err, tc.err)
+		})
+	}
+}
+
+func TestIngestInitializesQueueEnablement(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		for _, decision := range []struct {
+			name     string
+			explicit bool
+			state    entity.QueueEnablement
+			version  int64
+		}{
+			{"ordinary", false, entity.QueueEnablementDisabled, 1},
+			{"enable", true, entity.QueueEnablementEnabled, 2},
+			{"disable", true, entity.QueueEnablementDisabled, 1},
+		} {
+			name := "new/" + decision.name
+			if existing {
+				name = "existing empty/" + decision.name
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newIngestEnablementFixture(t)
+				f.queue = entity.Queue{}
+				if existing {
+					f.queue = entity.Queue{Name: testQueue, Version: 5, InFlightCount: 3, LastGreenRequestID: "4"}
+				}
+				f.summary = entity.QueueSummary{}
+				clear(f.logs)
+				m := f.mocks
+				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("7", nil).Times(2)
+				m.reqStore.EXPECT().Get(gomock.Any(), "7").Return(acceptedRequest("7"), nil).Times(2)
+				m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, requestlog.NewRequestStateLog(acceptedRequest("7"), entity.RequestOutcomeReasonUnknown)).Return(nil).Times(2)
+				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil).Times(2)
+				request := entity.IngestRequest{Queue: testQueue, HasEnablement: decision.explicit, Enablement: decision.state}
+				result, err := f.controller.Ingest(context.Background(), request)
+				require.NoError(t, err)
+				require.Equal(t, decision.state, result.Enablement.State)
+				require.Equal(t, decision.version, result.Enablement.Version)
+				require.Positive(t, result.Enablement.ChangedAtMs)
+				require.Equal(t, result.Enablement, f.summary.Snapshot())
+				require.Len(t, f.logs, int(decision.version))
+				require.Equal(t, "7", f.queue.LatestRequestID)
+				if existing {
+					require.Equal(t, int32(3), f.queue.InFlightCount)
+					require.Equal(t, "4", f.queue.LastGreenRequestID)
+				}
+				retry, err := f.controller.Ingest(context.Background(), request)
+				require.NoError(t, err)
+				require.Equal(t, result, retry)
+			})
+		}
+	}
+}
+
+func TestIngestRetriesQueueInitialization(t *testing.T) {
+	for _, stage := range []string{"history", "summary"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newIngestEnablementFixture(t)
+			f.queue, f.summary = entity.Queue{}, entity.QueueSummary{}
+			clear(f.logs)
+			if stage == "history" {
+				f.logErr = assert.AnError
+			} else {
+				f.summaryErr = assert.AnError
+			}
+			request := entity.IngestRequest{Queue: testQueue, HasEnablement: true, Enablement: entity.QueueEnablementEnabled}
+			_, err := f.controller.Ingest(context.Background(), request)
+			require.ErrorIs(t, err, assert.AnError)
+			initial := f.queue.EnablementState()
+			require.Equal(t, int64(1), initial.Version)
+			f.logErr, f.summaryErr = nil, nil
+			m := f.mocks
+			m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("7", nil)
+			m.reqStore.EXPECT().Get(gomock.Any(), "7").Return(acceptedRequest("7"), nil)
+			expectMaterializeAccepted(m, "7")
+			m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
+			result, err := f.controller.Ingest(context.Background(), request)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), result.Enablement.Version)
+			require.Equal(t, entity.QueueEnablementEnabled, result.Enablement.State)
+			require.Equal(t, initial, f.logs[entity.QueueLogID(1)].Snapshot())
+			require.Equal(t, result.Enablement, f.summary.Snapshot())
 		})
 	}
 }

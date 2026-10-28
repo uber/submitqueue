@@ -33,8 +33,6 @@ go_library(
         "//stovepipe/controller/process:go_default_library",
         "//stovepipe/controller/record:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
-        "//stovepipe/core/queuelog:go_default_library",
-        "//stovepipe/core/queuestate:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/extension/buildissue:go_default_library",
         "//stovepipe/extension/buildissue/noop:go_default_library",

@@ -55,8 +55,6 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
-	"github.com/uber/submitqueue/stovepipe/core/queuelog"
-	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
@@ -252,12 +250,6 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
-	queueEnablementController := queuestate.NewTransitionController(storageFty, sourceControl, queuelog.NewMaterializer(scope))
-	for _, queue := range tenants {
-		if _, err := queueEnablementController.Initialize(ctx, queue); err != nil {
-			return fmt.Errorf("initialize queue enablement %q: %w", queue, err)
-		}
-	}
 	materializer := requestlog.NewMaterializer(scope)
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory)
 	if err != nil {
@@ -296,7 +288,6 @@ func run() error {
 		materializer,
 		registry,
 		tenants,
-		queueEnablementController,
 	)
 	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	projectStatusController := controller.NewProjectStatusController(logger.Sugar(), scope, storageFty)

@@ -86,7 +86,6 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	s.queueDB, err = s.stack.ConnectMySQLService("mysql-queue")
 	require.NoError(t, err, "failed to connect to queue MySQL")
 
-	// Queue enablement is registered at service startup, so its schema must exist first.
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("stovepipe/extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))

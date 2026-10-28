@@ -80,10 +80,7 @@ func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsPrematureFinalNotificat
 	build := entity.Build{ID: "running-build", RequestID: request.ID, Status: entity.BuildStatusRunning, Version: 1}
 	require.NoError(t, store.GetRequestStore().Create(s.ctx, request))
 	require.NoError(t, store.GetBuildStore().Create(s.ctx, build))
-	queueState, err := store.GetQueueStore().Get(s.ctx, queue)
-	require.NoError(t, err)
-	queueState.InFlightCount = 1
-	require.NoError(t, store.GetQueueStore().Update(s.ctx, queueState, queueState.Version, queueState.Version+1))
+	require.NoError(t, store.GetQueueStore().Create(s.ctx, entity.Queue{Name: queue, InFlightCount: 1, Version: 1}))
 
 	mq, err := queuemysql.NewQueue(queuemysql.Params{
 		DB: s.queueDB, Logger: zap.NewNop(), MetricsScope: tally.NoopScope, Tenants: []string{queue},

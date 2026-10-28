@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queuelog"
 	"github.com/uber/submitqueue/stovepipe/core/queuestate"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -58,6 +59,7 @@ type IngestController struct {
 
 // NewIngestController creates a new instance of the stovepipe ingest controller. It publishes
 // accepted requests to the topic registered under messagequeue.TopicKeyProcess in the registry.
+// Queue state is initialized by Ingest; construction performs no storage I/O.
 func NewIngestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -67,7 +69,6 @@ func NewIngestController(
 	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
 	configuredQueues []string,
-	queueEnablementController queuestate.TransitionController,
 ) *IngestController {
 	queueNames := make(map[string]struct{}, len(configuredQueues))
 	for _, queue := range configuredQueues {
@@ -82,7 +83,7 @@ func NewIngestController(
 		materializer:              materializer,
 		registry:                  registry,
 		configuredQueues:          queueNames,
-		queueEnablementController: queueEnablementController,
+		queueEnablementController: queuestate.NewTransitionController(stores, sourceControl, queuelog.NewMaterializer(scope)),
 	}
 }
 
@@ -127,11 +128,12 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 		return entity.IngestResult{}, fmt.Errorf("failed to resolve head for queue=%s: %w", queue, err)
 	}
 
-	var state entity.QueueState
-	if req.HasEnablement {
+	if req.HasEnablement && req.Enablement != entity.QueueEnablementEnabled && req.Enablement != entity.QueueEnablementDisabled {
+		return entity.IngestResult{}, fmt.Errorf("unsupported enablement %q: %w", req.Enablement, queuestate.ErrInvalidChange)
+	}
+	state, err := c.queueEnablementController.Initialize(ctx, queue)
+	if err == nil && req.HasEnablement {
 		state, err = c.applyEnablementDecision(ctx, queue, req.Enablement, uri)
-	} else {
-		state, err = c.queueEnablementController.Initialize(ctx, queue)
 	}
 	if err != nil {
 		return entity.IngestResult{}, fmt.Errorf("resolve enablement for queue %q: %w", queue, err)

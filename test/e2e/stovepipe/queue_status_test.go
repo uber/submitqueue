@@ -48,15 +48,20 @@ func (s *StovepipeE2ESuite) TestQueueStatusViaIngest() {
 	queue := queueStateTestQueue
 	uri := "git://" + queue + "/HEAD"
 	initial, err := s.client.GetQueueStatus(s.ctx, &pb.GetQueueStatusRequest{Queue: queue})
-	require.NoError(t, err)
-	require.NotNil(t, initial.Enablement)
-	require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, initial.Enablement.State)
-	require.Equal(t, int64(1), initial.Enablement.Version)
-	require.Positive(t, initial.Enablement.ChangedAtMs)
+	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Nil(t, initial)
 	ordinary, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})
 	require.NoError(t, err)
 	require.NotEmpty(t, ordinary.Id)
-	require.Equal(t, initial.Enablement, ordinary.Enablement)
+	require.NotNil(t, ordinary.Enablement)
+	require.Equal(t, pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED, ordinary.Enablement.State)
+	require.Equal(t, int64(1), ordinary.Enablement.Version)
+	require.Positive(t, ordinary.Enablement.ChangedAtMs)
+	initial, err = s.client.GetQueueStatus(s.ctx, &pb.GetQueueStatusRequest{Queue: queue})
+	require.NoError(t, err)
+	require.Equal(t, ordinary.Enablement, initial.Enablement)
+	_, err = s.client.GetQueueStatus(s.ctx, &pb.GetQueueStatusRequest{Queue: queue, ChangeUri: "unknown"})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	manager := queuestate.NewTransitionController(queueStateStorageFactory{backend: s.appStorage}, queueStateSourceFactory{}, queuelog.NewMaterializer(tally.NoopScope))
 	for _, tc := range []struct {
 		name    string
@@ -123,7 +128,6 @@ func (s *StovepipeE2ESuite) TestQueueStatusErrors() {
 	}{
 		{"missing queue", &pb.GetQueueStatusRequest{}, codes.InvalidArgument},
 		{"unregistered queue", &pb.GetQueueStatusRequest{Queue: "unregistered"}, codes.NotFound},
-		{"unknown commit", &pb.GetQueueStatusRequest{Queue: queueStateTestQueue, ChangeUri: "unknown"}, codes.FailedPrecondition},
 	} {
 		s.Run(tc.name, func() {
 			response, err := s.client.GetQueueStatus(s.ctx, tc.request)

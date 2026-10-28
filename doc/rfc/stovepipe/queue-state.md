@@ -50,7 +50,7 @@ Suppose commits arrive in order A through G, with enablement changes at A, D and
 
 C and F need no validation requests. Their ancestry relative to the boundaries determines the answer.
 
-Registration starts a queue as disabled version 1, with no boundary; this covers commits before its first enablement. Missing state is an error, not disabled. If changes share a boundary, the highest version wins. Versions order changes; timestamps do not.
+The first `Ingest` call initializes a configured queue as disabled version 1, with no boundary, before applying an optional enablement decision. Initialization also adopts existing queue rows without enablement and preserves their pipeline fields. No separate startup registration is required. The initial disabled state covers commits before its first enablement. Missing state is an error, not disabled. If changes share a boundary, the highest version wins. Versions order changes; timestamps do not.
 
 `Ingest` accepts optional `ENABLED` or `DISABLED` enablement and returns the applied or observed status with the request ID. Omission or `UNKNOWN` preserves state; repeating the current setting preserves its boundary and version. A change records an inclusive boundary at the commit being ingested, without backfilling earlier requests. Enablement does not pause ingestion or processing. Deploy server support before callers send decisions, since older servers ignore the field.
 
