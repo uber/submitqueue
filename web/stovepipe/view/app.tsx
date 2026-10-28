@@ -52,7 +52,7 @@ function Page({ model }: { model: StovepipePageModel }) {
   const views = requestViews(model.key);
   return (
     <Block className={model.kind === "request" ? "sq-app sq-stovepipe-request" : "sq-app"} backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
-      minHeight="100vh" display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows="auto 1fr auto"
+      minHeight="100vh" height={model.kind === "request" ? "100dvh" : "auto"} display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows={model.kind === "request" ? "auto minmax(min-content, 1fr) auto" : "auto 1fr auto"}
       paddingLeft="scale600" paddingRight="scale600">
       <Block as="header" display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale600"
         paddingTop="scale300" paddingBottom="scale300">
@@ -102,7 +102,7 @@ function Page({ model }: { model: StovepipePageModel }) {
             {(history) => (
               <Section cacheKey={views.projectsHref} result={model.projectStatus}>
                 {(projects) => (
-                  <Block display="grid" gridTemplateColumns="minmax(0, 1fr)" gridGap="scale400">
+                  <Block className="sq-stovepipe-request-content" display="flex" flexDirection="column" gridGap="scale400">
                     <section aria-label="Request status">
                       <RequestDetails request={history?.request ?? null} repositoryResult={projects && <RecordedResult degree={projects.repositoryBreakageDegree} />} />
                     </section>
@@ -112,7 +112,7 @@ function Page({ model }: { model: StovepipePageModel }) {
                       ))}
                     </RequestViewNavigation>
                     {views.tabs.map(tab => (
-                      <section key={tab.id} aria-label={tab.label} hidden={!tab.selected}>
+                      <section key={tab.id} className="sq-stovepipe-request-view" aria-label={tab.label} hidden={!tab.selected}>
                         <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>
                         {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
                           : tab.id === "history" ? history && <History events={history.events} />

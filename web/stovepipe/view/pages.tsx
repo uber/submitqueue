@@ -97,6 +97,7 @@ export function History({ events }: { events: HistoryEventModel[] }) {
     <Table
       label="Request history"
       headers={["Time", "Type", "State or event", "Outcome"]}
+      fill
     >
       {events.map((event) => (
         <StyledTableBodyRow key={event.id}>

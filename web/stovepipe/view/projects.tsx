@@ -54,7 +54,7 @@ export function ProjectResults({ model, pageKey }: { model: ProjectStatusModel; 
   return (
     <>
       {renderPagination("top")}
-      <Table key={pageKey} label="Recorded project results" headers={["Project", "Recorded result"]} height="clamp(16rem, 55vh, 36rem)">
+      <Table key={pageKey} label="Recorded project results" headers={["Project", "Recorded result"]} fill>
         {model.projects.map((entry) => (
           <StyledTableBodyRow key={entry.project}>
             <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>

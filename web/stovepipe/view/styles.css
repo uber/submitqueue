@@ -1,5 +1,23 @@
 @import "@submitqueue/web-platform/styles.css";
 
+.sq-stovepipe-request > main,
+.sq-stovepipe-request-view:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
+.sq-stovepipe-request > main > *,
+.sq-stovepipe-request-content > *,
+.sq-stovepipe-request-view > * {
+  flex-shrink: 0;
+}
+
+.sq-stovepipe-request-content,
+.sq-stovepipe-request-view:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+}
+
 .sq-stovepipe-request :is(th, td) {
   padding-top: 6px;
   padding-bottom: 6px;

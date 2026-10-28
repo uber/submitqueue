@@ -391,6 +391,21 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
 });
 
 
+test("fills the available height and scrolls long results within each tab", async ({ page }) => {
+  for (const [view, label] of [["projects", "Recorded project results"], ["history", "Request history"]]) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/web%2Fpagination/request/51?view=${view}`);
+    const table = page.getByRole("region", { name: label, exact: true });
+    const initialHeight = await table.evaluate(element => element.clientHeight);
+    await page.setViewportSize({ width: 1280, height: 1200 });
+    await expect.poll(() => table.evaluate(element => element.clientHeight)).toBeGreaterThan(initialHeight);
+    await table.focus();
+    await page.keyboard.press("End");
+    await expect.poll(() => table.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  }
+});
+
 test("pages through project results without reloading or moving the surrounding page", async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 650 });
   await page.goto("/web%2Fpagination/request/51");
@@ -404,7 +419,6 @@ test("pages through project results without reloading or moving the surrounding 
   await expect.poll(() => projectScroll.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
   await pager.scrollIntoViewIfNeeded();
   const scrollBeforeNext = await page.evaluate(() => window.scrollY);
-  expect(scrollBeforeNext).toBeGreaterThan(0);
   await pager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(rows).toHaveCount(1);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeNext);

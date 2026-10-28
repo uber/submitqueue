@@ -50,6 +50,9 @@ def _pagination_fixture_sql() -> str:
     for i in range(1, 52):
         degree = 1.0 if i == 50 else 0.25 if i == 1 else 0
         statements.append(
+            f"INSERT INTO request_log VALUES ('web/pagination','51','fact-{i}',{2000+i},'','validation_fact_recorded',1,'','{{}}');"
+        )
+        statements.append(
             f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
         )
         statements.append(
