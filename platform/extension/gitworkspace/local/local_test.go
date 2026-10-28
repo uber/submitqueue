@@ -16,17 +16,86 @@ package local
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/extension/gitworkspace"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 )
 
-func TestExec_Success(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
+func newWorkspace(t *testing.T, ctx context.Context, p Params) gitworkspace.Workspace {
+	t.Helper()
+	f, err := NewFactory(p)
 	require.NoError(t, err)
-	defer ws.Close()
+	ws, err := f.For(ctx, "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ws.Close() })
+	return ws
+}
+
+func pinnedRuntime(t *testing.T) Runtime {
+	t.Helper()
+	executable := gitexectest.Git(t)
+	return Runtime{
+		Executable:  executable,
+		ExecPath:    filepath.Dir(executable),
+		TemplateDir: filepath.Dir(gitexectest.Runfile(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")),
+	}
+}
+
+func TestNewFactory(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  Params
+		wantErr bool
+	}{
+		{name: "directory only", params: Params{Dir: "/repo"}},
+		{name: "committer identity", params: Params{Dir: "/repo", CommitterName: "Runway", CommitterEmail: "runway@example.com"}},
+		{name: "committer name without email", params: Params{Dir: "/repo", CommitterName: "Runway"}, wantErr: true},
+		{name: "committer email without name", params: Params{Dir: "/repo", CommitterEmail: "runway@example.com"}, wantErr: true},
+		{name: "relative runtime path", params: Params{Dir: "/repo", Runtime: Runtime{Executable: "git", ExecPath: "/git-core", TemplateDir: "/templates"}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewFactory(tt.params)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestExec_GitRunsOnPinnedRuntimeAsCommitter(t *testing.T) {
+	// The ambient identity must not reach the commit: the pinned runtime scrubs
+	// the environment, so only the configured committer can be recorded.
+	t.Setenv("GIT_COMMITTER_NAME", "ambient")
+	dir := t.TempDir()
+	ws := newWorkspace(t, context.Background(), Params{
+		Dir:            dir,
+		Runtime:        pinnedRuntime(t),
+		CommitterName:  "Runway",
+		CommitterEmail: "runway@example.com",
+	})
+
+	outputs, err := ws.Exec([]gitworkspace.Command{
+		{Alias: "init", Bin: "git", Args: []string{"init", "-q", "-b", "main"}},
+		{Alias: "commit", Bin: "git", Args: []string{"commit", "-q", "--allow-empty", "-m", "seed", "--author", "Jane Dev <jane@example.com>"}},
+		{Alias: "idents", Bin: "git", Args: []string{"log", "-1", "--format=%an <%ae>|%cn <%ce>"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, outputs, 3)
+	for _, out := range outputs {
+		require.Equal(t, int32(0), out.ExitCode, "%s: %s", out.Alias, out.Stderr)
+	}
+	assert.Equal(t, "Jane Dev <jane@example.com>|Runway <runway@example.com>\n", outputs[2].Stdout)
+}
+
+func TestExec_Success(t *testing.T) {
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "echo", Bin: "echo", Args: []string{"hello"}},
@@ -39,9 +108,7 @@ func TestExec_Success(t *testing.T) {
 }
 
 func TestExec_MultipleCommands(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "first", Bin: "echo", Args: []string{"one"}},
@@ -56,9 +123,7 @@ func TestExec_MultipleCommands(t *testing.T) {
 }
 
 func TestExec_SkipsAfterFailure(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "ok", Bin: "echo", Args: []string{"fine"}},
@@ -76,11 +141,9 @@ func TestExec_SkipsAfterFailure(t *testing.T) {
 
 func TestExec_StatePersistsAcrossCalls(t *testing.T) {
 	dir := t.TempDir()
-	ws, err := NewFactory(Params{Dir: dir}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: dir})
 
-	_, err = ws.Exec([]gitworkspace.Command{
+	_, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "write", Bin: "sh", Args: []string{"-c", "echo content > testfile"}},
 	})
 	require.NoError(t, err)
@@ -95,9 +158,7 @@ func TestExec_StatePersistsAcrossCalls(t *testing.T) {
 }
 
 func TestExec_Stdin(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "cat", Bin: "cat", Stdin: "from stdin"},
@@ -109,9 +170,7 @@ func TestExec_Stdin(t *testing.T) {
 }
 
 func TestExec_Stderr(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "err", Bin: "sh", Args: []string{"-c", "echo oops >&2"}},
@@ -123,9 +182,7 @@ func TestExec_Stderr(t *testing.T) {
 }
 
 func TestExec_InvalidBinary(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec([]gitworkspace.Command{
 		{Alias: "bad", Bin: "nonexistent-binary-xyz"},
@@ -140,9 +197,7 @@ func TestExec_InvalidBinary(t *testing.T) {
 }
 
 func TestExec_EmptyBatch(t *testing.T) {
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(context.Background(), "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, context.Background(), Params{Dir: t.TempDir()})
 
 	outputs, err := ws.Exec(nil)
 	require.NoError(t, err)
@@ -151,9 +206,7 @@ func TestExec_EmptyBatch(t *testing.T) {
 
 func TestExec_CancelledContextStopsCommands(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	ws, err := NewFactory(Params{Dir: t.TempDir()}).For(ctx, "")
-	require.NoError(t, err)
-	defer ws.Close()
+	ws := newWorkspace(t, ctx, Params{Dir: t.TempDir()})
 
 	cancel()
 	outputs, err := ws.Exec([]gitworkspace.Command{
