@@ -53,11 +53,11 @@ func (m *gitMerger) ensureObject(ctx context.Context, ref changeRef) error {
 		return nil
 	}
 
-	if _, err := m.run(ctx, nil, "fetch", m.remote, ref.SHA); err == nil && m.hasCommit(ctx, ref.SHA) {
+	if _, err := m.run(ctx, "fetch", m.remote, ref.SHA); err == nil && m.hasCommit(ctx, ref.SHA) {
 		return nil
 	}
 	if ref.Ref != "" {
-		if _, err := m.run(ctx, nil, "fetch", m.remote, ref.Ref); err == nil && m.hasCommit(ctx, ref.SHA) {
+		if _, err := m.run(ctx, "fetch", m.remote, ref.Ref); err == nil && m.hasCommit(ctx, ref.SHA) {
 			return nil
 		}
 	}
@@ -65,7 +65,7 @@ func (m *gitMerger) ensureObject(ctx context.Context, ref changeRef) error {
 	// Both fetches failed. Distinguish "the remote is unreachable right now"
 	// (infrastructure, worth retrying) from "the remote is fine and simply does
 	// not have this commit" (terminal — no number of retries conjures it).
-	if _, err := m.run(ctx, nil, "ls-remote", "--exit-code", m.remote, "HEAD"); err != nil {
+	if _, err := m.run(ctx, "ls-remote", "--exit-code", m.remote, "HEAD"); err != nil {
 		return fmt.Errorf("remote %s unreachable while resolving commit %s: %w", m.remote, ref.SHA, err)
 	}
 
@@ -79,7 +79,7 @@ func (m *gitMerger) ensureObject(ctx context.Context, ref changeRef) error {
 
 // hasCommit reports whether sha names a commit object in the local checkout.
 func (m *gitMerger) hasCommit(ctx context.Context, sha string) bool {
-	_, err := m.run(ctx, nil, "cat-file", "-e", sha+"^{commit}")
+	_, err := m.run(ctx, "cat-file", "-e", sha+"^{commit}")
 	return err == nil
 }
 
@@ -101,7 +101,7 @@ func (m *gitMerger) checkStale(ctx context.Context, refs []changeRef) error {
 		if ref.Ref == "" {
 			continue
 		}
-		out, err := m.run(ctx, nil, "ls-remote", m.remote, ref.Ref)
+		out, err := m.run(ctx, "ls-remote", m.remote, ref.Ref)
 		if err != nil {
 			return fmt.Errorf("git ls-remote %s %s: %w", m.remote, ref.Ref, err)
 		}
