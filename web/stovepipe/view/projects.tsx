@@ -53,6 +53,11 @@ export function ProjectResults({ model, pageKey }: { model: ProjectStatusModel; 
   }
   return (
     <>
+      <ParagraphSmall color="contentSecondary">{model.complete
+        ? "Project result recording is complete."
+        : "Project result recording is still in progress; more results may arrive."}</ParagraphSmall>
+      <ParagraphSmall color="contentSecondary">Results updated: {model.updatedAtMs === "0"
+        ? "Unknown" : <Timestamp value={model.updatedAtMs} />}</ParagraphSmall>
       {renderPagination("top")}
       <Table key={pageKey} label="Recorded project results" headers={["Project", "Recorded result"]} fill>
         {model.projects.map((entry) => (
@@ -63,12 +68,7 @@ export function ProjectResults({ model, pageKey }: { model: ProjectStatusModel; 
         ))}
       </Table>
       {!model.projects.length && <ParagraphSmall>No project results recorded on this page.</ParagraphSmall>}
-      <ParagraphSmall color="contentSecondary">{model.complete
-        ? "Project result recording is complete."
-        : "Project result recording is still in progress; more results may arrive."}</ParagraphSmall>
       {renderPagination("bottom")}
-      <ParagraphSmall color="contentSecondary">Results updated: {model.updatedAtMs === "0"
-        ? "Unknown" : <Timestamp value={model.updatedAtMs} />}</ParagraphSmall>
     </>
   );
 }
