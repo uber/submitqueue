@@ -28,7 +28,7 @@ const RequestViewNavigation = styled("nav", ({ $theme }) => ({
 }));
 
 const requestViewTabs = [
-  { id: "projects", label: "Project results" },
+  { id: "projects", label: "Project Results" },
   { id: "history", label: "History" },
   { id: "issues", label: "Build and Test Issues" },
   { id: "fix-attempts", label: "Fix Attempts" },

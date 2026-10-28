@@ -74,7 +74,7 @@ it("displays the backend summary above the retained history", () => {
   expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(
     screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
-  ).toEqual(["Project results"]);
+  ).toEqual(["Project Results"]);
 });
 it("links queue entries by request ID even when the change URI is missing", () => {
   if (!model.history.ok) throw new Error("No summary");
@@ -133,7 +133,7 @@ it("discards previous results when the request changes", () => {
 
 it("renders recorded project results, completion and shareable pagination", () => {
   render(<StovepipeApp model={model} />);
-  const projects = screen.getByRole("region", { name: "Project results" });
+  const projects = screen.getByRole("region", { name: "Project Results" });
   const table = within(projects).getByRole("table", { name: "Recorded project results" });
   expect(within(table).queryByText(/Repository/)).toBeNull();
   expect(within(table).getByRole("columnheader", { name: "Project" })).toBeVisible();
@@ -241,7 +241,7 @@ it("shows history when repository and project results are unavailable", async ()
 
 
 it.each([
-  ["projects", "Project results"],
+  ["projects", "Project Results"],
   ["history", "History"],
   ["issues", "Build and Test Issues"],
   ["fix-attempts", "Fix Attempts"],
@@ -251,7 +251,7 @@ it.each([
   render(<StovepipeApp model={{ ...model, key: `/repo%2Fmain/request/7?${query}` }} />);
   const navigation = screen.getByRole("navigation", { name: "Request views" });
   const projectsHref = "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D&projectPageSize=25&filter=keep";
-  expect(within(navigation).getByRole("link", { name: "Project results" })).toHaveAttribute("href", projectsHref);
+  expect(within(navigation).getByRole("link", { name: "Project Results" })).toHaveAttribute("href", projectsHref);
   expect(within(navigation).getByRole("link", { name: "History" })).toHaveAttribute("href", projectsHref + "&view=history");
   expect(within(navigation).getByRole("link", { name: "Build and Test Issues" })).toHaveAttribute("href", projectsHref + "&view=issues");
   expect(within(navigation).getByRole("link", { name: "Fix Attempts" })).toHaveAttribute("href", projectsHref + "&view=fix-attempts");

@@ -323,7 +323,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     await expect(page.getByRole("heading", { level: 2 })).toHaveText(["History"]);
     await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request-history.png` });
-    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Project results", exact: true }).click();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Project Results", exact: true }).click();
     await expect(page.getByRole("table", { name: "Recorded project results" })).toBeVisible();
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request.png`,
@@ -331,7 +331,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
   });
   await test.step("Read recorded project results and reload their cursor", async () => {
     const status = page.getByRole("region", { name: "Request status", exact: true });
-    const section = page.getByRole("region", { name: "Project results", exact: true });
+    const section = page.getByRole("region", { name: "Project Results", exact: true });
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(50);
     await expect(projects.locator("tbody tr").nth(0).getByRole("cell", { name: "project-50", exact: true })).toBeVisible();
@@ -374,7 +374,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
   });
   await test.step("Keep another request's missing results distinct from green", async () => {
     await page.goto("/web%2Fpagination/request/49");
-    const section = page.getByRole("region", { name: "Project results", exact: true });
+    const section = page.getByRole("region", { name: "Project Results", exact: true });
     await expect(section.getByText("No project results recorded on this page.", { exact: true })).toBeVisible();
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(0);
@@ -433,7 +433,7 @@ test("pages through project results and switches views without reloading the doc
   await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
   expect(new URL(page.url()).searchParams.get("view")).toBe("history");
-  await views.getByRole("link", { name: "Project results", exact: true }).click();
+  await views.getByRole("link", { name: "Project Results", exact: true }).click();
   await expect(projects.locator("tbody tr")).toHaveCount(1);
   await page.goBack();
   await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
@@ -504,7 +504,7 @@ test("changes project page size without reloading and retains it across paging a
     expect(new URL(page.url()).searchParams.get("view")).toBe(view);
     expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
     expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
-    await views.getByRole("link", { name: "Project results", exact: true }).click();
+    await views.getByRole("link", { name: "Project Results", exact: true }).click();
     await expect(rows).toHaveCount(25);
     expect(await rows.locator("td:first-child").allTextContents()).toEqual(nextProjects);
   }
@@ -521,7 +521,7 @@ test("changes project page size without reloading and retains it across paging a
   await views.getByRole("link", { name: "History", exact: true }).click();
   await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("100");
-  await views.getByRole("link", { name: "Project results", exact: true }).click();
+  await views.getByRole("link", { name: "Project Results", exact: true }).click();
   await expect(rows).toHaveCount(51);
   await selectSize("top", "200");
   await expect(rows).toHaveCount(51);
