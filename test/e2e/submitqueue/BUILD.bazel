@@ -40,6 +40,9 @@ go_test(
         "SQ_GITHUB_TEST_REQUIRED",
         "SQ_GITHUB_TOKEN",
     ],
+    # One shard per top-level suite. Each starts its own Compose stack, so they
+    # run in parallel instead of adding up to the 300s default timeout.
+    shard_count = 3,
     tags = [
         "e2e",
         "integration",

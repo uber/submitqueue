@@ -147,7 +147,11 @@ The equal case matters as much as the newer one. A redelivery that finds its own
 
 ## Observability
 
-Two things are measured here, because this is where greenness becomes known. Both need a `SourceControl` lookup of a commit's creation time.
+Project-status work has two operation lifecycles under the record controller scope: `resolve_project_results` covers resolver selection, execution, and result validation; `persist_project_facts` covers the project fact writes, degree indexes, and completion-log materialization. Both use `LongLatencyBuckets` because resolution can call external analysis services and persistence spans an entire batch of storage round trips. Each emits a `.start` counter and `.finish` duration histogram tagged with `result=success|error|cancel`, inheriting metric tags from the consumer context, including the queue. The finish histogram also supplies completion counts; no separate completion counter is emitted.
+
+Successful resolution records the validated result count in `resolve_project_results.projects` using `CountBuckets`, including zero for valid empty results. Empty results do not distinguish disabled resolution, skipped analysis, and a completed analysis with no projects; that distinction belongs to the resolver implementation. These are per-attempt measurements: redelivery repeats resolution and persistence and emits another sample, even when existing immutable facts are adopted. Dependency-specific resolution metrics belong to the resolver implementation rather than this controller.
+
+Two additional signals are measured here, because this is where greenness becomes known. Both need a `SourceControl` lookup of a commit's creation time.
 
 - **Last-green age.** A gauge carrying the creation timestamp of the commit the bookmark now points at, emitted once the bookmark write is durable. It is a timestamp rather than an elapsed time so that subtracting it at scrape time gives the current age, and a queue that stops going green keeps reporting a staler value without the stage re-emitting anything.
 - **Failure-detection latency.** A histogram of how long the break a build failed on went undetected, measured from the creation time of the base URI it validated against. A distribution rather than a gauge, because what matters is how long breaks typically survive, not how long the last one did. There is no later moment to sample it from, since an elapsed time only means something against the failure that just became known, so this lookup cannot move off the delivery path onto a clock.

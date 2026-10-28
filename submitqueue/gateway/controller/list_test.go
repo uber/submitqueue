@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -220,6 +222,11 @@ func TestList_Errors(t *testing.T) {
 		{name: "token for another queue", request: entity.ListRequest{Queue: "q", PageToken: validToken(func(tok *listPageToken) { tok.Queue = "other" })}, wantInvalid: true},
 		{name: "mismatched lower bound", request: withToken(boundedListRequest("q", 101, 200), goodToken), wantInvalid: true},
 		{name: "mismatched upper bound", request: withToken(entity.ListRequest{Queue: "q", ReceivedBeforeMs: 0, HasReceivedBeforeMs: true}, goodToken), wantInvalid: true},
+		{name: "empty status", request: withStatuses(boundedListRequest("q", 1, 2), entity.RequestStatusUnknown), wantInvalid: true},
+		{name: "too many statuses", request: withStatuses(boundedListRequest("q", 1, 2), slices.Repeat([]entity.RequestStatus{entity.RequestStatusLanded}, maxListStatuses+1)...), wantInvalid: true},
+		{name: "token with non-canonical statuses", request: entity.ListRequest{Queue: "q", PageToken: validToken(func(tok *listPageToken) { tok.Statuses = []string{"landed", "error"} })}, wantInvalid: true},
+		{name: "statuses differ from token", request: withStatuses(withToken(entity.ListRequest{Queue: "q"}, validToken(func(tok *listPageToken) { tok.Statuses = []string{"landed"} })), entity.RequestStatusError), wantInvalid: true},
+		{name: "statuses added to unfiltered token", request: withStatuses(withToken(entity.ListRequest{Queue: "q"}, goodToken), entity.RequestStatusLanded), wantInvalid: true},
 		{
 			name: "receipt scan failure", request: boundedListRequest("q", 1, 2), wantErr: backendErr,
 			setup: func(f listTestFixture) {
@@ -270,4 +277,144 @@ func TestList_StorageResolutionFailure(t *testing.T) {
 
 	assert.ErrorIs(t, err, backendErr)
 	assert.Equal(t, entity.ListResult{}, result)
+}
+
+func withStatuses(req entity.ListRequest, statuses ...entity.RequestStatus) entity.ListRequest {
+	req.Statuses = statuses
+	return req
+}
+
+func listedReceipt(id string, receivedAtMs int64) entity.RequestReceipt {
+	return entity.RequestReceipt{RequestID: id, Queue: "q", ReceivedAtMs: receivedAtMs}
+}
+
+func listedSummary(receipt entity.RequestReceipt, status entity.RequestStatus) entity.RequestSummary {
+	return entity.RequestSummary{RequestID: receipt.RequestID, Queue: "q", ReceivedAtMs: receipt.ReceivedAtMs, Status: status}
+}
+
+func TestList_StatusFilter(t *testing.T) {
+	landed, errored := entity.RequestStatusLanded, entity.RequestStatusError
+	r := []entity.RequestReceipt{
+		listedReceipt("6", 160), listedReceipt("5", 150), listedReceipt("4", 140),
+		listedReceipt("3", 130), listedReceipt("2", 120), listedReceipt("1", 110),
+	}
+	cursor := func(receipt entity.RequestReceipt) basestorage.RequestReceiptCursor {
+		return basestorage.RequestReceiptCursor{ReceivedAtMs: receipt.ReceivedAtMs, RequestID: receipt.RequestID}
+	}
+	window := func(limit int, before basestorage.RequestReceiptCursor) basestorage.RequestReceiptRange {
+		return basestorage.RequestReceiptRange{ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: limit, Before: before}
+	}
+	type read struct {
+		query    basestorage.RequestReceiptRange
+		receipts []entity.RequestReceipt
+	}
+	tests := []struct {
+		name     string
+		statuses map[string]entity.RequestStatus
+		reads    []read
+		wantIDs  []string
+		// wantLast is the receipt a continuation resumes after; empty means the range was exhausted.
+		wantLast string
+	}{
+		{
+			name:     "keeps reading past non-matching receipts until the page fills",
+			statuses: map[string]entity.RequestStatus{"6": errored, "5": landed, "4": errored, "3": landed, "2": landed},
+			reads: []read{
+				{query: window(3, basestorage.RequestReceiptCursor{}), receipts: r[0:3]},
+				{query: window(2, cursor(r[1])), receipts: r[2:4]},
+				{query: window(2, cursor(r[2])), receipts: r[3:5]},
+			},
+			wantIDs: []string{"5", "3"}, wantLast: "3",
+		},
+		{
+			name:     "returns a partial page without a token when the range is exhausted",
+			statuses: map[string]entity.RequestStatus{"2": landed, "1": errored},
+			reads:    []read{{query: window(3, basestorage.RequestReceiptCursor{}), receipts: r[4:6]}},
+			wantIDs:  []string{"2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newListTestFixture(t)
+			f.queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
+			var calls []any
+			for _, read := range tt.reads {
+				calls = append(calls, f.receipts.EXPECT().List(gomock.Any(), read.query).Return(read.receipts, nil))
+				for _, receipt := range read.receipts[:min(len(read.receipts), read.query.Limit-1)] {
+					f.summaries.EXPECT().Get(gomock.Any(), receipt.RequestID).Return(listedSummary(receipt, tt.statuses[receipt.RequestID]), nil)
+				}
+			}
+			gomock.InOrder(calls...)
+			req := withStatuses(boundedListRequest("q", 100, 200), landed, landed)
+			req.PageSize = 2
+
+			result, err := f.controller.List(context.Background(), req)
+
+			require.NoError(t, err)
+			ids := make([]string, 0, len(result.Requests))
+			for _, summary := range result.Requests {
+				ids = append(ids, summary.RequestID)
+			}
+			assert.Equal(t, tt.wantIDs, ids)
+			if tt.wantLast == "" {
+				assert.Empty(t, result.NextPageToken)
+				return
+			}
+			token, err := decodeListPageToken(result.NextPageToken)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLast, token.LastRequestID)
+			assert.Equal(t, []string{"landed"}, token.Statuses)
+		})
+	}
+}
+
+func TestList_StatusFilterStopsAtReadBudget(t *testing.T) {
+	f := newListTestFixture(t)
+	f.queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
+	next := int64(100 + maxFilteredListReceipts + 1)
+	f.receipts.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, query basestorage.RequestReceiptRange) ([]entity.RequestReceipt, error) {
+			batch := make([]entity.RequestReceipt, 0, query.Limit)
+			for range query.Limit {
+				batch = append(batch, listedReceipt(fmt.Sprint(next), next))
+				next--
+			}
+			return batch, nil
+		}).AnyTimes()
+	f.summaries.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, id string) (entity.RequestSummary, error) {
+			var receivedAtMs int64
+			_, err := fmt.Sscan(id, &receivedAtMs)
+			require.NoError(t, err)
+			return listedSummary(listedReceipt(id, receivedAtMs), entity.RequestStatusError), nil
+		}).Times(maxFilteredListReceipts)
+
+	result, err := f.controller.List(context.Background(), withStatuses(boundedListRequest("q", 1, 10_000), entity.RequestStatusLanded))
+
+	require.NoError(t, err)
+	assert.Empty(t, result.Requests)
+	require.NotEmpty(t, result.NextPageToken)
+}
+
+func TestList_ContinuationTakesTokenStatuses(t *testing.T) {
+	f := newListTestFixture(t)
+	f.queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
+	token := mustEncodeListPageToken(t, listPageToken{
+		Version: listPageTokenVersion, Queue: "q", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200,
+		LastReceivedAtMs: 150, LastRequestID: "5", Statuses: []string{"landed"},
+	})
+	receipts := []entity.RequestReceipt{listedReceipt("4", 140), listedReceipt("3", 130)}
+	f.receipts.EXPECT().List(gomock.Any(), basestorage.RequestReceiptRange{
+		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 51,
+		Before: basestorage.RequestReceiptCursor{ReceivedAtMs: 150, RequestID: "5"},
+	}).Return(receipts, nil)
+	f.summaries.EXPECT().Get(gomock.Any(), "4").Return(listedSummary(receipts[0], entity.RequestStatusError), nil)
+	f.summaries.EXPECT().Get(gomock.Any(), "3").Return(listedSummary(receipts[1], entity.RequestStatusLanded), nil)
+
+	result, err := f.controller.List(context.Background(), entity.ListRequest{Queue: "q", PageToken: token})
+
+	require.NoError(t, err)
+	require.Len(t, result.Requests, 1)
+	assert.Equal(t, "3", result.Requests[0].RequestID)
+	assert.Empty(t, result.NextPageToken)
 }

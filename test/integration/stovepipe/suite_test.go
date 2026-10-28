@@ -123,7 +123,7 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 
 	const queue = "monorepo/main"
 
-	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})
+	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue, Enablement: pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED})
 	require.NoError(t, err, "Ingest failed")
 	require.NotEmpty(t, resp.Id, "minted request id should not be empty")
 	id := resp.Id

@@ -193,7 +193,7 @@ func (f *stateFixture) setTip(tip string) {
 func (f *stateFixture) applyState(t *testing.T, state entity.QueueEnablement, tip string) (PreparedChange, entity.QueueState) {
 	t.Helper()
 	f.setTip(tip)
-	change, err := f.manager.Prepare(context.Background(), "repo/main", state)
+	change, err := f.manager.Prepare(context.Background(), "repo/main", state, tip)
 	require.NoError(t, err)
 	applied, err := f.manager.Apply(context.Background(), change)
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestStateCommittedHistoryAndPreparedReplay(t *testing.T) {
 func TestStateNoOpPreservesBoundaryAndReplays(t *testing.T) {
 	f := newStateFixture()
 	initial := initializeFixture(t, f)
-	noop, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementDisabled)
+	noop, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementDisabled, "A")
 	require.NoError(t, err)
 	require.Zero(t, f.source.calls)
 	state, err := f.manager.Apply(context.Background(), noop)
@@ -263,19 +263,19 @@ func TestStateNoOpPreservesBoundaryAndReplays(t *testing.T) {
 func TestStatePartialLogWriteBlocksNextTransition(t *testing.T) {
 	f := newStateFixture()
 	initializeFixture(t, f)
-	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.NoError(t, err)
 	f.beforeUpdate = func() { f.logCreateErr = errors.New("history unavailable") }
 	_, err = f.manager.Apply(context.Background(), change)
 	require.ErrorIs(t, err, f.logCreateErr)
 	require.Equal(t, int64(2), f.state.Version)
 	require.Len(t, f.logs, 1)
-	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementDisabled)
+	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementDisabled, "A")
 	require.ErrorIs(t, err, f.logCreateErr)
 	require.Equal(t, int64(2), f.state.Version)
 	f.logCreateErr = nil
 	f.clock = 9000
-	noop, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	noop, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.NoError(t, err)
 	_, err = f.manager.Apply(context.Background(), noop)
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestStateUncertainWriteReconciliation(t *testing.T) {
 		t.Run(map[bool]string{false: "failed before commit", true: "committed before connection failed"}[committed], func(t *testing.T) {
 			f := newStateFixture()
 			initializeFixture(t, f)
-			change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+			change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 			require.NoError(t, err)
 			f.updateErr = errors.New("connection lost")
 			f.commitOnError = committed
@@ -320,10 +320,10 @@ func TestStateUncertainWriteReconciliation(t *testing.T) {
 func TestStateCompetingPreparedChanges(t *testing.T) {
 	f := newStateFixture()
 	initializeFixture(t, f)
-	first, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	first, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.NoError(t, err)
 	f.setTip("B")
-	second, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	second, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "B")
 	require.NoError(t, err)
 	f.beforeUpdate = func() { _, err := f.manager.Apply(context.Background(), second); require.NoError(t, err) }
 	_, err = f.manager.Apply(context.Background(), first)
@@ -332,6 +332,17 @@ func TestStateCompetingPreparedChanges(t *testing.T) {
 	require.Len(t, f.logs, 2)
 	_, err = f.manager.Apply(context.Background(), first)
 	require.ErrorIs(t, err, storage.ErrVersionMismatch)
+}
+
+func TestStateUsesSuppliedBoundaryWhenHeadAdvances(t *testing.T) {
+	f := newStateFixture()
+	initializeFixture(t, f)
+	f.setTip("D")
+	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
+	require.NoError(t, err)
+	applied, err := f.manager.Apply(context.Background(), change)
+	require.NoError(t, err)
+	require.Equal(t, "A", applied.EffectiveFromCommitURI)
 }
 
 func TestStateBoundaryAndDecisionValidation(t *testing.T) {
@@ -343,6 +354,7 @@ func TestStateBoundaryAndDecisionValidation(t *testing.T) {
 	}{
 		{"equal boundary", "A", entity.QueueEnablementDisabled, nil},
 		{"forward boundary", "D", entity.QueueEnablementDisabled, nil},
+		{"empty boundary", "", entity.QueueEnablementDisabled, ErrInvalidChange},
 		{"backward boundary", "before", entity.QueueEnablementDisabled, ErrInvalidChange},
 		{"rewritten lineage", "other", entity.QueueEnablementDisabled, sourcecontrol.ErrNotFound},
 		{"unknown enablement", "D", entity.QueueEnablementUnknown, ErrInvalidChange},
@@ -355,7 +367,7 @@ func TestStateBoundaryAndDecisionValidation(t *testing.T) {
 			if tc.tip == "before" {
 				f.source.sc = fixedLatestSource{SourceControl: scfake.New(sourcecontrol.Config{QueueName: "repo/main"}, []string{"G", "A", "before"}), tip: "before"}
 			}
-			change, err := f.manager.Prepare(context.Background(), "repo/main", tc.state)
+			change, err := f.manager.Prepare(context.Background(), "repo/main", tc.state, tc.tip)
 			if tc.want != nil {
 				require.ErrorIs(t, err, tc.want)
 				require.Equal(t, int64(2), f.state.Version)
@@ -369,7 +381,7 @@ func TestStateBoundaryAndDecisionValidation(t *testing.T) {
 	}
 	f := newStateFixture()
 	initializeFixture(t, f)
-	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.NoError(t, err)
 	f.setTip("other")
 	_, err = f.manager.Apply(context.Background(), change)
@@ -406,7 +418,7 @@ func TestStateFailuresAndHistoryCorruption(t *testing.T) {
 	require.False(t, storage.IsNotFound(err))
 	f.state.Version = math.MaxInt64
 	f.state.EffectiveFromCommitURI = "A"
-	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.ErrorIs(t, err, ErrInvalidChange)
 	_, err = f.manager.Apply(context.Background(), PreparedChange{})
 	require.ErrorIs(t, err, ErrInvalidChange)
@@ -427,11 +439,13 @@ func TestStateDependencyFailuresRemainVisible(t *testing.T) {
 	f.createErr = nil
 	initializeFixture(t, f)
 	f.getErr = failure
-	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.ErrorIs(t, err, failure)
 	f.getErr = nil
+	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
+	require.NoError(t, err)
 	f.source.err = failure
-	_, err = f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	_, err = f.manager.Apply(context.Background(), change)
 	require.ErrorIs(t, err, failure)
 	f.source.err = nil
 	f.logGetErr = failure
@@ -444,7 +458,7 @@ func TestStateChangesPreserveOperationalQueueUpdates(t *testing.T) {
 		t.Run(map[bool]string{false: "between prepare and apply", true: "CAS conflict during apply"}[duringWrite], func(t *testing.T) {
 			f := newStateFixture()
 			initializeFixture(t, f)
-			change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+			change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 			require.NoError(t, err)
 			mutateQueue := func() {
 				f.queue.Version++
@@ -485,7 +499,7 @@ func TestStateInitializationAdoptsExistingOperationalQueue(t *testing.T) {
 func TestStateProjectionFailureDoesNotLoseAppliedState(t *testing.T) {
 	f := newStateFixture()
 	initial := initializeFixture(t, f)
-	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled)
+	change, err := f.manager.Prepare(context.Background(), "repo/main", entity.QueueEnablementEnabled, "A")
 	require.NoError(t, err)
 	f.beforeUpdate = func() { f.summaryUpdateErr = errors.New("projection unavailable") }
 	_, err = f.manager.Apply(context.Background(), change)

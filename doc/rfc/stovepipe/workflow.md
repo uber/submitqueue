@@ -114,7 +114,7 @@ What runs is one pass per Request. It establishes whole-repository greenness, an
                                    └──────────────────────────────┘
 ```
 
-1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward.
+1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward. It can also record an optional [enablement decision](queue-state.md) at that head.
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, publishes a **hook event** announcing that validation of the commit has begun, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
 4. **buildsignal** — polls until terminal, records the status, releases the build slot, persists the winning Request outcome, and advances a successful-build baseline before publishing the RequestID to `record`. Slot release and baseline advancement are separate updates, so the next admission may still select the previous baseline.
@@ -128,7 +128,7 @@ An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` ha
 
 | Controller | In | Out | One-line role |
 |---|---|---|---|
-| **ingest** | Queue name (from poller) | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
+| **ingest** | Queue name and optional enablement | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
 | **process** | RequestID | build, hook topic | Build strategy, concurrency gate, backlog coalescing; announce validation start on admit → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
 | **buildsignal** | BuildID | record, buildanalysis | Poll until terminal, release capacity, persist the outcome, advance a successful baseline, and publish downstream work |

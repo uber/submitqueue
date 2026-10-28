@@ -25,14 +25,23 @@ import (
 // ProtoToIngestRequest maps the wire IngestRequest to the entity.IngestRequest
 // the controller operates on.
 func ProtoToIngestRequest(req *pb.IngestRequest) entity.IngestRequest {
-	return entity.IngestRequest{
-		Queue: req.GetQueue(),
+	result := entity.IngestRequest{Queue: req.GetQueue()}
+	if req.GetEnablement() != pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN {
+		result.HasEnablement = true
+		switch req.GetEnablement() {
+		case pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED:
+			result.Enablement = entity.QueueEnablementEnabled
+		case pb.QueueEnablement_QUEUE_ENABLEMENT_DISABLED:
+			result.Enablement = entity.QueueEnablementDisabled
+		}
 	}
+	return result
 }
 
 // IngestResultToProto maps the domain result to the wire IngestResponse.
 func IngestResultToProto(result entity.IngestResult) *pb.IngestResponse {
 	return &pb.IngestResponse{
-		Id: result.ID,
+		Id:         result.ID,
+		Enablement: queueEnablementStatusToProto(result.Enablement),
 	}
 }
