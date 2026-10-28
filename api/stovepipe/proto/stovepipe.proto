@@ -223,6 +223,10 @@ message RequestSummary {
     int64 accepted_at_ms = 7;
     // Stable reason for the represented state. Empty when unavailable or inapplicable.
     string outcome_reason = 8;
+    // Total recorded project results; zero when no project results have been recorded.
+    int32 project_count = 9;
+    // Recorded project results with degree above zero.
+    int32 broken_project_count = 10;
 }
 
 // ListRequest selects a page of retained request summaries for one queue.

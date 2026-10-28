@@ -180,6 +180,7 @@ func TestRequestHistorySummaryMapping(t *testing.T) {
 		RequestSummary: entity.RequestSummary{
 			RequestID: "7", Queue: "queue", URI: "uri", BaseURI: "base", State: "future-state",
 			StateTimestampMs: 200, AcceptedAtMs: 100, OutcomeReason: "future-reason",
+			ProjectCount: 3, BrokenProjectCount: 1,
 		},
 	}
 	byID := RequestHistoryByIDToProto(history)
@@ -188,6 +189,7 @@ func TestRequestHistorySummaryMapping(t *testing.T) {
 	want := &pb.RequestSummary{
 		RequestId: "7", Queue: "queue", ChangeUri: "uri", BaseUri: "base", RequestState: "future-state",
 		StateUpdatedAtMs: 200, AcceptedAtMs: 100, OutcomeReason: "future-reason",
+		ProjectCount: 3, BrokenProjectCount: 1,
 	}
 	assert.Equal(t, want, byID.RequestSummary)
 	assert.Equal(t, want, byURI.RequestSummary)

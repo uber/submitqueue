@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -121,6 +122,7 @@ func projectRequestSummaryFacts(summary entity.RequestSummary, log entity.Reques
 			return entity.RequestSummary{}, fmt.Errorf("request summary completion time conflicts with retained log request_id=%q", log.RequestID)
 		}
 		summary.ProjectResultsCompletedAtMs = log.TimestampMs
+		return projectRequestSummaryProjectCounts(summary, log)
 	}
 	if log.State == entity.RequestStateAccepted {
 		if summary.AcceptedAtMs != 0 && summary.AcceptedAtMs != log.TimestampMs {
@@ -128,6 +130,17 @@ func projectRequestSummaryFacts(summary entity.RequestSummary, log entity.Reques
 		}
 		summary.AcceptedAtMs = log.TimestampMs
 	}
+	return summary, nil
+}
+
+func projectRequestSummaryProjectCounts(summary entity.RequestSummary, log entity.RequestLog) (entity.RequestSummary, error) {
+	count, countErr := strconv.ParseInt(log.Metadata[MetadataKeyProjectFactCount], 10, 32)
+	broken, brokenErr := strconv.ParseInt(log.Metadata[MetadataKeyBrokenProjectFactCount], 10, 32)
+	if countErr != nil || brokenErr != nil || count < 0 || broken < 0 || broken > count {
+		return entity.RequestSummary{}, fmt.Errorf("invalid project outcome counts in retained log request_id=%q", log.RequestID)
+	}
+	summary.ProjectCount = int32(count)
+	summary.BrokenProjectCount = int32(broken)
 	return summary, nil
 }
 

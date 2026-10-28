@@ -131,7 +131,7 @@ Immutable Request context such as URI, build strategy, base URI, and terminal bu
 | `build_analysis_abandoned` | Build analysis could not complete; issue observations may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
 | `issue_tracking_abandoned` | Issue tracking stopped before completing a pass; existing issue changes remain, but reconciliation may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
 
-Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Individual project facts remain outside the vocabulary; one batch-completion event summarizes their durable recording.
+Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Individual project facts remain outside the vocabulary; one batch-completion event summarizes their durable recording. Its `project_fact_count` and `broken_project_fact_count` metadata contain the total and the number with degree above zero, counted from persisted facts after their indexes are durable. Project completion projection requires both counts and assigns them together in `RequestSummary` from the retained event.
 
 ### Evolution
 

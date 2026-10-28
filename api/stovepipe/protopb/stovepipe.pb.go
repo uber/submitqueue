@@ -1271,8 +1271,12 @@ type RequestSummary struct {
 	AcceptedAtMs int64 `protobuf:"varint,7,opt,name=accepted_at_ms,json=acceptedAtMs,proto3" json:"accepted_at_ms,omitempty"`
 	// Stable reason for the represented state. Empty when unavailable or inapplicable.
 	OutcomeReason string `protobuf:"bytes,8,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Total recorded project results; zero when no project results have been recorded.
+	ProjectCount int32 `protobuf:"varint,9,opt,name=project_count,json=projectCount,proto3" json:"project_count,omitempty"`
+	// Recorded project results with degree above zero.
+	BrokenProjectCount int32 `protobuf:"varint,10,opt,name=broken_project_count,json=brokenProjectCount,proto3" json:"broken_project_count,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RequestSummary) Reset() {
@@ -1359,6 +1363,20 @@ func (x *RequestSummary) GetOutcomeReason() string {
 		return x.OutcomeReason
 	}
 	return ""
+}
+
+func (x *RequestSummary) GetProjectCount() int32 {
+	if x != nil {
+		return x.ProjectCount
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetBrokenProjectCount() int32 {
+	if x != nil {
+		return x.BrokenProjectCount
+	}
+	return 0
 }
 
 // ListRequest selects a page of retained request summaries for one queue.
@@ -1820,7 +1838,7 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x18project_results_complete\x18\a \x01(\bR\x16projectResultsComplete\x12I\n" +
 	"\bprojects\x18\b \x03(\v2-.uber.submitqueue.stovepipe.ProjectValidationR\bprojects\x12&\n" +
 	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageTokenB\x13\n" +
-	"\x11repository_result\"\xa0\x02\n" +
+	"\x11repository_result\"\xf7\x02\n" +
 	"\x0eRequestSummary\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
@@ -1831,7 +1849,10 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12-\n" +
 	"\x13state_updated_at_ms\x18\x06 \x01(\x03R\x10stateUpdatedAtMs\x12$\n" +
 	"\x0eaccepted_at_ms\x18\a \x01(\x03R\facceptedAtMs\x12%\n" +
-	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReason\"\xf7\x01\n" +
+	"\x0eoutcome_reason\x18\b \x01(\tR\routcomeReason\x12#\n" +
+	"\rproject_count\x18\t \x01(\x05R\fprojectCount\x120\n" +
+	"\x14broken_project_count\x18\n" +
+	" \x01(\x05R\x12brokenProjectCount\"\xf7\x01\n" +
 	"\vListRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x126\n" +
 	"\x17accepted_at_or_after_ms\x18\x02 \x01(\x03H\x00R\x13acceptedAtOrAfterMs\x12.\n" +

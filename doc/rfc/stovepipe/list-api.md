@@ -42,12 +42,18 @@ This is the wire representation of the existing domain `RequestSummary`, not ano
 | `state_updated_at_ms` | int64 | Timestamp of the represented state entry. |
 | `accepted_at_ms` | int64 | Timestamp of the original retained accepted entry; `0` means unknown, otherwise positive and immutable. |
 | `outcome_reason` | string | Reason for the represented state; empty when unavailable or inapplicable. |
+| `project_count` | int32 | Total recorded project results; zero means none recorded. |
+| `broken_project_count` | int32 | Recorded project results with degree above zero. |
 
 The domain already defines a typed [RequestState](../../../stovepipe/entity/request.go). The wire field remains a string to match existing status/history APIs. States and reasons use the existing [public vocabulary](request-log.md#outcome-reasons); clients tolerate future values. Duplicate Ingest calls resolving to the same request produce one row.
 
 ## Data and Storage
 
-All listed fields are materialized in [RequestSummary](../../../stovepipe/entity/request_summary.go), including acceptance time and outcome reason from retained logs. Acceptance time is acceptance-log time, not first RPC receipt time. No new producer signal or per-queue counter is needed.
+All listed fields are materialized in [RequestSummary](../../../stovepipe/entity/request_summary.go), including acceptance time and outcome reason from retained logs. Acceptance time is acceptance-log time, not first RPC receipt time. The `project_facts_recorded` event supplies total and broken counts after all project facts and their indexes are durable. Counts follow persisted facts, including adopted immutable facts, rather than retry-time resolver answers. No per-queue counter is needed.
+
+Counts default to zero before project results are recorded, for empty results, and for older summaries without counts. Clients can show the ratio when `project_count` is positive. Lifecycle updates preserve counts, and completion projection preserves lifecycle timestamps and outcome reasons.
+
+Existing databases must add the defaulted `project_count` and `broken_project_count` summary columns before deploying readers or writers that use them. Defaults leave older counts at zero; historical count backfill is not automatic.
 
 Listing uses an immutable mapping keyed by `(queue, accepted_at_ms, request_id)` for known positive acceptance times, then point-reads the corresponding summaries. This adds one small record per request and bounded extra reads, not another mutable status projection. Existing summary keys and public request IDs remain unchanged; no numeric-key migration is needed.
 

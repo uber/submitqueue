@@ -13,5 +13,7 @@ CREATE TABLE IF NOT EXISTS request_summary (
     accepted_at_ms     BIGINT       NOT NULL DEFAULT 0,
     outcome_reason     VARCHAR(64)  NOT NULL DEFAULT '',
     project_results_completed_at_ms BIGINT NOT NULL DEFAULT 0,
+    project_count INT NOT NULL DEFAULT 0,
+    broken_project_count INT NOT NULL DEFAULT 0,
     PRIMARY KEY (queue, request_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

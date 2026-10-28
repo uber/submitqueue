@@ -123,7 +123,7 @@ Whole-repository degree depends on the outcome `buildsignal` stamped on the Requ
 | `cancelled`     | no fact                       |
 
 
-`DegreePartial` is hard coded to `0.5` for now; it does not measure the fraction of projects failing. Each project fact preserves the degree returned by the resolver.
+`DegreePartial` is hard coded to `0.5` for now; it does not measure the fraction of projects failing. Each project fact preserves the degree returned by the resolver, unless its immutable identity already exists. After persisting every project fact and its degree index, `record` retains total and broken project counts in `project_facts_recorded` for the request summary. Broken means a persisted degree above zero; retries count adopted facts rather than contradictory resolver results. Empty results record zero counts.
 
 ## Last-green advancement (Queue bookmark)
 

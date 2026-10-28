@@ -14,7 +14,7 @@ Request-ID lookup validates the queue and ID, then reads that queue's `RequestLo
 
 At least one retained log record defines the existence of a history. A summary alone does not establish a retained history, and the operational `Request` entity is not required for either read. A returned summary must match the selected queue and request ID; disagreement is an infrastructure consistency error.
 
-The summary is the existing current lifecycle projection maintained by the request-log materializer. It includes request identity, queue, commit URI, baseline URI, current state, state timestamp, acceptance timestamp, and outcome reason. The mapper reuses the public summary representation exposed by List, omitting internal storage versions.
+The summary is the existing current lifecycle projection maintained by the request-log materializer. It includes request identity, queue, commit URI, baseline URI, current state, state timestamp, acceptance timestamp, outcome reason, and recorded project outcome counts. The mapper reuses the public summary representation exposed by List, omitting internal storage versions.
 
 History is read before its summary. The two reads are eventually consistent, not a transactional snapshot: the current summary can represent newer state than the retained events returned by the earlier read, or lag a newly appended state event. The API does not replay the returned events to derive a summary or fabricate missing occurrences from current state.
 

@@ -209,6 +209,7 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 	op := metrics.Begin(c.metricsScope, "persist_project_facts", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
 
+	brokenCount := 0
 	for _, result := range results {
 		fact, _, err := recordValidationFact(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:       request.URI,
@@ -220,6 +221,9 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 		if err != nil {
 			return err
 		}
+		if !fact.IsGreen() {
+			brokenCount++
+		}
 
 		entry, err := entity.NewProjectFactByDegree(fact)
 		if err != nil {
@@ -230,7 +234,7 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 			return fmt.Errorf("failed to index project fact for request %q and project %q: %w", request.ID, fact.Project, err)
 		}
 	}
-	return c.persistProjectFactsRecordedLog(ctx, store, request, len(results))
+	return c.persistProjectFactsRecordedLog(ctx, store, request, len(results), brokenCount)
 }
 
 func validateProjectStatusResults(request entity.Request, results []projectstatus.Result) error {
@@ -254,13 +258,16 @@ func (c *Controller) persistProjectFactsRecordedLog(
 	ctx context.Context,
 	store storage.Storage,
 	request entity.Request,
-	count int,
+	count, brokenCount int,
 ) error {
 	log := requestlog.NewRequestEventLog(
 		request,
 		entity.RequestEventProjectFactsRecorded,
 		"all",
-		map[string]string{requestlog.MetadataKeyProjectFactCount: strconv.Itoa(count)},
+		map[string]string{
+			requestlog.MetadataKeyProjectFactCount:       strconv.Itoa(count),
+			requestlog.MetadataKeyBrokenProjectFactCount: strconv.Itoa(brokenCount),
+		},
 	)
 	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("failed to record project facts for request %s: %w", request.ID, err)

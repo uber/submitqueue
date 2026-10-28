@@ -338,7 +338,7 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
 	).Return([]projectstatus.Result{
 		{Project: "project-a", Degree: entity.DegreeBroken},
-		{Project: "project-b", Degree: entity.DegreeBroken},
+		{Project: "project-b", Degree: entity.DegreeGreen},
 	}, nil)
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 
@@ -379,6 +379,8 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 		assert.Equal(t, testID, fact.RequestID)
 		if fact.Project == "" {
 			assert.Equal(t, entity.DegreePartial, fact.Degree)
+		} else if fact.Project == "project-b" {
+			assert.Equal(t, entity.DegreeGreen, fact.Degree)
 		} else {
 			assert.Equal(t, entity.DegreeBroken, fact.Degree)
 		}
@@ -390,6 +392,7 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	assert.Equal(t, "2", logs[1].Metadata[requestlog.MetadataKeyProjectFactCount])
 	assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", "success")
 	assertRecordOperationMetrics(t, m.metricsScope, "persist_project_facts", "success")
+	assert.Equal(t, "1", logs[1].Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
 }
 
 func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
@@ -608,6 +611,7 @@ func TestProcessRecordsEmptyProjectCompletion(t *testing.T) {
 						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
 							assert.Equal(t, "event/project_facts_recorded/all", log.ID)
 							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
+							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
 							return tt.writeErr
 						}),
 				)
@@ -1497,4 +1501,42 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 	}).Return(nil)
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Len(t, m.hooks.events, 1)
+}
+
+func TestPersistProjectFactsCountsPersistedOutcomes(t *testing.T) {
+	for _, tt := range []struct {
+		name                         string
+		storedDegree, resolvedDegree float64
+		broken                       string
+	}{
+		{name: "new green", storedDegree: entity.DegreeGreen, resolvedDegree: entity.DegreeGreen, broken: "0"},
+		{name: "new partially broken", storedDegree: 0.25, resolvedDegree: 0.25, broken: "1"},
+		{name: "new fully broken", storedDegree: entity.DegreeBroken, resolvedDegree: entity.DegreeBroken, broken: "1"},
+		{name: "adopts existing green", storedDegree: entity.DegreeGreen, resolvedDegree: entity.DegreeBroken, broken: "0"},
+		{name: "adopts existing broken", storedDegree: entity.DegreeBroken, resolvedDegree: entity.DegreeGreen, broken: "1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: tt.storedDegree, RequestID: request.ID, CreatedAt: 10}
+			if tt.storedDegree != tt.resolvedDegree {
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil)
+			} else {
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			}
+			m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			materializer := requestlogmock.NewMockMaterializer(ctrl)
+			c.materializer = materializer
+			materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+				assert.Equal(t, map[string]string{
+					requestlog.MetadataKeyProjectFactCount:       "1",
+					requestlog.MetadataKeyBrokenProjectFactCount: tt.broken,
+				}, log.Metadata)
+				return nil
+			})
+			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: tt.resolvedDegree}}))
+		})
+	}
 }
