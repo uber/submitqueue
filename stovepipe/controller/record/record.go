@@ -69,7 +69,6 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// _opName is the metric operation name shared by every emit in this file.
 const _opName = "record"
 
 // wholeRepositoryProject is the project component of a fact covering the whole
@@ -184,12 +183,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 }
 
-func (c *Controller) resolveProjectResults(ctx context.Context, request entity.Request) ([]projectstatus.Result, error) {
+func (c *Controller) resolveProjectResults(ctx context.Context, request entity.Request) (results []projectstatus.Result, retErr error) {
+	op := metrics.Begin(c.metricsScope, "resolve_project_results", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
+	defer func() { op.Complete(retErr) }()
+
 	resolver, err := c.projectStatusResolverFactory.For(projectstatus.ResolverConfig{QueueName: request.Queue})
 	if err != nil {
 		return nil, fmt.Errorf("resolve project status resolver for queue %q: %w", request.Queue, err)
 	}
-	results, err := resolver.Resolve(ctx, request, request.TerminalBuildID)
+	results, err = resolver.Resolve(ctx, request, request.TerminalBuildID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve project status results for request %q: %w", request.ID, err)
 	}
@@ -197,10 +199,16 @@ func (c *Controller) resolveProjectResults(ctx context.Context, request entity.R
 	if err := validateProjectStatusResults(request, results); err != nil {
 		return nil, err
 	}
+	metrics.NamedHistogram(c.metricsScope, "resolve_project_results", "projects", metrics.CountBuckets,
+		metrics.TagsFromContext(ctx)...,
+	).RecordValue(float64(len(results)))
 	return results, nil
 }
 
-func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) error {
+func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "persist_project_facts", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
+	defer func() { op.Complete(retErr) }()
+
 	for _, result := range results {
 		fact, _, err := recordValidationFact(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:       request.URI,
