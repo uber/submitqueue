@@ -1,6 +1,6 @@
 # git merger
 
-A `merger.Merger` backed by the `git` CLI operating on a local checkout. It applies a merge request's ordered steps onto a target branch, honoring each step's strategy, and — for a committing merge — pushes the result. It is constructed by the wiring layer (see [`service/runway`](../../../../service/runway)) with the checkout path, remote, target branch, pinned git runtime, committer identity, and the default strategy; the request itself carries only a queue name and the changes, so the merger reads change URIs straight from the payload (no store, no resolver).
+A `merger.Merger` that drives the `git` CLI through a [`gitworkspace.Workspace`](../../../../platform/extension/gitworkspace). It applies a merge request's ordered steps onto a target branch, honoring each step's strategy, and — for a committing merge — pushes the result. It is constructed by the wiring layer (see [`service/runway`](../../../../service/runway)) with a workspace factory, remote, target branch, and the default strategy; the request itself carries only a queue name and the changes, so the merger reads change URIs straight from the payload (no store, no resolver).
 
 ## Model
 
@@ -57,13 +57,11 @@ Fetching by SHA guarantees the merger applies exactly the commit a URI names —
 
 ## Authorship
 
-Git records an author and a committer separately, and the merger keeps them apart: the committer is always the merger's configured identity, because it is what applied the change, while the author is the person who wrote it.
+Git records an author and a committer separately, and the merger keeps them apart: the committer is always the workspace's configured identity, because it is what applied the change, while the author is the person who wrote it.
 
 `REBASE` gets this for free — cherry-pick carries each commit's author across, so every landed commit keeps whoever wrote it. The strategies that mint a fresh commit do not: the squash commit and the `--no-ff` merge commit are new objects, and without attribution both would be credited to the service. Each is therefore authored as the author recorded on the commit its change's URI pins. For a change spanning several commits by different people, that is the head commit's author — the one identity the request actually names.
 
-The author is read out of the local object store, so this costs no network and needs nothing on the wire: every referenced commit is already fetched and verified before a step is applied. A commit that records no usable author (either half missing) falls back to the committer identity rather than failing the merge.
-
-The author travels to git through `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` rather than `git commit --author`, because `git merge` has no `--author` flag and because the environment keeps the name and address as separate values — a single `Name <address>` string has to be parsed back apart, which a display name containing an angle bracket breaks.
+The author is read out of the local object store, so this costs no network and needs nothing on the wire: every referenced commit is already fetched and verified before a step is applied. The author travels as `git commit --author`, since a workspace command carries arguments only. `git merge` has no `--author` flag, so a `MERGE` step merges with `--no-commit` and then commits the merge with the author. A commit that records no usable author falls back to the committer identity rather than failing the merge: either half missing, or a name or address containing an angle bracket or line break, which `--author`'s single `Name <address>` string cannot carry.
 
 ## Importing an unrelated history
 
@@ -87,9 +85,9 @@ A merge conflict surfaces as `merger.ErrConflict`. An unusable request surfaces 
 
 The distinction between the last two matters operationally: a commit that is missing while the remote answers is a property of the request, whereas a remote that will not answer is a property of the moment.
 
-## Runtime and identity
+## Workspace, runtime and identity
 
-Every git invocation uses the pinned runtime (explicit executable, exec-path, and template dir) and a scrubbed environment: no ambient configuration, no system or global git config, no interactive prompts. Because that leaves no ambient identity, the committer name and email are injected per-invocation, which the commit-creating strategies (`REBASE`, `SQUASH_REBASE`, `MERGE`) require.
+The merger opens one workspace per operation and runs every git command in it, one command per batch. Where git runs, which git it is, and who it commits as belong to the workspace, not the merger. The reference wiring uses the local workspace over the configured checkout, with the pinned runtime (explicit executable, exec-path, and template dir) and a scrubbed environment: no ambient configuration, no system or global git config, no interactive prompts. Because that leaves no ambient identity, the workspace injects the committer name and email into every git command, which the commit-creating strategies (`REBASE`, `SQUASH_REBASE`, `MERGE`) require.
 
 Scrubbing denies git ambient *configuration* — anything that could change what a merge produces. It deliberately does not deny it the means to reach the remote, so the agent socket, `PATH`, ssh-command, TLS and proxy variables are inherited when set. Without them an SSH remote cannot authenticate and git cannot even exec `ssh`; none of them can influence merge semantics. A deployment needing more can name additional variables on the runtime.
 
