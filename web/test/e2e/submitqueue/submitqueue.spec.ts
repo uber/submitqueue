@@ -312,7 +312,8 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
   await expect(automatic).not.toBeChecked();
   const now = new Date();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
+  // The installed clock keeps running, so pausing at the install time races it.
+  await page.clock.pauseAt(new Date(now.getTime() + 60_000));
   let refreshRequests = 0;
   const isRefresh = (request: import("@playwright/test").Request) =>
     request.headers()["rsc"] === "1" && new URL(request.url()).pathname === new URL(page.url()).pathname;
