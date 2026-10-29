@@ -56,7 +56,7 @@ The MySQL backend uses the new `issue_state` table. Create it before deploying t
 
 `RequestID` and `BuildID` identify the latest represented transition, while `FirstSeenBuildID` identifies its current or most recent opening. Source order follows request ingest order, not opaque build IDs or timestamps. Within the same request, a closing transition supersedes an opening. `Version` is only the summary's CAS guard, not the source order. The materializer must compare incoming transitions before replacing a summary; the store does not enforce lifecycle ordering.
 
-The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. This storage layer does not yet populate summaries or expose a public open-issues list.
+The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. The [issue-log materializer](../../core/issuelog/README.md) updates summaries during normal issue tracking and recovery. No public open-issues list is exposed yet.
 
 ## Issue lifecycle history
 
@@ -66,7 +66,7 @@ The build ID identifies the build where the issue was first seen or confirmed cl
 
 The MySQL key uses the same binary identifier limits as the issue stores, plus the existing 32-byte `event` column containing the status, for a maximum of 2586 bytes. Its column name and primary key remain unchanged. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
 
-History persistence does not alter issue state or validate transitions against it. The issue-tracking controller owns opening/closing decisions and retry-safe history writes. History enumeration is outside this storage contract.
+History persistence does not alter issue state or validate transitions against it. The issue-tracking controller owns opening/closing decisions and invokes the issue-log materializer to retain history and update summaries. History enumeration is outside this storage contract.
 
 ## Issue reconciliation progress
 

@@ -193,7 +193,7 @@ func TestRecoveryDoesNotReopenAnExistingClosedCursor(t *testing.T) {
 }
 
 func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
-	for _, step := range []string{"build/get", "request/get", "progress/get", "progress/update", "issue/get", "issue/update", "history/create", "recovery/history", "finish abandonment"} {
+	for _, step := range []string{"build/get", "request/get", "progress/get", "progress/update", "issue/get", "issue/update", "history/create", "history/get", "summary/get", "recovery/history", "finish abandonment"} {
 		t.Run(step, func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusFailed)
@@ -221,7 +221,7 @@ func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
 }
 
 func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
-	for _, step := range []string{"issue/create", "history/create", "recovery/history"} {
+	for _, step := range []string{"issue/create", "history/create", "summary/create", "recovery/history"} {
 		t.Run(step, func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusRunning)
@@ -236,6 +236,10 @@ func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
 			require.NoError(t, f.recover(msg, false))
 			issue := f.states[issueKey{"task", "unit"}]
 			log := f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen}]
+			summary := f.summaries[issueKey{"task", "unit"}]
+			require.Equal(t, entity.IssueStatusOpen, summary.Status)
+			require.Equal(t, issue.FirstSeenBuildID, summary.FirstSeenBuildID)
+			require.Equal(t, issue.ChangedAtMs, summary.ChangedAtMs)
 			require.Equal(t, "build/100", issue.FirstSeenBuildID)
 			require.Equal(t, issue.ChangedAtMs, log.TimestampMs)
 			if step == "issue/create" {

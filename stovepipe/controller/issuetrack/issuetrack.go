@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/fixrequest"
+	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -45,6 +46,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  issuelog.Materializer
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -56,6 +58,7 @@ func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.
 		logger:        logger.Named("issuetrack_controller"),
 		metricsScope:  scope.SubScope("issuetrack_controller"),
 		stores:        stores,
+		materializer:  issuelog.NewMaterializer(scope),
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -389,7 +392,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 
 func (c *Controller) recordHistory(ctx context.Context, store storage.Storage, issue entity.IssueState) error {
 	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
-	if err := store.GetIssueLogStore().Create(ctx, log); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	if err := c.materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
 		return fmt.Errorf("record issue transition: %w", err)
 	}
 	return nil
