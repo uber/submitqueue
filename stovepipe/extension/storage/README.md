@@ -56,7 +56,7 @@ The MySQL backend uses `issue_state` for operational tracking. The separate `ope
 
 `RequestID` and `BuildID` identify the latest represented transition, while `FirstSeenBuildID` identifies its current or most recent opening. Source order follows request ingest order, not opaque build IDs or timestamps. Within the same request, a closing transition supersedes an opening. `Version` is only the summary's CAS guard, not the source order. The materializer must compare incoming transitions before replacing a summary; the store does not enforce lifecycle ordering.
 
-The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. The [issue-log materializer](../../core/issuelog/README.md) updates summaries during normal issue tracking and recovery. No public open-issues list is exposed yet.
+The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. The [issue-log materializer](../../core/issuelog/README.md) updates summaries during normal issue tracking and recovery. The [open-issues API](../../../doc/rfc/stovepipe/open-issues-api.md) lists summaries through the derived lookup.
 
 ## Open-issue lookups
 
@@ -66,7 +66,7 @@ Create returns `ErrAlreadyExists` for any existing task/unit key. Replace compar
 
 Listing traverses a bounded queue-prefix primary-key range in ascending bytewise task/unit order. The zero cursor starts the range; otherwise the cursor excludes its key and all earlier keys, even if that open-issue row has been deleted. Empty units identify task-wide issues, while task IDs must be nonempty. Membership can change between reads. A consumer that skips stale references must still advance after the last returned open-issue row, not the last accepted issue.
 
-Open-issue rows are not authoritative issue status. A delayed create can leave a reference to a closed issue, so readers must verify that the summary is open and its opening matches before returning a result. The store does not read summaries, enforce source ordering, backfill existing rows, or populate open-issue rows automatically. The [issue-log materializer](../../core/issuelog/README.md#open-issue-lookup) maintains open-issue rows after summary persistence during normal processing and recovery. No public list API uses this store yet.
+Open-issue rows are not authoritative issue status. A delayed create can leave a reference to a closed issue, so readers must verify that the summary is open and its opening matches before returning a result. The store does not read summaries, enforce source ordering, backfill existing rows, or populate open-issue rows automatically. The [issue-log materializer](../../core/issuelog/README.md#open-issue-lookup) maintains open-issue rows after summary persistence during normal processing and recovery. The open-issues API validates summaries before returning results and advances its continuation after the last examined open-issue row, including skipped references.
 
 ## Issue lifecycle history
 

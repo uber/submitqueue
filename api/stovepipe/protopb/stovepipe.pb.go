@@ -1742,6 +1742,227 @@ func (x *GetQueueStatusResponse) GetEnablement() *QueueEnablementStatus {
 	return nil
 }
 
+// IssueSummary is the current materialized view of a validation issue.
+type IssueSummary struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical validation task.
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// Validation unit; empty identifies a task-wide issue.
+	UnitId string `protobuf:"bytes,2,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
+	// Materialized status. ListOpenIssues returns only "open".
+	Status string `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	// Build where the current or most recent opening was first observed.
+	FirstSeenBuildId string `protobuf:"bytes,4,opt,name=first_seen_build_id,json=firstSeenBuildId,proto3" json:"first_seen_build_id,omitempty"`
+	// Source request of the latest status transition.
+	RequestId string `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Source build of the latest status transition.
+	BuildId string `protobuf:"bytes,6,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	// Original transition timestamp in Unix milliseconds.
+	ChangedAtMs   int64 `protobuf:"varint,7,opt,name=changed_at_ms,json=changedAtMs,proto3" json:"changed_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueSummary) Reset() {
+	*x = IssueSummary{}
+	mi := &file_stovepipe_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueSummary) ProtoMessage() {}
+
+func (x *IssueSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueSummary.ProtoReflect.Descriptor instead.
+func (*IssueSummary) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *IssueSummary) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *IssueSummary) GetUnitId() string {
+	if x != nil {
+		return x.UnitId
+	}
+	return ""
+}
+
+func (x *IssueSummary) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *IssueSummary) GetFirstSeenBuildId() string {
+	if x != nil {
+		return x.FirstSeenBuildId
+	}
+	return ""
+}
+
+func (x *IssueSummary) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *IssueSummary) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *IssueSummary) GetChangedAtMs() int64 {
+	if x != nil {
+		return x.ChangedAtMs
+	}
+	return 0
+}
+
+// ListOpenIssuesRequest selects current open issues within one queue.
+type ListOpenIssuesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required configured queue.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Maximum issues to return. Zero selects 50; otherwise 1 through 200.
+	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation bound to the queue and task/unit ordering.
+	PageToken     string `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOpenIssuesRequest) Reset() {
+	*x = ListOpenIssuesRequest{}
+	mi := &file_stovepipe_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOpenIssuesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOpenIssuesRequest) ProtoMessage() {}
+
+func (x *ListOpenIssuesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOpenIssuesRequest.ProtoReflect.Descriptor instead.
+func (*ListOpenIssuesRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ListOpenIssuesRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListOpenIssuesRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListOpenIssuesRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+// ListOpenIssuesResponse is not a snapshot across calls.
+type ListOpenIssuesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Open summaries in ascending bytewise task/unit order.
+	// The inspection budget can leave this partial or empty even with a continuation.
+	Issues []*IssueSummary `protobuf:"bytes,1,rep,name=issues,proto3" json:"issues,omitempty"`
+	// Continues after the last examined open-issue row, including skipped references.
+	// Empty means no further open-issue row was observed.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOpenIssuesResponse) Reset() {
+	*x = ListOpenIssuesResponse{}
+	mi := &file_stovepipe_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOpenIssuesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOpenIssuesResponse) ProtoMessage() {}
+
+func (x *ListOpenIssuesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOpenIssuesResponse.ProtoReflect.Descriptor instead.
+func (*ListOpenIssuesResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ListOpenIssuesResponse) GetIssues() []*IssueSummary {
+	if x != nil {
+		return x.Issues
+	}
+	return nil
+}
+
+func (x *ListOpenIssuesResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -1878,11 +2099,28 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12Q\n" +
 	"\n" +
 	"enablement\x18\x02 \x01(\v21.uber.submitqueue.stovepipe.QueueEnablementStatusR\n" +
-	"enablement*l\n" +
+	"enablement\"\xe5\x01\n" +
+	"\fIssueSummary\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x17\n" +
+	"\aunit_id\x18\x02 \x01(\tR\x06unitId\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12-\n" +
+	"\x13first_seen_build_id\x18\x04 \x01(\tR\x10firstSeenBuildId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\x12\x19\n" +
+	"\bbuild_id\x18\x06 \x01(\tR\abuildId\x12\"\n" +
+	"\rchanged_at_ms\x18\a \x01(\x03R\vchangedAtMs\"i\n" +
+	"\x15ListOpenIssuesRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x03 \x01(\tR\tpageToken\"\x82\x01\n" +
+	"\x16ListOpenIssuesResponse\x12@\n" +
+	"\x06issues\x18\x01 \x03(\v2(.uber.submitqueue.stovepipe.IssueSummaryR\x06issues\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken*l\n" +
 	"\x0fQueueEnablement\x12\x1c\n" +
 	"\x18QUEUE_ENABLEMENT_UNKNOWN\x10\x00\x12\x1c\n" +
 	"\x18QUEUE_ENABLEMENT_ENABLED\x10\x01\x12\x1d\n" +
-	"\x19QUEUE_ENABLEMENT_DISABLED\x10\x022\xe7\a\n" +
+	"\x19QUEUE_ENABLEMENT_DISABLED\x10\x022\xe2\b\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
 	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
@@ -1891,7 +2129,8 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x14GetProjectStatusByID\x127.uber.submitqueue.stovepipe.GetProjectStatusByIDRequest\x1a8.uber.submitqueue.stovepipe.GetProjectStatusByIDResponse\"\x00\x12\x8e\x01\n" +
 	"\x15GetProjectStatusByURI\x128.uber.submitqueue.stovepipe.GetProjectStatusByURIRequest\x1a9.uber.submitqueue.stovepipe.GetProjectStatusByURIResponse\"\x00\x12[\n" +
 	"\x04List\x12'.uber.submitqueue.stovepipe.ListRequest\x1a(.uber.submitqueue.stovepipe.ListResponse\"\x00\x12y\n" +
-	"\x0eGetQueueStatus\x121.uber.submitqueue.stovepipe.GetQueueStatusRequest\x1a2.uber.submitqueue.stovepipe.GetQueueStatusResponse\"\x00Be\n" +
+	"\x0eGetQueueStatus\x121.uber.submitqueue.stovepipe.GetQueueStatusRequest\x1a2.uber.submitqueue.stovepipe.GetQueueStatusResponse\"\x00\x12y\n" +
+	"\x0eListOpenIssues\x121.uber.submitqueue.stovepipe.ListOpenIssuesRequest\x1a2.uber.submitqueue.stovepipe.ListOpenIssuesResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -1907,7 +2146,7 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 }
 
 var file_stovepipe_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_stovepipe_proto_goTypes = []any{
 	(QueueEnablement)(0),                   // 0: uber.submitqueue.stovepipe.QueueEnablement
 	(*PingRequest)(nil),                    // 1: uber.submitqueue.stovepipe.PingRequest
@@ -1931,6 +2170,9 @@ var file_stovepipe_proto_goTypes = []any{
 	(*GetQueueStatusRequest)(nil),          // 19: uber.submitqueue.stovepipe.GetQueueStatusRequest
 	(*QueueEnablementStatus)(nil),          // 20: uber.submitqueue.stovepipe.QueueEnablementStatus
 	(*GetQueueStatusResponse)(nil),         // 21: uber.submitqueue.stovepipe.GetQueueStatusResponse
+	(*IssueSummary)(nil),                   // 22: uber.submitqueue.stovepipe.IssueSummary
+	(*ListOpenIssuesRequest)(nil),          // 23: uber.submitqueue.stovepipe.ListOpenIssuesRequest
+	(*ListOpenIssuesResponse)(nil),         // 24: uber.submitqueue.stovepipe.ListOpenIssuesResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
 	0,  // 0: uber.submitqueue.stovepipe.IngestRequest.enablement:type_name -> uber.submitqueue.stovepipe.QueueEnablement
@@ -1945,27 +2187,30 @@ var file_stovepipe_proto_depIdxs = []int32{
 	16, // 9: uber.submitqueue.stovepipe.ListResponse.requests:type_name -> uber.submitqueue.stovepipe.RequestSummary
 	0,  // 10: uber.submitqueue.stovepipe.QueueEnablementStatus.state:type_name -> uber.submitqueue.stovepipe.QueueEnablement
 	20, // 11: uber.submitqueue.stovepipe.GetQueueStatusResponse.enablement:type_name -> uber.submitqueue.stovepipe.QueueEnablementStatus
-	1,  // 12: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	3,  // 13: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	5,  // 14: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	6,  // 15: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	11, // 16: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
-	12, // 17: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	17, // 18: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
-	19, // 19: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:input_type -> uber.submitqueue.stovepipe.GetQueueStatusRequest
-	2,  // 20: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	4,  // 21: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	9,  // 22: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	10, // 23: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	14, // 24: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
-	15, // 25: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
-	18, // 26: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
-	21, // 27: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:output_type -> uber.submitqueue.stovepipe.GetQueueStatusResponse
-	20, // [20:28] is the sub-list for method output_type
-	12, // [12:20] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	22, // 12: uber.submitqueue.stovepipe.ListOpenIssuesResponse.issues:type_name -> uber.submitqueue.stovepipe.IssueSummary
+	1,  // 13: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	3,  // 14: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	5,  // 15: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	6,  // 16: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	11, // 17: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
+	12, // 18: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	17, // 19: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
+	19, // 20: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:input_type -> uber.submitqueue.stovepipe.GetQueueStatusRequest
+	23, // 21: uber.submitqueue.stovepipe.Stovepipe.ListOpenIssues:input_type -> uber.submitqueue.stovepipe.ListOpenIssuesRequest
+	2,  // 22: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	4,  // 23: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	9,  // 24: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	10, // 25: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	14, // 26: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
+	15, // 27: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	18, // 28: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
+	21, // 29: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:output_type -> uber.submitqueue.stovepipe.GetQueueStatusResponse
+	24, // 30: uber.submitqueue.stovepipe.Stovepipe.ListOpenIssues:output_type -> uber.submitqueue.stovepipe.ListOpenIssuesResponse
+	22, // [22:31] is the sub-list for method output_type
+	13, // [13:22] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
@@ -1996,7 +2241,7 @@ func file_stovepipe_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   21,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

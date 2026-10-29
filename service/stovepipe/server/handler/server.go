@@ -37,6 +37,7 @@ type StovepipeServer struct {
 	requestHistoryController controller.RequestHistoryController
 	projectStatusController  controller.ProjectStatusController
 	listController           controller.ListController
+	openIssuesController     controller.ListOpenIssuesController
 	queueStatusController    controller.GetQueueStatusController
 }
 
@@ -48,6 +49,7 @@ func NewStovepipeServer(
 	projectStatusController controller.ProjectStatusController,
 	listController controller.ListController,
 	queueStatusController controller.GetQueueStatusController,
+	openIssuesController controller.ListOpenIssuesController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
@@ -55,6 +57,7 @@ func NewStovepipeServer(
 		requestHistoryController: requestHistoryController,
 		projectStatusController:  projectStatusController,
 		listController:           listController,
+		openIssuesController:     openIssuesController,
 		queueStatusController:    queueStatusController,
 	}
 }
@@ -142,4 +145,19 @@ func (s *StovepipeServer) GetQueueStatus(ctx context.Context, req *pb.GetQueueSt
 		}
 	}
 	return mapper.GetQueueStatusResultToProto(result), nil
+}
+
+func (s *StovepipeServer) ListOpenIssues(ctx context.Context, req *pb.ListOpenIssuesRequest) (*pb.ListOpenIssuesResponse, error) {
+	result, err := s.openIssuesController.ListOpenIssues(ctx, mapper.ProtoToListOpenIssuesRequest(req))
+	if err != nil {
+		switch {
+		case controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil, status.FromContextError(err).Err()
+		default:
+			return nil, err
+		}
+	}
+	return mapper.ListOpenIssuesResultToProto(result), nil
 }

@@ -14,4 +14,4 @@ Each iteration reads the open-issue row before the summary. Otherwise, a worker 
 
 The two projections are not updated atomically. A future list reader must still verify that each referenced summary is open and its opening matches. No status filtering, cross-record transaction, or queue-wide scan is required to maintain one open-issue row.
 
-This materializer does not backfill existing history or expose a list API. Source builds must remain readable while their transitions can be replayed.
+This materializer does not backfill existing history. The [open-issues API](../../../doc/rfc/stovepipe/open-issues-api.md) reads the lookup and validates referenced summaries. Source builds must remain readable while their transitions can be replayed.

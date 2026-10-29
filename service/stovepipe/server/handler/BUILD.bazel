@@ -19,6 +19,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "list_open_issues_test.go",
         "list_test.go",
         "queue_status_test.go",
         "server_test.go",
