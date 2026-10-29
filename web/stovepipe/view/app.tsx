@@ -10,9 +10,10 @@ import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestDetails, History } from "./pages.js";
 import { QueueRequests } from "./queue.js";
+import { OpenIssues } from "./issues.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
 
-const RequestViewLink = styled<typeof Link, { $active: boolean }>(Link, ({ $theme, $active }) => ({
+const ViewLink = styled<typeof Link, { $active: boolean }>(Link, ({ $theme, $active }) => ({
   display: "inline-block",
   paddingTop: $theme.sizing.scale400,
   paddingBottom: $theme.sizing.scale400,
@@ -20,7 +21,7 @@ const RequestViewLink = styled<typeof Link, { $active: boolean }>(Link, ({ $them
   borderBottom: `2px solid ${$active ? $theme.colors.contentPrimary : "transparent"}`,
 }));
 
-const RequestViewNavigation = styled("nav", ({ $theme }) => ({
+const ViewNavigation = styled("nav", ({ $theme }) => ({
   display: "flex",
   flexWrap: "wrap",
   columnGap: $theme.sizing.scale700,
@@ -60,7 +61,7 @@ function Page({ model }: { model: StovepipePageModel }) {
           <Tag closeable={false} kind="neutral" size="small">SP</Tag><LabelMedium as="span">Stovepipe</LabelMedium>
         </Block>
         <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
-          <TimeZoneToggle /><RefreshControls />
+          <TimeZoneToggle /><RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
       </Block>
       <Block as="main" paddingTop="scale400" paddingBottom="scale600">
@@ -82,21 +83,31 @@ function Page({ model }: { model: StovepipePageModel }) {
                 <Link href={model.queueHref}>← Queue requests</Link> / {model.queue}
               </ParagraphSmall>
             )}
-            {model.kind === "queue" ? <>
+            {model.kind !== "request" ? <>
               <HeadingLarge marginTop="0" marginBottom="scale300" as="h1">{model.queue}</HeadingLarge>
-              <ParagraphSmall marginTop="0">Requests ordered by acceptance time, newest first.</ParagraphSmall>
+              <ParagraphSmall marginTop="0">{model.kind === "issues" ? "Open issues grouped by task." : "Requests ordered by acceptance time, newest first."}</ParagraphSmall>
             </> : <HeadingMedium marginTop="0" marginBottom="0" as="h1">Request {model.requestId}</HeadingMedium>}
           </div>
         </Block>
-        {model.kind === "queue" && model.showLatestLink && (
+        {model.kind !== "request" && <ViewNavigation aria-label="Queue views">
+          <ViewLink $active={model.kind === "queue"} href={model.queueHref} aria-current={model.kind === "queue" ? "page" : undefined}>Requests</ViewLink>
+          <ViewLink $active={model.kind === "issues"} href={`${model.queueHref}?view=issues`} aria-current={model.kind === "issues" ? "page" : undefined}>Open issues</ViewLink>
+        </ViewNavigation>}
+        {model.kind !== "request" && model.showLatestLink && (
           <ParagraphSmall>
-            <Link href={model.latestHref}>Latest page</Link>
+            <Link href={model.latestHref}>{model.kind === "issues" ? "First page" : "Latest page"}</Link>
           </ParagraphSmall>
         )}
         {model.kind === "queue" ? (
           <Section result={model.requests}>
             {(data) => data && <QueueRequests initial={data} routeKey={model.key} />}
           </Section>
+        ) : model.kind === "issues" ? (
+          <Block marginTop="scale600">
+            <Section cacheKey={model.latestHref} result={model.issues}>
+              {data => data && <OpenIssues initial={data} />}
+            </Section>
+          </Block>
         ) : (
           <Section result={model.history}>
             {(history) => (
@@ -106,11 +117,11 @@ function Page({ model }: { model: StovepipePageModel }) {
                     <section aria-label="Request status">
                       <RequestDetails request={history?.request ?? null} repositoryResult={projects && <RecordedResult degree={projects.repositoryBreakageDegree} />} />
                     </section>
-                    <RequestViewNavigation aria-label="Request views">
+                    <ViewNavigation aria-label="Request views">
                       {views.tabs.map(tab => (
-                        <RequestViewLink key={tab.id} $active={tab.selected} href={tab.href} scroll={false} aria-current={tab.selected ? "page" : undefined}>{tab.label}</RequestViewLink>
+                        <ViewLink key={tab.id} $active={tab.selected} href={tab.href} scroll={false} aria-current={tab.selected ? "page" : undefined}>{tab.label}</ViewLink>
                       ))}
-                    </RequestViewNavigation>
+                    </ViewNavigation>
                     {views.tabs.map(tab => (
                       <section key={tab.id} className="sq-stovepipe-request-view" aria-label={tab.label} hidden={!tab.selected}>
                         <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>
@@ -133,6 +144,6 @@ function Page({ model }: { model: StovepipePageModel }) {
   );
 }
 export function StovepipeApp({ model }: { model: StovepipePageModel }) {
-  const pageKey = model.kind === "request" ? model.key.split("?")[0] : model.key;
+  const pageKey = model.kind === "issues" ? model.latestHref : model.kind === "request" ? model.key.split("?")[0] : model.key;
   return <TimeZoneProvider><Page key={pageKey} model={model} /></TimeZoneProvider>;
 }

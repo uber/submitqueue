@@ -5,9 +5,10 @@ import { instrumentStovepipeWeb } from "./instrumentation";
 
 function createHostFixture() {
   const list = vi.fn().mockResolvedValue({ requests: [], nextPageToken: "" });
+  const listOpenIssues = vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" });
   const getRequestHistoryByID = vi.fn().mockRejectedValue(new Error("private failure"));
   const getProjectStatusByID = vi.fn().mockRejectedValue(new Error("private failure"));
-  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, getRequestHistoryByID, getProjectStatusByID } });
+  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listOpenIssues, getRequestHistoryByID, getProjectStatusByID } });
   const record = vi.fn();
   const add = vi.fn();
   const span = { setAttribute: vi.fn(), setStatus: vi.fn(), recordException: vi.fn(), end: vi.fn() };
@@ -16,10 +17,18 @@ function createHostFixture() {
   const host = instrumentStovepipeWeb(web,
     { createHistogram, createCounter } as unknown as Meter,
     { startSpan: () => span } as unknown as Tracer);
-  return { host, list, web, record, add, span, createHistogram, createCounter };
+  return { host, list, listOpenIssues, web, record, add, span, createHistogram, createCounter };
 }
 
 describe("Stovepipe host instrumentation", () => {
+  it("records a failed open-issues section as a failed page load", async () => {
+    const fixture = createHostFixture();
+    fixture.listOpenIssues.mockRejectedValue(new Error("private issue failure"));
+    const result = await fixture.host.handle({ path: "/demo", search: new URLSearchParams({ view: "issues" }) });
+    expect(result).toMatchObject({ kind: "render", model: { kind: "issues", issues: { ok: false } } });
+    expect(fixture.add).toHaveBeenCalledWith(1, { outcome: "error" });
+    expect(fixture.span.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR });
+  });
   it("records successful page loads under the existing metric names", async () => {
     const fixture = createHostFixture();
     const result = await fixture.host.handle({ path: "/demo", search: new URLSearchParams() });

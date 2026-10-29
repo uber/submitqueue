@@ -1,5 +1,6 @@
-import { cleanup, render, screen, waitFor, within } from "../../platform/test/rtl.js";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it } from "vitest";
+import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { StovepipeApp } from "./app.js";
 import type { StovepipePageModel } from "../entity/index.js";
 afterEach(cleanup);
@@ -74,6 +75,55 @@ it("displays request summary data", () => {
   expect(within(status).getByText("No result recorded")).toBeVisible();
   const history = screen.getByText("accepted").closest("section")!;
   expect(history).not.toBeVisible();
+});
+it("shows a separate queue issues tab and retains successful issue data on refresh failure", () => {
+  const issuesModel: StovepipePageModel = {
+    ...model, kind: "issues", key: "/repo%2Fmain?view=issues", latestHref: "/repo%2Fmain?view=issues",
+    issues: { ok: true, data: {
+      issues: [{ taskId: "buildtest", unitId: "", firstSeenAtMs: "1000", requestId: "7", requestHref: "/repo%2Fmain/request/7" }],
+      nextHref: null,
+    } },
+  };
+  const { rerender } = render(<StovepipeApp model={issuesModel} />);
+  const navigation = screen.getByRole("navigation", { name: "Queue views" });
+  expect(within(navigation).getByRole("link", { name: "Requests" })).toHaveAttribute("href", "/repo%2Fmain");
+  expect(within(navigation).getByRole("link", { name: "Open issues" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByText("Task-wide failure")).toBeVisible();
+  rerender(<StovepipeApp model={{ ...issuesModel, loadedAtMs: 2000, issues: { ok: false, error: "Unable to load open issues." } }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Unable to load open issues");
+  expect(screen.getByText("Task-wide failure")).toBeVisible();
+});
+it("retains issue data and auto-refresh when a cursor refresh fails on the first-page URL", () => {
+  const issuesModel: StovepipePageModel = {
+    ...model, kind: "issues", key: "/repo%2Fmain?view=issues&page=cursor",
+    latestHref: "/repo%2Fmain?view=issues", showLatestLink: true,
+    issues: { ok: true, data: {
+      issues: [{ taskId: "buildtest", unitId: "", firstSeenAtMs: "1000", requestId: "7", requestHref: "/repo%2Fmain/request/7" }],
+      nextHref: null,
+    } },
+  };
+  const navigation = { refresh: async () => undefined };
+  const { rerender } = render(<WebNavigationProvider value={navigation}>
+    <StovepipeApp model={issuesModel} />
+  </WebNavigationProvider>);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Auto refresh every 10s" }));
+  rerender(<WebNavigationProvider value={navigation}>
+    <StovepipeApp model={{
+      ...issuesModel, key: issuesModel.latestHref, showLatestLink: false,
+      issues: { ok: false, error: "Unable to load open issues." },
+    }} />
+  </WebNavigationProvider>);
+  expect(screen.getByText("Task-wide failure")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent("Unable to load open issues");
+  expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).toBeChecked();
+  rerender(<WebNavigationProvider value={navigation}>
+    <StovepipeApp model={{
+      ...issuesModel, queue: "other", key: "/other?view=issues", latestHref: "/other?view=issues",
+      issues: { ok: false, error: "Unable to load other issues." },
+    }} />
+  </WebNavigationProvider>);
+  expect(screen.queryByText("Task-wide failure")).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
 });
 it("links queue entries by request ID even when the change URI is missing", () => {
   if (!model.history.ok) throw new Error("No summary");

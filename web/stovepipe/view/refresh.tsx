@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { AutoRefresh, useWebNavigation } from "@submitqueue/web-platform";
 import { ParagraphXSmall } from "baseui/typography";
 
-export function RefreshControls() {
+export function RefreshControls({ href }: { href?: string }) {
   const navigation = useWebNavigation();
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
@@ -13,12 +13,12 @@ export function RefreshControls() {
       return;
     }
     try {
-      await navigation.refresh(null);
+      await navigation.refresh(href ?? null);
     } catch (cause) {
       setError("Refresh failed. Showing the last successful result.");
       throw cause;
     }
-  }, [navigation]);
+  }, [navigation, href]);
   return (
     <div>
       <AutoRefresh

@@ -1,12 +1,13 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Block } from "baseui/block";
 import { Button, KIND, SIZE } from "baseui/button";
 import { StyledLink } from "baseui/link";
 import { Spinner } from "baseui/spinner";
 import { ParagraphSmall, ParagraphXSmall } from "baseui/typography";
 import { useWebNavigation } from "./navigation.js";
+import { appendUniqueItems, usePageLoader } from "./use-page-loader.js";
 
 const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
@@ -63,19 +64,27 @@ export function PagedRequests<T>({ initial, routeKey, requestKey, children }: {
   const [snapshot, setSnapshot] = useState(() =>
     (context?.pages.get(routeKey)?.snapshot as RequestSnapshot<T> | undefined) ?? createSnapshot(initial, requestKey));
   const [hydrated, setHydrated] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
   const sentinel = useRef<HTMLElement | null>(null);
-  const inFlight = useRef<AbortController | null>(null);
   const saved = useRef<SavedRequests>({ snapshot, scrollY: context?.pages.get(routeKey)?.scrollY ?? 0 });
   saved.current.snapshot = snapshot;
-  const keyOf = useRef(requestKey);
-  keyOf.current = requestKey;
 
   if (snapshot.latest !== initial) {
     const current = new Map(initial.requests.map(request => [requestKey(request), request]));
     setSnapshot({ ...snapshot, latest: initial, requests: snapshot.requests.map(request => current.get(requestKey(request)) ?? request) });
   }
+
+  const { loading, error, loadNextPage: loadOlderRequests, cancelPageLoad } = usePageLoader({
+    loadPage: context?.loadPage as ((href: string, signal: AbortSignal) => Promise<RequestPage<T>>) | undefined,
+    nextHref: snapshot.nextHref,
+    loadedHrefs: snapshot.loadedHrefs,
+    resetKey: routeKey,
+    onPage: (next, href) => setSnapshot(current => current.nextHref !== href ? current : {
+      ...current,
+      requests: appendUniqueItems(current.requests, next.requests, requestKey),
+      nextHref: next.nextHref,
+      loadedHrefs: [...current.loadedHrefs, href],
+    }),
+  });
 
   useBrowserLayoutEffect(() => {
     setHydrated(true);
@@ -89,42 +98,9 @@ export function PagedRequests<T>({ initial, routeKey, requestKey, children }: {
       if (frame !== null) cancelAnimationFrame(frame);
       window.removeEventListener("scroll", recordScroll);
       // Save before navigation can shrink the document and reset its scroll offset.
-      inFlight.current?.abort();
       context?.pages.set(routeKey, saved.current);
     };
   }, [context, routeKey]);
-
-  const loadOlderRequests = useCallback(async () => {
-    const href = snapshot.nextHref;
-    if (!context || !href || inFlight.current) return;
-    const controller = new AbortController();
-    inFlight.current = controller;
-    setLoading(true);
-    setError(false);
-    try {
-      const next = await context.loadPage(href, controller.signal) as RequestPage<T>;
-      if (controller.signal.aborted) return;
-      if (next.nextHref && [href, ...snapshot.loadedHrefs].includes(next.nextHref)) throw new Error("Repeated continuation");
-      setSnapshot(current => {
-        if (current.nextHref !== href) return current;
-        const existing = new Set(current.requests.map(keyOf.current));
-        const additions = next.requests.filter(request => {
-          const key = keyOf.current(request);
-          if (existing.has(key)) return false;
-          existing.add(key);
-          return true;
-        });
-        return { ...current, requests: [...current.requests, ...additions], nextHref: next.nextHref, loadedHrefs: [...current.loadedHrefs, href] };
-      });
-    } catch {
-      if (!controller.signal.aborted) setError(true);
-    } finally {
-      if (inFlight.current === controller) {
-        inFlight.current = null;
-        setLoading(false);
-      }
-    }
-  }, [context, snapshot.nextHref, snapshot.loadedHrefs]);
 
   useEffect(() => {
     if (!context || !snapshot.nextHref || error || loading || !sentinel.current || typeof IntersectionObserver === "undefined") return;
@@ -154,10 +130,7 @@ export function PagedRequests<T>({ initial, routeKey, requestKey, children }: {
   return <>
     {newRequests && <Block marginBottom="scale600">
       <Button size={SIZE.compact} onClick={() => {
-        inFlight.current?.abort();
-        inFlight.current = null;
-        setLoading(false);
-        setError(false);
+        cancelPageLoad();
         setSnapshot(createSnapshot(initial, requestKey));
         window.scrollTo(0, 0);
       }}>New requests available · Show latest requests</Button>

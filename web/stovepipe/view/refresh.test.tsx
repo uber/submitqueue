@@ -77,3 +77,12 @@ it("removes scheduled polls when the page unmounts", async () => {
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(refresh).not.toHaveBeenCalled();
 });
+it("returns cursor-based issue pages to their first page on refresh", async () => {
+  const refresh = vi.fn(async () => undefined);
+  render(<WebNavigationProvider value={{ refresh }}>
+    <RefreshControls href="/queue?view=issues" />
+  </WebNavigationProvider>);
+  fireEvent.click(screen.getByRole("checkbox"));
+  await act(async () => vi.advanceTimersByTime(10_000));
+  expect(refresh).toHaveBeenCalledWith("/queue?view=issues");
+});

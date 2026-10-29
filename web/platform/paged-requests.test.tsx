@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "./test/rtl.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { PagedRequests, RequestPagesProvider, type RequestPage } from "./paged-requests.js";
+import { PagedRequests, RequestPagesProvider, type RequestPage, type RequestPageLoader } from "./paged-requests.js";
 
 interface Row {
   id: string;
@@ -106,4 +106,42 @@ it("aborts a departing queue, restores its loaded rows, and keeps new arrivals b
   fireEvent.click(screen.getByRole("button", { name: /Show latest requests/ }));
   expect(displayedIds()).toEqual(["4", "3"]);
   expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+});
+
+it("keeps loading older requests while a refresh updates the latest rows", async () => {
+  let finish!: (result: RequestPage<Row>) => void;
+  const loadPage = vi.fn<RequestPageLoader>(() => new Promise<RequestPage<Row>>(resolve => { finish = resolve; }));
+  const { rerender } = render(<RequestPagesProvider loadPage={loadPage}>
+    <RowList routeKey="queue" initial={page(["3"])} />
+  </RequestPagesProvider>);
+  await act(async () => intersect());
+  const signal = loadPage.mock.calls[0]![1];
+  const latest = page(["4", "3"]);
+  latest.requests[1]!.state = "succeeded";
+  rerender(<RequestPagesProvider loadPage={loadPage}>
+    <RowList routeKey="queue" initial={latest} />
+  </RequestPagesProvider>);
+  expect(signal.aborted).toBe(false);
+  expect(screen.getByText("succeeded")).toBeVisible();
+  await act(async () => finish(page(["2"], null)));
+  expect(displayedIds()).toEqual(["3", "2"]);
+  fireEvent.click(screen.getByRole("button", { name: /Show latest requests/ }));
+  expect(displayedIds()).toEqual(["4", "3"]);
+});
+
+it("rejects an earlier continuation and retries without losing displayed requests", async () => {
+  const loadPage = vi.fn()
+    .mockResolvedValueOnce(page(["2"], "/last"))
+    .mockResolvedValueOnce(page(["1"], nextHref))
+    .mockResolvedValueOnce(page(["1"], null));
+  render(<RequestPagesProvider loadPage={loadPage}>
+    <RowList routeKey="queue" initial={page(["3"])} />
+  </RequestPagesProvider>);
+  await act(async () => intersect());
+  fireEvent.click(screen.getByRole("button", { name: "Load more requests" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+  expect(displayedIds()).toEqual(["3", "2"]);
+  fireEvent.click(screen.getByRole("button", { name: "Retry loading older requests" }));
+  await waitFor(() => expect(displayedIds()).toEqual(["3", "2", "1"]));
+  expect(loadPage.mock.calls.map(call => call[0])).toEqual([nextHref, "/last", "/last"]);
 });

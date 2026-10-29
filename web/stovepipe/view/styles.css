@@ -1,5 +1,19 @@
 @import "@submitqueue/web-platform/styles.css";
 
+.sq-stovepipe-open-issues table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 40rem;
+}
+
+.sq-stovepipe-open-issues th:nth-child(2) {
+  width: 17rem;
+}
+
+.sq-stovepipe-open-issues th:nth-child(3) {
+  width: 10rem;
+}
+
 .sq-stovepipe-request > main,
 .sq-stovepipe-request-view:not([hidden]) {
   display: flex;

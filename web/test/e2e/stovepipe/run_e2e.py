@@ -59,6 +59,31 @@ def _pagination_fixture_sql() -> str:
         statements.append(
             f"INSERT INTO project_fact_by_degree VALUES ('web/pagination','{uri}',{degree},'project-{i:02d}');"
         )
+    for i in range(53):
+        task = "buildtest" if i < 52 else "expensive"
+        unit = "" if i in (0, 52) else f"//packages/test-{i:02d}:go_default_test"
+        statements.append(
+            "INSERT INTO issue_summary "
+            "(queue,task_id,unit_id,status,first_seen_build_id,request_id,build_id,changed_at_ms,version) "
+            f"VALUES ('web/pagination','{task}','{unit}','open','web/build/51','51','web/build/51',1000,1);"
+        )
+        statements.append(
+            f"INSERT INTO open_issue VALUES ('web/pagination','{task}','{unit}','web/build/51');"
+        )
+    closed_issue_count = 500
+    for i in range(closed_issue_count + 1):
+        closed = i < closed_issue_count
+        task = "a-closed" if closed else "z-open"
+        unit = f"unit-{i:03d}" if closed else ""
+        status = "closed" if closed else "open"
+        statements.append(
+            "INSERT INTO issue_summary "
+            "(queue,task_id,unit_id,status,first_seen_build_id,request_id,build_id,changed_at_ms,version) "
+            f"VALUES ('web/empty','{task}','{unit}','{status}','web/build/1','1','web/build/1',1000,1);"
+        )
+        statements.append(
+            f"INSERT INTO open_issue VALUES ('web/empty','{task}','{unit}','web/build/1');"
+        )
     return "\n".join(statements)
 
 

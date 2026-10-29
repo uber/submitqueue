@@ -33,6 +33,24 @@ export interface QueueRequestsModel {
   /** Opaque continuation URL; null on the final page. */
   nextHref: string | null;
 }
+export interface OpenIssueModel {
+  /** Logical validation task, preserved verbatim. */
+  taskId: string;
+  /** Validation unit; empty identifies a task-wide failure. */
+  unitId: string;
+  /** Opening time in Unix milliseconds as a decimal string. */
+  firstSeenAtMs: string;
+  /** Request that established this opening. */
+  requestId: string;
+  /** In-app URL of the opening request. */
+  requestHref: string;
+}
+export interface OpenIssuesModel {
+  /** Open issues on this page, in backend task/unit order. */
+  issues: OpenIssueModel[];
+  /** Opaque continuation URL; null when no further row was observed. */
+  nextHref: string | null;
+}
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
   id: string;
@@ -90,6 +108,10 @@ export type StovepipePageModel = PageBase &
     | {
         kind: "queue";
         requests: ReadResult<QueueRequestsModel>;
+      }
+    | {
+        kind: "issues";
+        issues: ReadResult<OpenIssuesModel>;
       }
     | {
         kind: "request";

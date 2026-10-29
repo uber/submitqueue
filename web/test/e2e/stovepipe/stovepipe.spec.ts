@@ -19,6 +19,17 @@ test.describe("server-rendered styling", () => {
     await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
     await expect(page.getByRole("status")).toContainText("More requests available");
   });
+  test("renders grouped open issues and continuation links without JavaScript", async ({ page }) => {
+    await page.goto("/web%2Fpagination?view=issues");
+    await expect(page.getByRole("heading", { name: "buildtest", exact: true })).toBeVisible();
+    const rows = page.getByRole("table", { name: "Issues for buildtest" }).locator("tbody tr");
+    await expect(rows).toHaveCount(50);
+    await expect(rows.first()).toContainText("Task-wide failure");
+    await expect(page.getByRole("link", { name: "Load more", exact: true })).toHaveAttribute("href", /view=issues&page=/);
+    await page.getByRole("link", { name: "Load more", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "expensive", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "First page", exact: true })).toHaveAttribute("href", "/web%2Fpagination?view=issues");
+  });
   test("renders request status and views without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination/request/51");
     const status = page.getByRole("region", { name: "Request status" });
@@ -48,6 +59,102 @@ test.describe("server-rendered styling", () => {
     const table = await page.getByRole("table", { name: "Requests", exact: true }).boundingBox();
     expect(table?.width).toBeGreaterThan(1920 * 0.95);
   });
+});
+
+test("loads and retries issue pages, merges task groups, and refreshes from the beginning", async ({ page }) => {
+  await page.goto("/web%2Fpagination");
+  await page.getByRole("navigation", { name: "Queue views" }).getByRole("link", { name: "Open issues", exact: true }).click();
+  const region = page.getByRole("region", { name: "Open issues", exact: true });
+  const rows = region.locator("tbody tr");
+  await expect(rows).toHaveCount(50);
+  await expect(rows.first()).toContainText("Task-wide failure");
+  await page.screenshot({ path: test.info().outputPath("open-issues-desktop.png") });
+  const endpoint = "**/api/open-issues?*";
+  await page.route(endpoint, route => route.fulfill({ status: 503 }));
+  await page.getByRole("button", { name: "Load more", exact: true }).click();
+  await expect(region.getByRole("alert")).toContainText("Could not load more issues");
+  await expect(rows).toHaveCount(50);
+  await page.unroute(endpoint);
+  await page.getByRole("button", { name: "Retry loading issues" }).click();
+  await expect(rows).toHaveCount(53);
+  await expect(page.getByRole("heading", { name: "buildtest", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "expensive", exact: true })).toBeVisible();
+  await expect(region.getByRole("status")).toContainText("53 issues loaded");
+  await expect(rows.first().getByRole("link", { name: "51", exact: true })).toHaveAttribute("href", "/web%2Fpagination/request/51");
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    const columns = await region.getByRole("table").evaluateAll(tables => tables.map(table =>
+      [...table.querySelectorAll("thead th")].map(cell => {
+        const { x, width } = cell.getBoundingClientRect();
+        return { x, width };
+      })));
+    expect(columns).toHaveLength(2);
+    expect(columns[1]).toEqual(columns[0]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  await page.reload();
+  await expect(rows).toHaveCount(50);
+  await expect(page.getByRole("heading", { name: "expensive", exact: true })).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: test.info().outputPath("open-issues-mobile.png") });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("continues past an empty issue batch instead of claiming the queue has no issues", async ({ page }) => {
+  await page.goto("/web%2Fempty?view=issues");
+  await expect(page.getByText("No matching issues in this batch. More results are available.")).toBeVisible();
+  await expect(page.getByText("No tracked open issues.", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "z-open", exact: true })).toBeVisible();
+  await expect(page.getByText("Task-wide failure", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
+});
+test("keeps auto-refresh enabled when an issue cursor refresh returns to the first page", async ({ page }) => {
+  const first = await client.listOpenIssues({ queue: "web/pagination", pageSize: 50 });
+  await page.goto(`/web%2Fpagination?view=issues&page=${encodeURIComponent(first.nextPageToken)}`);
+  const region = page.getByRole("region", { name: "Open issues", exact: true });
+  await expect(region.getByRole("status")).toContainText("3 issues loaded");
+  const now = new Date();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
+  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
+  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  const response = page.waitForResponse(response =>
+    response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === "/web%2Fpagination");
+  await page.clock.runFor(10_000);
+  expect((await response).ok()).toBe(true);
+  await expect(region.getByRole("status")).toContainText("50 issues loaded");
+  await expect(automatic).toBeChecked();
+  expect(new URL(page.url()).searchParams.has("page")).toBe(false);
+  await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+});
+test("keeps loaded issue pages across polls until the viewer selects refreshed results", async ({ page }) => {
+  await page.goto("/web%2Fpagination?view=issues");
+  const region = page.getByRole("region", { name: "Open issues", exact: true });
+  await region.getByRole("button", { name: "Load more", exact: true }).click();
+  await expect(region.getByRole("status")).toContainText("53 issues loaded");
+  const now = new Date();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
+  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
+  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const response = page.waitForResponse(response =>
+      response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === "/web%2Fpagination");
+    await page.clock.runFor(10_000);
+    expect((await response).ok()).toBe(true);
+    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+    await expect(region.getByRole("status")).toContainText("53 issues loaded");
+    await expect(region.getByRole("heading", { name: "expensive", exact: true })).toBeVisible();
+    await expect(automatic).toBeChecked();
+  }
+  await region.getByRole("button", { name: "Show latest issues", exact: true }).click();
+  await expect(region.getByRole("status")).toContainText("50 issues loaded");
+  await expect(region.getByRole("heading", { name: "expensive", exact: true })).toHaveCount(0);
+  await expect(region.getByRole("button", { name: "Show latest issues", exact: true })).toHaveCount(0);
+  await expect(automatic).toBeChecked();
 });
 test("keeps queue tables inside a narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

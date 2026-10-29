@@ -5,6 +5,7 @@ import type { Queue, StovepipePageModel } from "./entity/index.js";
 import { parseProjectPageSize, StovepipePaths } from "./core/paths.js";
 import { readSection } from "./controller/page.js";
 import { loadQueueRequests } from "./controller/queue.js";
+import { loadOpenIssues } from "./controller/issues.js";
 import { loadRequestHistory } from "./controller/request.js";
 import { loadProjectStatus } from "./controller/projects.js";
 
@@ -48,6 +49,7 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
         const route = parseStovepipeRoute(request.path, paths, options.queues);
         if (!route) return { kind: "not-found" };
         const { queue, requestId } = route;
+        const issuesView = !requestId && request.search.get("view") === "issues";
         if (options.authorize && !(await options.authorize(request.principal, queue.name)))
           return { kind: "forbidden" };
         const service =
@@ -57,13 +59,21 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
           queue: queue.name,
           queues: options.queues.map((queue) => ({
             name: queue.name,
-            href: paths.queue(queue.name),
+            href: issuesView ? paths.openIssues(queue.name) : paths.queue(queue.name),
           })),
           queueHref: paths.queue(queue.name),
-          latestHref: paths.queue(queue.name),
+          latestHref: issuesView ? paths.openIssues(queue.name) : paths.queue(queue.name),
           showLatestLink: Boolean(!requestId && request.search.get("page")),
           loadedAtMs: Date.now(),
         };
+        if (issuesView) {
+          const issues = await readSection(
+            () => loadOpenIssues(service, paths, queue.name, request.search.get("page") ?? "", request.signal),
+            onLog,
+            "open issues",
+          );
+          return { kind: "render", model: { ...common, kind: "issues", issues } };
+        }
         if (!requestId) {
           const requests = await readSection(
             () =>

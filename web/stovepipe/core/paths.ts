@@ -15,6 +15,11 @@ export class StovepipePaths {
     const path = `${this.basePath}/${encodePathSegment(queue)}`;
     return page ? `${path}?${new URLSearchParams({ page })}` : path;
   }
+  openIssues(queue: string, page = ""): string {
+    const search = new URLSearchParams({ view: "issues" });
+    if (page) search.set("page", page);
+    return `${this.queue(queue)}?${search}`;
+  }
   request(queue: string, requestId: string, projects = "", projectPageSize = 50): string {
     const path = `${this.queue(queue)}/request/${encodePathSegment(requestId)}`;
     const search = new URLSearchParams();

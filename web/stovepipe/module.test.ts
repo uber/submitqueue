@@ -21,6 +21,7 @@ const summary: RequestSummary = {
 };
 function createPageTestContext() {
   const service: StovepipeService = {
+    listOpenIssues: vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" }),
     list: vi
       .fn()
       .mockResolvedValue({ requests: [], nextPageToken: "older+/page" }),
@@ -58,6 +59,53 @@ function createPageTestContext() {
   return { service, paths, app };
 }
 describe("Stovepipe page loading", () => {
+  it("loads only open issues for the queue tab and preserves identities and opaque cursors", async () => {
+    const { app, service, paths } = createPageTestContext();
+    vi.mocked(service.listOpenIssues).mockResolvedValue({
+      issues: [{ taskId: "build/test", unitId: "", requestId: summary.requestId, changedAtMs: 9007199254740993n }],
+      nextPageToken: "next+/=",
+    });
+    const controller = new AbortController();
+    const result = await app.handle({
+      path: paths.queue("repo/main"), search: new URLSearchParams({ view: "issues", page: "opaque+/=" }),
+      signal: controller.signal,
+    });
+    expect(service.listOpenIssues).toHaveBeenCalledWith(
+      { queue: "repo/main", pageSize: 50, pageToken: "opaque+/=" }, { signal: controller.signal },
+    );
+    expect(service.list).not.toHaveBeenCalled();
+    expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      kind: "render",
+      model: {
+        kind: "issues", latestHref: paths.openIssues("repo/main"), showLatestLink: true,
+        issues: { ok: true, data: {
+          issues: [{
+            taskId: "build/test", unitId: "", firstSeenAtMs: "9007199254740993",
+            requestId: summary.requestId, requestHref: paths.request("repo/main", summary.requestId),
+          }],
+          nextHref: paths.openIssues("repo/main", "next+/="),
+        } },
+      },
+    });
+  });
+
+  it("does not call issue storage for an unknown queue or denied access", async () => {
+    const { app, service, paths } = createPageTestContext();
+    expect(await app.handle({ path: paths.queue("unknown"), search: new URLSearchParams({ view: "issues" }) })).toEqual({ kind: "not-found" });
+    const denied = createStovepipeWeb({ service, paths, queues: [{ name: "repo/main" }], authorize: () => false });
+    expect(await denied.handle({ path: paths.queue("repo/main"), search: new URLSearchParams({ view: "issues" }) })).toEqual({ kind: "forbidden" });
+    expect(service.listOpenIssues).not.toHaveBeenCalled();
+  });
+
+  it("contains issue-service failures in the page section without exposing backend diagnostics", async () => {
+    const { app, service, paths } = createPageTestContext();
+    vi.mocked(service.listOpenIssues).mockRejectedValue(new Error("private issue-service detail"));
+    const result = await app.handle({ path: paths.queue("repo/main"), search: new URLSearchParams({ view: "issues" }) });
+    expect(result).toMatchObject({ kind: "render", model: { kind: "issues", issues: { ok: false } } });
+    expect(JSON.stringify(result)).not.toContain("private issue-service detail");
+  });
+
   it("keeps overlapping loads bound to their own host logging callbacks", async () => {
     const { app, service, paths } = createPageTestContext();
     let release!: () => void;

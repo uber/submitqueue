@@ -7,3 +7,4 @@ export * from "./table.js";
 export * from "./facts.js";
 export * from "./select-overrides.js";
 export * from "./paged-requests.js";
+export * from "./use-page-loader.js";
