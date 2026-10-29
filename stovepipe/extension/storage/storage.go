@@ -106,6 +106,9 @@ type Storage interface {
 	// GetIssueSummaryStore returns the IssueSummaryStore instance.
 	GetIssueSummaryStore() IssueSummaryStore
 
+	// GetOpenIssueStore returns the derived open-issue lookup store.
+	GetOpenIssueStore() OpenIssueStore
+
 	// GetIssueTrackingStore returns the operational reconciliation progress store.
 	GetIssueTrackingStore() IssueTrackingStore
 

@@ -9,6 +9,7 @@ go_library(
         "issue_state_store.go",
         "issue_summary_store.go",
         "issue_tracking_store.go",
+        "open_issue_store.go",
         "project_fact_by_degree_store.go",
         "queue_log_store.go",
         "queue_store.go",

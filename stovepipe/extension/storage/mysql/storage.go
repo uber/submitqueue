@@ -59,6 +59,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		issueStateStore:          NewIssueStateStore(s.db, queueScope.SubScope("issue_state_store"), queueName),
 		issueLogStore:            NewIssueLogStore(s.db, queueScope.SubScope("issue_log_store"), queueName),
 		issueSummaryStore:        NewIssueSummaryStore(s.db, queueScope.SubScope("issue_summary_store"), queueName),
+		openIssueStore:           NewOpenIssueStore(s.db, queueScope.SubScope("open_issue_store"), queueName),
 		issueTrackingStore:       NewIssueTrackingStore(s.db, queueScope.SubScope("issue_tracking_store"), queueName),
 		validationFactStore:      NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
 		projectFactByDegreeStore: NewProjectFactByDegreeStore(s.db, queueScope.SubScope("project_fact_by_degree_store"), queueName),
@@ -85,6 +86,7 @@ type mysqlStorage struct {
 	issueStateStore          storage.IssueStateStore
 	issueLogStore            storage.IssueLogStore
 	issueSummaryStore        storage.IssueSummaryStore
+	openIssueStore           storage.OpenIssueStore
 	issueTrackingStore       storage.IssueTrackingStore
 	validationFactStore      storage.ValidationFactStore
 	projectFactByDegreeStore storage.ProjectFactByDegreeStore
@@ -157,6 +159,10 @@ func (f *mysqlStorage) GetIssueLogStore() storage.IssueLogStore {
 
 func (f *mysqlStorage) GetIssueSummaryStore() storage.IssueSummaryStore {
 	return f.issueSummaryStore
+}
+
+func (f *mysqlStorage) GetOpenIssueStore() storage.OpenIssueStore {
+	return f.openIssueStore
 }
 
 func (f *mysqlStorage) GetIssueTrackingStore() storage.IssueTrackingStore {
