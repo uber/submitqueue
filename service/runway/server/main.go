@@ -15,6 +15,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -496,6 +497,14 @@ func loadMergeConfigFromEnv(logger *zap.Logger) (mergeConfig, error) {
 	return cfg, nil
 }
 
+// Committer identity of a git merger whose config leaves it unset. The pinned
+// runtime scrubs ambient git configuration, so the commit-creating strategies
+// need one supplied explicitly.
+const (
+	defaultCommitterName  = "SubmitQueue Runway"
+	defaultCommitterEmail = "runway@submitqueue.invalid"
+)
+
 // mergerBuilder constructs merger factories, reusing one git instance per merge
 // target.
 //
@@ -540,18 +549,25 @@ func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, e
 		}
 	}
 
+	workspaces, err := gitlocal.NewFactory(gitlocal.Params{
+		Dir:            cfg.CheckoutPath,
+		Runtime:        b.runtime,
+		CommitterName:  cmp.Or(cfg.CommitterName, defaultCommitterName),
+		CommitterEmail: cmp.Or(cfg.CommitterEmail, defaultCommitterEmail),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build git workspace: %w", where, err)
+	}
 	m, err := gitmerger.NewMerger(gitmerger.Params{
-		CheckoutPath:            cfg.CheckoutPath,
+		Workspaces:              workspaces,
+		Repo:                    cfg.CheckoutPath,
 		Remote:                  cfg.Remote,
 		Target:                  cfg.Target,
 		DefaultStrategy:         cfg.strategy(),
-		Runtime:                 b.runtime,
 		MaxPushAttempts:         cfg.MaxPushAttempts,
 		FetchRefspecs:           cfg.FetchRefspecs,
 		CheckStaleness:          *cfg.CheckStaleness,
 		AllowUnrelatedHistories: cfg.AllowUnrelatedHistories,
-		CommitterName:           cfg.CommitterName,
-		CommitterEmail:          cfg.CommitterEmail,
 		Logger:                  b.logger.Sugar(),
 		MetricsScope:            b.scope,
 	})
