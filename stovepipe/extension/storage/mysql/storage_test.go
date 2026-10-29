@@ -51,6 +51,7 @@ func TestNewStorage(t *testing.T) {
 	assert.NotNil(t, bound.GetBuildIssueStore())
 	assert.NotNil(t, bound.GetIssueStateStore())
 	assert.NotNil(t, bound.GetIssueLogStore())
+	assert.NotNil(t, bound.GetIssueSummaryStore())
 	assert.NotNil(t, bound.GetIssueTrackingStore())
 
 	_, err = s.For("")
@@ -105,6 +106,14 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			op:   "get",
 			read: func(bound storage.Storage, _ string) error {
 				_, err := bound.GetRequestSummaryStore().Get(context.Background(), "request-id")
+				return err
+			},
+		},
+		{
+			name: "issue_summary_store",
+			op:   "get",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetIssueSummaryStore().Get(context.Background(), "task", "unit")
 				return err
 			},
 		},

@@ -50,6 +50,14 @@ Listing reads a bounded primary-key range in bytewise task/unit order and includ
 
 The MySQL backend uses the new `issue_state` table. Create it before deploying the updated readers. The prior `open_issue` table is not read or automatically copied; no in-repository runtime writer was enabled for it. Deployments with externally populated rows need an explicit backfill before switching readers. The repair executor still receives an `OpenIssue`, which describes an open occurrence rather than the storage record.
 
+## Issue summaries
+
+`IssueSummaryStore` retains one read model per task/unit within its queue, independently of operational `IssueState`. It supports only complete-key create, get, and CAS replacement. Closed summaries remain present; removing them would also remove the source-order information needed to reject an older opening. There is no deletion or listing operation.
+
+`RequestID` and `BuildID` identify the latest represented transition, while `FirstSeenBuildID` identifies its current or most recent opening. Source order follows request ingest order, not opaque build IDs or timestamps. Within the same request, a closing transition supersedes an opening. `Version` is only the summary's CAS guard, not the source order. The materializer must compare incoming transitions before replacing a summary; the store does not enforce lifecycle ordering.
+
+The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. This storage layer does not yet populate summaries or expose a public open-issues list.
+
 ## Issue lifecycle history
 
 `IssueLogStore` retains immutable open/closed status transitions independently of current issue state and per-build observations. Each transition is keyed by task, unit, build, and status within the bound queue. An empty unit identifies a task-wide issue. History remains when an issue closes or reopens; transitions do not carry a separate reference to the opening they belong to.
