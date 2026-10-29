@@ -226,7 +226,7 @@ The `project_facts_recorded` event also projects its retained timestamp into `Re
 
 Build running and unchanged polls create no entry. A failed runner trigger that creates no Build creates no event. Cancelled and superseded requests create no validation fact.
 
-No controller infers an outcome reason from `RequestStateFailed` alone or records DLQ as the domain reason. Record DLQ uses that persisted state to recover a missing broken repository fact; it does not infer project verdicts.
+A terminal `Request` persists its outcome reason in the same compare-and-swap as its state, and every terminal state entry copies that reason. Only a Request made terminal before reasons were persisted falls back to the reason derived by the stage repairing its entry. No controller otherwise infers an outcome reason from `RequestStateFailed` alone or records DLQ as the domain reason. Record DLQ uses that persisted state to recover a missing broken repository fact; it does not infer project verdicts.
 
 ### Repair trigger requirement
 

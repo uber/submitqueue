@@ -106,8 +106,8 @@ func failRequest(
 
 	if request.State.IsTerminal() {
 		if request.State == entity.RequestStateFailed {
-			// The originating DLQ remains the retry trigger after the state write. Its stage-specific
-			// reason repairs that write's missing log; PersistLog rejects an already-retained conflict.
+			// The originating DLQ remains the retry trigger after the state write. The repaired log
+			// carries the reason persisted with that write, so it agrees with any log its writer retained.
 			return persistFailureLog(ctx, store, materializer, request, reason)
 		}
 		logger.Infow("dlq reconcile: request already terminal, skipping",
@@ -125,6 +125,7 @@ func failRequest(
 
 	updated := request
 	updated.State = entity.RequestStateFailed
+	updated.OutcomeReason = reason
 	newVersion := request.Version + 1
 	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
 		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
@@ -145,9 +146,9 @@ func persistFailureLog(
 	store storage.Storage,
 	materializer requestlog.Materializer,
 	request entity.Request,
-	reason entity.RequestOutcomeReason,
+	fallbackReason entity.RequestOutcomeReason,
 ) error {
-	log := requestlog.NewRequestStateLog(request, reason)
+	log := requestlog.NewRequestStateLog(request, fallbackReason)
 	if err := materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("failed to record failed state for request %s: %w", request.ID, err)
 	}

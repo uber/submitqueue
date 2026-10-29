@@ -801,6 +801,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				superseded := acceptedRequest(testID)
 				superseded.State = entity.RequestStateSuperseded
+				superseded.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
 				loggedRequest := superseded
 				loggedRequest.Version = 2
@@ -906,6 +907,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
+				updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 				loggedRequest := updated
 				loggedRequest.Version = 2
@@ -925,6 +927,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
+				updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 				request := entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
@@ -948,6 +951,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
+				updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 				reloaded := entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,

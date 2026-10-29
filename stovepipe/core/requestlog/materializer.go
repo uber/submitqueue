@@ -70,7 +70,13 @@ func NewMaterializer(scope tally.Scope) Materializer {
 }
 
 // NewRequestStateLog constructs the occurrence representing the request's current durable state.
-func NewRequestStateLog(request entity.Request, outcomeReason entity.RequestOutcomeReason) entity.RequestLog {
+// It records the request's persisted outcome reason. fallbackReason applies only when none is
+// persisted: on a nonterminal request, or on one made terminal before reasons were persisted.
+func NewRequestStateLog(request entity.Request, fallbackReason entity.RequestOutcomeReason) entity.RequestLog {
+	outcomeReason := request.OutcomeReason
+	if outcomeReason == entity.RequestOutcomeReasonUnknown {
+		outcomeReason = fallbackReason
+	}
 	metadata := make(map[string]string)
 	switch request.BuildStrategy {
 	case entity.BuildStrategyFull:

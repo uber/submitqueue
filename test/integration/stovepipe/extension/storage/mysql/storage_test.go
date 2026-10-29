@@ -318,6 +318,16 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 	// Stale CAS: oldVersion 1 no longer matches the stored version (2).
 	err = s.store.Update(s.ctx, updated, 1, 2)
 	require.ErrorIs(s.T(), err, storage.ErrVersionMismatch)
+
+	failed := updated
+	failed.State = entity.RequestStateFailed
+	failed.OutcomeReason = entity.RequestOutcomeReasonBuildPollingExhausted
+	require.NoError(s.T(), s.store.Update(s.ctx, failed, 2, 3))
+	failed.Version = 3
+
+	got, err = s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), failed, got)
 }
 
 func (s *MySQLRequestStoreSuite) TestUpdateNotFoundIsVersionMismatch() {
