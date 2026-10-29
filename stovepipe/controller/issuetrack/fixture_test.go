@@ -50,6 +50,7 @@ type fixture struct {
 	store       storage.Storage
 	states      map[issueKey]entity.IssueState
 	summaries   map[issueKey]entity.IssueSummary
+	openIssues  map[issueKey]entity.OpenIssue
 	logs        map[logKey]entity.IssueLog
 	progress    entity.IssueTrackingState
 	hasProgress bool
@@ -72,17 +73,20 @@ func newFixture(t *testing.T) *fixture {
 	f.requests = map[string]entity.Request{}
 	f.buildIssues = map[string]map[issueKey]entity.BuildIssue{}
 	f.summaries = map[issueKey]entity.IssueSummary{}
+	f.openIssues = map[issueKey]entity.OpenIssue{}
 	f.source("older", "1", entity.BuildStatusSucceeded)
 	store := storagemock.NewMockStorage(f.mocks)
 	f.store = store
 	states := storagemock.NewMockIssueStateStore(f.mocks)
 	history := storagemock.NewMockIssueLogStore(f.mocks)
 	summaries := storagemock.NewMockIssueSummaryStore(f.mocks)
+	openIssues := storagemock.NewMockOpenIssueStore(f.mocks)
 	tracking := storagemock.NewMockIssueTrackingStore(f.mocks)
 	f.factory.EXPECT().For(storage.Config{QueueName: testQueue}).Return(store, nil).AnyTimes()
 	store.EXPECT().GetIssueStateStore().Return(states).AnyTimes()
 	store.EXPECT().GetIssueLogStore().Return(history).AnyTimes()
 	store.EXPECT().GetIssueSummaryStore().Return(summaries).AnyTimes()
+	store.EXPECT().GetOpenIssueStore().Return(openIssues).AnyTimes()
 	store.EXPECT().GetIssueTrackingStore().Return(tracking).AnyTimes()
 
 	states.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit string) (entity.IssueState, error) {
@@ -179,6 +183,49 @@ func newFixture(t *testing.T) *fixture {
 		summary.Version = newVersion
 		f.summaries[key] = summary
 		return nil
+	}).AnyTimes()
+	openIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit string) (entity.OpenIssue, error) {
+		if err := f.fail("open-issue/get"); err != nil {
+			return entity.OpenIssue{}, err
+		}
+		issue, ok := f.openIssues[issueKey{task, unit}]
+		if !ok {
+			return entity.OpenIssue{}, storage.ErrNotFound
+		}
+		return issue, nil
+	}).AnyTimes()
+	openIssues.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.OpenIssue) error {
+		if err := f.fail("open-issue/create"); err != nil {
+			return err
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		if _, ok := f.openIssues[key]; ok {
+			return storage.ErrAlreadyExists
+		}
+		f.openIssues[key] = issue
+		return nil
+	}).AnyTimes()
+	openIssues.EXPECT().Replace(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.OpenIssue, expected string) (bool, error) {
+		if err := f.fail("open-issue/replace"); err != nil {
+			return false, err
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		if current, ok := f.openIssues[key]; !ok || current.FirstSeenBuildID != expected {
+			return false, nil
+		}
+		f.openIssues[key] = issue
+		return true, nil
+	}).AnyTimes()
+	openIssues.EXPECT().Delete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.OpenIssue) (bool, error) {
+		if err := f.fail("open-issue/delete"); err != nil {
+			return false, err
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		if current, ok := f.openIssues[key]; !ok || current.FirstSeenBuildID != issue.FirstSeenBuildID {
+			return false, nil
+		}
+		delete(f.openIssues, key)
+		return true, nil
 	}).AnyTimes()
 	tracking.EXPECT().Get(gomock.Any()).DoAndReturn(func(context.Context) (entity.IssueTrackingState, error) {
 		if err := f.fail("progress/get"); err != nil {
@@ -358,4 +405,7 @@ func (f *fixture) seedIssue(task, unit string, status entity.IssueStatus) {
 	f.initialLogs[logKey{issueKey{task, unit}, "older", status}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Status: status, TimestampMs: 500}
 	f.summaries[issueKey{task, unit}] = entity.IssueSummary{TaskID: task, UnitID: unit, Status: status,
 		FirstSeenBuildID: "older", RequestID: "1", BuildID: "older", ChangedAtMs: 500, Version: 1}
+	if status == entity.IssueStatusOpen {
+		f.openIssues[issueKey{task, unit}] = entity.OpenIssue{TaskID: task, UnitID: unit, FirstSeenBuildID: "older"}
+	}
 }

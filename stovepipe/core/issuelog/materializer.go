@@ -28,9 +28,9 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-// Materializer retains immutable issue history and updates its summary.
+// Materializer retains issue history and updates its summary and open-issue lookup.
 type Materializer interface {
-	// PersistLog repairs the summary even when the transition already exists.
+	// PersistLog repairs the summary and lookup even when the transition already exists.
 	// firstSeenBuildID identifies the opening retained by the source issue state.
 	PersistLog(ctx context.Context, stores storage.Storage, log entity.IssueLog, firstSeenBuildID string) error
 }
@@ -76,7 +76,10 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 	if err := summary.Validate(); err != nil {
 		return fmt.Errorf("invalid issue summary: %w", err)
 	}
-	return materializeIssueSummary(ctx, stores.GetIssueSummaryStore(), summary)
+	if err := materializeIssueSummary(ctx, stores.GetIssueSummaryStore(), summary); err != nil {
+		return err
+	}
+	return materializeOpenIssue(ctx, stores, summary.TaskID, summary.UnitID)
 }
 
 func retainIssueLog(ctx context.Context, logs storage.IssueLogStore, log entity.IssueLog) (entity.IssueLog, error) {
@@ -150,6 +153,54 @@ func materializeIssueSummary(ctx context.Context, summaries storage.IssueSummary
 			return fmt.Errorf("replace issue summary: %w", err)
 		}
 		return nil
+	}
+}
+
+func materializeOpenIssue(ctx context.Context, stores storage.Storage, taskID, unitID string) error {
+	openIssues := stores.GetOpenIssueStore()
+	summaries := stores.GetIssueSummaryStore()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Read the open-issue row before the summary so a stale closed
+		// summary cannot authorize deleting a newer opening.
+		current, err := openIssues.Get(ctx, taskID, unitID)
+		missing := errors.Is(err, storage.ErrNotFound)
+		if err != nil && !missing {
+			return fmt.Errorf("read open issue: %w", err)
+		}
+		summary, err := summaries.Get(ctx, taskID, unitID)
+		if err != nil {
+			return fmt.Errorf("read issue summary for open issue: %w", err)
+		}
+
+		switch summary.Status {
+		case entity.IssueStatusOpen:
+			if !missing && current.FirstSeenBuildID == summary.FirstSeenBuildID {
+				return nil
+			}
+			desired := entity.OpenIssue{TaskID: taskID, UnitID: unitID, FirstSeenBuildID: summary.FirstSeenBuildID}
+			if missing {
+				err = openIssues.Create(ctx, desired)
+				if errors.Is(err, storage.ErrAlreadyExists) {
+					continue
+				}
+			} else {
+				_, err = openIssues.Replace(ctx, desired, current.FirstSeenBuildID)
+			}
+		case entity.IssueStatusClosed:
+			if missing {
+				return nil
+			}
+			_, err = openIssues.Delete(ctx, current)
+		default:
+			return fmt.Errorf("invalid issue summary status %q", summary.Status)
+		}
+		if err != nil {
+			return fmt.Errorf("materialize open issue: %w", err)
+		}
 	}
 }
 

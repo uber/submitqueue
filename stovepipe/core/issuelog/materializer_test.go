@@ -38,8 +38,12 @@ type materializerFixture struct {
 	stores                     *storagemock.MockStorage
 	logs                       map[logKey]entity.IssueLog
 	summary                    entity.IssueSummary
+	openIssue                  entity.OpenIssue
 	failures                   map[string]error
 	beforeCreate, beforeUpdate func()
+	beforeOpenIssueGet         func()
+	beforeOpenIssueWrite       func()
+	openIssueDeletes           int
 }
 
 func newMaterializerFixture(t *testing.T) *materializerFixture {
@@ -49,9 +53,11 @@ func newMaterializerFixture(t *testing.T) *materializerFixture {
 		logs: make(map[logKey]entity.IssueLog), failures: make(map[string]error)}
 	logs := storagemock.NewMockIssueLogStore(ctrl)
 	summaries := storagemock.NewMockIssueSummaryStore(ctrl)
+	openIssues := storagemock.NewMockOpenIssueStore(ctrl)
 	builds := storagemock.NewMockBuildStore(ctrl)
 	f.stores.EXPECT().GetIssueLogStore().Return(logs).AnyTimes()
 	f.stores.EXPECT().GetIssueSummaryStore().Return(summaries).AnyTimes()
+	f.stores.EXPECT().GetOpenIssueStore().Return(openIssues).AnyTimes()
 	f.stores.EXPECT().GetBuildStore().Return(builds).AnyTimes()
 	logs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.IssueLog) error {
 		if err := f.failures["log/create"]; err != nil {
@@ -126,6 +132,61 @@ func newMaterializerFixture(t *testing.T) *materializerFixture {
 		f.summary = summary
 		return nil
 	}).AnyTimes()
+	openIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string, string) (entity.OpenIssue, error) {
+		if f.beforeOpenIssueGet != nil {
+			hook := f.beforeOpenIssueGet
+			f.beforeOpenIssueGet = nil
+			hook()
+		}
+		if err := f.failures["open_issue/get"]; err != nil {
+			return entity.OpenIssue{}, err
+		}
+		if f.openIssue.TaskID == "" {
+			return entity.OpenIssue{}, storage.ErrNotFound
+		}
+		return f.openIssue, nil
+	}).AnyTimes()
+	runOpenIssueWriteHook := func() {
+		if f.beforeOpenIssueWrite != nil {
+			hook := f.beforeOpenIssueWrite
+			f.beforeOpenIssueWrite = nil
+			hook()
+		}
+	}
+	openIssues.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.OpenIssue) error {
+		runOpenIssueWriteHook()
+		if err := f.failures["open_issue/create"]; err != nil {
+			return err
+		}
+		if f.openIssue.TaskID != "" {
+			return storage.ErrAlreadyExists
+		}
+		f.openIssue = issue
+		return nil
+	}).AnyTimes()
+	openIssues.EXPECT().Replace(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.OpenIssue, expected string) (bool, error) {
+		runOpenIssueWriteHook()
+		if err := f.failures["open_issue/replace"]; err != nil {
+			return false, err
+		}
+		if f.openIssue.TaskID == "" || f.openIssue.FirstSeenBuildID != expected {
+			return false, nil
+		}
+		f.openIssue = issue
+		return true, nil
+	}).AnyTimes()
+	openIssues.EXPECT().Delete(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.OpenIssue) (bool, error) {
+		f.openIssueDeletes++
+		runOpenIssueWriteHook()
+		if err := f.failures["open_issue/delete"]; err != nil {
+			return false, err
+		}
+		if f.openIssue != issue {
+			return false, nil
+		}
+		f.openIssue = entity.OpenIssue{}
+		return true, nil
+	}).AnyTimes()
 	return f
 }
 
@@ -154,6 +215,11 @@ func TestMaterializerOpenCloseReopenAndReplay(t *testing.T) {
 		require.NoError(t, f.m.PersistLog(context.Background(), f.stores, step.log, step.opening))
 		require.Equal(t, step.status, f.summary.Status)
 		require.Equal(t, step.version, f.summary.Version)
+		if step.status == entity.IssueStatusClosed {
+			require.Empty(t, f.openIssue)
+		} else {
+			require.Equal(t, f.summary.FirstSeenBuildID, f.openIssue.FirstSeenBuildID)
+		}
 	}
 	require.Equal(t, "11", f.summary.RequestID)
 	require.Equal(t, reopened.BuildID, f.summary.FirstSeenBuildID)
@@ -305,4 +371,149 @@ func TestMaterializerHonorsCanceledContext(t *testing.T) {
 	require.ErrorIs(t, f.m.PersistLog(ctx, f.stores, log, log.BuildID), context.Canceled)
 	require.Empty(t, f.logs)
 	require.Empty(t, f.summary)
+}
+
+func TestMaterializerRepairsOpenIssueOnRetry(t *testing.T) {
+	for _, step := range []string{"open_issue/get", "open_issue/create", "open_issue/replace", "open_issue/delete"} {
+		t.Run(step, func(t *testing.T) {
+			f := newMaterializerFixture(t)
+			log := testIssueLog("build/z", entity.IssueStatusOpen)
+			opening := log.BuildID
+			switch step {
+			case "open_issue/replace":
+				require.NoError(t, f.m.PersistLog(context.Background(), f.stores, log, opening))
+				log = testIssueLog("build/a", entity.IssueStatusOpen)
+				opening = log.BuildID
+			case "open_issue/delete":
+				require.NoError(t, f.m.PersistLog(context.Background(), f.stores, log, opening))
+				log = testIssueLog("build/a", entity.IssueStatusClosed)
+			}
+			f.failures[step] = assert.AnError
+			require.ErrorIs(t, f.m.PersistLog(context.Background(), f.stores, log, opening), assert.AnError)
+			persisted := f.summary
+			require.Equal(t, log.BuildID, persisted.BuildID)
+			delete(f.failures, step)
+
+			retry := log
+			retry.TimestampMs = 9999
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, retry, opening))
+			require.Equal(t, persisted, f.summary)
+			if persisted.Status == entity.IssueStatusClosed {
+				require.Empty(t, f.openIssue)
+			} else {
+				require.Equal(t, entity.OpenIssue{TaskID: log.TaskID, UnitID: log.UnitID, FirstSeenBuildID: opening}, f.openIssue)
+			}
+		})
+	}
+}
+
+func TestOlderTransitionsRepairTheLatestOpening(t *testing.T) {
+	for _, stale := range []entity.IssueStatus{entity.IssueStatusOpen, entity.IssueStatusClosed} {
+		t.Run(string(stale), func(t *testing.T) {
+			f := newMaterializerFixture(t)
+			opened := testIssueLog("build/z", entity.IssueStatusOpen)
+			closed := testIssueLog("build/a", entity.IssueStatusClosed)
+			reopened := testIssueLog("build/m", entity.IssueStatusOpen)
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, closed, opened.BuildID))
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, reopened, reopened.BuildID))
+			if stale == entity.IssueStatusOpen {
+				f.openIssue = entity.OpenIssue{}
+			} else {
+				f.openIssue.FirstSeenBuildID = opened.BuildID
+			}
+
+			log := opened
+			if stale == entity.IssueStatusClosed {
+				log = closed
+			}
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, log, opened.BuildID))
+			require.Equal(t, reopened.BuildID, f.openIssue.FirstSeenBuildID)
+			require.Equal(t, reopened.BuildID, f.summary.FirstSeenBuildID)
+		})
+	}
+}
+
+func TestDelayedOpenIssueCreateUsesTheLatestSummary(t *testing.T) {
+	for _, status := range []entity.IssueStatus{entity.IssueStatusOpen, entity.IssueStatusClosed} {
+		t.Run(string(status), func(t *testing.T) {
+			f := newMaterializerFixture(t)
+			opened := testIssueLog("build/z", entity.IssueStatusOpen)
+			newer := testIssueLog("build/a", status)
+			opening := opened.BuildID
+			if status == entity.IssueStatusOpen {
+				opening = newer.BuildID
+			}
+			f.beforeOpenIssueWrite = func() {
+				require.NoError(t, f.m.PersistLog(context.Background(), f.stores, newer, opening))
+			}
+
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+			if status == entity.IssueStatusClosed {
+				require.Equal(t, entity.IssueStatusClosed, f.summary.Status)
+				require.Empty(t, f.openIssue)
+			} else {
+				require.Equal(t, newer.BuildID, f.openIssue.FirstSeenBuildID)
+			}
+		})
+	}
+}
+
+func TestDelayedOpenIssueWritesPreserveANewerOpening(t *testing.T) {
+	for _, status := range []entity.IssueStatus{entity.IssueStatusOpen, entity.IssueStatusClosed} {
+		t.Run(string(status), func(t *testing.T) {
+			f := newMaterializerFixture(t)
+			opened := testIssueLog("build/z", entity.IssueStatusOpen)
+			incoming := testIssueLog("build/a", status)
+			newer := testIssueLog("build/m", entity.IssueStatusOpen)
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+			f.beforeOpenIssueWrite = func() {
+				require.NoError(t, f.m.PersistLog(context.Background(), f.stores, newer, newer.BuildID))
+			}
+			opening := opened.BuildID
+			if status == entity.IssueStatusOpen {
+				opening = incoming.BuildID
+			}
+
+			require.NoError(t, f.m.PersistLog(context.Background(), f.stores, incoming, opening))
+			require.Equal(t, newer.BuildID, f.openIssue.FirstSeenBuildID)
+			require.Equal(t, newer.BuildID, f.summary.FirstSeenBuildID)
+		})
+	}
+}
+
+func TestOpenIssueReadsTheSummaryAfterTheOpeningReference(t *testing.T) {
+	f := newMaterializerFixture(t)
+	opened := testIssueLog("build/z", entity.IssueStatusOpen)
+	closed := testIssueLog("build/a", entity.IssueStatusClosed)
+	newer := testIssueLog("build/m", entity.IssueStatusOpen)
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+	f.failures["open_issue/delete"] = assert.AnError
+	require.ErrorIs(t, f.m.PersistLog(context.Background(), f.stores, closed, opened.BuildID), assert.AnError)
+	delete(f.failures, "open_issue/delete")
+	deletes := f.openIssueDeletes
+	f.beforeOpenIssueGet = func() {
+		require.NoError(t, f.m.PersistLog(context.Background(), f.stores, newer, newer.BuildID))
+	}
+
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, closed, opened.BuildID))
+	require.Equal(t, newer.BuildID, f.openIssue.FirstSeenBuildID)
+	require.Equal(t, deletes, f.openIssueDeletes)
+}
+
+func TestOpenIssueRequiresAReadableSummary(t *testing.T) {
+	f := newMaterializerFixture(t)
+	err := materializeOpenIssue(context.Background(), f.stores, "validation", "unit")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.Empty(t, f.openIssue)
+}
+
+func TestOpenIssueRetryHonorsCanceledContext(t *testing.T) {
+	f := newMaterializerFixture(t)
+	log := testIssueLog("build/z", entity.IssueStatusOpen)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.beforeOpenIssueWrite = cancel
+
+	require.ErrorIs(t, f.m.PersistLog(ctx, f.stores, log, log.BuildID), context.Canceled)
 }

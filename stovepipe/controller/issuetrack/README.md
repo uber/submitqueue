@@ -8,7 +8,7 @@ Issue tracking maintains current issue state and opening/closing history from pe
 2. Reject a source older than the issue's last processed build, using Request order rather than opaque Build IDs.
 3. Before changing the issue, conditionally save its task/unit key as the current queue cursor **after** reading the issue row. Repeat this conditional write even when resuming the same cursor.
 4. Conditionally create or update the issue row. Record the processed build even when its open/closed status stays the same; update the changing build and timestamp only on an actual transition.
-5. Retain opening or closing history from the issue row's changing build and timestamp, then materialize its summary. On retry, the inclusive cursor revisits that row and repairs both before proceeding.
+5. Retain opening or closing history from the issue row's changing build and timestamp, then materialize its summary and open-issue lookup. On retry, the inclusive cursor revisits that row and repairs all three before proceeding.
 
 Closed issue rows are retained, so their versions cannot reset on reopening. A repeated result from the same build needs no new issue write. Its history is repaired when revisiting the current cursor.
 
@@ -16,7 +16,7 @@ Closed issue rows are retained, so their versions cannot reset on reopening. A r
 
 During issue application, the caller must finish the current cursor and its history before moving on or admitting another build. If a replacement worker advances, completing that cursor changes the issue version first. A paused worker's earlier issue write then fails its row guard. A worker that reads later is rejected by source ordering or the conditional cursor write.
 
-The [issue-log materializer](../../core/issuelog/README.md) also orders summary updates by source request, with closing after opening within the same request. A paused projection writer cannot overwrite a newer summary: its conditional write fails, and reloading the winner repeats the source-order check. Summary failures keep the cursor unfinished, just like history failures.
+The [issue-log materializer](../../core/issuelog/README.md) also orders summary updates by source request, with closing after opening within the same request. A paused projection writer cannot overwrite a newer summary: its conditional write fails, and reloading the winner repeats the source-order check. Lookup entries are then maintained from the latest summary, not the incoming transition. Summary and lookup failures keep the cursor unfinished, just like history failures.
 
 The post-read cursor write and processed-build updates, including unchanged statuses, are required for this ordering. A progress version alone is not a lock around issue writes. These operations use individual K-V reads, conditional writes, and immutable history creates; no cross-record transaction or stored future-change payload is needed.
 
@@ -50,7 +50,7 @@ An error returns to normal consumer retry. The next delivery resumes the cursor 
 
 1. Conditionally enter `abandoning`, retaining the source, notification, and cursor. Normal deliveries hold for 30 seconds while this phase is present; they cannot start another pass or resume issue application.
 2. If there is a cursor, read its issue and conditionally advance progress after that read. Advance the issue's version without changing its status or transition metadata. This invalidates a paused worker's earlier row guard. If the row has not been created yet, finish that one opening instead: the normal worker can only have saved such a cursor after finding a reported build issue. Creating it prevents the delayed create from succeeding. Closed issue rows are never deleted.
-3. Repair the cursor's opening or closing history and summary from the retained row. Record an `issue_tracking_abandoned` Request-history event keyed by the failed notification, with its build ID.
+3. Repair the cursor's opening or closing history, summary, and open-issue lookup from the retained row. Record an `issue_tracking_abandoned` Request-history event keyed by the failed notification, with its build ID.
 4. Conditionally enter `abandoned`. Keep the source-order boundary and notification identity, so the same delivery and older builds cannot restart the abandoned work.
 
 Accepted opens and closes remain in place. Recovery does not scan either issue range, close the remaining issues, change Request or Build outcomes, or release build slots. An abandoned ordinary refresh still permits a new refresh or terminal notification for that Request; an abandoned terminal pass permits only newer Requests. A later successful build can reconcile issues left unchanged by the failed pass.

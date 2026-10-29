@@ -66,7 +66,7 @@ Create returns `ErrAlreadyExists` for any existing task/unit key. Replace compar
 
 Listing traverses a bounded queue-prefix primary-key range in ascending bytewise task/unit order. The zero cursor starts the range; otherwise the cursor excludes its key and all earlier keys, even if that open-issue row has been deleted. Empty units identify task-wide issues, while task IDs must be nonempty. Membership can change between reads. A consumer that skips stale references must still advance after the last returned open-issue row, not the last accepted issue.
 
-Open-issue rows are not authoritative issue status. A delayed create can leave a reference to a closed issue, so readers must verify that the summary is open and its opening matches before returning a result. The store does not read summaries, enforce source ordering, backfill existing rows, or populate open-issue rows automatically. No runtime writer or public list API uses this store yet.
+Open-issue rows are not authoritative issue status. A delayed create can leave a reference to a closed issue, so readers must verify that the summary is open and its opening matches before returning a result. The store does not read summaries, enforce source ordering, backfill existing rows, or populate open-issue rows automatically. The [issue-log materializer](../../core/issuelog/README.md#open-issue-lookup) maintains open-issue rows after summary persistence during normal processing and recovery. No public list API uses this store yet.
 
 ## Issue lifecycle history
 

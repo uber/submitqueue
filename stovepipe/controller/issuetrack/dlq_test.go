@@ -193,7 +193,7 @@ func TestRecoveryDoesNotReopenAnExistingClosedCursor(t *testing.T) {
 }
 
 func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
-	for _, step := range []string{"build/get", "request/get", "progress/get", "progress/update", "issue/get", "issue/update", "history/create", "history/get", "summary/get", "recovery/history", "finish abandonment"} {
+	for _, step := range []string{"build/get", "request/get", "progress/get", "progress/update", "issue/get", "issue/update", "history/create", "history/get", "summary/get", "open-issue/get", "recovery/history", "finish abandonment"} {
 		t.Run(step, func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusFailed)
@@ -221,7 +221,7 @@ func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
 }
 
 func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
-	for _, step := range []string{"issue/create", "history/create", "summary/create", "recovery/history"} {
+	for _, step := range []string{"issue/create", "history/create", "summary/create", "open-issue/create", "recovery/history"} {
 		t.Run(step, func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusRunning)
@@ -237,6 +237,7 @@ func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
 			issue := f.states[issueKey{"task", "unit"}]
 			log := f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen}]
 			summary := f.summaries[issueKey{"task", "unit"}]
+			require.Equal(t, issue.FirstSeenBuildID, f.openIssues[issueKey{"task", "unit"}].FirstSeenBuildID)
 			require.Equal(t, entity.IssueStatusOpen, summary.Status)
 			require.Equal(t, issue.FirstSeenBuildID, summary.FirstSeenBuildID)
 			require.Equal(t, issue.ChangedAtMs, summary.ChangedAtMs)
@@ -249,6 +250,29 @@ func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecoveryRepairsClosedIssueLookupBeforeAbandonment(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusFailed)
+	f.seedIssue("task", "unit", entity.IssueStatusClosed)
+	key := issueKey{"task", "unit"}
+	f.openIssues[key] = entity.OpenIssue{TaskID: key.task, UnitID: key.unit, FirstSeenBuildID: "older"}
+	progress := currentCursor()
+	msg := f.message("build/100", true)
+	progress.Finalize, progress.NotificationID = true, msg.ID
+	f.retain(progress)
+	f.failures["open-issue/delete"] = 1
+
+	require.ErrorIs(t, f.recover(msg, false), assert.AnError)
+	require.Equal(t, entity.IssueTrackingPhaseAbandoning, f.progress.Phase)
+	require.Contains(t, f.openIssues, key)
+
+	require.NoError(t, f.recover(msg, false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.NotContains(t, f.openIssues, key)
+	require.Equal(t, entity.IssueStatusClosed, f.states[key].Status)
+	require.Equal(t, entity.IssueStatusClosed, f.summaries[key].Status)
 }
 
 func TestPrimaryWaitsForRecoveryThenAdmitsANewerBuild(t *testing.T) {
