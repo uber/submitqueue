@@ -11,6 +11,7 @@ Runnable wiring for the **Stovepipe** domain — a single-service domain (the do
 - **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.
 - **buildanalysis consumer** (`TopicKeyBuildAnalysis`) — periodically detects and persists build issues, then publishes queue-partitioned issue-tracking notifications.
 - **issuetrack consumer** (`TopicKeyIssueTrack`) — applies reported build issues to current issue state and history, closing absent issues only when final reconciliation permits it.
+- **fix consumer** (`TopicKeyFix`) — selects an eligible issue and records one repair association per build using the reference host's no-op executor.
 - **record consumer** (`TopicKeyRecord`) — writes the whole-repository validation fact and, for a green fact, advances the queue's last-green bookmark and promotion ref.
 - **hook consumer** (`TopicKeyHook`) — receives `validation.repository.started` from process and `validation.repository.recorded` or `validation.repository.cancelled` from record. The current resolver invokes only `noop`, so these events have no external side effect. Its topic name is domain-qualified (`stovepipe-hook`) because the key is shared across domains.
 - **DLQ consumers** — registered for process, build, buildsignal, buildanalysis, issuetrack, record, and hook, with stage-specific recovery behavior. Issue-tracking recovery abandons incomplete passes while preserving accepted changes; it does not rerun their remaining batches.
@@ -21,10 +22,11 @@ Stovepipe therefore needs two MySQL databases: a **storage** database (the `queu
 
 ## Wiring notes
 
-`server/main.go` is the composition root and supplies the concrete extension implementations. Two are deliberately demo-only and must be replaced for any real deployment:
+`server/main.go` is the composition root and supplies the concrete extension implementations. Demo implementations must be replaced for any real deployment:
 
 - **`inMemoryCounter`** — a process-local `counter.Counter` for sequence numbers; not durable. A real deployment uses a persistent implementation (e.g. `platform/extension/counter/mysql`).
 - **`fakeSourceControlFactory`** — seeds each queue with a deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting the same queue exercises the dedup path). A real deployment supplies a VCS-backed `sourcecontrol.Factory`, which is also where a queue's promotion ref is resolved. The fake has no ref to move, so a promotion locally shows up only in the record consumer's logs.
+- **`noopRepairExecutorFactory`** — accepts repairs without launching work and returns `noop/<buildID>`. The fix controller stores that ID, consuming the build's one-repair allowance. Replacing this factory does not retry builds that already have a no-op association. The default no-op issue detector reports no failures, so the reference stack does not normally reach repair submission.
 
 ## Layout
 

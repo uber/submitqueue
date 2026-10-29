@@ -59,7 +59,7 @@ A notification can fail while helping an older pass. Recovery abandons that save
 
 Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged.
 
-The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The fix publication route is registered, but fix consumption and executor configuration remain separate.
+The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery remains separate.
 
 ## Analysis handoff
 
