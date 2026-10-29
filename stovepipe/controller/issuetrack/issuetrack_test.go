@@ -92,12 +92,12 @@ func TestProcessIssueOpensAndCloses(t *testing.T) {
 				require.Equal(t, entity.IssueStatusOpen, issue.Status)
 				require.Equal(t, "build/100", issue.FirstSeenBuildID)
 				require.Equal(t, int32(1), issue.Version)
-				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened})
+				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen})
 			} else {
 				require.Equal(t, entity.IssueStatusClosed, issue.Status)
 				require.Equal(t, "older", issue.FirstSeenBuildID)
 				require.Equal(t, int32(8), issue.Version)
-				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventResolved})
+				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusClosed})
 			}
 		})
 	}
@@ -138,7 +138,7 @@ func TestHistoryRetryUsesTheStoredTransition(t *testing.T) {
 	_, err = f.controller.processIssue(context.Background(), f.store, f.progress, issueKey{"task", "unit"}, false)
 	require.NoError(t, err)
 	require.Equal(t, applied, f.states[issueKey{"task", "unit"}])
-	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened}].TimestampMs)
+	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen}].TimestampMs)
 }
 
 func TestCursorFailureDoesNotMutateTheIssue(t *testing.T) {

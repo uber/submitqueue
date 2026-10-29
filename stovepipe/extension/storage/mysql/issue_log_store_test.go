@@ -31,7 +31,7 @@ import (
 
 func issueLogFixture() entity.IssueLog {
 	return entity.IssueLog{TaskID: "task", UnitID: "unit",
-		Event: entity.IssueEventResolved, BuildID: "build/2", TimestampMs: 2000}
+		Status: entity.IssueStatusClosed, BuildID: "build/2", TimestampMs: 2000}
 }
 
 func TestIssueLogCreate(t *testing.T) {
@@ -54,7 +54,7 @@ func TestIssueLogCreate(t *testing.T) {
 			query := mock.ExpectExec(regexp.QuoteMeta(
 				`INSERT INTO issue_log (queue, task_id, unit_id, build_id, event, timestamp_ms)
                  VALUES (?, ?, ?, ?, ?, ?)`)).
-				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, log.Event, log.TimestampMs)
+				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, "closed", log.TimestampMs)
 			if tt.dbErr != nil {
 				query.WillReturnError(tt.dbErr)
 			} else {
@@ -83,7 +83,7 @@ func TestIssueLogGet(t *testing.T) {
 			query := mock.ExpectQuery(regexp.QuoteMeta(
 				`SELECT task_id, unit_id, build_id, event, timestamp_ms
                  FROM issue_log WHERE queue = ? AND task_id = ? AND unit_id = ? AND build_id = ? AND event = ?`)).
-				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, log.Event)
+				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, "closed")
 			switch kind {
 			case "missing":
 				query.WillReturnError(sql.ErrNoRows)
@@ -95,10 +95,10 @@ func TestIssueLogGet(t *testing.T) {
 					timestamp = "invalid"
 				}
 				query.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms"}).
-					AddRow(log.TaskID, log.UnitID, log.BuildID, log.Event, timestamp))
+					AddRow(log.TaskID, log.UnitID, log.BuildID, log.Status, timestamp))
 			}
 
-			got, err := store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Event)
+			got, err := store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Status)
 			switch kind {
 			case "found":
 				require.NoError(t, err)
@@ -128,8 +128,8 @@ func TestIssueLogRejectsInvalidKeys(t *testing.T) {
 		{name: "oversized unit", change: func(l *entity.IssueLog, _ *string) { l.UnitID = strings.Repeat("😀", 257) }},
 		{name: "oversized build", change: func(l *entity.IssueLog, _ *string) { l.BuildID = strings.Repeat("b", 1021) }},
 		{name: "empty build", change: func(l *entity.IssueLog, _ *string) { l.BuildID = "" }},
-		{name: "unknown event", change: func(l *entity.IssueLog, _ *string) { l.Event = entity.IssueEventUnknown }},
-		{name: "unsupported event", change: func(l *entity.IssueLog, _ *string) { l.Event = "other" }},
+		{name: "unknown status", change: func(l *entity.IssueLog, _ *string) { l.Status = entity.IssueStatusUnknown }},
+		{name: "unsupported status", change: func(l *entity.IssueLog, _ *string) { l.Status = "other" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
@@ -143,10 +143,10 @@ func TestIssueLogRejectsInvalidKeys(t *testing.T) {
 			mock.ExpectExec("INSERT INTO issue_log").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows(
 				[]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms"}).
-				AddRow(log.TaskID, log.UnitID, log.BuildID, log.Event, log.TimestampMs))
+				AddRow(log.TaskID, log.UnitID, log.BuildID, log.Status, log.TimestampMs))
 
 			require.Error(t, store.Create(context.Background(), log))
-			_, err = store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Event)
+			_, err = store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Status)
 			require.Error(t, err)
 		})
 	}

@@ -91,11 +91,7 @@ func TestRecoveryKeepsAcceptedIssueChanges(t *testing.T) {
 			for key, state := range f.states {
 				untouched[key] = state
 			}
-			event := entity.IssueEventOpened
-			if status == entity.IssueStatusClosed {
-				event = entity.IssueEventResolved
-			}
-			delete(f.initialLogs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, event})
+			delete(f.initialLogs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, status})
 			f.failures["issue/list"], f.failures["build-issues/list"], f.failures["build-issues/get"] = 1, 1, 1
 
 			require.NoError(t, f.recover(msg, false))
@@ -106,7 +102,7 @@ func TestRecoveryKeepsAcceptedIssueChanges(t *testing.T) {
 				}
 				require.Equal(t, expected, f.states[key])
 			}
-			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, event})
+			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, status})
 			require.Len(t, f.events, 1)
 			require.Equal(t, 1, f.failures["issue/list"])
 			require.Equal(t, 1, f.failures["build-issues/list"])
@@ -193,7 +189,7 @@ func TestRecoveryDoesNotReopenAnExistingClosedCursor(t *testing.T) {
 	require.NoError(t, f.recover(msg, false))
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
 	require.Equal(t, "older", f.states[issueKey{"task", "unit"}].FirstSeenBuildID)
-	require.NotContains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened})
+	require.NotContains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen})
 }
 
 func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
@@ -239,7 +235,7 @@ func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
 
 			require.NoError(t, f.recover(msg, false))
 			issue := f.states[issueKey{"task", "unit"}]
-			log := f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened}]
+			log := f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen}]
 			require.Equal(t, "build/100", issue.FirstSeenBuildID)
 			require.Equal(t, issue.ChangedAtMs, log.TimestampMs)
 			if step == "issue/create" {

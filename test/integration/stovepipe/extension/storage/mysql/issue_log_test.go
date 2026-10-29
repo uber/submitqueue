@@ -32,7 +32,7 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 	require.NoError(t, err)
 	store := bound.GetIssueLogStore()
 	opened := entity.IssueLog{TaskID: "validation", UnitID: "unit",
-		Event: entity.IssueEventOpened, BuildID: "build/1", TimestampMs: 1000}
+		Status: entity.IssueStatusOpen, BuildID: "build/1", TimestampMs: 1000}
 
 	t.Run("history survives closure and reopening", func(t *testing.T) {
 		issue := entity.IssueState{TaskID: opened.TaskID, UnitID: opened.UnitID, FirstSeenBuildID: opened.BuildID, Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: opened.BuildID, LastChangedBuildID: opened.BuildID, ChangedAtMs: 1000}
@@ -40,9 +40,9 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 		require.NoError(t, bound.GetBuildIssueStore().Create(ctx, opened.BuildID, entity.BuildIssue{TaskID: opened.TaskID, UnitID: opened.UnitID}))
 		require.NoError(t, store.Create(ctx, opened))
 
-		resolved := opened
-		resolved.Event, resolved.BuildID, resolved.TimestampMs = entity.IssueEventResolved, "build/2", 2000
-		require.NoError(t, store.Create(ctx, resolved))
+		closed := opened
+		closed.Status, closed.BuildID, closed.TimestampMs = entity.IssueStatusClosed, "build/2", 2000
+		require.NoError(t, store.Create(ctx, closed))
 		issue.Status = entity.IssueStatusClosed
 		require.NoError(t, bound.GetIssueStateStore().Update(ctx, issue, 1, 2))
 		retained, err := bound.GetIssueStateStore().Get(ctx, issue.TaskID, issue.UnitID)
@@ -56,12 +56,12 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 		require.NoError(t, bound.GetIssueStateStore().Update(ctx, issue, 2, 3))
 		require.NoError(t, store.Create(ctx, reopened))
 
-		for _, want := range []entity.IssueLog{opened, resolved, reopened} {
-			got, err := store.Get(ctx, want.TaskID, want.UnitID, want.BuildID, want.Event)
+		for _, want := range []entity.IssueLog{opened, closed, reopened} {
+			got, err := store.Get(ctx, want.TaskID, want.UnitID, want.BuildID, want.Status)
 			require.NoError(t, err)
 			require.Equal(t, want, got)
 		}
-		_, err = store.Get(ctx, reopened.TaskID, reopened.UnitID, reopened.BuildID, entity.IssueEventResolved)
+		_, err = store.Get(ctx, reopened.TaskID, reopened.UnitID, reopened.BuildID, entity.IssueStatusClosed)
 		require.ErrorIs(t, err, storage.ErrNotFound)
 		_, err = bound.GetBuildIssueStore().Get(ctx, opened.BuildID, opened.TaskID, opened.UnitID)
 		require.NoError(t, err)
@@ -71,18 +71,18 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 		duplicate := opened
 		duplicate.TimestampMs = 4000
 		require.ErrorIs(t, store.Create(ctx, duplicate), storage.ErrAlreadyExists)
-		got, err := store.Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Event)
+		got, err := store.Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Status)
 		require.NoError(t, err)
 		require.Equal(t, opened, got)
 	})
 
-	t.Run("event distinguishes transitions within one build", func(t *testing.T) {
-		for _, event := range []entity.IssueEvent{entity.IssueEventOpened, entity.IssueEventResolved} {
+	t.Run("status distinguishes transitions within one build", func(t *testing.T) {
+		for _, status := range []entity.IssueStatus{entity.IssueStatusOpen, entity.IssueStatusClosed} {
 			log := opened
-			log.UnitID, log.Event = "same-build", event
+			log.UnitID, log.Status = "same-build", status
 			require.NoError(t, store.Create(ctx, log))
 
-			got, err := store.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Event)
+			got, err := store.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Status)
 			require.NoError(t, err)
 			require.Equal(t, log, got)
 		}
@@ -91,12 +91,12 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 	t.Run("queue and byte-exact identity isolation", func(t *testing.T) {
 		other, err := factory.For(storage.Config{QueueName: "Issue-history/main"})
 		require.NoError(t, err)
-		_, err = other.GetIssueLogStore().Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Event)
+		_, err = other.GetIssueLogStore().Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Status)
 		require.ErrorIs(t, err, storage.ErrNotFound)
 		otherLog := opened
 		otherLog.TimestampMs++
 		require.NoError(t, other.GetIssueLogStore().Create(ctx, otherLog))
-		got, err := other.GetIssueLogStore().Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Event)
+		got, err := other.GetIssueLogStore().Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Status)
 		require.NoError(t, err)
 		require.Equal(t, otherLog, got)
 
@@ -118,17 +118,17 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 				log := opened
 				log.TaskID, log.UnitID, log.BuildID = tt.taskID, tt.unitID, tt.buildID
 				require.NoError(t, store.Create(ctx, log))
-				got, err := store.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Event)
+				got, err := store.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Status)
 				require.NoError(t, err)
 				require.Equal(t, log, got)
 			})
 		}
-		got, err = store.Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Event)
+		got, err = store.Get(ctx, opened.TaskID, opened.UnitID, opened.BuildID, opened.Status)
 		require.NoError(t, err)
 		require.Equal(t, opened, got)
 	})
 
-	t.Run("concurrent replay retains one event", func(t *testing.T) {
+	t.Run("concurrent replay retains one transition", func(t *testing.T) {
 		log := opened
 		log.UnitID = "concurrent"
 		results := make(chan error, 2)
@@ -149,7 +149,7 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 		}
 		require.Equal(t, 1, successes)
 		require.Equal(t, 1, duplicates)
-		got, err := store.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Event)
+		got, err := store.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Status)
 		require.NoError(t, err)
 		require.Equal(t, log, got)
 	})
@@ -159,25 +159,25 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 		require.NoError(t, err)
 		maxStore := maxBound.GetIssueLogStore()
 		log := entity.IssueLog{TaskID: strings.Repeat("t", 255), UnitID: strings.Repeat("😀", 256),
-			Event:   entity.IssueEventResolved,
+			Status:  entity.IssueStatusClosed,
 			BuildID: strings.Repeat("😀", 255), TimestampMs: 1000}
 		require.NoError(t, maxStore.Create(ctx, log))
-		got, err := maxStore.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Event)
+		got, err := maxStore.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Status)
 		require.NoError(t, err)
 		require.Equal(t, log, got)
 
 		oversized := log
 		oversized.BuildID += "x"
 		require.Error(t, maxStore.Create(ctx, oversized))
-		_, err = maxStore.Get(ctx, oversized.TaskID, oversized.UnitID, oversized.BuildID, oversized.Event)
+		_, err = maxStore.Get(ctx, oversized.TaskID, oversized.UnitID, oversized.BuildID, oversized.Status)
 		require.Error(t, err)
 		oversized = log
 		oversized.UnitID += "x"
 		require.Error(t, maxStore.Create(ctx, oversized))
-		_, err = maxStore.Get(ctx, oversized.TaskID, oversized.UnitID, oversized.BuildID, oversized.Event)
+		_, err = maxStore.Get(ctx, oversized.TaskID, oversized.UnitID, oversized.BuildID, oversized.Status)
 		require.Error(t, err)
 
-		got, err = maxStore.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Event)
+		got, err = maxStore.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Status)
 		require.NoError(t, err)
 		require.Equal(t, log, got)
 	})

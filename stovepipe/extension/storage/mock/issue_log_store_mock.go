@@ -56,16 +56,16 @@ func (mr *MockIssueLogStoreMockRecorder) Create(ctx, log any) *gomock.Call {
 }
 
 // Get mocks base method.
-func (m *MockIssueLogStore) Get(ctx context.Context, taskID, unitID, buildID string, event entity.IssueEvent) (entity.IssueLog, error) {
+func (m *MockIssueLogStore) Get(ctx context.Context, taskID, unitID, buildID string, status entity.IssueStatus) (entity.IssueLog, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", ctx, taskID, unitID, buildID, event)
+	ret := m.ctrl.Call(m, "Get", ctx, taskID, unitID, buildID, status)
 	ret0, _ := ret[0].(entity.IssueLog)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Get indicates an expected call of Get.
-func (mr *MockIssueLogStoreMockRecorder) Get(ctx, taskID, unitID, buildID, event any) *gomock.Call {
+func (mr *MockIssueLogStoreMockRecorder) Get(ctx, taskID, unitID, buildID, status any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockIssueLogStore)(nil).Get), ctx, taskID, unitID, buildID, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockIssueLogStore)(nil).Get), ctx, taskID, unitID, buildID, status)
 }

@@ -388,12 +388,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 }
 
 func (c *Controller) recordHistory(ctx context.Context, store storage.Storage, issue entity.IssueState) error {
-	event := entity.IssueEventOpened
-	if issue.Status == entity.IssueStatusClosed {
-		event = entity.IssueEventResolved
-	}
-
-	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Event: event, TimestampMs: issue.ChangedAtMs}
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
 	if err := store.GetIssueLogStore().Create(ctx, log); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		return fmt.Errorf("record issue transition: %w", err)
 	}

@@ -16,28 +16,16 @@ package entity
 
 import "fmt"
 
-// IssueEvent identifies an issue lifecycle transition.
-type IssueEvent string
-
-const (
-	// IssueEventUnknown is the unset event value.
-	IssueEventUnknown IssueEvent = ""
-	// IssueEventOpened records that an issue became open.
-	IssueEventOpened IssueEvent = "opened"
-	// IssueEventResolved records that an issue was resolved.
-	IssueEventResolved IssueEvent = "resolved"
-)
-
 // IssueLog is an immutable issue lifecycle transition within a queue.
-// Task, unit, build, and event identify one transition.
+// Task, unit, build, and status identify one transition.
 type IssueLog struct {
 	// TaskID identifies the logical validation task.
 	TaskID string `json:"task_id"`
 	// UnitID identifies the validation unit; empty for a task-wide issue.
 	UnitID string `json:"unit_id"`
-	// Event identifies the opening or resolution.
-	Event IssueEvent `json:"event"`
-	// BuildID identifies the build where the issue was first seen or confirmed resolved.
+	// Status is the open or closed status established by this transition.
+	Status IssueStatus `json:"status"`
+	// BuildID identifies the build where the issue was first seen or confirmed closed.
 	BuildID string `json:"build_id"`
 	// TimestampMs is when the transition was first recorded, in Unix milliseconds.
 	TimestampMs int64 `json:"timestamp_ms"`
@@ -51,10 +39,10 @@ func (l IssueLog) Validate() error {
 	if l.TimestampMs <= 0 {
 		return fmt.Errorf("issue log timestamp must be positive")
 	}
-	switch l.Event {
-	case IssueEventOpened, IssueEventResolved:
+	switch l.Status {
+	case IssueStatusOpen, IssueStatusClosed:
 		return nil
 	default:
-		return fmt.Errorf("invalid issue event %q", l.Event)
+		return fmt.Errorf("invalid issue status %q", l.Status)
 	}
 }

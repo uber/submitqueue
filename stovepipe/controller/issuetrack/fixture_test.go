@@ -37,8 +37,8 @@ const testQueue = "validation/main"
 
 type logKey struct {
 	issueKey
-	build string
-	event entity.IssueEvent
+	build  string
+	status entity.IssueStatus
 }
 
 type fixture struct {
@@ -119,7 +119,7 @@ func newFixture(t *testing.T) *fixture {
 		if err := f.fail("history/create"); err != nil {
 			return err
 		}
-		key := logKey{issueKey{log.TaskID, log.UnitID}, log.BuildID, log.Event}
+		key := logKey{issueKey{log.TaskID, log.UnitID}, log.BuildID, log.Status}
 		if _, ok := f.initialLogs[key]; ok {
 			return storage.ErrAlreadyExists
 		}
@@ -304,9 +304,5 @@ func (f *fixture) reportIssue(build, task, unit string) {
 
 func (f *fixture) seedIssue(task, unit string, status entity.IssueStatus) {
 	f.states[issueKey{task, unit}] = entity.IssueState{TaskID: task, UnitID: unit, Status: status, FirstSeenBuildID: "older", Version: 7, LastProcessedBuildID: "older", LastChangedBuildID: "older", ChangedAtMs: 500}
-	event := entity.IssueEventOpened
-	if status == entity.IssueStatusClosed {
-		event = entity.IssueEventResolved
-	}
-	f.initialLogs[logKey{issueKey{task, unit}, "older", event}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Event: event, TimestampMs: 500}
+	f.initialLogs[logKey{issueKey{task, unit}, "older", status}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Status: status, TimestampMs: 500}
 }

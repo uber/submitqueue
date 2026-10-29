@@ -152,7 +152,7 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			name: "issue_log_store",
 			op:   "get",
 			read: func(bound storage.Storage, _ string) error {
-				_, err := bound.GetIssueLogStore().Get(context.Background(), "task", "unit", "build-id", entity.IssueEventOpened)
+				_, err := bound.GetIssueLogStore().Get(context.Background(), "task", "unit", "build-id", entity.IssueStatusOpen)
 				return err
 			},
 		},
