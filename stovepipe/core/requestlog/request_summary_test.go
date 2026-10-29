@@ -514,19 +514,28 @@ func TestMaterializerRetriesAcceptanceRepairAfterPartialWrite(t *testing.T) {
 func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 	for _, tt := range []struct {
 		name         string
+		event        entity.RequestEvent
 		completedAt  int64
 		count        string
 		projectCount int32
-		wantErr      bool
 	}{
-		{name: "completed projects", count: "3", projectCount: 3},
-		{name: "completed empty set", count: "0"},
-		{name: "duplicate completion", completedAt: testNowMs, count: "3", projectCount: 3},
-		{name: "conflicting timestamp", completedAt: testNowMs - 1, count: "3", wantErr: true},
+		{name: "completed projects", event: entity.RequestEventProjectFactsRecorded, count: "3", projectCount: 3},
+		{name: "completed empty set", event: entity.RequestEventProjectFactsRecorded, count: "0"},
+		{name: "duplicate completion", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs, count: "3", projectCount: 3},
+		{name: "recording after abandonment", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs - 1, count: "3", projectCount: 3},
+		{name: "delayed recording after abandonment", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs + 1, count: "3", projectCount: 3},
+		{name: "abandoned recording", event: entity.RequestEventRecordAbandoned},
+		{name: "duplicate abandonment", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs},
+		{name: "abandonment after recording", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs - 1},
+		{name: "delayed abandonment after recording", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs + 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
-			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{MetadataKeyProjectFactCount: tt.count, MetadataKeyBrokenProjectFactCount: "0"})
+			var metadata map[string]string
+			if tt.event == entity.RequestEventProjectFactsRecorded {
+				metadata = map[string]string{MetadataKeyProjectFactCount: tt.count, MetadataKeyBrokenProjectFactCount: "0"}
+			}
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, tt.event, "test", metadata)
 			log.TimestampMs = testNowMs
 			current := seededRequestSummary()
 			current.State = entity.RequestStateFailed
@@ -536,95 +545,115 @@ func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 			current.AcceptedAtMs = testNowMs - 2000
 			current.OutcomeReason = entity.RequestOutcomeReasonBuildFailed
 			current.ProjectResultsCompletedAtMs = tt.completedAt
+			current.ProjectCount = 5
+			current.BrokenProjectCount = 2
 			want := current
-			want.ProjectResultsCompletedAtMs = log.TimestampMs
-			want.ProjectCount = tt.projectCount
+			if want.ProjectResultsCompletedAtMs == 0 {
+				want.ProjectResultsCompletedAtMs = log.TimestampMs
+			}
+			if tt.event == entity.RequestEventProjectFactsRecorded {
+				want.ProjectCount = tt.projectCount
+				want.BrokenProjectCount = 0
+			}
 			logs.EXPECT().Create(gomock.Any(), log).Return(storage.ErrAlreadyExists)
 			logs.EXPECT().Get(gomock.Any(), testRequestID, log.ID).Return(log, nil)
 			summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil)
-			if !tt.wantErr && want != current {
+			if want != current {
 				summaries.EXPECT().Update(gomock.Any(), want, current.Version, current.Version+1).Return(nil)
 			}
-			err := materializer.PersistLog(context.Background(), stores, log)
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
 		})
 	}
 }
 
 func TestMaterializerRepairsCompletionAfterProjectionFailure(t *testing.T) {
-	materializer, stores, logs, summaries, _ := newTestMaterializer(t)
-	log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
-	retained := log
-	retained.TimestampMs = testNowMs
-	current := seededRequestSummary()
-	current.State = entity.RequestStateFailed
-	current.RequestVersion = 3
-	current.StateTimestampMs = testNowMs - 1000
-	updated := current
-	updated.ProjectResultsCompletedAtMs = retained.TimestampMs
-	updated.ProjectCount = 3
-	updated.BrokenProjectCount = 1
-	writeErr := errors.New("summary unavailable")
-	gomock.InOrder(
-		logs.EXPECT().Create(gomock.Any(), retained).Return(nil),
-		summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil),
-		summaries.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(writeErr),
-	)
-	require.ErrorIs(t, materializer.PersistLog(context.Background(), stores, log), writeErr)
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
+			retained := log
+			retained.TimestampMs = testNowMs
+			current := seededRequestSummary()
+			current.State = entity.RequestStateFailed
+			current.RequestVersion = 3
+			current.StateTimestampMs = testNowMs - 1000
+			updated := current
+			updated.ProjectResultsCompletedAtMs = retained.TimestampMs
+			if event == entity.RequestEventProjectFactsRecorded {
+				updated.ProjectCount = 3
+				updated.BrokenProjectCount = 1
+			}
+			writeErr := errors.New("summary unavailable")
+			gomock.InOrder(
+				logs.EXPECT().Create(gomock.Any(), retained).Return(nil),
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil),
+				summaries.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(writeErr),
+			)
+			require.ErrorIs(t, materializer.PersistLog(context.Background(), stores, log), writeErr)
 
-	materializer.now = func() time.Time { return time.UnixMilli(testNowMs + 1000) }
-	candidate := log
-	candidate.TimestampMs = testNowMs + 1000
-	gomock.InOrder(
-		logs.EXPECT().Create(gomock.Any(), candidate).Return(storage.ErrAlreadyExists),
-		logs.EXPECT().Get(gomock.Any(), testRequestID, log.ID).Return(retained, nil),
-		summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil),
-		summaries.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil),
-	)
-	require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+			materializer.now = func() time.Time { return time.UnixMilli(testNowMs + 1000) }
+			candidate := log
+			candidate.TimestampMs = testNowMs + 1000
+			gomock.InOrder(
+				logs.EXPECT().Create(gomock.Any(), candidate).Return(storage.ErrAlreadyExists),
+				logs.EXPECT().Get(gomock.Any(), testRequestID, log.ID).Return(retained, nil),
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil),
+				summaries.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil),
+			)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+		})
+	}
 }
 
 func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
-	materializer, stores, logs, summaries, _ := newTestMaterializer(t)
-	log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
-	log.TimestampMs = testNowMs
-	current := seededRequestSummary()
-	current.State = entity.RequestStateProcessing
-	current.RequestVersion = 2
-	updated := current
-	updated.ProjectResultsCompletedAtMs = log.TimestampMs
-	updated.ProjectCount = 3
-	updated.BrokenProjectCount = 1
-	winner := current
-	winner.State = entity.RequestStateFailed
-	winner.RequestVersion = 3
-	winner.StateTimestampMs = testNowMs + 1
-	winner.OutcomeReason = entity.RequestOutcomeReasonBuildFailed
-	winner.Version++
-	updatedWinner := winner
-	updatedWinner.ProjectResultsCompletedAtMs = log.TimestampMs
-	updatedWinner.ProjectCount = 3
-	updatedWinner.BrokenProjectCount = 1
-	gomock.InOrder(
-		logs.EXPECT().Create(gomock.Any(), log).Return(nil),
-		summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil),
-		summaries.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch),
-		summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(winner, nil),
-		summaries.EXPECT().Update(gomock.Any(), updatedWinner, int32(2), int32(3)).Return(nil),
-	)
-	require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
+			log.TimestampMs = testNowMs
+			current := seededRequestSummary()
+			current.State = entity.RequestStateProcessing
+			current.RequestVersion = 2
+			updated := current
+			updated.ProjectResultsCompletedAtMs = log.TimestampMs
+			if event == entity.RequestEventProjectFactsRecorded {
+				updated.ProjectCount = 3
+				updated.BrokenProjectCount = 1
+			}
+			winner := current
+			winner.State = entity.RequestStateFailed
+			winner.RequestVersion = 3
+			winner.StateTimestampMs = testNowMs + 1
+			winner.OutcomeReason = entity.RequestOutcomeReasonBuildFailed
+			winner.Version++
+			updatedWinner := winner
+			updatedWinner.ProjectResultsCompletedAtMs = log.TimestampMs
+			if event == entity.RequestEventProjectFactsRecorded {
+				updatedWinner.ProjectCount = 3
+				updatedWinner.BrokenProjectCount = 1
+			}
+			gomock.InOrder(
+				logs.EXPECT().Create(gomock.Any(), log).Return(nil),
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(current, nil),
+				summaries.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch),
+				summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(winner, nil),
+				summaries.EXPECT().Update(gomock.Any(), updatedWinner, int32(2), int32(3)).Return(nil),
+			)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+		})
+	}
 }
 
 func TestMaterializerCompletionRequiresExistingSummary(t *testing.T) {
-	materializer, stores, logs, summaries, _ := newTestMaterializer(t)
-	log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, entity.RequestEventProjectFactsRecorded, "all", nil)
-	logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(entity.RequestSummary{}, storage.ErrNotFound)
-	require.ErrorIs(t, materializer.PersistLog(context.Background(), stores, log), storage.ErrNotFound)
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", nil)
+			logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(entity.RequestSummary{}, storage.ErrNotFound)
+			require.ErrorIs(t, materializer.PersistLog(context.Background(), stores, log), storage.ErrNotFound)
+		})
+	}
 }
 
 func TestProjectRequestSummaryProjectCounts(t *testing.T) {

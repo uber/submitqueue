@@ -412,6 +412,69 @@ func (s *StovepipeIntegrationSuite) TestProjectStatusAPI() {
 	}
 }
 
+func (s *StovepipeIntegrationSuite) TestAbandonedProjectResultsAreComplete() {
+	for _, recordedProject := range []bool{false, true} {
+		name := "empty"
+		if recordedProject {
+			name = "partial"
+		}
+		s.T().Run(name, func(t *testing.T) {
+			queue, id := "project-status-abandoned/"+name, "1"
+			uri := "git://project-status-abandoned/" + name + "/commit"
+			_, err := s.db.Exec(`INSERT INTO request_summary
+				(queue, request_id, uri, base_uri, state, request_version, state_timestamp_ms, version)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, queue, id, uri, "", "failed", 3, 1000, 1)
+			require.NoError(t, err)
+			_, err = s.db.Exec("INSERT INTO request_uri (queue, uri, request_id, version) VALUES (?, ?, ?, ?)", queue, uri, id, 1)
+			require.NoError(t, err)
+			backend, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+			require.NoError(t, err)
+			stores, err := backend.For(queue)
+			require.NoError(t, err)
+			require.NoError(t, stores.GetValidationFactStore().Create(s.ctx, entity.ValidationFact{
+				URI: uri, RequestID: id, Degree: entity.DegreeBroken, CreatedAt: 2000,
+			}))
+			if recordedProject {
+				require.NoError(t, stores.GetValidationFactStore().Create(s.ctx, entity.ValidationFact{
+					URI: uri, RequestID: id, Project: "project-a", Degree: entity.DegreeBroken, CreatedAt: 3000,
+				}))
+			}
+			byIDRequest := &pb.GetProjectStatusByIDRequest{Queue: queue, RequestId: id, Projects: []string{"project-a", "missing"}}
+			pending, err := s.client.GetProjectStatusByID(s.ctx, byIDRequest)
+			require.NoError(t, err)
+			assert.False(t, pending.ProjectResultsComplete)
+
+			abandonment := requestlog.NewRequestEventLog(entity.Request{Queue: queue, ID: id}, entity.RequestEventRecordAbandoned, "repository", nil)
+			abandonment.TimestampMs = 4000
+			materializer := requestlog.NewMaterializer(tally.NoopScope)
+			require.NoError(t, materializer.PersistLog(s.ctx, stores, abandonment))
+			abandonment.TimestampMs = 5000
+			require.NoError(t, materializer.PersistLog(s.ctx, stores, abandonment))
+
+			byID, err := s.client.GetProjectStatusByID(s.ctx, byIDRequest)
+			require.NoError(t, err)
+			byURI, err := s.client.GetProjectStatusByURI(s.ctx, &pb.GetProjectStatusByURIRequest{
+				Queue: queue, ChangeUri: uri, Projects: byIDRequest.Projects,
+			})
+			require.NoError(t, err)
+			assert.True(t, byID.ProjectResultsComplete)
+			assert.True(t, byURI.ProjectResultsComplete)
+			assert.Equal(t, int64(4000), byID.UpdatedAtMs)
+			assert.Equal(t, byID.UpdatedAtMs, byURI.UpdatedAtMs)
+			assert.Equal(t, entity.DegreeBroken, byID.GetRepositoryBreakageDegree())
+			assert.Equal(t, pending.Projects, byID.Projects)
+			assert.Equal(t, byID.Projects, byURI.Projects)
+			if recordedProject {
+				require.Len(t, byID.Projects, 1)
+				assert.Equal(t, "project-a", byID.Projects[0].Project)
+				assert.Equal(t, entity.DegreeBroken, byID.Projects[0].GetBreakageDegree())
+			} else {
+				assert.Empty(t, byID.Projects)
+			}
+		})
+	}
+}
+
 func (s *StovepipeIntegrationSuite) TestUnindexedFactsRemainAvailableByExplicitProject() {
 	t := s.T()
 	const queue, id, uri = "fresh-index/main", "9", "git://fresh-index/main/older-commit"

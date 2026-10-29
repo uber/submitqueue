@@ -119,7 +119,9 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return err
 	}
 
-	if retained.State == entity.RequestStateUnknown && retained.Event != entity.RequestEventProjectFactsRecorded {
+	if retained.State == entity.RequestStateUnknown &&
+		retained.Event != entity.RequestEventProjectFactsRecorded &&
+		retained.Event != entity.RequestEventRecordAbandoned {
 		return nil
 	}
 	if err := materializeRequestProjections(ctx, stores, retained); err != nil {
