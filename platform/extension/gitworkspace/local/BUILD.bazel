@@ -20,9 +20,19 @@ go_test(
         "local_test.go",
         "runtime_test.go",
     ],
+    data = [
+        "@git",
+        "@git//:templates",
+        "@git//:templates/description",
+    ],
     embed = [":go_default_library"],
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+        "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION": "$(location @git//:templates/description)",
+    },
     deps = [
         "//platform/extension/gitworkspace:go_default_library",
+        "//platform/git/exectest:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

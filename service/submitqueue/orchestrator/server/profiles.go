@@ -784,7 +784,11 @@ func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where str
 type cloneWorkspaces struct{}
 
 func (cloneWorkspaces) For(ctx context.Context, repo string) (gitworkspace.Workspace, error) {
-	return gitworkspacelocal.NewFactory(gitworkspacelocal.Params{Dir: repo}).For(ctx, repo)
+	f, err := gitworkspacelocal.NewFactory(gitworkspacelocal.Params{Dir: repo})
+	if err != nil {
+		return nil, err
+	}
+	return f.For(ctx, repo)
 }
 
 // pathOverlapKey maps the configured granularity onto the projection the
