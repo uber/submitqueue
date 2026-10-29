@@ -3,6 +3,7 @@ exports_files(
         "docker-compose.fake.yml",
         "docker-compose.git.yml",
         "docker-compose.provider.yml",
+        "docker-compose.tango.yml",
         "docker-compose.web.yml",
         "docker-compose.yml",
     ],
