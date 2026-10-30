@@ -93,7 +93,7 @@ func parseConduitResponse(resp *http.Response, diffIDs []int) (map[int]*diffResu
 	results := make(map[int]*diffResult, len(diffIDs))
 	for _, id := range diffIDs {
 		diff, ok := rawMap[strconv.Itoa(id)]
-		if !ok {
+		if !ok || diff == nil {
 			return nil, fmt.Errorf("diff %d not found in querydiffs response", id)
 		}
 		results[id] = diff
