@@ -335,6 +335,44 @@ message GetQueueStatusResponse {
     QueueEnablementStatus enablement = 2;
 }
 
+// IssueSummary is the current materialized view of a validation issue.
+message IssueSummary {
+    // Logical validation task.
+    string task_id = 1;
+    // Validation unit; empty identifies a task-wide issue.
+    string unit_id = 2;
+    // Materialized status. ListOpenIssues returns only "open".
+    string status = 3;
+    // Build where the current or most recent opening was first observed.
+    string first_seen_build_id = 4;
+    // Source request of the latest status transition.
+    string request_id = 5;
+    // Source build of the latest status transition.
+    string build_id = 6;
+    // Original transition timestamp in Unix milliseconds.
+    int64 changed_at_ms = 7;
+}
+
+// ListOpenIssuesRequest selects current open issues within one queue.
+message ListOpenIssuesRequest {
+    // Required configured queue.
+    string queue = 1;
+    // Maximum issues to return. Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 2;
+    // Opaque continuation bound to the queue and task/unit ordering.
+    string page_token = 3;
+}
+
+// ListOpenIssuesResponse is not a snapshot across calls.
+message ListOpenIssuesResponse {
+    // Open summaries in ascending bytewise task/unit order.
+    // The inspection budget can leave this partial or empty even with a continuation.
+    repeated IssueSummary issues = 1;
+    // Continues after the last examined open-issue row, including skipped references.
+    // Empty means no further open-issue row was observed.
+    string next_page_token = 2;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -354,4 +392,6 @@ service Stovepipe {
     rpc List(ListRequest) returns (ListResponse) {}
     // GetQueueStatus returns current enablement or enablement for a supplied commit.
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
+    // ListOpenIssues returns current open issues validated against their summaries.
+    rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
 }

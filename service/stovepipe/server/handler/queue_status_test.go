@@ -53,7 +53,7 @@ func TestGetQueueStatus(t *testing.T) {
 			require.Equal(t, entity.GetQueueStatusRequest{Queue: "repo/main", ChangeURI: "C"}, req)
 			return entity.GetQueueStatusResult{Queue: "repo/main", Enablement: entity.QueueState{Version: 1, State: entity.QueueEnablementDisabled}}, wantErr
 		}}
-		server := NewStovepipeServer(nil, nil, nil, nil, nil, fake)
+		server := NewStovepipeServer(nil, nil, nil, nil, nil, fake, nil)
 		response, err := server.GetQueueStatus(context.Background(), &pb.GetQueueStatusRequest{Queue: "repo/main", ChangeUri: "C"})
 		if wantErr != nil {
 			require.Equal(t, tt.code, status.Code(err))
