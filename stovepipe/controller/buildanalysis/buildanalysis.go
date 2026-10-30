@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -28,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -44,6 +46,7 @@ type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	stores          storage.Factory
+	materializer    requestlog.Materializer
 	detectorFactory buildissue.DetectorFactory
 	registry        consumer.TopicRegistry
 	topicKey        consumer.TopicKey
@@ -54,6 +57,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	detectorFactory buildissue.DetectorFactory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -63,6 +67,7 @@ func NewController(
 		logger:          logger.Named("buildanalysis_controller"),
 		metricsScope:    scope.SubScope("buildanalysis_controller"),
 		stores:          stores,
+		materializer:    materializer,
 		detectorFactory: detectorFactory,
 		registry:        registry,
 		topicKey:        topicKey,
@@ -163,6 +168,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		}
 		finalize = request.TerminalBuildID == build.ID
 		hold = !finalize && !request.State.IsTerminal()
+	}
+
+	if build.Status.IsTerminal() {
+		log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, build.ID,
+			map[string]string{
+				requestlog.MetadataKeyBuildID:    build.ID,
+				requestlog.MetadataKeyIssueCount: strconv.Itoa(len(issues)),
+			})
+		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+			return fmt.Errorf("retain completed analysis for build %q: %w", build.ID, err)
+		}
 	}
 
 	if err := c.publishIssueTracking(ctx, request.Queue, build.ID, finalize); err != nil {

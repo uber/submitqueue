@@ -34,8 +34,18 @@ const (
 	RequestEventRecordAbandoned RequestEvent = "record_abandoned"
 	// RequestEventBuildAnalysisAbandoned records incomplete build analysis, not a validation outcome.
 	RequestEventBuildAnalysisAbandoned RequestEvent = "build_analysis_abandoned"
-	// RequestEventIssueTrackingAbandoned records incomplete issue tracking, not a validation outcome.
+	// RequestEventBuildAnalysisCompleted records complete terminal issue analysis for a build.
+	RequestEventBuildAnalysisCompleted RequestEvent = "build_analysis_completed"
+	// RequestEventIssuesReconciled records completed final issue reconciliation for a build.
+	RequestEventIssuesReconciled RequestEvent = "issues_reconciled"
+	// RequestEventIssueTrackingAbandoned records unfinished issue reconciliation after primary processing stopped.
 	RequestEventIssueTrackingAbandoned RequestEvent = "issue_tracking_abandoned"
+	// RequestEventFixSubmitted records an identified repair attempt associated with a build issue.
+	RequestEventFixSubmitted RequestEvent = "fix_submitted"
+	// RequestEventFixSubmissionSkipped records a repair decision with no eligible open issue.
+	RequestEventFixSubmissionSkipped RequestEvent = "fix_submission_skipped"
+	// RequestEventFixSubmissionAbandoned records stopped repair submission with an unknown acceptance outcome.
+	RequestEventFixSubmissionAbandoned RequestEvent = "fix_submission_abandoned"
 )
 
 // RequestOutcomeReason identifies the durable domain reason for a terminal request state.
@@ -141,7 +151,10 @@ func (e RequestLog) validateEvent() error {
 		return fmt.Errorf("event log must not contain request-state context")
 	}
 	switch e.Event {
-	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded, RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventIssueTrackingAbandoned:
+	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded,
+		RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventBuildAnalysisCompleted,
+		RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,
+		RequestEventFixSubmitted, RequestEventFixSubmissionSkipped, RequestEventFixSubmissionAbandoned:
 	default:
 		return fmt.Errorf("unknown request event %q", e.Event)
 	}

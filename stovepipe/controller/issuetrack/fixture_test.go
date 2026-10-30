@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
@@ -42,24 +43,26 @@ type logKey struct {
 }
 
 type fixture struct {
-	failOnPhase entity.IssueTrackingPhase
-	t           *testing.T
-	mocks       *gomock.Controller
-	controller  *Controller
-	factory     *storagemock.MockFactory
-	store       storage.Storage
-	states      map[issueKey]entity.IssueState
-	summaries   map[issueKey]entity.IssueSummary
-	openIssues  map[issueKey]entity.OpenIssue
-	logs        map[logKey]entity.IssueLog
-	progress    entity.IssueTrackingState
-	hasProgress bool
-	failures    map[string]int
-	initialLogs map[logKey]entity.IssueLog
-	builds      map[string]entity.Build
-	requests    map[string]entity.Request
-	buildIssues map[string]map[issueKey]entity.BuildIssue
-	sequence    int
+	requestHistory map[string]entity.RequestLog
+	materializer   requestlog.Materializer
+	failOnPhase    entity.IssueTrackingPhase
+	t              *testing.T
+	mocks          *gomock.Controller
+	controller     *Controller
+	factory        *storagemock.MockFactory
+	store          storage.Storage
+	states         map[issueKey]entity.IssueState
+	summaries      map[issueKey]entity.IssueSummary
+	openIssues     map[issueKey]entity.OpenIssue
+	logs           map[logKey]entity.IssueLog
+	progress       entity.IssueTrackingState
+	hasProgress    bool
+	failures       map[string]int
+	initialLogs    map[logKey]entity.IssueLog
+	builds         map[string]entity.Build
+	requests       map[string]entity.Request
+	buildIssues    map[string]map[issueKey]entity.BuildIssue
+	sequence       int
 
 	fixMessages  []entityqueue.Message
 	onFixPublish func(entityqueue.Message)
@@ -351,7 +354,29 @@ func newFixture(t *testing.T) *fixture {
 	}).AnyTimes()
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: messagequeue.TopicKeyFix, Name: "fix", Queue: queue}})
 	require.NoError(t, err)
-	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, registry, messagequeue.TopicKeyIssueTrack, "test")
+	f.requestHistory = map[string]entity.RequestLog{}
+	f.materializer = requestlog.NewMaterializer(tally.NoopScope)
+	requestHistory := storagemock.NewMockRequestLogStore(f.mocks)
+	store.EXPECT().GetRequestLogStore().Return(requestHistory).AnyTimes()
+	requestHistory.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
+		if err := f.fail("request-history/create"); err != nil {
+			return err
+		}
+		key := log.RequestID + ":" + log.ID
+		if _, exists := f.requestHistory[key]; exists {
+			return storage.ErrAlreadyExists
+		}
+		f.requestHistory[key] = log
+		return nil
+	}).AnyTimes()
+	requestHistory.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
+		log, exists := f.requestHistory[requestID+":"+logID]
+		if !exists {
+			return entity.RequestLog{}, storage.ErrNotFound
+		}
+		return log, nil
+	}).AnyTimes()
+	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, f.materializer, registry, messagequeue.TopicKeyIssueTrack, "test")
 	f.controller.nowMs = func() int64 { return 1000 }
 	return f
 }

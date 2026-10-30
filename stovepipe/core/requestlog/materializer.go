@@ -46,6 +46,18 @@ const (
 	MetadataKeyBrokenProjectFactCount = "broken_project_fact_count"
 	// MetadataKeyBaseURI records the selected build baseline; an empty value means a full build.
 	MetadataKeyBaseURI = "base_uri"
+	// MetadataKeyIssueCount records the complete issue count from terminal build analysis.
+	MetadataKeyIssueCount = "issue_count"
+	// MetadataKeyClosureMode records whether absent issues were reconciled or why closure was suppressed.
+	MetadataKeyClosureMode = "closure_mode"
+	// MetadataKeyFixID identifies an opaque repair attempt.
+	MetadataKeyFixID = "fix_id"
+	// MetadataKeyTaskID identifies the validation task associated with a repair attempt.
+	MetadataKeyTaskID = "task_id"
+	// MetadataKeyUnitID identifies the validation unit; empty means a task-wide issue.
+	MetadataKeyUnitID = "unit_id"
+	// MetadataKeyReason is a bounded explanation for a skipped or abandoned operation.
+	MetadataKeyReason = "reason"
 )
 
 // Materializer retains request-log occurrences and advances their derived read models.

@@ -417,19 +417,19 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(logger, scope, store, materializer, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
 	}
 	count++
 
-	issueTrackController := issuetrack.NewController(logger, scope, store, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	issueTrackController := issuetrack.NewController(logger, scope, store, materializer, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
 	if err := c.Register(issueTrackController); err != nil {
 		return count, fmt.Errorf("failed to register issuetrack controller: %w", err)
 	}
 	count++
 
-	fixController := fix.NewController(logger, scope, store, repairExecutors, stovepipemq.TopicKeyFix, "stovepipe-fix")
+	fixController := fix.NewController(logger, scope, store, materializer, repairExecutors, stovepipemq.TopicKeyFix, "stovepipe-fix")
 	if err := c.Register(fixController); err != nil {
 		return count, fmt.Errorf("failed to register fix controller: %w", err)
 	}
@@ -489,6 +489,12 @@ func registerDLQControllers(
 	issueTrackDLQController := issuetrack.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyIssueTrack), "stovepipe-issuetrack-dlq")
 	if err := c.Register(issueTrackDLQController); err != nil {
 		return count, fmt.Errorf("failed to register issuetrack dlq controller: %w", err)
+	}
+	count++
+
+	fixDLQController := fix.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyFix), "stovepipe-fix-dlq")
+	if err := c.Register(fixDLQController); err != nil {
+		return count, fmt.Errorf("failed to register fix dlq controller: %w", err)
 	}
 	count++
 
@@ -605,6 +611,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Name:         "fix",
 			Queue:        q,
 			Subscription: extqueue.ExtendedSubscriptionConfig(subscriberName, "stovepipe-fix"),
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyFix),
+			Name:         "fix_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-fix-dlq"),
 		},
 		{
 			Key:          stovepipemq.TopicKeyBuildAnalysis,
