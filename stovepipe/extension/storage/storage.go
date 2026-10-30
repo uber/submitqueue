@@ -103,6 +103,9 @@ type Storage interface {
 	// GetIssueLogStore returns the IssueLogStore instance.
 	GetIssueLogStore() IssueLogStore
 
+	// GetIssueSummaryStore returns the IssueSummaryStore instance.
+	GetIssueSummaryStore() IssueSummaryStore
+
 	// GetIssueTrackingStore returns the operational reconciliation progress store.
 	GetIssueTrackingStore() IssueTrackingStore
 

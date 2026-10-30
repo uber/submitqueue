@@ -110,6 +110,11 @@ func TestMySQLStorage(t *testing.T) {
 		testIssueStateStore(t, ctx, factory)
 	})
 
+	t.Run("IssueSummaryStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testIssueSummaryStore(t, ctx, factory)
+	})
+
 	t.Run("IssueStateList", func(t *testing.T) {
 		resetStorage(t, db)
 		testIssueStateList(t, ctx, factory)
@@ -184,6 +189,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 
 	for _, statement := range []string{
 		"TRUNCATE TABLE issue_state",
+		"TRUNCATE TABLE issue_summary",
 		"TRUNCATE TABLE issue_log",
 		"TRUNCATE TABLE issue_tracking",
 		"TRUNCATE TABLE queue_log",
@@ -229,6 +235,9 @@ func (s *MySQLRequestSummaryStoreSuite) TestCreateGetAndUpdate() {
 	updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 	updated.RequestVersion = 2
 	updated.StateTimestampMs = 2000
+	updated.ProjectResultsCompletedAtMs = 2100
+	updated.ProjectCount = 5
+	updated.BrokenProjectCount = 2
 	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))
 	updated.Version = 2
 

@@ -28,8 +28,10 @@ type ListRequest struct {
 	HasReceivedBeforeMs bool
 	// PageSize is the maximum number of results to return. Zero selects the server default.
 	PageSize int32
-	// PageToken is an opaque continuation token from a previous result, bound to its queue and receipt window.
+	// PageToken is an opaque continuation token from a previous result, bound to its queue, receipt window, and statuses.
 	PageToken string
+	// Statuses are the current statuses to include; empty includes every status.
+	Statuses []RequestStatus
 }
 
 // ListResult contains one page of queue receipt history.

@@ -15,5 +15,7 @@ export function mapRequestSummary(
     updatedAtMs: request.stateUpdatedAtMs.toString(),
     acceptedAtMs: request.acceptedAtMs.toString(),
     outcomeReason: request.outcomeReason,
+    projectCount: request.projectCount,
+    brokenProjectCount: request.brokenProjectCount,
   };
 }

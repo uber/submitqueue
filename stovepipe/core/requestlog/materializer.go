@@ -42,6 +42,8 @@ const (
 	MetadataKeyFactDegree = "fact_degree"
 	// MetadataKeyProjectFactCount records how many project facts a completed batch established.
 	MetadataKeyProjectFactCount = "project_fact_count"
+	// MetadataKeyBrokenProjectFactCount records how many persisted project facts have a nonzero degree.
+	MetadataKeyBrokenProjectFactCount = "broken_project_fact_count"
 	// MetadataKeyBaseURI records the selected build baseline; an empty value means a full build.
 	MetadataKeyBaseURI = "base_uri"
 )

@@ -103,6 +103,8 @@ message RequestSummary {
     string last_error = 6;
     // Display and debugging metadata associated with the current status.
     map<string, string> metadata = 7;
+    // Time the current status was recorded, in Unix milliseconds; equals received_at_ms until the status first changes.
+    int64 updated_at_ms = 8;
 }
 
 // GetRequestSummaryByIDRequest selects one request by the sqid returned from Land.
@@ -149,8 +151,11 @@ message ListRequest {
     }
     // Maximum results to return. Zero selects the server default; values above the server maximum are invalid.
     int32 page_size = 4;
-    // Opaque continuation token from a previous response, bound to its queue and receipt window. Empty selects the first page.
+    // Opaque continuation token from a previous response, bound to its queue, receipt window, and statuses. Empty selects the first page.
     string page_token = 5;
+    // Current statuses to include, as reported in RequestSummary.status; empty includes every status. With page_token, omitted takes the token's statuses and supplied must equal them.
+    // A filtered page may hold fewer than page_size requests, or none, while next_page_token is non-empty: each call reads a bounded number of receipts.
+    repeated string statuses = 6;
 }
 
 // ListResponse defines one page of queue receipt history.

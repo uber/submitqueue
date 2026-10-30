@@ -162,7 +162,7 @@ func TestProcessBuildChecksLaterPagesForRecordedFix(t *testing.T) {
 			Return([]entity.BuildIssue{issueIdentity(issue)}, nil),
 		m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(storedIssue(issue), nil),
 		m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue))).
-			Return([]entity.BuildIssue{{TaskID: "resolved", FixID: "fix/1"}}, nil),
+			Return([]entity.BuildIssue{{TaskID: "closed", FixID: "fix/1"}}, nil),
 	)
 	require.NoError(t, controller.processBuild(context.Background(), testQueue, testBuildID))
 }

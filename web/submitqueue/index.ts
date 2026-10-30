@@ -5,10 +5,12 @@ export {
   SubmitQueueApp, SubmitQueuePage, SubmitQueueShell, SubmitQueueStatePage,
   type SubmitQueuePageProps, type SubmitQueueShellProps,
 } from "./view/index.js";
-export { WebNavigationProvider, type WebLinkProps, type WebNavigation } from "@submitqueue/web-platform";
+export {
+  RequestPagesProvider, WebNavigationProvider, type RequestPageLoader, type WebLinkProps, type WebNavigation,
+} from "@submitqueue/web-platform";
 export type {
   ChangeDetailModel, ChangePageModel, ChangeSubmissionModel, HistoryEventModel, HistoryEventType, LoadResult,
-  QueueDirectoryPageModel, QueueModel, QueueRequestsPageModel, RequestDetailModel, RequestListModel,
+  QueueDirectoryPageModel, QueueModel, QueueRequestsModel, QueueRequestsPageModel, RequestDetailModel, RequestListModel,
   RequestPageModel, RequestSummaryModel, StatusDisplay, StatusTone, SubmitQueuePageModel, WebError, WebErrorKind,
   WebPageModel, WebRefreshModel,
 } from "./entity/index.js";

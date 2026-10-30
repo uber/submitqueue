@@ -2,7 +2,7 @@ import { createLogCallback, type LogCallback } from "@submitqueue/web-platform/l
 import { parseStovepipeRoute } from "./core/route.js";
 import type { StovepipeService } from "./extension/service/index.js";
 import type { Queue, StovepipePageModel } from "./entity/index.js";
-import { StovepipePaths } from "./core/paths.js";
+import { parseProjectPageSize, StovepipePaths } from "./core/paths.js";
 import { readSection } from "./controller/page.js";
 import { loadQueueRequests } from "./controller/queue.js";
 import { loadRequestHistory } from "./controller/request.js";
@@ -88,7 +88,8 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
           readSection(
             () => loadProjectStatus(
               service, paths, queue.name, requestId,
-              request.search.get("projects") ?? "", request.signal,
+              request.search.get("projects") ?? "",
+              parseProjectPageSize(request.search.get("projectPageSize")), request.signal,
             ),
             onLog,
             "project results",

@@ -22,6 +22,10 @@ export interface RequestSummaryModel {
   acceptedAtMs: string;
   /** Stable backend outcome reason, empty when absent. */
   outcomeReason: string;
+  /** Total recorded project results; zero means no ratio to display. */
+  projectCount: number;
+  /** Recorded project results with nonzero breakage. */
+  brokenProjectCount: number;
 }
 export interface QueueRequestsModel {
   /** Requests on this page, newest accepted first. */
@@ -54,6 +58,10 @@ export interface ProjectStatusModel {
   repositoryBreakageDegree: number | null;
   /** Whether production of relevant project results has finished, independent of pagination. */
   complete: boolean;
+  /** Maximum project results requested per page. */
+  pageSize: number;
+  /** Supported page sizes and their first-page URLs for this request. */
+  pageSizeChoices: { value: number; href: string }[];
   /** Recorded projects on this page; null breakage means no result. */
   projects: { project: string; breakageDegree: number | null }[];
   /** First project page for this request; null on the first page. */

@@ -123,7 +123,7 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 
 	const queue = "monorepo/main"
 
-	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})
+	resp, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue, Enablement: pb.QueueEnablement_QUEUE_ENABLEMENT_ENABLED})
 	require.NoError(t, err, "Ingest failed")
 	require.NotEmpty(t, resp.Id, "minted request id should not be empty")
 	id := resp.Id
@@ -382,7 +382,7 @@ func (s *StovepipeIntegrationSuite) TestProjectStatusAPI() {
 	assert.Equal(t, int64(4000), remaining.GetUpdatedAtMs())
 	assert.Empty(t, remaining.NextPageToken)
 	assert.False(t, remaining.ProjectResultsComplete)
-	completion := requestlog.NewRequestEventLog(entity.Request{Queue: queue, ID: id}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{requestlog.MetadataKeyProjectFactCount: "3"})
+	completion := requestlog.NewRequestEventLog(entity.Request{Queue: queue, ID: id}, entity.RequestEventProjectFactsRecorded, "all", map[string]string{requestlog.MetadataKeyProjectFactCount: "3", requestlog.MetadataKeyBrokenProjectFactCount: "2"})
 	completion.TimestampMs = 6000
 	backend, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)

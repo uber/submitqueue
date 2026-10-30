@@ -2,14 +2,15 @@ import { act, fireEvent, render, screen, within } from "../../platform/test/rtl.
 import { describe, expect, it, vi } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { WebApp } from "./web-app.js";
-import { ChangeSubmissions, QueueDirectory, RequestDetail, RequestList, RequestListView, RequestStatus } from "./components.js";
-import type { ChangeDetailModel, RequestDetailModel, RequestListModel } from "../entity/index.js";
+import { ChangeSubmissions, QueueDirectory, QueueRequests, RequestDetail, RequestList, RequestStatus } from "./components.js";
+import type { ChangeDetailModel, RequestDetailModel } from "../entity/index.js";
 
 const request = {
   sqid: "demo-queue/1",
   queue: "demo-queue",
   changeUris: ["github://github.com/uber/submitqueue/pull/1/abc"],
   receivedAtMs: 1_700_000_000_000,
+  updatedAtMs: 1_700_000_065_000,
   status: "speculating",
   lastError: null,
   metadata: { batch: "batch-1" },
@@ -17,39 +18,30 @@ const request = {
 
 describe("request components", () => {
   it("renders a linked queue request with its complete sqid", () => {
-    const model: RequestListModel = {
-      queue: "demo-queue",
-      receivedAtOrAfterMs: 1,
-      receivedBeforeMs: 2,
-      requests: [request],
-      nextPageToken: "opaque-token",
-    };
-    render(<RequestList model={model} />);
+    render(<RequestList queue="demo-queue" requests={[request]} />);
 
     const link = screen.getByRole("link", { name: "demo-queue/1" });
     expect(link.getAttribute("href")).toBe(
-      "/demo-queue/request/demo-queue/1",
+      "/queue/demo-queue/request/demo-queue/1",
     );
     expect(screen.getByText("Speculating").closest("[data-tone]")?.getAttribute("data-tone")).toBe("progress");
     expect(screen.getByText("Nov 14, 2023, 10:13:20 PM UTC")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Next page" }).getAttribute("href")).toBe(
-      "/demo-queue?page=opaque-token",
-    );
+    expect(screen.getByText("Nov 14, 2023, 10:14:25 PM UTC")).toBeTruthy();
   });
 
-  it("renders an accessible empty state", () => {
-    render(
-      <RequestList
-        model={{
-          queue: "demo-queue",
-          receivedAtOrAfterMs: 1,
-          receivedBeforeMs: 2,
-          requests: [],
-          nextPageToken: null,
-        }}
-      />,
-    );
-    expect(screen.getByText("No requests were received in this window.")).toBeTruthy();
+  it("shows an unreported update time as a dash", () => {
+    render(<RequestList queue="demo-queue" requests={[{ ...request, updatedAtMs: null }]} />);
+    const row = screen.getAllByRole("row")[1]!;
+    expect(within(row).getAllByRole("cell").at(-1)?.textContent).toBe("—");
+  });
+
+  it.each([
+    { name: "an empty queue", filtered: false, complete: true, message: "No requests have been received on this queue." },
+    { name: "no matches for a filter", filtered: true, complete: true, message: "No requests on this queue have the selected statuses." },
+    { name: "a scan still in progress", filtered: true, complete: false, message: null },
+  ])("describes $name accurately", ({ filtered, complete, message }) => {
+    const { container } = render(<RequestList queue="demo-queue" requests={[]} filtered={filtered} complete={complete} />);
+    expect(container.textContent).toBe(message ?? "");
   });
 
   it("renders ordered status/build history with expandable metadata", () => {
@@ -90,44 +82,27 @@ describe("request components", () => {
 
   it("lists configured queues even when there is only one", () => {
     render(<QueueDirectory queues={[{ name: "demo-queue", description: "Demo gateway" }]} />);
-    expect(screen.getByRole("link", { name: "demo-queue" }).getAttribute("href")).toBe("/demo-queue");
+    expect(screen.getByRole("link", { name: "demo-queue" }).getAttribute("href")).toBe("/queue/demo-queue");
   });
 
-  it("filters only the displayed page without discarding its pagination link", () => {
-    render(<RequestList model={{
-      queue: "demo-queue", receivedAtOrAfterMs: 1, receivedBeforeMs: 2,
-      requests: [request, { ...request, sqid: "42", status: "landed" }],
-      nextPageToken: "next",
-    }} />);
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "landed" } });
-    expect(screen.queryByRole("link", { name: request.sqid })).toBeNull();
-    expect(screen.getByRole("link", { name: "42" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Next page" })).toBeTruthy();
-  });
-
-  it("uses host-supplied change labels and links without exposing fake file hints", () => {
-    const raw = "git://git.example.com/demo/refs%2Fheads%2Fmain/sha?sq-files=demo%2Ffile.txt";
+  it("links change URIs to their change page by canonical label without exposing fake file hints", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const raw = `git://git.example.com/demo/refs%2Fheads%2Fmain/${sha}?sq-files=demo%2Ffile.txt`;
     const clean = raw.split("?")[0]!;
-    render(<RequestList model={{
-      queue: "demo-queue", receivedAtOrAfterMs: 1, receivedBeforeMs: 2,
-      requests: [{ ...request, changeUris: [raw] }], nextPageToken: null,
-    }} changeLabels={{ [raw]: clean }} changeLinks={{ [raw]: "/change" }} />);
-    expect(screen.getByRole("link", { name: clean }).getAttribute("href")).toBe("/change");
+    render(<RequestList queue="demo-queue" requests={[{ ...request, changeUris: [raw] }]} basePath="/sq" />);
+    expect(screen.getByRole("link", { name: clean }).getAttribute("href"))
+      .toBe("/sq/queue/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain");
     expect(screen.queryByText(/sq-files=/)).toBeNull();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "file.txt" } });
-    expect(screen.getByText("No displayed requests match.")).toBeTruthy();
   });
 
   it("retains the last successful list on a transient failure, but not a permanent failure", () => {
-    const view = render(<RequestListView result={{ ok: true, data: {
-      queue: "demo-queue", receivedAtOrAfterMs: 1, receivedBeforeMs: 2,
-      requests: [request], nextPageToken: null,
-    } }} />);
+    const view = render(<QueueRequests queue="demo-queue" routeKey="demo-queue:live"
+      result={{ ok: true, data: { requests: [request], nextHref: null } }} />);
     const error = { kind: "transient" as const, title: "Unavailable", message: "Retry", retryable: true };
-    view.rerender(<RequestListView result={{ ok: false, error }} />);
+    view.rerender(<QueueRequests queue="demo-queue" routeKey="demo-queue:live" result={{ ok: false, error }} />);
     expect(screen.getByRole("link", { name: request.sqid })).toBeTruthy();
     expect(screen.getByText(/last successful snapshot/)).toBeTruthy();
-    view.rerender(<RequestListView result={{ ok: false, error: { ...error, retryable: false } }} />);
+    view.rerender(<QueueRequests queue="demo-queue" routeKey="demo-queue:live" result={{ ok: false, error: { ...error, retryable: false } }} />);
     expect(screen.queryByRole("link", { name: request.sqid })).toBeNull();
   });
 
@@ -156,7 +131,7 @@ describe("request components", () => {
     }} />);
     const table = screen.getByRole("table", { name: "Change submissions" });
     expect(within(table).getAllByText("same-sha")).toHaveLength(2);
-    expect(within(table).getByRole("link", { name: "38" }).getAttribute("href")).toBe("/demo-queue/request/38");
+    expect(within(table).getByRole("link", { name: "38" }).getAttribute("href")).toBe("/queue/demo-queue/request/38");
   });
 
   it("navigates between versions through the enclosing app and keeps full versions in links", () => {

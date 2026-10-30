@@ -21,9 +21,9 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   });
   const routes = [
     { path: "/", search: {} },
-    { path: "/demo-queue", search: {} },
-    { path: "/demo-queue/request/demo-queue/1", search: {} },
-    { path: "/demo-queue/request/demo-queue/1", search: { view: "history" } },
+    { path: "/queue/demo-queue", search: {} },
+    { path: "/queue/demo-queue/request/demo-queue/1", search: {} },
+    { path: "/queue/demo-queue/request/demo-queue/1", search: { view: "history" } },
   ];
   const pages = [];
   const themes = [LightTheme, DarkTheme, createTheme({ colors: {
@@ -56,13 +56,14 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
       projectResultsComplete: true, nextPageToken: "",
       projects: [{ project: "example-project", result: { case: "breakageDegree", value: 0 } }],
     }),
-    getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "" }, events: [] }),
+    getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 }, events: [] }),
   } });
-  for (const path of ["/repo%2Fmain", "/repo%2Fmain/request/1"]) {
-    const result = await stovepipe.handle({ path, search: new URLSearchParams() });
+  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history"]) {
+    const url = new URL(href, "https://submitqueue.test");
+    const result = await stovepipe.handle({ path: url.pathname, search: url.searchParams });
     assert.equal(result.kind, "render");
     const page = createElement(StovepipeApp, { model: result.model });
-    addPage(path, page);
+    addPage(href, page);
   }
 
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://submitqueue.test/" });

@@ -5,6 +5,7 @@ import { Block } from "baseui/block";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { ParagraphSmall } from "baseui/typography";
+import type { ReactNode } from "react";
 import type {
   RequestSummaryModel,
   HistoryEventModel,
@@ -16,6 +17,12 @@ function RequestTimestamp({ value }: { value: string }) {
   if (milliseconds <= 0 || Number.isNaN(new Date(milliseconds).getTime()))
     return <span>Unknown</span>;
   return <Timestamp value={value} />;
+}
+
+function formatBrokenProjectCounts(request: RequestSummaryModel) {
+  return request.projectCount > 0
+    ? `${request.brokenProjectCount} of ${request.projectCount}`
+    : "—";
 }
 
 export function RequestList({
@@ -36,6 +43,7 @@ export function RequestList({
           "Accepted",
           "Updated",
           "Outcome",
+          "Broken projects",
         ]}
       >
         {requests.map((request) => (
@@ -58,30 +66,39 @@ export function RequestList({
               <RequestTimestamp value={request.updatedAtMs} />
             </StyledTableBodyCell>
             <StyledTableBodyCell>{request.outcomeReason || "—"}</StyledTableBodyCell>
+            <StyledTableBodyCell>{formatBrokenProjectCounts(request)}</StyledTableBodyCell>
           </StyledTableBodyRow>
         ))}
       </Table>
     </>
   );
 }
-export function RequestDetails({ request }: { request: RequestSummaryModel }) {
+export function RequestDetails({ request, repositoryResult }: { request: RequestSummaryModel | null; repositoryResult: ReactNode }) {
   return (
-    <Block as="dl" margin="0">
-      <Fact label="State">
-        <Tag closeable={false} kind="neutral" size="small">
-          {request.state || "Unknown"}
-        </Tag>
-      </Fact>
-      <Fact label="Change URI">
-        <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
-      </Fact>
-      <Fact label="Base URI">
-        <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
-      </Fact>
-      <Fact label="Accepted"><RequestTimestamp value={request.acceptedAtMs} /></Fact>
-      <Fact label="Updated"><RequestTimestamp value={request.updatedAtMs} /></Fact>
-      <Fact label="Outcome">{request.outcomeReason || "—"}</Fact>
-    </Block>
+    <>
+      <Block as="dl" margin="0" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))", "repeat(3, minmax(0, 1fr))", "repeat(6, minmax(0, 1fr))"]} gridGap="scale400">
+        {request && <Fact label="State" compact>
+          <Tag closeable={false} kind="neutral" size="small">
+            {request.state || "Unknown"}
+          </Tag>
+        </Fact>}
+        {repositoryResult && <Fact label="Repository result" compact>{repositoryResult}</Fact>}
+        {request && <>
+          <Fact label="Accepted" compact><RequestTimestamp value={request.acceptedAtMs} /></Fact>
+          <Fact label="Updated" compact><RequestTimestamp value={request.updatedAtMs} /></Fact>
+          <Fact label="Outcome" compact>{request.outcomeReason || "—"}</Fact>
+          <Fact label="Broken projects" compact>{formatBrokenProjectCounts(request)}</Fact>
+        </>}
+      </Block>
+      {request && <Block as="dl" marginTop="scale300" marginBottom="scale400" display="grid" gridTemplateColumns={["minmax(0, 1fr)", "repeat(2, minmax(0, 1fr))"]} gridGap="scale400">
+        <Fact label="Change URI" compact>
+          <Block as="code" font="MonoParagraphXSmall">{request.changeUri || "Unknown URI"}</Block>
+        </Fact>
+        <Fact label="Base URI" compact>
+          <Block as="code" font="MonoParagraphXSmall">{request.baseUri || "No baseline selected"}</Block>
+        </Fact>
+      </Block>}
+    </>
   );
 }
 export function History({ events }: { events: HistoryEventModel[] }) {
@@ -89,6 +106,7 @@ export function History({ events }: { events: HistoryEventModel[] }) {
     <Table
       label="Request history"
       headers={["Time", "Type", "State or event", "Outcome"]}
+      fill
     >
       {events.map((event) => (
         <StyledTableBodyRow key={event.id}>

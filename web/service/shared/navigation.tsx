@@ -47,7 +47,7 @@ export function useNextNavigation(): WebNavigation {
 
   return useMemo(() => ({
     Link: NextWebLink,
-    push: (href: string) => router.push(href),
+    push: (href: string, options?: Pick<WebLinkProps, "scroll">) => router.push(href, options),
     refresh,
   }), [refresh, router]);
 }

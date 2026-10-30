@@ -10,6 +10,8 @@ export interface RequestSummaryModel {
   changeUris: string[];
   /** Receipt time, Unix epoch milliseconds. */
   receivedAtMs: number;
+  /** Time the current status was recorded, Unix epoch milliseconds, or `null` when the gateway does not report it. */
+  updatedAtMs: number | null;
   /** Current lifecycle status; unknown values are kept verbatim. */
   status: string;
   /** Most recent failure message, or `null` when none was recorded. */
@@ -49,6 +51,14 @@ export interface RequestListModel {
   requests: RequestSummaryModel[];
   /** Opaque cursor for the next page within the same window, or `null` on the last page. */
   nextPageToken: string | null;
+}
+
+/** One page of a queue's requests, newest received first. */
+export interface QueueRequestsModel {
+  /** Requests on this page, newest received first. */
+  requests: RequestSummaryModel[];
+  /** Opaque in-app URL of the next page; null on the final page. */
+  nextHref: string | null;
 }
 
 /** A request with its retained history. */

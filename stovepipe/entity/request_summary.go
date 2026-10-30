@@ -34,6 +34,10 @@ type RequestSummary struct {
 	AcceptedAtMs int64
 	// ProjectResultsCompletedAtMs is the completion timestamp in Unix milliseconds; zero means unknown and a positive value is immutable.
 	ProjectResultsCompletedAtMs int64
+	// ProjectCount is the number of recorded project results; zero means none recorded.
+	ProjectCount int32
+	// BrokenProjectCount counts recorded project results with degree above DegreeGreen.
+	BrokenProjectCount int32
 	// OutcomeReason is the reason for the represented state; empty means unavailable or inapplicable.
 	OutcomeReason RequestOutcomeReason
 	// Version is the optimistic-lock version of this materialized view.

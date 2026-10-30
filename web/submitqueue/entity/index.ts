@@ -5,7 +5,7 @@ export type {
 } from "./page.js";
 export type { QueueModel } from "./queue.js";
 export type {
-  HistoryEventModel, HistoryEventType, RequestDetailModel, RequestListModel, RequestSummaryModel,
+  HistoryEventModel, HistoryEventType, QueueRequestsModel, RequestDetailModel, RequestListModel, RequestSummaryModel,
 } from "./request.js";
 export type { StatusDisplay, StatusTone } from "./status.js";
 export type { LoadResult, WebError, WebErrorKind } from "./result.js";

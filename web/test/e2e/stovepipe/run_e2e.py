@@ -31,11 +31,12 @@ def _pagination_fixture_sql() -> str:
             "?file=src%2Fmain#fragment" if i == 51 else ""
         )
         state = "failed" if i == 51 else "succeeded"
+        project_count, broken_project_count = (51, 2) if i == 51 else (0, 0)
         statements.append(
             "INSERT INTO request_summary "
             "(queue,request_id,uri,base_uri,state,request_version,"
-            "state_timestamp_ms,version,accepted_at_ms,outcome_reason) "
-            f"VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'');"
+            "state_timestamp_ms,version,accepted_at_ms,outcome_reason,project_count,broken_project_count) "
+            f"VALUES ('web/pagination','{i}','{uri}','','{state}',1,{1000+i},1,{1000+i},'',{project_count},{broken_project_count});"
         )
         statements.append(
             f"INSERT INTO request_acceptance VALUES ('web/pagination',{1000+i},'{i}');"
@@ -49,6 +50,9 @@ def _pagination_fixture_sql() -> str:
     )
     for i in range(1, 52):
         degree = 1.0 if i == 50 else 0.25 if i == 1 else 0
+        statements.append(
+            f"INSERT INTO request_log VALUES ('web/pagination','51','fact-{i}',{2000+i},'','validation_fact_recorded',1,'','{{}}');"
+        )
         statements.append(
             f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
         )

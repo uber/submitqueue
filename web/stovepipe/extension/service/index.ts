@@ -7,6 +7,8 @@ export interface RequestSummary {
   stateUpdatedAtMs: bigint;
   acceptedAtMs: bigint;
   outcomeReason: string;
+  projectCount: number;
+  brokenProjectCount: number;
 }
 
 export interface HistoryEvent {

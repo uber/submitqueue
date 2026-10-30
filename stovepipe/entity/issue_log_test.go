@@ -26,18 +26,18 @@ func TestIssueLogValidate(t *testing.T) {
 		change  func(*IssueLog)
 		invalid bool
 	}{
-		{name: "opened"},
-		{name: "resolved", change: func(l *IssueLog) { l.Event = IssueEventResolved }},
+		{name: "open"},
+		{name: "closed", change: func(l *IssueLog) { l.Status = "closed" }},
 		{name: "task-wide issue", change: func(l *IssueLog) { l.UnitID = "" }},
 		{name: "missing build", change: func(l *IssueLog) { l.BuildID = "" }, invalid: true},
 		{name: "zero timestamp", change: func(l *IssueLog) { l.TimestampMs = 0 }, invalid: true},
 		{name: "negative timestamp", change: func(l *IssueLog) { l.TimestampMs = -1 }, invalid: true},
-		{name: "unknown event", change: func(l *IssueLog) { l.Event = IssueEventUnknown }, invalid: true},
-		{name: "unsupported event", change: func(l *IssueLog) { l.Event = "other" }, invalid: true},
+		{name: "unknown status", change: func(l *IssueLog) { l.Status = IssueStatusUnknown }, invalid: true},
+		{name: "unsupported status", change: func(l *IssueLog) { l.Status = "other" }, invalid: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			log := IssueLog{TaskID: "task", UnitID: "unit",
-				Event: IssueEventOpened, BuildID: "build/1", TimestampMs: 1000}
+				Status: IssueStatusOpen, BuildID: "build/1", TimestampMs: 1000}
 			if tt.change != nil {
 				tt.change(&log)
 			}

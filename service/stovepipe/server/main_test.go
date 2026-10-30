@@ -23,12 +23,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
+	"github.com/uber/submitqueue/stovepipe/extension/storage"
+	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -61,7 +67,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	deadLetter := &recordingConsumer{}
 
 	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
-		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New())
+		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
 	require.NoError(t, err)
 
 	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry)
@@ -89,6 +95,106 @@ func TestEveryRegisteredControllerResolvesInTheTopicRegistry(t *testing.T) {
 			_, ok = registry.SubscriptionConfig(c.TopicKey(), c.ConsumerGroup())
 			assert.True(t, ok, "no subscription registered for the controller's consumer group")
 		})
+	}
+}
+
+func TestIssueTrackingRegistration(t *testing.T) {
+	registry, primary, deadLetter := registeredControllers(t)
+	name, ok := registry.TopicName(stovepipemq.TopicKeyIssueTrack)
+	require.True(t, ok)
+	assert.Equal(t, "issuetrack", name)
+	assert.Contains(t, topicKeys(primary), stovepipemq.TopicKeyIssueTrack)
+	assert.Contains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyIssueTrack))
+
+	dlqName, ok := registry.TopicName(dlq.TopicKey(stovepipemq.TopicKeyIssueTrack))
+	require.True(t, ok)
+	assert.Equal(t, "issuetrack_dlq", dlqName)
+
+	cfg, ok := registry.SubscriptionConfig(stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	require.True(t, ok)
+	assert.True(t, cfg.DLQ.Enabled)
+	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
+}
+
+func TestValidationStagesHaveRecovery(t *testing.T) {
+	_, primary, deadLetter := registeredControllers(t)
+	recoveryKeys := topicKeys(deadLetter)
+	for _, controller := range primary {
+		if controller.TopicKey() == stovepipemq.TopicKeyFix {
+			continue
+		}
+		t.Run(controller.Name(), func(t *testing.T) {
+			assert.Contains(t, recoveryKeys, dlq.TopicKey(controller.TopicKey()))
+		})
+	}
+}
+
+func TestFixRegistration(t *testing.T) {
+	registry, primary, deadLetter := registeredControllers(t)
+	name, ok := registry.TopicName(stovepipemq.TopicKeyFix)
+	require.True(t, ok)
+	assert.Equal(t, "fix", name)
+	assert.Contains(t, topicKeys(primary), stovepipemq.TopicKeyFix)
+	assert.NotContains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyFix))
+}
+
+func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
+	const queueName = "validation/main"
+	const buildID = "build/1"
+	ctrl := gomock.NewController(t)
+	stores := storagemock.NewMockFactory(ctrl)
+	store := storagemock.NewMockStorage(ctrl)
+	observations := storagemock.NewMockBuildIssueStore(ctrl)
+	issues := storagemock.NewMockIssueStateStore(ctrl)
+	stores.EXPECT().For(storage.Config{QueueName: queueName}).Return(store, nil).AnyTimes()
+	store.EXPECT().GetBuildIssueStore().Return(observations).AnyTimes()
+	store.EXPECT().GetIssueStateStore().Return(issues).AnyTimes()
+
+	observation := entity.BuildIssue{TaskID: "test", UnitID: "unit", Version: 1}
+	observations.EXPECT().List(gomock.Any(), buildID, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, bounds storage.BuildIssueRange) ([]entity.BuildIssue, error) {
+			if bounds.After.TaskID != "" {
+				return nil, nil
+			}
+			return []entity.BuildIssue{observation}, nil
+		}).AnyTimes()
+	issues.EXPECT().Get(gomock.Any(), observation.TaskID, observation.UnitID).Return(entity.IssueState{
+		TaskID: observation.TaskID, UnitID: observation.UnitID, Status: entity.IssueStatusOpen,
+		FirstSeenBuildID: buildID, LastProcessedBuildID: buildID, LastChangedBuildID: buildID,
+		ChangedAtMs: 1000, Version: 1,
+	}, nil)
+	observations.EXPECT().Update(gomock.Any(), buildID, gomock.Any(), int32(1), int32(2)).DoAndReturn(
+		func(_ context.Context, _ string, updated entity.BuildIssue, _, newVersion int32) error {
+			require.Equal(t, "noop/"+buildID, updated.FixID)
+			observation = updated
+			observation.Version = newVersion
+			return nil
+		})
+
+	registry, err := newTopicRegistry(nil, "subscriber")
+	require.NoError(t, err)
+	primary := &recordingConsumer{}
+	_, err = registerPrimaryControllers(primary, zaptest.NewLogger(t).Sugar(), tally.NoopScope, stores,
+		requestlog.NewMaterializer(tally.NoopScope), registry, fakeSourceControlFactory{}, fakeBuildRunnerFactory{},
+		hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+	require.NoError(t, err)
+	var fixController consumer.Controller
+	for _, controller := range primary.controllers {
+		if controller.TopicKey() == stovepipemq.TopicKeyFix {
+			fixController = controller
+			break
+		}
+	}
+	require.NotNil(t, fixController)
+
+	payload, err := stovepipemq.Marshal(&stovepipemq.FixRequest{Id: buildID, QueueName: queueName})
+	require.NoError(t, err)
+	for _, pass := range []string{"pass/1", "pass/2"} {
+		message := entityqueue.NewMessage(buildID+"/"+pass, payload, buildID, nil)
+		message.Tenant = queueName
+		delivery := consumermock.NewMockDelivery(ctrl)
+		delivery.EXPECT().Message().Return(message)
+		require.NoError(t, fixController.Process(context.Background(), delivery))
 	}
 }
 
@@ -131,6 +237,8 @@ func TestPipelineSubscriptionRetryPolicies(t *testing.T) {
 		{name: "build", topicKey: stovepipemq.TopicKeyBuild, consumerGroup: "stovepipe-build", wantRetry: defaultRetry},
 		{name: "buildsignal", topicKey: stovepipemq.TopicKeyBuildSignal, consumerGroup: "stovepipe-buildsignal", wantRetry: extendedRetry},
 		{name: "buildanalysis", topicKey: stovepipemq.TopicKeyBuildAnalysis, consumerGroup: "stovepipe-buildanalysis", wantRetry: extendedRetry},
+		{name: "issuetrack", topicKey: stovepipemq.TopicKeyIssueTrack, consumerGroup: "stovepipe-issuetrack", wantRetry: extendedRetry},
+		{name: "fix", topicKey: stovepipemq.TopicKeyFix, consumerGroup: "stovepipe-fix", wantRetry: extendedRetry},
 		{name: "record", topicKey: stovepipemq.TopicKeyRecord, consumerGroup: "stovepipe-record", wantRetry: extendedRetry},
 		{name: "hook", topicKey: basehook.TopicKeyHook, consumerGroup: "stovepipe-hook", wantRetry: defaultRetry},
 	}

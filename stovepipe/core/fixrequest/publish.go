@@ -24,11 +24,11 @@ import (
 	mq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 )
 
-// Publish requires the build and its open issues to be persisted first.
-// Replays after publication errors must call Publish again.
-func Publish(ctx context.Context, registry consumer.TopicRegistry, queueName, buildID string) error {
-	if queueName == "" || buildID == "" {
-		return fmt.Errorf("repair request requires a queue and build ID")
+// Publish requires the opening pass's issue state and history to be durable.
+// The notification ID must be stable across retries and distinct between passes.
+func Publish(ctx context.Context, registry consumer.TopicRegistry, queueName, buildID, notificationID string) error {
+	if queueName == "" || buildID == "" || notificationID == "" {
+		return fmt.Errorf("repair request requires a queue, build ID, and notification ID")
 	}
 
 	payload, err := mq.Marshal(&mq.FixRequest{Id: buildID, QueueName: queueName})
@@ -36,10 +36,9 @@ func Publish(ctx context.Context, registry consumer.TopicRegistry, queueName, bu
 		return fmt.Errorf("failed to serialize repair request: %w", err)
 	}
 
-	// Repair submission is a one-shot handoff for this build.
 	return publish.Message(ctx, registry, mq.TopicKeyFix, publish.MessageParams{
 		Tenant:       queueName,
-		ID:           publish.IntentID(buildID),
+		ID:           publish.IntentID(buildID, notificationID),
 		Payload:      payload,
 		PartitionKey: buildID,
 	})

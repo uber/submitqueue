@@ -12,19 +12,24 @@ Instrumentation belongs in the host: wrap `handle` to observe page results and i
 
 Use the server entry's `createStovepipeWeb` to load a page and render its model with `StovepipeApp`. Mount beneath `WebNavigationProvider` when the host supplies client navigation and refresh. Without it, links and refresh use ordinary document navigation. Import `@submitqueue/web-stovepipe/styles.css` for long-identifier wrapping, and supply BaseUI's `BaseProvider` and Styletron's `Provider`. The host owns the theme and styling engine, including SSR stylesheet extraction and hydration; the library creates neither. BaseUI, React, React DOM, and Styletron React are peer dependencies.
 
-Mount `StovepipeQueueProvider` above route changes with a `loadPage(href, signal)` callback that returns a `QueueRequestsModel` through the host's authenticated transport. Queue lists then load older rows automatically near the bottom, with a keyboard-accessible Load more button and explicit retry after failure. The provider retains loaded rows and scroll positions across detail visits. Without JavaScript or a loader, continuation links navigate normally. The reference host supplies an authenticated, uncached JSON route.
+Mount `RequestPagesProvider` above route changes with a `loadPage(href, signal)` callback that returns a `QueueRequestsModel` through the host's authenticated transport. Queue lists then load older rows automatically near the bottom, with a keyboard-accessible Load more button and explicit retry after failure. The provider retains loaded rows and scroll positions across detail visits. Without JavaScript or a loader, continuation links navigate normally. The reference host supplies an authenticated, uncached JSON route.
 
 ## Routes and data
 
 Request pages use `/<queue>/request/<request-id>` and load both the current summary and events with `GetRequestHistoryByID`. The summary is displayed above history and is not reconstructed from retained events. Queue pagination uses the backend's opaque continuations, and the latest URL carries no time window.
 
 Project results use `GetProjectStatusByID` for that exact request, with an empty
-project selection to read all recorded projects. Each page contains up to 50
-projects; `?projects=<opaque-token>` carries its continuation and can be shared.
+project selection to read all recorded projects. Pages default to 50
+projects; the Projects per page dropdown offers 25, 50, 100, or 200.
+`?projects=<opaque-token>` carries the continuation and `projectPageSize` carries
+a non-default page size, so both can be shared. Changing the size starts at the
+first page. Unsupported sizes fall back to 50.
 First-page navigation removes the cursor. Pages are live rather than a snapshot;
 return to the first page to see newly recorded projects.
 
-The repository result appears in the request summary above history; the project results table contains only projects. Recorded results show Green at zero, Partial Breakage between zero and one, and Breakage at one, without percentages.
+The request page shows a compact summary with change and base URIs always visible. Project results are the default view; History is a separate tab at `?view=history`. Build and Test Issues (`?view=issues`) and Fix Attempts (`?view=fix-attempts`) show Coming soon. Switching tabs preserves the project cursor. Project results and history tables fill the remaining page height and scroll within the active tab. On small screens, a minimum table height keeps rows usable while the page can scroll to reach the controls. Project pagination controls appear above and below the table, show the number of projects on the page, and use the host router without a document reload or resetting the document scroll position. A new project page starts at the top of the table, while the surrounding page and pagination controls stay in place, including on a short final page. Host router links should honor `WebLinkProps.scroll` to support this behavior. Browser Back and Forward restore the selected tab and cursor; links also work without JavaScript. The repository result appears in the summary above all tabs; the project results table contains only projects. Recorded results show Green at zero, Partial Breakage between zero and one, and Breakage at one, without percentages.
+
+Queue rows and request summaries show recorded broken projects out of the total when the total is positive, including zero broken projects. A zero total displays a dash. Counts come from the backend summary, not the current page of project results, so pagination does not change the ratio.
 
 Repository breakage, per-project breakage, and recording completion are separate.
 Zero breakage is green; absent results are never treated as green. Completion

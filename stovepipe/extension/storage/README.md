@@ -32,7 +32,7 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 
 Listing fixes the queue/build primary-key prefix and returns bounded pages in ascending bytewise task/unit order. A task/unit cursor continues after the last returned key; the zero cursor starts the range, and a unit without a task is invalid. Pages are not a snapshot across calls: concurrent observations can affect membership. Empty pages represent no observations in that range, not build success or completed analysis.
 
-Each observation is stored separately, not in a serialized collection. Observations are historical evidence; they do not track whether an issue is currently open or resolved. Repair metadata is mutable; observation identities remain durable, with no deletion or absence-based recovery.
+Each observation is stored separately, not in a serialized collection. Observations are historical evidence; they do not track whether an issue is currently open or closed. Repair metadata is mutable; observation identities remain durable, with no deletion or absence-based recovery.
 
 The MySQL primary key contains the queue, build ID, task ID, and unit ID directly as binary strings, preserving byte-exact identity. Their limits are 255, 1020, 255, and 1024 bytes respectively, for a combined maximum of 2554 bytes. Creates and reads reject identifiers exceeding these limits before querying the database; identifiers are never truncated.
 
@@ -50,23 +50,33 @@ Listing reads a bounded primary-key range in bytewise task/unit order and includ
 
 The MySQL backend uses the new `issue_state` table. Create it before deploying the updated readers. The prior `open_issue` table is not read or automatically copied; no in-repository runtime writer was enabled for it. Deployments with externally populated rows need an explicit backfill before switching readers. The repair executor still receives an `OpenIssue`, which describes an open occurrence rather than the storage record.
 
+## Issue summaries
+
+`IssueSummaryStore` retains one read model per task/unit within its queue, independently of operational `IssueState`. It supports only complete-key create, get, and CAS replacement. Closed summaries remain present; removing them would also remove the source-order information needed to reject an older opening. There is no deletion or listing operation.
+
+`RequestID` and `BuildID` identify the latest represented transition, while `FirstSeenBuildID` identifies its current or most recent opening. Source order follows request ingest order, not opaque build IDs or timestamps. Within the same request, a closing transition supersedes an opening. `Version` is only the summary's CAS guard, not the source order. The materializer must compare incoming transitions before replacing a summary; the store does not enforce lifecycle ordering.
+
+The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. This storage layer does not yet populate summaries or expose a public open-issues list.
+
 ## Issue lifecycle history
 
-`IssueLogStore` retains immutable opened and resolved transitions independently of current issue state and per-build observations. Each transition is keyed by task, unit, build, and event within the bound queue. An empty unit identifies a task-wide issue. History remains when an issue closes or reopens; transitions do not carry a separate reference to the opening they belong to.
+`IssueLogStore` retains immutable open/closed status transitions independently of current issue state and per-build observations. Each transition is keyed by task, unit, build, and status within the bound queue. An empty unit identifies a task-wide issue. History remains when an issue closes or reopens; transitions do not carry a separate reference to the opening they belong to.
 
-The build ID identifies the build where the issue was first seen or confirmed resolved. The application supplies a positive Unix-millisecond timestamp for when the transition was first recorded, not when the build finished. A duplicate identity returns `ErrAlreadyExists` without replacing the original timestamp. Callers can treat replay as success or read the original event. Build IDs are opaque and do not establish transition ordering.
+The build ID identifies the build where the issue was first seen or confirmed closed. The application supplies a positive Unix-millisecond timestamp for when the transition was first recorded, not when the build finished. A duplicate identity returns `ErrAlreadyExists` without replacing the original timestamp. Callers can treat replay as success or read the original transition. Build IDs are opaque and do not establish transition ordering.
 
-The MySQL key uses the same binary identifier limits as the issue stores, plus a 32-byte event field, for a maximum of 2586 bytes. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
+The MySQL key uses the same binary identifier limits as the issue stores, plus the existing 32-byte `event` column containing the status, for a maximum of 2586 bytes. Its column name and primary key remain unchanged. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
 
-History persistence does not alter issue state or validate transitions against it. No runtime writer is enabled here. A later reconciliation controller must own opening/resolution decisions, retry-safe writes to both stores, and protection against stale build analysis. History enumeration is outside this storage contract.
+History persistence does not alter issue state or validate transitions against it. The issue-tracking controller owns opening/closing decisions and retry-safe history writes. History enumeration is outside this storage contract.
 
 ## Issue reconciliation progress
 
-`IssueTrackingStore` retains one queue-scoped operational `IssueTrackingState`, independently of open-issue membership and user-facing summaries. It records the source request and build, the refresh or finalization phase, the owning notification, one task/unit cursor, and its optimistic version. The zero cursor starts a pass. An active pass revisits the cursor issue before scanning later keys, including when the previous delivery already finished that issue. Notification identity lets the controller distinguish its own continuation from helping another pass. The record remains after all issues close to preserve the source-order boundary. The MySQL table is keyed only by queue; creates, reads, and updates use complete primary keys with no secondary indexes or cross-table transaction.
+`IssueTrackingStore` retains one queue-scoped operational `IssueTrackingState`, independently of open-issue membership and user-facing summaries. It records the source request and build, the refresh or finalization phase, the owning notification, one task/unit cursor, and its optimistic version. The zero cursor starts the current phase's range. Every active pass revisits the cursor issue before scanning later keys, including when the previous delivery already finished that issue. `Finalize` retains the terminal notification intent during refreshing, while `HasTaskWideIssues` records whether a task-wide issue has been encountered in that pass. Once all build issues have been applied, a terminal pass with task-wide failures finishes without closing; otherwise it resets the cursor and finalizes against issue states. These fields and the cursor are saved together under the same version guard. Notification identity lets the controller distinguish its own continuation from helping another pass. The record remains after all issues close to preserve the source-order boundary. The MySQL table is keyed only by queue; creates, reads, and updates use complete primary keys with no secondary indexes or cross-table transaction.
 
 The store does not decide source ordering, apply issue transitions, or advance versions. Its caller supplies the guard version and replacement version. A later controller will own acceptance, resumption of cursor work, and completion; no runtime writer is enabled here.
 
-The issue-tracking table must include the notification and cursor columns before updated readers or writers are deployed. No runtime writer is enabled by the storage layer. Notification IDs allow up to 1020 bytes, matching the queue message ID byte capacity; cursor limits match the issue stores.
+Recovery uses the same record's `abandoning` and `abandoned` phases; no additional schema fields or storage operations are required. The source, notification, cursor, and terminal intent remain present after abandonment. See [issue tracking recovery](../../controller/issuetrack/README.md#recovery-and-activation) for the conditional-write ordering that protects the current cursor before newer work is admitted.
+
+The issue-tracking table must include the notification, cursor, `finalize`, and `has_task_wide_issues` columns before updated readers or writers are deployed. Both boolean columns default to false. They describe one pass, not analysis state for every build in the queue; terminal intent is required before absence-based reconciliation is permitted. No runtime writer is enabled by the storage layer. Notification IDs allow up to 1020 bytes, matching the queue message ID byte capacity; cursor limits match the issue stores.
 
 ### Applied transition facts
 

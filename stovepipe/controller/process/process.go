@@ -225,62 +225,29 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 	return true, nil
 }
 
-// admitLatestHead runs the gate-then-admit workflow for the latest head: claim a build
-// slot, mark the request processing, and publish it to build. Every queue-row reload
-// re-runs coalesce-then-gate, so a slot is never spent on a now-stale head; a closed gate
-// defers by holding the delivery (redeliver after the gate wait delay) rather than failing.
+// admitLatestHead holds the delivery while the build-slot gate is closed; otherwise it marks the
+// request processing, counts its build slot, and publishes it to build.
 func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
-	var sc sourcecontrol.SourceControl
-	var strategy entity.BuildStrategy
-	var baseURI string
-	var err error
-
-	for {
-		if queueRow.InFlightCount >= cfg.MaxConcurrent {
-			return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
-		}
-
-		if queueRow.LastGreenURI != "" && sc == nil {
-			sc, err = c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
-			if err != nil {
-				metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
-					metrics.TagsFromContext(ctx, metrics.NewTag("stage", "resolve"))...,
-				)
-				return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
-			}
-		}
-
-		strategy, baseURI, err = c.deriveBuildStrategy(ctx, sc, queueRow, request)
-		if err != nil {
-			return err
-		}
-
-		err = c.claimBuildSlot(ctx, store, &queueRow)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, storage.ErrVersionMismatch) {
-			return err
-		}
-		// claimBuildSlot reloaded queueRow. Re-coalesce: supersede if a newer head arrived,
-		// otherwise loop to re-check the gate.
-		superseded, err := c.coalesce(ctx, store, request, queueRow.LatestRequestID)
-		if err != nil || superseded {
-			return err
-		}
+	if queueRow.InFlightCount >= cfg.MaxConcurrent {
+		return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
 	}
 
-	transitioned, err := c.markProcessing(ctx, store, &request, strategy, baseURI)
+	strategy, baseURI, err := c.deriveBuildStrategy(ctx, queueRow, request)
 	if err != nil {
-		// Slot claimed but never admitted: release best-effort so the slot isn't leaked
-		// (a redelivery would find the gate closed by its own claim and nothing decrements it).
-		c.releaseBuildSlot(ctx, store, request.Queue)
 		return err
 	}
-	if !transitioned {
-		// Lost the admit race: another delivery advanced this request. Release and skip.
-		c.releaseBuildSlot(ctx, store, request.Queue)
-		return nil
+
+	// The request transition is the admit and the count follows it, so a failure between the two
+	// writes leaves the count low (over-admission by one) rather than a slot nobody owns (a wedge). The
+	// gate is therefore best-effort: two heads that read it open in the same window both pass, and
+	// the release paths' zero clamp reconverges a low count. See doc/rfc/stovepipe/steps/process.md
+	// (in_flight_count integrity); PR #966's owner-keyed slot set is the exact alternative.
+	transitioned, err := c.markProcessing(ctx, store, &request, strategy, baseURI)
+	if err != nil || !transitioned {
+		return err
+	}
+	if err := c.claimBuildSlot(ctx, store, queueRow); err != nil {
+		return err
 	}
 
 	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonUnknown); err != nil {
@@ -318,10 +285,17 @@ func (c *Controller) persistStateLog(ctx context.Context, store storage.Storage,
 }
 
 // deriveBuildStrategy chooses the validation scope and baseline from the queue's last-known-good commit.
-// The caller resolves source control once and persists the returned values only after successfully claiming a build slot.
-func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.SourceControl, queueRow entity.Queue, request entity.Request) (strategy entity.BuildStrategy, baseURI string, err error) {
+func (c *Controller) deriveBuildStrategy(ctx context.Context, queueRow entity.Queue, request entity.Request) (strategy entity.BuildStrategy, baseURI string, err error) {
 	if queueRow.LastGreenURI == "" {
 		return entity.BuildStrategyFull, "", nil
+	}
+
+	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "resolve"))...,
+		)
+		return entity.BuildStrategyUnknown, "", fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
 	}
 
 	isAncestor, err := sc.IsAncestor(ctx, queueRow.LastGreenURI, request.URI)
@@ -349,35 +323,32 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 	return entity.BuildStrategyFull, "", nil
 }
 
-// claimBuildSlot CAS-increments queue.in_flight_count by one. On version mismatch it
-// reloads queueRow and returns ErrVersionMismatch so the caller can retry.
-func (c *Controller) claimBuildSlot(ctx context.Context, store storage.Storage, queueRow *entity.Queue) error {
+// claimBuildSlot CAS-increments queue.in_flight_count, retrying version conflicts without re-gating
+// because the admit is already durable. A hard failure leaves the count low, never high.
+func (c *Controller) claimBuildSlot(ctx context.Context, store storage.Storage, queueRow entity.Queue) error {
 	queueStore := store.GetQueueStore()
 
-	updated := *queueRow
-	updated.InFlightCount = queueRow.InFlightCount + 1
-	newVersion := queueRow.Version + 1
-	if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-		if errors.Is(err, storage.ErrVersionMismatch) {
-			got, getErr := queueStore.Get(ctx, queueRow.Name)
-			if getErr != nil {
-				return fmt.Errorf("failed to reload queue %s after version mismatch: %w", queueRow.Name, getErr)
-			}
-			*queueRow = got
-			return storage.ErrVersionMismatch
+	for {
+		updated := queueRow
+		updated.InFlightCount = queueRow.InFlightCount + 1
+		newVersion := queueRow.Version + 1
+		err := queueStore.Update(ctx, updated, queueRow.Version, newVersion)
+		if err == nil {
+			return nil
 		}
-		return fmt.Errorf("failed to claim build slot for queue %s: %w", queueRow.Name, err)
+		if !errors.Is(err, storage.ErrVersionMismatch) {
+			return fmt.Errorf("failed to claim build slot for queue %s: %w", queueRow.Name, err)
+		}
+		reloaded, getErr := queueStore.Get(ctx, queueRow.Name)
+		if getErr != nil {
+			return fmt.Errorf("failed to reload queue %s after version mismatch: %w", queueRow.Name, getErr)
+		}
+		queueRow = reloaded
 	}
-	updated.Version = newVersion
-	*queueRow = updated
-	return nil
 }
 
-// markProcessing CAS-marks request accepted→processing and persists the strategy chosen after the
-// build slot was claimed. It reapplies the values after a request reload so an accepted concurrent
-// update cannot discard them. transitioned is true only when this call performed the CAS; false
-// means a concurrent writer already advanced the request past accepted, so the caller must release
-// its claimed slot.
+// markProcessing CAS-marks request accepted→processing with strategy and baseURI, reapplied after a reload.
+// transitioned is false when another writer already moved the request past accepted; the caller then counts no slot.
 func (c *Controller) markProcessing(ctx context.Context, store storage.Storage, request *entity.Request, strategy entity.BuildStrategy, baseURI string) (transitioned bool, err error) {
 	reqStore := store.GetRequestStore()
 
@@ -405,43 +376,6 @@ func (c *Controller) markProcessing(ctx context.Context, store storage.Storage, 
 		updated.Version = newVersion
 		*request = updated
 		return true, nil
-	}
-}
-
-// releaseBuildSlot CAS-decrements queue.in_flight_count to compensate a slot claimed but never
-// admitted. It decrements relatively (preserving a concurrent record decrement) and retries on
-// version conflicts. Best-effort: it only logs on a hard failure, since the caller is unwinding.
-func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) {
-	queueStore := store.GetQueueStore()
-
-	for {
-		queueRow, err := queueStore.Get(ctx, queueName)
-		if err != nil {
-			c.logger.Errorw("failed to release claimed build slot",
-				"queue", queueName,
-				"error", err,
-			)
-			return
-		}
-		if queueRow.InFlightCount <= 0 {
-			return
-		}
-
-		updated := queueRow
-		updated.InFlightCount = queueRow.InFlightCount - 1
-		newVersion := queueRow.Version + 1
-		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
-				continue
-			}
-			c.logger.Errorw("failed to release claimed build slot",
-				"queue", queueName,
-				"error", err,
-			)
-			return
-		}
-		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
-		return
 	}
 }
 

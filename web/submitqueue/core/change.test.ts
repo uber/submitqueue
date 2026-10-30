@@ -6,14 +6,14 @@ const sha = "0123456789abcdef0123456789abcdef01234567";
 
 describe("readable change identity", () => {
   it.each([
-    [`github://github.com/uber/submitqueue/pull/123/${sha}`, `/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}`],
-    ["phab://phabricator.example.com/D12345/67890", "/demo-queue/change/phab/phabricator.example.com/D12345/67890"],
-    [`git://git.example.com/uber/demo/refs%2Fheads%2Fmain/${sha}`, `/demo-queue/change/git/git.example.com/uber/demo/refs%2Fheads%2Fmain/${sha}`],
+    [`github://github.com/uber/submitqueue/pull/123/${sha}`, `/queue/demo-queue/change/github/github.com/uber/submitqueue/pull/123/${sha}`],
+    ["phab://phabricator.example.com/D12345/67890", "/queue/demo-queue/change/phab/phabricator.example.com/D12345/67890"],
+    [`git://git.example.com/uber/demo/refs%2Fheads%2Fmain/${sha}`, `/queue/demo-queue/change/git/git.example.com/uber/demo/refs%2Fheads%2Fmain/${sha}`],
   ])("preserves authority and path from %s", (uri, href) => {
     const reference = parseChangeUri(uri);
     expect(reference).not.toBeNull();
     expect(changeHref("demo-queue", reference!, true)).toBe(href);
-    expect(parseChangePath(href.split("/").slice(3).map(decodeURIComponent))?.uri).toBe(uri);
+    expect(parseChangePath(href.split("/").slice(4).map(decodeURIComponent))?.uri).toBe(uri);
   });
 
   it("distinguishes logical review identity from its submitted version", () => {
@@ -37,12 +37,12 @@ describe("readable change identity", () => {
   });
 
   it.each([
-    [`git://git.example.com/demo/refs%2Fheads%2Fmain/${sha}`, "?sq-files=demo%2F00%2Ffile.txt", "/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain"],
-    [`github://github.com/uber/submitqueue/pull/123/${sha}`, "?sq-fake=build-fail&attempt=2", "/demo-queue/change/github/github.com/uber/submitqueue/pull/123"],
+    [`git://git.example.com/demo/refs%2Fheads%2Fmain/${sha}`, "?sq-files=demo%2F00%2Ffile.txt", "/queue/demo-queue/change/git/git.example.com/demo/refs%2Fheads%2Fmain"],
+    [`github://github.com/uber/submitqueue/pull/123/${sha}`, "?sq-fake=build-fail&attempt=2", "/queue/demo-queue/change/github/github.com/uber/submitqueue/pull/123"],
   ])("hides URI query markers in labels/links without changing the submitted URI: %s", (clean, query, expectedHref) => {
     const raw = `${clean}${query}`;
     const request: RequestSummaryModel = {
-      sqid: "42", queue: "demo-queue", changeUris: [raw], receivedAtMs: 1,
+      sqid: "42", queue: "demo-queue", changeUris: [raw], receivedAtMs: 1, updatedAtMs: null,
       status: "landed", lastError: null, metadata: {},
     };
     expect(requestChangeLabels([request])[raw]).toBe(clean);
@@ -53,7 +53,7 @@ describe("readable change identity", () => {
   it("does not relabel a URI that is already canonical", () => {
     const uri = `github://github.com/uber/submitqueue/pull/123/${sha}`;
     const request: RequestSummaryModel = {
-      sqid: "42", queue: "demo-queue", changeUris: [uri], receivedAtMs: 1,
+      sqid: "42", queue: "demo-queue", changeUris: [uri], receivedAtMs: 1, updatedAtMs: null,
       status: "landed", lastError: null, metadata: {},
     };
     expect(requestChangeLabels([request])).toEqual({});

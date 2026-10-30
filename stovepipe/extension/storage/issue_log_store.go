@@ -23,12 +23,12 @@ import (
 )
 
 // IssueLogStore retains immutable issue transitions within the bound queue.
-// Task, unit, build, and event identify one transition.
+// Task, unit, build, and status identify one transition.
 type IssueLogStore interface {
 	// Create returns ErrAlreadyExists for a previously recorded transition.
 	// A duplicate never replaces the original timestamp.
 	Create(ctx context.Context, log entity.IssueLog) error
 
 	// Get returns ErrNotFound when the transition has not been recorded.
-	Get(ctx context.Context, taskID, unitID, buildID string, event entity.IssueEvent) (entity.IssueLog, error)
+	Get(ctx context.Context, taskID, unitID, buildID string, status entity.IssueStatus) (entity.IssueLog, error)
 }

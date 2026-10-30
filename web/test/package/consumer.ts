@@ -13,7 +13,7 @@ const web = createSubmitQueueWeb({ gateway });
 
 export async function render() {
   const result = await web.handle({
-    path: "/demo-queue", search: {},
+    path: "/queue/demo-queue", search: {},
     onLog: (level, message, metadata) => { console[level](message, metadata); },
   });
   if (result.kind !== "render") {

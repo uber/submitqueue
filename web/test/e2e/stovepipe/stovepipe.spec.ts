@@ -19,22 +19,19 @@ test.describe("server-rendered styling", () => {
     await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
     await expect(page.getByRole("status")).toContainText("More requests available");
   });
-  test("separates request status fields before hydration", async ({ page }) => {
+  test("renders request status and views without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination/request/51");
     const status = page.getByRole("region", { name: "Request status" });
-    const rows = status.locator("dl > div");
-    await expect(rows).toHaveCount(7);
+    await expect(status.getByText("Broken projects", { exact: true })).toBeVisible();
+    await expect(status.getByText("2 of 51", { exact: true })).toBeVisible();
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
-    const layout = await rows.evaluateAll(fields => fields.map(field => ({
-      height: field.getBoundingClientRect().height,
-      labelGap: field.querySelector("dd")!.getBoundingClientRect().top - field.querySelector("dt")!.getBoundingClientRect().bottom,
-      separator: parseFloat(getComputedStyle(field).borderBottomWidth),
-    })));
-    for (const row of layout) {
-      expect(row.height).toBeGreaterThanOrEqual(60);
-      expect(row.labelGap).toBeGreaterThanOrEqual(6);
-      expect(row.separator).toBeGreaterThan(0);
+    await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
+    await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
+    for (const label of ["Build and Test Issues", "Fix Attempts"]) {
+      await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: label, exact: true }).click();
+      await expect(page.getByRole("region", { name: label, exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
     }
   });
   test("keeps continuation links usable without JavaScript", async ({ page }) => {
@@ -60,6 +57,7 @@ test("keeps queue tables inside a narrow viewport", async ({ page }) => {
   await page.getByRole("link", { name: "51", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Request 51", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
   const history = page.getByRole("region", { name: "Request history", exact: true });
   await history.focus();
   await expect(history).toBeFocused();
@@ -164,7 +162,8 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
   await expect(automatic).not.toBeChecked();
   const now = new Date();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
+  // The installed clock keeps running, so pausing at the install time races it.
+  await page.clock.pauseAt(new Date(now.getTime() + 60_000));
   let refreshRequests = 0;
   const isRefresh = (request: import("@playwright/test").Request) =>
     request.headers()["rsc"] === "1" && new URL(request.url()).pathname === new URL(page.url()).pathname;
@@ -268,10 +267,11 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await expect(
       page.getByRole("heading", { name: `Request ${id}`, exact: true }),
     ).toBeVisible();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(
       page.getByRole("table", { name: "Request history" }).locator("tbody tr"),
     ).not.toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`/monorepo%2Fmain/request/${id}$`));
+    await expect(page).toHaveURL(new RegExp(`/monorepo%2Fmain/request/${id}\\?view=history$`));
     await expect(
       page.getByRole("region", { name: "Request status" }),
     ).toBeVisible();
@@ -283,6 +283,8 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
       .getByRole("link", { name: "web/pagination", exact: true })
       .click();
     await expect(requests.locator("tbody tr")).toHaveCount(50);
+    await expect(requests.getByRole("columnheader", { name: "Broken projects", exact: true })).toBeVisible();
+    await expect(requests.getByText("2 of 51", { exact: true })).toBeVisible();
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-queue.png`,
       fullPage: true,
@@ -313,24 +315,22 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     await expect(status.getByText("Accepted", { exact: true })).toBeVisible();
     await expect(status.getByText("Updated", { exact: true })).toBeVisible();
+    await expect(status.getByText("2 of 51", { exact: true })).toBeVisible();
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(
       page.getByRole("table", { name: "Request history" }).getByText("accepted", {
         exact: true,
       }),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { level: 2 })).toHaveText([
-      "Request status",
-      "History",
-      "Project results",
-    ]);
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Project Results", exact: true }).click();
+    await expect(page.getByRole("table", { name: "Recorded project results" })).toBeVisible();
     await page.screenshot({
       path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-request.png`,
-      fullPage: true,
     });
   });
   await test.step("Read recorded project results and reload their cursor", async () => {
     const status = page.getByRole("region", { name: "Request status", exact: true });
-    const section = page.getByRole("region", { name: "Project results", exact: true });
+    const section = page.getByRole("region", { name: "Project Results", exact: true });
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(50);
     await expect(projects.locator("tbody tr").nth(0).getByRole("cell", { name: "project-50", exact: true })).toBeVisible();
@@ -356,7 +356,7 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
     await page.reload();
     await expect(projects.locator("tbody tr")).toHaveCount(50);
-    await section.getByRole("link", { name: "Next projects →", exact: true }).click();
+    await section.getByRole("link", { name: "Next projects →", exact: true }).first().click();
     await expect(projects.locator("tbody tr")).toHaveCount(1);
     await expect(projects.getByRole("cell", { name: "project-51", exact: true })).toBeVisible();
     const cursor = new URL(page.url()).searchParams.get("projects");
@@ -366,14 +366,14 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
     await expect(section.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
-    await section.getByRole("link", { name: "First projects", exact: true }).click();
+    await section.getByRole("link", { name: "First projects", exact: true }).last().click();
     await expect(projects.locator("tbody tr")).toHaveCount(50);
     expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   });
   await test.step("Keep another request's missing results distinct from green", async () => {
     await page.goto("/web%2Fpagination/request/49");
-    const section = page.getByRole("region", { name: "Project results", exact: true });
+    const section = page.getByRole("region", { name: "Project Results", exact: true });
     await expect(section.getByText("No project results recorded on this page.", { exact: true })).toBeVisible();
     const projects = section.getByRole("table", { name: "Recorded project results", exact: true });
     await expect(projects.locator("tbody tr")).toHaveCount(0);
@@ -394,4 +394,93 @@ test("real ingestion, queue selection, cursors, request summaries, history, proj
     ).toBeVisible();
   });
   expect(errors).toEqual([]);
+});
+
+
+test("fills the available height and scrolls long results within each tab", async ({ page }) => {
+  for (const [view, label] of [["projects", "Recorded project results"], ["history", "Request history"]]) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/web%2Fpagination/request/51?view=${view}`);
+    const table = page.getByRole("region", { name: label, exact: true });
+    const initialHeight = await table.evaluate(element => element.clientHeight);
+    await page.setViewportSize({ width: 1280, height: 1200 });
+    await expect.poll(() => table.evaluate(element => element.clientHeight)).toBeGreaterThan(initialHeight);
+    await table.focus();
+    await page.keyboard.press("End");
+    await expect.poll(() => table.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  }
+});
+
+test("pages through project results without reloading or moving the surrounding page", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 650 });
+  await page.goto("/web%2Fpagination/request/51");
+  const rows = page.getByRole("table", { name: "Recorded project results" }).locator("tbody tr");
+  const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
+  const pager = page.getByRole("navigation", { name: "Project pages (bottom)" });
+  await expect(rows).toHaveCount(50);
+  await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
+  await projectScroll.focus();
+  await page.keyboard.press("End");
+  await expect.poll(() => projectScroll.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await pager.scrollIntoViewIfNeeded();
+  const scrollBeforeNext = await page.evaluate(() => window.scrollY);
+  await pager.getByRole("link", { name: "Next projects →", exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeNext);
+  expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
+  await expect(pager.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
+  await page.goBack();
+  await expect(rows).toHaveCount(50);
+  await page.goForward();
+  await expect(rows).toHaveCount(1);
+  await pager.scrollIntoViewIfNeeded();
+  const scrollBeforeFirst = await page.evaluate(() => window.scrollY);
+  await pager.getByRole("link", { name: "First projects", exact: true }).click();
+  await expect(rows).toHaveCount(50);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeFirst);
+  expect(await page.evaluate(() => document.documentElement.dataset.pageSession)).toBe("retained");
+});
+
+test("retains project paging across views and resets the cursor when page size changes", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51");
+  const rows = page.getByRole("table", { name: "Recorded project results" }).locator("tbody tr");
+  const views = page.getByRole("navigation", { name: "Request views" });
+  const pager = page.getByRole("navigation", { name: "Project pages (bottom)" });
+  const selectSize = async (size: string) => {
+    await pager.getByRole("combobox", { name: /Projects per page/u }).click();
+    await page.getByRole("option", { name: size, exact: true }).click();
+  };
+  await expect(rows).toHaveCount(50);
+  await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
+  await pager.scrollIntoViewIfNeeded();
+  const scrollBeforeSize = await page.evaluate(() => window.scrollY);
+  await selectSize("25");
+  await expect(rows).toHaveCount(25);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeSize);
+  const firstProjects = await rows.locator("td:first-child").allTextContents();
+  await pager.getByRole("link", { name: "Next projects →", exact: true }).click();
+  await expect.poll(() => rows.locator("td:first-child").allTextContents()).not.toEqual(firstProjects);
+  const nextProjects = await rows.locator("td:first-child").allTextContents();
+  expect(nextProjects.every(project => !firstProjects.includes(project))).toBe(true);
+  const cursor = new URL(page.url()).searchParams.get("projects");
+  expect(cursor).toBeTruthy();
+  for (const label of ["History", "Build and Test Issues", "Fix Attempts"]) {
+    await views.getByRole("link", { name: label, exact: true }).click();
+    const section = page.getByRole("region", { name: label, exact: true });
+    await expect(section).toBeVisible();
+    if (label !== "History") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
+  }
+  await views.getByRole("link", { name: "Project Results", exact: true }).click();
+  await expect(rows).toHaveCount(25);
+  expect(new URL(page.url()).searchParams.get("projects")).toBe(cursor);
+  expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
+  expect(await rows.locator("td:first-child").allTextContents()).toEqual(nextProjects);
+  await selectSize("100");
+  await expect(rows).toHaveCount(51);
+  expect(new URL(page.url()).searchParams.has("projects")).toBe(false);
+  expect(await page.evaluate(() => document.documentElement.dataset.pageSession)).toBe("retained");
+  await page.reload();
+  await expect(rows).toHaveCount(51);
+  expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("100");
 });

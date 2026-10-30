@@ -9,7 +9,8 @@ Stovepipe retains an append-only request log for each validation request. Its in
 - `validation_fact_recorded`;
 - `project_facts_recorded`;
 - `record_abandoned`;
-- `build_analysis_abandoned`.
+- `build_analysis_abandoned`;
+- `issue_tracking_abandoned`.
 
 The model deliberately follows SubmitQueue's distinction between statuses describing where a request is and events describing important activity that does not move it. It remains a bounded request-lifecycle log rather than a generic event bus or an audit of every correlated operation.
 
@@ -128,8 +129,9 @@ State entries retain the selected baseline URI when known, including an empty UR
 | `project_facts_recorded` | All project validation facts returned for a request became durable. | Project-fact count metadata and completion time |
 | `record_abandoned` | Record-stage work stopped after exhausting primary retries. | Event retention time |
 | `build_analysis_abandoned` | Build analysis could not complete; issue observations may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
+| `issue_tracking_abandoned` | Issue tracking stopped before completing a pass; existing issue changes remain, but reconciliation may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
 
-Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Individual project facts remain outside the vocabulary; one batch-completion event summarizes their durable recording.
+Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Individual project facts remain outside the vocabulary; one batch-completion event summarizes their durable recording. Its `project_fact_count` and `broken_project_fact_count` metadata contain the total and the number with degree above zero, counted from persisted facts after their indexes are durable. Project completion projection requires both counts and assigns them together in `RequestSummary` from the retained event.
 
 ### Evolution
 
@@ -219,6 +221,7 @@ The `project_facts_recorded` event also projects its retained timestamp into `Re
 | Record | Create or verify the whole-repository fact, then retain `validation_fact_recorded`; after recording project facts, retain one `project_facts_recorded` event. | An identical whole-repository fact and project-fact batch ensure their events before bookmark or promotion work. |
 | Record DLQ | Retain `record_abandoned`; for failed Requests, create or verify the repository fact and retain `validation_fact_recorded` before publishing its hook. | Existing facts remain authoritative; stable log and hook IDs make replay idempotent without resolving projects or replaying promotion. |
 | Build analysis DLQ | Retain `build_analysis_abandoned` without rerunning detection or changing validation state. | One stable event per build deduplicates recovery deliveries; only state reads and history retention retry. |
+| Issue tracking DLQ | Protect the current cursor from delayed writes, retain its issue history and `issue_tracking_abandoned`, then mark the pass abandoned. | A stable hash of the notification ID deduplicates the event. Recovery retains accepted issue changes and never processes the remaining range. |
 | Reconciler | CAS an unrecoverable non-terminal Request to failed, then retain failed. | An existing terminal Request is repaired from its persisted outcome without relabeling it. |
 
 Build running and unchanged polls create no entry. A failed runner trigger that creates no Build creates no event. Cancelled and superseded requests create no validation fact.

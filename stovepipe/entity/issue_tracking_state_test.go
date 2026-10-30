@@ -21,9 +21,9 @@ import (
 )
 
 func TestIssueTrackingState(t *testing.T) {
-	for _, phase := range []IssueTrackingPhase{IssueTrackingPhaseRefreshing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalizing, IssueTrackingPhaseFinalized} {
+	for _, phase := range []IssueTrackingPhase{IssueTrackingPhaseRefreshing, IssueTrackingPhaseRefreshed, IssueTrackingPhaseFinalizing, IssueTrackingPhaseFinalized, IssueTrackingPhaseAbandoning, IssueTrackingPhaseAbandoned} {
 		t.Run(string(phase), func(t *testing.T) {
-			state := IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: phase, Version: 1}
+			state := IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: phase, Finalize: phase == IssueTrackingPhaseFinalizing || phase == IssueTrackingPhaseFinalized, Version: 1}
 			require.NoError(t, state.Validate())
 		})
 	}
@@ -36,6 +36,14 @@ func TestIssueTrackingState(t *testing.T) {
 		{"nonnumeric request", func(s *IssueTrackingState) { s.RequestID = "request/10" }},
 		{"missing notification", func(s *IssueTrackingState) { s.NotificationID = "" }},
 		{"unit cursor without task", func(s *IssueTrackingState) { s.CursorUnitID = "unit" }},
+		{"closing without terminal intent", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseFinalizing }},
+		{"finalized without terminal intent", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseFinalized }},
+		{"terminal pass marked refreshed", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseRefreshed; s.Finalize = true }},
+		{"closing with task-wide failure", func(s *IssueTrackingState) {
+			s.Phase = IssueTrackingPhaseFinalizing
+			s.Finalize = true
+			s.HasTaskWideIssues = true
+		}},
 		{"missing build", func(s *IssueTrackingState) { s.BuildID = "" }},
 		{"unknown phase", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseUnknown }},
 		{"unsupported phase", func(s *IssueTrackingState) { s.Phase = "other" }},

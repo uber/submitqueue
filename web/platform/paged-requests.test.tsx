@@ -1,17 +1,24 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "./test/rtl.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { QueueRequestsModel } from "../entity/index.js";
-import { QueueRequests, StovepipeQueueProvider } from "./queue.js";
+import { PagedRequests, RequestPagesProvider, type RequestPage } from "./paged-requests.js";
+
+interface Row {
+  id: string;
+  state: string;
+}
 
 const nextHref = "/repo%2Fmain?page=opaque%2B%2F%3D";
-function page(ids: string[], next: string | null = nextHref): QueueRequestsModel {
-  return { requests: ids.map(id => ({
-    id, href: `/repo%2Fmain/request/${id}`, changeUri: `git://repo/${id}`, baseUri: "", state: "accepted",
-    acceptedAtMs: "1000", updatedAtMs: "1000", outcomeReason: "",
-  })), nextHref: next };
+function page(ids: string[], next: string | null = nextHref): RequestPage<Row> {
+  return { requests: ids.map(id => ({ id, state: "accepted" })), nextHref: next };
+}
+function RowList({ initial, routeKey }: { initial: RequestPage<Row>; routeKey: string }) {
+  return <PagedRequests initial={initial} routeKey={routeKey} requestKey={request => request.id}>
+    {requests => <ul aria-label="Requests">{requests.map(request =>
+      <li key={request.id}><a href={`/repo%2Fmain/request/${request.id}`}>{request.id}</a><span>{request.state}</span></li>)}</ul>}
+  </PagedRequests>;
 }
 function displayedIds() {
-  return within(screen.getByRole("table", { name: "Requests" })).getAllByRole("link").map(link => link.textContent);
+  return within(screen.getByRole("list", { name: "Requests" })).getAllByRole("link").map(link => link.textContent);
 }
 let intersect: () => void;
 beforeEach(() => {
@@ -31,11 +38,11 @@ afterEach(() => {
 });
 
 it("loads on intersection once, appends unique requests, and stops at the end", async () => {
-  let resolve!: (result: QueueRequestsModel) => void;
-  const loadPage = vi.fn(() => new Promise<QueueRequestsModel>(complete => {
+  let resolve!: (result: RequestPage<Row>) => void;
+  const loadPage = vi.fn(() => new Promise<RequestPage<Row>>(complete => {
     resolve = complete;
   }));
-  render(<StovepipeQueueProvider loadPage={loadPage}><QueueRequests routeKey="queue" initial={page(["3", "2"])} /></StovepipeQueueProvider>);
+  render(<RequestPagesProvider loadPage={loadPage}><RowList routeKey="queue" initial={page(["3", "2"])} /></RequestPagesProvider>);
   await act(async () => {
     intersect();
     intersect();
@@ -58,7 +65,7 @@ it("loads on intersection once, appends unique requests, and stops at the end", 
 
 it("retains rows after a failed load and retries the same continuation by button", async () => {
   const loadPage = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValueOnce(page(["1"], null));
-  render(<StovepipeQueueProvider loadPage={loadPage}><QueueRequests routeKey="queue" initial={page(["2"])} /></StovepipeQueueProvider>);
+  render(<RequestPagesProvider loadPage={loadPage}><RowList routeKey="queue" initial={page(["2"])} /></RequestPagesProvider>);
   await act(async () => intersect());
   expect(displayedIds()).toEqual(["2"]);
   expect(screen.getByRole("alert")).toHaveTextContent("Could not load older requests");
@@ -72,17 +79,17 @@ it("retains rows after a failed load and retries the same continuation by button
 it("aborts a departing queue, restores its loaded rows, and keeps new arrivals behind an explicit action", async () => {
   const initial = page(["3", "2"]);
   const loadPage = vi.fn().mockResolvedValueOnce(page(["1"], "/repo%2Fmain?page=last"));
-  function App({ visible = true, latest = initial }: { visible?: boolean; latest?: QueueRequestsModel }) {
-    return <StovepipeQueueProvider loadPage={loadPage}>{visible && <QueueRequests routeKey="queue" initial={latest} />}</StovepipeQueueProvider>;
+  function App({ visible = true, latest = initial }: { visible?: boolean; latest?: RequestPage<Row> }) {
+    return <RequestPagesProvider loadPage={loadPage}>{visible && <RowList routeKey="queue" initial={latest} />}</RequestPagesProvider>;
   }
   const { rerender } = render(<App />);
   await act(async () => intersect());
   expect(displayedIds()).toEqual(["3", "2", "1"]);
   let signal: AbortSignal | undefined;
-  let finish!: (result: QueueRequestsModel) => void;
+  let finish!: (result: RequestPage<Row>) => void;
   loadPage.mockImplementationOnce((_href: string, abort: AbortSignal) => {
     signal = abort;
-    return new Promise<QueueRequestsModel>(resolve => {
+    return new Promise<RequestPage<Row>>(resolve => {
       finish = resolve;
     });
   });

@@ -9,6 +9,7 @@ go_test(
         "issue_log_test.go",
         "issue_state_list_test.go",
         "issue_state_test.go",
+        "issue_summary_test.go",
         "issue_tracking_test.go",
         "project_fact_by_degree_test.go",
         "queue_state_transitions_test.go",

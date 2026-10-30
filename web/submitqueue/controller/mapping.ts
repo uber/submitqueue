@@ -13,10 +13,16 @@ export function mapRequestSummary(value: GatewayRequestSummary): RequestSummaryM
     queue: value.queue,
     changeUris: [...value.changeUris],
     receivedAtMs,
+    updatedAtMs: positiveMs(value.updatedAtMs),
     status: value.status,
     lastError: value.lastError === "" ? null : value.lastError,
     metadata: { ...value.metadata },
   };
+}
+
+function positiveMs(value: Int64Value): number | null {
+  const ms = safeInt64ToNumber(value);
+  return ms === null || ms <= 0 ? null : ms;
 }
 
 export function mapResponseWindow(value: { receivedAtOrAfterMs: Int64Value; receivedBeforeMs: Int64Value }): RequestWindow | null {

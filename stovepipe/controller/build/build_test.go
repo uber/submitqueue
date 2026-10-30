@@ -99,6 +99,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: stovepipemq.TopicKeyBuildSignal, Name: "buildsignal", Queue: queue},
 		{Key: stovepipemq.TopicKeyBuildAnalysis, Name: "buildanalysis", Queue: queue},
+		{Key: stovepipemq.TopicKeyIssueTrack, Name: "issuetrack", Queue: queue},
 		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
 	})
 	require.NoError(t, err)

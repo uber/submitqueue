@@ -16,6 +16,8 @@ const summary: RequestSummary = {
   stateUpdatedAtMs: 9007199254740993n,
   acceptedAtMs: 100n,
   outcomeReason: "future_reason",
+  projectCount: 51,
+  brokenProjectCount: 2,
 };
 function createPageTestContext() {
   const service: StovepipeService = {
@@ -157,6 +159,10 @@ describe("Stovepipe page loading", () => {
     ]);
     expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
     expect(service.getProjectStatusByID).not.toHaveBeenCalled();
+    expect(result.model.requests.data.requests).toEqual([
+      expect.objectContaining({ projectCount: 51, brokenProjectCount: 2 }),
+      expect.objectContaining({ projectCount: 51, brokenProjectCount: 2 }),
+    ]);
   });
   it("loads the current summary and events by ID without reconstructing state from history", async () => {
     const { app, service, paths } = createPageTestContext();
@@ -190,6 +196,8 @@ describe("Stovepipe page loading", () => {
               updatedAtMs: "9007199254740993",
               acceptedAtMs: "100",
               outcomeReason: "future_reason",
+              projectCount: 51,
+              brokenProjectCount: 2,
             },
             events: [{ label: "future_event", outcomeReason: "event_reason" }],
           },
@@ -312,6 +320,37 @@ describe("Stovepipe page loading", () => {
       },
     } } });
     expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
+  it.each([25, 100, 200])("requests %s project results and preserves the size in pagination links", async (pageSize) => {
+    const { app, service, paths } = createPageTestContext();
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId),
+      search: new URLSearchParams({ projects: "opaque+/=", projectPageSize: String(pageSize) }),
+    });
+    expect(service.getProjectStatusByID).toHaveBeenCalledWith({
+      queue: summary.queue, requestId: summary.requestId,
+      projects: [], pageSize, pageToken: "opaque+/=",
+    }, {});
+    expect(result).toMatchObject({ kind: "render", model: { projectStatus: {
+      ok: true, data: {
+        pageSize,
+        firstHref: paths.request(summary.queue, summary.requestId) + `?projectPageSize=${pageSize}`,
+        nextHref: paths.request(summary.queue, summary.requestId) + `?projects=next%2B%2F%3D&projectPageSize=${pageSize}`,
+      },
+    } } });
+  });
+
+  it.each(["", "0", "-1", "201", "25.5", "invalid"])("uses 50 project results for an invalid page size %j", async (projectPageSize) => {
+    const { app, service, paths } = createPageTestContext();
+    await app.handle({
+      path: paths.request(summary.queue, summary.requestId),
+      search: new URLSearchParams({ projectPageSize }),
+    });
+    expect(service.getProjectStatusByID).toHaveBeenCalledWith({
+      queue: summary.queue, requestId: summary.requestId,
+      projects: [], pageSize: 50, pageToken: "",
+    }, {});
   });
 
   it.each([
