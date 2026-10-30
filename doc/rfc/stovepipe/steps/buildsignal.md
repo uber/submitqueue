@@ -62,7 +62,7 @@ For a delivery carrying build id `B`:
 
 7. If the stored status is terminal:
    a. If R does not already carry an outcome, release the queue's build slot:
-      CAS-decrement Queue.in_flight_count, clamped at zero.
+      CAS-remove R.ID from Queue.in_flight_request_ids; no write if it is absent.
       - failure here aborts the step: R must not go terminal while still holding a slot.
    b. If R does not already carry an outcome, CAS R from processing to the outcome the stored status projects onto it and persist B as R's terminal build id:
       succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
@@ -85,7 +85,7 @@ For a delivery carrying build id `B`:
      exactly one poll chain; no message ids are minted and no new rows are written per tick.
 ```
 
-**Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever decrement it. Failing this way leaves the request non-terminal: redelivery re-runs both steps and decrements again, transiently over-admitting by one slot until the zero clamp reconverges. Over-admission is the failure mode this pipeline already prefers, for the same reason and in the same words as the DLQ reconciler (see [process.md](process.md#in_flight_count-integrity)).
+**Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever release it. Failing this way leaves the request non-terminal: redelivery re-runs both steps, and the release finds R's ID already gone and writes nothing, so a retry cannot free another Request's slot (see [process.md](process.md#in_flight_request_ids-integrity)).
 
 **Baseline timing.** After the winning Request outcome is durable, a successful Request advances `last_green_uri` and `last_green_request_id` in a CAS retry loop before publishing to `record`. Older candidates never regress the bookmark. A terminal redelivery retries the advance without releasing capacity again. Slot release and bookmark advancement are separate updates, so an admission between them can still select the previous baseline. Project resolution, facts, and Git promotion remain in `record`.
 
@@ -136,7 +136,7 @@ Everything else — factory lookup, an `Update` store error other than a CAS con
 
 ### What it costs when a backend does not classify `Status` errors
 
-Leaving `Status` to the classifier only works if the backend classifies. A `BuildRunner` whose transport returns plain `fmt.Errorf` values gets the non-retryable default, and here that default is expensive: dead-lettering ends the *only* poll chain for a build that is still running, and the request keeps holding one of the queue's `in_flight_count` build slots until reconciliation gives it back. A single `502` from a proxy in front of the build API then looks exactly like "this build can never be polled".
+Leaving `Status` to the classifier only works if the backend classifies. A `BuildRunner` whose transport returns plain `fmt.Errorf` values gets the non-retryable default, and here that default is expensive: dead-lettering ends the *only* poll chain for a build that is still running, and the request keeps holding one of the queue's build slots until reconciliation gives it back. A single `502` from a proxy in front of the build API then looks exactly like "this build can never be polled".
 
 Two things keep a blip from stalling a queue, and a backend needs both:
 
@@ -163,9 +163,9 @@ The window to guard is between persisting status (step 6) and ack (steps 7–8);
 
 ## Fail-closed interaction
 
-A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](../workflow.md#fail-closed-on-unprocessable-work) and the `in_flight_count` slot lifecycle in [process.md](process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative terminal `failed` and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
+A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](../workflow.md#fail-closed-on-unprocessable-work) and the build-slot lifecycle in [process.md](process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative terminal `failed` and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
 
-One boundary of that posture is worth stating: the `MaxAttempts` path fires only when polls *fail*. A runner that keeps answering a healthy non-terminal status forever — a hung build on a backend with no timeout of its own — never errors, so the hold chain (whose redeliveries deliberately do not count toward the retry limit) re-polls indefinitely and nothing dead-letters; SubmitQueue's poll loop shares this property. Bounding it requires a poll deadline — a `max_validation_ms` past which `buildsignal` treats the build as failed and lets the normal terminal path run — which pairs naturally with the lease idea [process.md](process.md#per-queue-concurrency-gate) floats for `in_flight_count`. Deferred with it; until then a too-old non-terminal `Build` is an operational alert, not a self-healing path.
+One boundary of that posture is worth stating: the `MaxAttempts` path fires only when polls *fail*. A runner that keeps answering a healthy non-terminal status forever — a hung build on a backend with no timeout of its own — never errors, so the hold chain (whose redeliveries deliberately do not count toward the retry limit) re-polls indefinitely and nothing dead-letters; SubmitQueue's poll loop shares this property. Bounding it requires a poll deadline — a `max_validation_ms` past which `buildsignal` treats the build as failed and lets the normal terminal path run — which pairs naturally with the lease idea [process.md](process.md#per-queue-concurrency-gate) floats for `in_flight_request_ids`. Deferred with it; until then a too-old non-terminal `Build` is an operational alert, not a self-healing path.
 
 ## Entity, storage, and queue additions
 

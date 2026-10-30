@@ -127,7 +127,7 @@ Whole-repository degree depends on the outcome `buildsignal` stamped on the Requ
 
 ## Last-green advancement (Queue bookmark)
 
-`buildsignal` advances the bookmark after releasing the build slot and persisting the successful Request outcome, before publishing to `record`. The bookmark only moves forward. `entity.Queue` carries `LastGreenURI` alongside `LastGreenRequestID`, the request id that owns the current URI, plus `InFlightCount` and `LatestRequestID`. The guard compares ids with `entity.CompareRequestID(R.Queue, …)`, the same ingest-order comparison `ingest` and `process` use for coalescing. It errors on an id that does not match the queue's format, which is non-retryable: re-parsing the same ids cannot start succeeding.
+`buildsignal` advances the bookmark after releasing the build slot and persisting the successful Request outcome, before publishing to `record`. The bookmark only moves forward. `entity.Queue` carries `LastGreenURI` alongside `LastGreenRequestID`, the request id that owns the current URI, plus `InFlightRequestIDs` and `LatestRequestID`. The guard compares ids with `entity.CompareRequestID(R.Queue, …)`, the same ingest-order comparison `ingest` and `process` use for coalescing. It errors on an id that does not match the queue's format, which is non-retryable: re-parsing the same ids cannot start succeeding.
 
 The write goes through `QueueStore.Update(ctx, queue, oldVersion, newVersion)`, so version arithmetic stays in the controller: it computes `newVersion = oldVersion + 1` and the store does a pure conditional write. `ErrVersionMismatch` is absorbed by the loop rather than returned, since a concurrent writer moved the row and reloading converges.
 
@@ -162,7 +162,7 @@ Both are best-effort. Every way the lookup can fail is counted, logged, and swal
 
 ## Build slot release
 
-`Queue.in_flight_count` is released by `buildsignal` before it stamps the outcome and publishes to the record step. The DLQ reconciler releases the slot on the fail-closed path for the same reason. `record`'s only Queue write is the bookmark.
+The Request's slot in `Queue.in_flight_request_ids` is released by `buildsignal` before it stamps the outcome and publishes to the record step. The DLQ reconciler releases the slot on the fail-closed path for the same reason. `record`'s only Queue write is the bookmark.
 
 ## Hooks
 

@@ -89,6 +89,6 @@ func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
 	require.NotEmpty(s.T(), history.Events)
 	assert.Equal(s.T(), "accepted", history.Events[0].GetRequestState())
 	assert.Equal(s.T(), history.Events[0].TimestampMs, summary.AcceptedAtMs)
-	assert.Equal(s.T(), int32(0), s.inFlightCount(queue),
+	assert.Empty(s.T(), s.inFlightRequestIDs(queue),
 		"a terminal build should release the queue's build slot")
 }

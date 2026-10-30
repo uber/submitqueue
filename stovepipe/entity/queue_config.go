@@ -15,7 +15,7 @@
 package entity
 
 // QueueConfig holds deployment configuration for a Stovepipe validation queue.
-// Mutable runtime state (latest head, in-flight count) lives on the Queue row;
+// Mutable runtime state (latest head, in-flight requests) lives on the Queue row;
 // knobs such as max_concurrent are resolved here at gate-check time. Immutable
 // after load.
 type QueueConfig struct {

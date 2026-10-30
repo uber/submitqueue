@@ -43,7 +43,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 
 	var savedBuild entity.Build
 	request := processingRequest(entity.BuildStrategyFull, "")
-	queue := entity.Queue{Name: testQueue, InFlightCount: 1, Version: 1}
+	queue := entity.Queue{Name: testQueue, InFlightRequestIDs: []string{testID}, Version: 1}
 
 	queueStore := storagemock.NewMockQueueStore(ctrl)
 	issueStore := storagemock.NewMockBuildIssueStore(ctrl)
@@ -150,7 +150,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	require.Len(t, published["buildanalysis"], 2)
 	assert.Equal(t, entity.BuildStatusFailed, savedBuild.Status)
 	assert.Equal(t, entity.RequestStateFailed, request.State)
-	assert.Zero(t, queue.InFlightCount)
+	assert.Empty(t, queue.InFlightRequestIDs)
 	assert.True(t, persisted[b])
 	assert.NotEqual(t, published["buildanalysis"][0].ID, published["buildanalysis"][1].ID)
 

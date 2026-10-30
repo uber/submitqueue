@@ -80,7 +80,7 @@ func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsPrematureFinalNotificat
 	build := entity.Build{ID: "running-build", RequestID: request.ID, Status: entity.BuildStatusRunning, Version: 1}
 	require.NoError(t, store.GetRequestStore().Create(s.ctx, request))
 	require.NoError(t, store.GetBuildStore().Create(s.ctx, build))
-	require.NoError(t, store.GetQueueStore().Create(s.ctx, entity.Queue{Name: queue, InFlightCount: 1, Version: 1}))
+	require.NoError(t, store.GetQueueStore().Create(s.ctx, entity.Queue{Name: queue, InFlightRequestIDs: []string{request.ID}, Version: 1}))
 
 	mq, err := queuemysql.NewQueue(queuemysql.Params{
 		DB: s.queueDB, Logger: zap.NewNop(), MetricsScope: tally.NoopScope, Tenants: []string{queue},
@@ -112,7 +112,7 @@ func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsPrematureFinalNotificat
 	retainedBuild, err := store.GetBuildStore().Get(s.ctx, build.ID)
 	require.NoError(t, err)
 	require.Equal(t, build, retainedBuild)
-	require.Equal(t, int32(1), s.inFlightCount(queue))
+	require.Equal(t, []string{request.ID}, s.inFlightRequestIDs(queue))
 
 	// The DLQ watermark survives message garbage collection and proves recovery acknowledged.
 	pollUntil(convergencePollInterval, func() bool {

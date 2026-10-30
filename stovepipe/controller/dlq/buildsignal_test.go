@@ -103,10 +103,10 @@ func TestBuildSignalProcess(t *testing.T) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, InFlightCount: 1, Version: 5,
+					Name: testQueue, InFlightRequestIDs: []string{testID}, Version: 5,
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, InFlightCount: 0, Version: 5,
+					Name: testQueue, InFlightRequestIDs: []string{}, Version: 5,
 				}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed

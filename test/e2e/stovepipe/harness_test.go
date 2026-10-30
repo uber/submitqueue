@@ -15,6 +15,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -95,11 +96,13 @@ func (s *StovepipeE2ESuite) awaitRequestState(queue, id, want string) {
 	})
 }
 
-func (s *StovepipeE2ESuite) inFlightCount(queue string) int32 {
+func (s *StovepipeE2ESuite) inFlightRequestIDs(queue string) []string {
 	s.T().Helper()
-	var count int32
-	require.NoError(s.T(), s.db.QueryRowContext(s.ctx, "SELECT in_flight_count FROM queue WHERE name = ?", queue).Scan(&count))
-	return count
+	var encoded []byte
+	require.NoError(s.T(), s.db.QueryRowContext(s.ctx, "SELECT in_flight_request_ids FROM queue WHERE name = ?", queue).Scan(&encoded))
+	var ids []string
+	require.NoError(s.T(), json.Unmarshal(encoded, &ids))
+	return ids
 }
 
 func (s *StovepipeE2ESuite) awaitBuildStatus(queue, requestID, want string) {

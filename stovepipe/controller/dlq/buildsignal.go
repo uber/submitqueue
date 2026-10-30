@@ -39,7 +39,7 @@ const _buildSignalOpName = "buildsignal_dlq"
 // request via failRequest.
 //
 // This DLQ is the one that matters most. A request only reaches buildsignal
-// after process admitted it, so it holds one of the queue's in_flight_count
+// after process admitted it, so it holds one of the queue's
 // build slots, and buildsignal's terminal path is the only thing that gives that
 // slot back. Once a poll message dead-letters — a Status call that stayed broken
 // through every retry, an unknown build id, a storage write that kept failing —
@@ -149,10 +149,6 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	// Every request reachable from a build row is either still processing, and holding
-	// the slot failRequest releases, or already terminal, and past releasing it: build
-	// triggers only once process has written the strategy, which lands in the same CAS
-	// as accepted→processing, and processing exits only to a terminal outcome.
 	if err := failRequest(ctx, store, c.materializer, c.logger, build.RequestID, entity.RequestOutcomeReasonBuildPollingExhausted); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err

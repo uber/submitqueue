@@ -28,16 +28,19 @@
 // transitions it to RequestStateFailed — the conservative unsuccessful outcome, which
 // whatever records greenness treats as not-green for gating (see entity.RequestState) —
 // with an idempotent optimistic-locking write so
-// concurrent activity (a late successful pipeline transition) wins cleanly. If the request had
-// already been admitted (processing) and was holding a concurrency slot, the
-// reconciler also releases it by CAS-decrementing the queue's in_flight_count, per
-// doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity.
+// concurrent activity (a late successful pipeline transition) wins cleanly. Before that write
+// the reconciler releases the request's build slot by removing its ID from the queue's
+// in_flight_request_ids. Ownership is keyed by request ID, so the release is idempotent and
+// runs for any nonterminal request; a crash between process's claim and admit is repaired
+// when the redelivery recognizes its own claim. See
+// doc/rfc/stovepipe/steps/process.md#in_flight_request_ids-integrity.
 package dlq
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -59,32 +62,8 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
-// failRequest transitions request to RequestStateFailed if it is not already
-// in a terminal state. If the request had reached RequestStateProcessing — meaning process's
-// admit step already CAS-incremented the queue's in_flight_count for it and no terminal
-// outcome has released it yet — the queue's
-// slot is released first.
-//
-// Processing is the only non-terminal state that can own a slot, so the condition is not a
-// narrowing of some broader set: process claims the slot and CAS-marks accepted→processing,
-// releasing its own claim if that CAS never lands, and the exits from processing are the
-// terminal outcomes, which release the slot themselves. Widening the release to accepted
-// would decrement for the far more common request that never claimed a slot, over-admitting
-// against MaxConcurrent. The one case that escapes both this reconciler and process's
-// compensation is a hard crash between the two admit writes, which leaves an accepted
-// request holding a slot that nothing here can tell apart from a request that never
-// claimed one; distinguishing them needs per-request slot ownership on the row.
-//
-// Queue and Request are separate entities with no cross-entity
-// transaction, so the two writes cannot be atomic and the ordering picks which crash
-// failure mode we accept: a crash between the writes leaves the request non-terminal,
-// redelivery re-runs reconciliation, and releaseSlot (which tracks no per-request slot
-// ownership) decrements again — transiently over-admitting by one slot until the
-// under-count re-converges at releaseSlot's zero clamp. The reverse order would leak
-// the slot instead: redelivery skips terminal requests, permanently shrinking the
-// queue's capacity toward a wedge. Over-admission is the failure mode we prefer. See
-// doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity for the broader
-// counter-drift story.
+// failRequest marks a nonterminal request failed, releasing its build slot first: a terminal
+// request is skipped on redelivery, so a slot left behind would never be released.
 func failRequest(
 	ctx context.Context,
 	store storage.Storage,
@@ -117,10 +96,8 @@ func failRequest(
 		return nil
 	}
 
-	if request.State == entity.RequestStateProcessing {
-		if err := releaseSlot(ctx, store, logger, request.Queue); err != nil {
-			return fmt.Errorf("failed to release queue slot for request %s: %w", requestID, err)
-		}
+	if err := releaseSlot(ctx, store, logger, request); err != nil {
+		return fmt.Errorf("failed to release queue slot for request %s: %w", requestID, err)
 	}
 
 	updated := request
@@ -154,42 +131,41 @@ func persistFailureLog(
 	return nil
 }
 
-// releaseSlot CAS-decrements the queue's in_flight_count, retrying on version
-// conflicts, mirroring process.Controller's own CAS-retry loop for queue updates.
-func releaseSlot(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, queueName string) error {
+// releaseSlot CAS-removes request's ID from the queue's in_flight_request_ids, writing
+// nothing when it is absent and retrying on version conflicts.
+func releaseSlot(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, request entity.Request) error {
 	queueStore := store.GetQueueStore()
 
 	for {
-		queueRow, err := queueStore.Get(ctx, queueName)
+		queueRow, err := queueStore.Get(ctx, request.Queue)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				logger.Warnw("dlq reconcile: queue not found, skipping slot release",
-					"queue", queueName,
+					"queue", request.Queue,
 				)
 				return nil
 			}
-			return fmt.Errorf("failed to get queue %s: %w", queueName, err)
+			return fmt.Errorf("failed to get queue %s: %w", request.Queue, err)
 		}
 
-		if queueRow.InFlightCount <= 0 {
-			logger.Warnw("dlq reconcile: queue in_flight_count already at zero, skipping slot release",
-				"queue", queueName,
-			)
+		ownerIndex := slices.Index(queueRow.InFlightRequestIDs, request.ID)
+		if ownerIndex < 0 {
 			return nil
 		}
 
 		updated := queueRow
-		updated.InFlightCount--
+		updated.InFlightRequestIDs = slices.Delete(slices.Clone(queueRow.InFlightRequestIDs), ownerIndex, ownerIndex+1)
 		newVersion := queueRow.Version + 1
 		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				continue
 			}
-			return fmt.Errorf("failed to release slot for queue %s: %w", queueName, err)
+			return fmt.Errorf("failed to release slot for request %s in queue %s: %w", request.ID, request.Queue, err)
 		}
 		logger.Infow("dlq reconcile: released queue slot",
-			"queue", queueName,
-			"in_flight_count", updated.InFlightCount,
+			"queue", request.Queue,
+			"request_id", request.ID,
+			"in_flight_request_ids", updated.InFlightRequestIDs,
 		)
 		return nil
 	}

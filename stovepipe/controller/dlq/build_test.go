@@ -67,8 +67,8 @@ func TestBuildProcess(t *testing.T) {
 			name: "processing request is failed",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, InFlightCount: 1, Version: 5}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{Name: testQueue, Version: 5}, int32(5), int32(6)).Return(nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, InFlightRequestIDs: []string{testID}, Version: 5}, nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{Name: testQueue, InFlightRequestIDs: []string{}, Version: 5}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
