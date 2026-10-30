@@ -119,7 +119,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	)
 
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
+		staticStorageFactory{store: m.store}, m.materializer, detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
 	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
 		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
 		stovepipemq.TopicKeyBuildSignal, "signal")
