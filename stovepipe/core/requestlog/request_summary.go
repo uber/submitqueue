@@ -117,12 +117,17 @@ func projectRequestSummaryFacts(summary entity.RequestSummary, log entity.Reques
 			log.RequestID, summary.RequestID, log.Queue, summary.Queue,
 		)
 	}
-	if log.Event == entity.RequestEventProjectFactsRecorded {
-		if log.TimestampMs <= 0 || (summary.ProjectResultsCompletedAtMs != 0 && summary.ProjectResultsCompletedAtMs != log.TimestampMs) {
-			return entity.RequestSummary{}, fmt.Errorf("request summary completion time conflicts with retained log request_id=%q", log.RequestID)
+	if log.Event == entity.RequestEventProjectFactsRecorded || log.Event == entity.RequestEventRecordAbandoned {
+		if log.TimestampMs <= 0 {
+			return entity.RequestSummary{}, fmt.Errorf("request summary completion time must be positive request_id=%q", log.RequestID)
 		}
-		summary.ProjectResultsCompletedAtMs = log.TimestampMs
-		return projectRequestSummaryProjectCounts(summary, log)
+		// Recording and abandonment can both be retained; the first projected completion stays authoritative.
+		if summary.ProjectResultsCompletedAtMs == 0 {
+			summary.ProjectResultsCompletedAtMs = log.TimestampMs
+		}
+		if log.Event == entity.RequestEventProjectFactsRecorded {
+			return projectRequestSummaryProjectCounts(summary, log)
+		}
 	}
 	if log.State == entity.RequestStateAccepted {
 		if summary.AcceptedAtMs != 0 && summary.AcceptedAtMs != log.TimestampMs {

@@ -1,4 +1,4 @@
--- Retained for schema compatibility with existing deployments; active issue state uses issue_state.
+-- Derived opening references for open-only lookups; issue_summary retains authoritative read state.
 CREATE TABLE IF NOT EXISTS open_issue (
     queue                    VARBINARY(255) NOT NULL,
     task_id                  VARBINARY(255) NOT NULL,

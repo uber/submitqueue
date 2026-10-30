@@ -7,6 +7,7 @@ go_test(
         "ingest_test.go",
         "issuetrack_test.go",
         "list_test.go",
+        "open_issues_test.go",
         "queue_status_test.go",
         "suite_test.go",
     ],

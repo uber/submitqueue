@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "ingest.go",
         "list.go",
+        "list_open_issues.go",
         "project_status.go",
         "queue_status.go",
         "request_history.go",
@@ -21,6 +22,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "ingest_test.go",
+        "list_open_issues_test.go",
         "list_test.go",
         "project_status_test.go",
         "queue_status_test.go",

@@ -389,7 +389,6 @@ func TestMaterializerRetainsOtherEventsWithoutProjectingSummary(t *testing.T) {
 		entity.RequestEventBuildTriggered,
 		entity.RequestEventBuildFinished,
 		entity.RequestEventValidationFactRecorded,
-		entity.RequestEventRecordAbandoned,
 		entity.RequestEventBuildAnalysisAbandoned,
 		entity.RequestEventIssueTrackingAbandoned,
 	} {

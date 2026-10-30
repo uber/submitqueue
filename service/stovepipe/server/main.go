@@ -303,7 +303,11 @@ func run() error {
 	projectStatusController := controller.NewProjectStatusController(logger.Sugar(), scope, storageFty)
 	listController := controller.NewListController(logger.Sugar(), scope, storageFty, tenants)
 	queueStatusController := controller.NewGetQueueStatusController(scope, storageFty, sourceControl)
-	srv := handler.NewStovepipeServer(pingController, ingestController, requestHistoryController, projectStatusController, listController, queueStatusController)
+	openIssuesController := controller.NewListOpenIssuesController(logger.Sugar(), scope, storageFty, tenants)
+	srv := handler.NewStovepipeServer(
+		pingController, ingestController, requestHistoryController, projectStatusController,
+		listController, queueStatusController, openIssuesController,
+	)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
 	// Register reflection service for debugging with grpcurl

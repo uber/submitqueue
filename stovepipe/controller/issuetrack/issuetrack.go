@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/fixrequest"
+	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -43,26 +44,28 @@ type issueKey struct{ task, unit string }
 
 // Controller retains issue transitions and their queue-scoped progress.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	stores        storage.Factory
-	registry      consumer.TopicRegistry
-	materializer  requestlog.Materializer
-	topicKey      consumer.TopicKey
-	consumerGroup string
-	nowMs         func() int64
+	logger              *zap.SugaredLogger
+	metricsScope        tally.Scope
+	stores              storage.Factory
+	materializer        issuelog.Materializer
+	registry            consumer.TopicRegistry
+	requestMaterializer requestlog.Materializer
+	topicKey            consumer.TopicKey
+	consumerGroup       string
+	nowMs               func() int64
 }
 
 func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) *Controller {
 	return &Controller{
-		logger:        logger.Named("issuetrack_controller"),
-		metricsScope:  scope.SubScope("issuetrack_controller"),
-		stores:        stores,
-		registry:      registry,
-		materializer:  materializer,
-		topicKey:      topicKey,
-		consumerGroup: consumerGroup,
-		nowMs:         func() int64 { return time.Now().UnixMilli() },
+		logger:              logger.Named("issuetrack_controller"),
+		metricsScope:        scope.SubScope("issuetrack_controller"),
+		stores:              stores,
+		materializer:        issuelog.NewMaterializer(scope),
+		registry:            registry,
+		requestMaterializer: materializer,
+		topicKey:            topicKey,
+		consumerGroup:       consumerGroup,
+		nowMs:               func() int64 { return time.Now().UnixMilli() },
 	}
 }
 
@@ -109,7 +112,7 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 		}
 		// A completed checkpoint is the repair source until its history exists.
 		// Retain that occurrence before another notification can replace it.
-		if err := persistIssuesReconciledLog(ctx, c.materializer, store, queue, progress); err != nil {
+		if err := persistIssuesReconciledLog(ctx, c.requestMaterializer, store, queue, progress); err != nil {
 			return err
 		}
 
@@ -172,7 +175,7 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 		if err != nil {
 			return err
 		}
-		if err := persistIssuesReconciledLog(ctx, c.materializer, store, queue, checkpoint); err != nil {
+		if err := persistIssuesReconciledLog(ctx, c.requestMaterializer, store, queue, checkpoint); err != nil {
 			return err
 		}
 		if checkpoint.NotificationID != notificationID ||
@@ -400,7 +403,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 
 func (c *Controller) recordHistory(ctx context.Context, store storage.Storage, issue entity.IssueState) error {
 	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
-	if err := store.GetIssueLogStore().Create(ctx, log); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	if err := c.materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
 		return fmt.Errorf("record issue transition: %w", err)
 	}
 	return nil

@@ -48,7 +48,7 @@ Create is conditional on absence, including closed records. Update checks the su
 
 Listing reads a bounded primary-key range in bytewise task/unit order and includes both statuses. Callers filter closed records in memory and advance after the last scanned key, including closed records. A page containing only closed records is not the end of the range. No status index or server-side filtering is required. Task IDs must be nonempty; empty units identify task-wide issues. Identifier byte limits match the build-issue store.
 
-The MySQL backend uses the new `issue_state` table. Create it before deploying the updated readers. The prior `open_issue` table is not read or automatically copied; no in-repository runtime writer was enabled for it. Deployments with externally populated rows need an explicit backfill before switching readers. The repair executor still receives an `OpenIssue`, which describes an open occurrence rather than the storage record.
+The MySQL backend uses `issue_state` for operational tracking. The separate `open_issue` table is a derived lookup, not a replacement for retained issue state. The repair executor still receives an `OpenIssue`, which describes an open occurrence rather than the operational storage record.
 
 ## Issue summaries
 
@@ -56,7 +56,17 @@ The MySQL backend uses the new `issue_state` table. Create it before deploying t
 
 `RequestID` and `BuildID` identify the latest represented transition, while `FirstSeenBuildID` identifies its current or most recent opening. Source order follows request ingest order, not opaque build IDs or timestamps. Within the same request, a closing transition supersedes an opening. `Version` is only the summary's CAS guard, not the source order. The materializer must compare incoming transitions before replacing a summary; the store does not enforce lifecycle ordering.
 
-The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. This storage layer does not yet populate summaries or expose a public open-issues list.
+The MySQL primary key is `(queue, task_id, unit_id)` with byte-exact identity and the same identifier limits as the issue-state store. Source request IDs follow the existing canonical positive decimal ID contract. The new `issue_summary` table must exist before deploying readers or writers. The [issue-log materializer](../../core/issuelog/README.md) updates summaries during normal issue tracking and recovery. The [open-issues API](../../../doc/rfc/stovepipe/open-issues-api.md) lists summaries through the derived lookup.
+
+## Open-issue lookups
+
+`OpenIssueStore` exposes the existing `open_issue` table as a queue-scoped lookup keyed by task/unit. Each open-issue row contains only the opening's `FirstSeenBuildID`, using the existing `OpenIssue` entity and identifier byte limits. No columns, indexes, or operational issue-state fields are added.
+
+Create returns `ErrAlreadyExists` for any existing task/unit key. Replace compares the expected opening build ID before changing it; Delete compares the opening in the supplied open-issue row before removing it. Both operations return whether they changed the open-issue row, with false for a missing key or a different opening. Replacing an opening with itself is also a no-op returning false. These are atomic conditional writes to one complete key, not build-order checks. An old close that still expects a previous opening cannot delete a newer opening.
+
+Listing traverses a bounded queue-prefix primary-key range in ascending bytewise task/unit order. The zero cursor starts the range; otherwise the cursor excludes its key and all earlier keys, even if that open-issue row has been deleted. Empty units identify task-wide issues, while task IDs must be nonempty. Membership can change between reads. A consumer that skips stale references must still advance after the last returned open-issue row, not the last accepted issue.
+
+Open-issue rows are not authoritative issue status. A delayed create can leave a reference to a closed issue, so readers must verify that the summary is open and its opening matches before returning a result. The store does not read summaries, enforce source ordering, backfill existing rows, or populate open-issue rows automatically. The [issue-log materializer](../../core/issuelog/README.md#open-issue-lookup) maintains open-issue rows after summary persistence during normal processing and recovery. The open-issues API validates summaries before returning results and advances its continuation after the last examined open-issue row, including skipped references.
 
 ## Issue lifecycle history
 
@@ -66,7 +76,7 @@ The build ID identifies the build where the issue was first seen or confirmed cl
 
 The MySQL key uses the same binary identifier limits as the issue stores, plus the existing 32-byte `event` column containing the status, for a maximum of 2586 bytes. Its column name and primary key remain unchanged. Reads and creates use primary-key operations; there is no update or deletion API, metadata collection, or repair state.
 
-History persistence does not alter issue state or validate transitions against it. The issue-tracking controller owns opening/closing decisions and retry-safe history writes. History enumeration is outside this storage contract.
+History persistence does not alter issue state or validate transitions against it. The issue-tracking controller owns opening/closing decisions and invokes the issue-log materializer to retain history and update summaries. History enumeration is outside this storage contract.
 
 ## Issue reconciliation progress
 

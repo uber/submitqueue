@@ -11,6 +11,7 @@ go_library(
         "issue_summary.go",
         "issue_tracking_state.go",
         "list.go",
+        "list_open_issues.go",
         "open_issue.go",
         "project_fact_by_degree.go",
         "project_status.go",
