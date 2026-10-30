@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuemock "github.com/uber/submitqueue/stovepipe/extension/buildissue/mock"
@@ -45,6 +46,9 @@ const (
 )
 
 type analysisMocks struct {
+	history         map[string]entity.RequestLog
+	historyFailure  *error
+	materializer    requestlog.Materializer
 	request         *entity.Request
 	ctrl            *gomock.Controller
 	stores          *storagemock.MockFactory
@@ -82,6 +86,28 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m.requestRead = m.requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string) (entity.Request, error) { return *m.request, nil }).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.issues).AnyTimes()
 
+	m.history = map[string]entity.RequestLog{}
+	m.historyFailure = new(error)
+	m.materializer = requestlog.NewMaterializer(tally.NoopScope)
+	history := storagemock.NewMockRequestLogStore(ctrl)
+	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	history.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
+		if *m.historyFailure != nil {
+			return *m.historyFailure
+		}
+		if _, exists := m.history[log.ID]; exists {
+			return storage.ErrAlreadyExists
+		}
+		m.history[log.ID] = log
+		return nil
+	}).AnyTimes()
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
+		log, exists := m.history[logID]
+		if !exists || log.RequestID != requestID {
+			return entity.RequestLog{}, storage.ErrNotFound
+		}
+		return log, nil
+	}).AnyTimes()
 	queue := mqmock.NewMockQueue(ctrl)
 	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
@@ -89,7 +115,7 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.detectorFactory, registry,
+	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.materializer, m.detectorFactory, registry,
 		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 
 	return c, m
@@ -177,6 +203,11 @@ func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
 				}
 
 				require.NoError(t, c.Process(context.Background(), d))
+				if status.IsTerminal() {
+					require.Len(t, m.history, 1)
+				} else {
+					require.Empty(t, m.history)
+				}
 			})
 		}
 	}

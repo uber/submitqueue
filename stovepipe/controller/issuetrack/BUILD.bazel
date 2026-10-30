@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "dlq.go",
+        "history.go",
         "issuetrack.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/controller/issuetrack",
@@ -31,6 +32,7 @@ go_test(
         "dlq_test.go",
         "fix_handoff_test.go",
         "fixture_test.go",
+        "history_test.go",
         "issuetrack_test.go",
     ],
     embed = [":go_default_library"],

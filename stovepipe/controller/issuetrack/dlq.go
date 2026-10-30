@@ -45,7 +45,7 @@ type DLQController struct {
 
 func NewDLQController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, topicKey consumer.TopicKey, consumerGroup string) *DLQController {
 	return &DLQController{
-		controller:   NewController(logger, scope, stores, consumer.TopicRegistry{}, topicKey, consumerGroup),
+		controller:   NewController(logger, scope, stores, materializer, consumer.TopicRegistry{}, topicKey, consumerGroup),
 		materializer: materializer,
 	}
 }
@@ -129,6 +129,9 @@ func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, 
 	if err == nil {
 		if err := progress.Validate(); err != nil {
 			return entity.IssueTrackingState{}, fmt.Errorf("invalid issue tracking recovery: %w", err)
+		}
+		if err := persistIssuesReconciledLog(ctx, c.materializer, store, request.Queue, progress); err != nil {
+			return entity.IssueTrackingState{}, err
 		}
 		if progress.NotificationID == notificationID {
 			switch progress.Phase {

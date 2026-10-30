@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/fixrequest"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -46,17 +47,19 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	registry      consumer.TopicRegistry
+	materializer  requestlog.Materializer
 	topicKey      consumer.TopicKey
 	consumerGroup string
 	nowMs         func() int64
 }
 
-func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) *Controller {
+func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) *Controller {
 	return &Controller{
 		logger:        logger.Named("issuetrack_controller"),
 		metricsScope:  scope.SubScope("issuetrack_controller"),
 		stores:        stores,
 		registry:      registry,
+		materializer:  materializer,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 		nowMs:         func() int64 { return time.Now().UnixMilli() },
@@ -103,6 +106,11 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 			progress = entity.IssueTrackingState{}
 		} else if err != nil {
 			return fmt.Errorf("load issue tracking progress: %w", err)
+		}
+		// A completed checkpoint is the repair source until its history exists.
+		// Retain that occurrence before another notification can replace it.
+		if err := persistIssuesReconciledLog(ctx, c.materializer, store, queue, progress); err != nil {
+			return err
 		}
 
 		if progress.Phase == entity.IssueTrackingPhaseAbandoning {
@@ -162,6 +170,9 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 
 		checkpoint, err := c.reconcileBatch(ctx, store, queue, progress)
 		if err != nil {
+			return err
+		}
+		if err := persistIssuesReconciledLog(ctx, c.materializer, store, queue, checkpoint); err != nil {
 			return err
 		}
 		if checkpoint.NotificationID != notificationID ||

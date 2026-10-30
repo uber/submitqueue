@@ -10,7 +10,12 @@ Stovepipe retains an append-only request log for each validation request. Its in
 - `project_facts_recorded`;
 - `record_abandoned`;
 - `build_analysis_abandoned`;
-- `issue_tracking_abandoned`.
+- `issue_tracking_abandoned`;
+- `build_analysis_completed`;
+- `issues_reconciled`;
+- `fix_submitted`;
+- `fix_submission_skipped`;
+- `fix_submission_abandoned`.
 
 The model deliberately follows SubmitQueue's distinction between statuses describing where a request is and events describing important activity that does not move it. It remains a bounded request-lifecycle log rather than a generic event bus or an audit of every correlated operation.
 
@@ -29,7 +34,7 @@ State changes alone are insufficient. A request remains processing while a build
 An occurrence belongs in the request log only when it is either:
 
 1. a durable `Request.State` transition; or
-2. an asynchronous durable milestone required to explain the next request transition or public verdict.
+2. an asynchronous durable milestone explaining validation, issue reconciliation, or a repair submission for the request.
 
 The following remain with their owning entities, metrics, or structured logs:
 
@@ -130,8 +135,17 @@ Immutable Request context such as URI, build strategy, base URI, and terminal bu
 | `record_abandoned` | Record-stage work stopped after exhausting primary retries. | Event retention time |
 | `build_analysis_abandoned` | Build analysis could not complete; issue observations may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
 | `issue_tracking_abandoned` | Issue tracking stopped before completing a pass; existing issue changes remain, but reconciliation may be incomplete. This is not a validation verdict. | Build ID metadata and event retention time |
+| `build_analysis_completed` | Terminal detection completed and its complete issue set was persisted. | Build ID, issue count, and event retention time |
+| `issues_reconciled` | A final issue-tracking pass completed, including any deliberate suppression of absent-issue closure. | Build ID, closure mode, and event retention time |
+| `fix_submitted` | An identified repair attempt was durably associated with a build issue. It does not imply a patch exists or the issue recovered. | Build, task, unit, and fix IDs and event retention time |
+| `fix_submission_skipped` | No eligible open issue existed for the build. | Build ID, bounded reason, and event retention time |
+| `fix_submission_abandoned` | Repair processing stopped without a durable fix ID; external acceptance remains unknown. | Build ID, bounded reason, and event retention time |
 
 Build running and unchanged polls are not retained. Trigger and terminal result explain the request outcome without turning polling into an unbounded log. Individual project facts remain outside the vocabulary; one batch-completion event summarizes their durable recording. Its `project_fact_count` and `broken_project_fact_count` metadata contain the total and the number with degree above zero, counted from persisted facts after their indexes are durable. Project completion projection requires both counts and assigns them together in `RequestSummary` from the retained event.
+
+`build_analysis_completed`, `issues_reconciled`, `fix_submission_skipped`, and `fix_submission_abandoned` use the build ID as their occurrence key. `fix_submitted` uses a digest of the executor fix ID to fit the storage key limit, retaining the verbatim fix ID in metadata. Existing issue-tracking abandonment uses a digest of the failed notification ID to fit the storage key limit. The materializer prefixes each key with its event kind, and request identity scopes all entries. Replays retain the first stored timestamp.
+
+Analysis and repair events do not advance Request state or alter validation facts. An empty terminal analysis records an issue count of zero. `issues_reconciled` records closure mode `reconciled`, `suppressed_cancelled`, or `suppressed_task_wide_issue`; suppression does not mean reconciliation failed. Skipped repair uses reason `no_eligible_issue`; abandoned repair uses `acceptance_unknown`. Raw dependency errors remain in operational logs.
 
 ### Evolution
 
@@ -220,8 +234,12 @@ The `project_facts_recorded` event also projects its retained timestamp into `Re
 | Buildsignal | Persist terminal Build and retain `build_finished`; CAS the Request outcome and retain its terminal state. | Existing terminal Build and Request outcome each ensure their own entry before record publication. |
 | Record | Create or verify the whole-repository fact, then retain `validation_fact_recorded`; after recording project facts, retain one `project_facts_recorded` event. | An identical whole-repository fact and project-fact batch ensure their events before bookmark or promotion work. |
 | Record DLQ | Retain `record_abandoned`; for failed Requests, create or verify the repository fact and retain `validation_fact_recorded` before publishing its hook. | Existing facts remain authoritative; stable log and hook IDs make replay idempotent without resolving projects or replaying promotion. |
+| Build analysis | Persist complete terminal detection results, then retain `build_analysis_completed` before issue-tracking publication. | Repeat detection and issue creation, then reconcile the stable per-build event before publication. Nonterminal polls add no event. |
 | Build analysis DLQ | Retain `build_analysis_abandoned` without rerunning detection or changing validation state. | One stable event per build deduplicates recovery deliveries; only state reads and history retention retry. |
 | Issue tracking DLQ | Protect the current cursor from delayed writes, retain its issue history and `issue_tracking_abandoned`, then mark the pass abandoned. | A stable hash of the notification ID deduplicates the event. Recovery retains accepted issue changes and never processes the remaining range. |
+| Issue tracking | Finalize the durable checkpoint, then retain `issues_reconciled`. | Reconstruct history from the finalized checkpoint before it can be replaced by another pass. |
+| Fix | Associate the returned fix ID, then retain `fix_submitted`; retain `fix_submission_skipped` when no issue is eligible. | Ensure submitted history from any existing association before skipping executor work. |
+| Fix DLQ | Repair submitted or skipped history from current durable state, or retain `fix_submission_abandoned` when acceptance is unknown. | Only read sources and retain history; never call the executor or change issue state. |
 | Reconciler | CAS an unrecoverable non-terminal Request to failed, then retain failed. | An existing terminal Request is repaired from its persisted outcome without relabeling it. |
 
 Build running and unchanged polls create no entry. A failed runner trigger that creates no Build creates no event. Cancelled and superseded requests create no validation fact.
@@ -280,7 +298,7 @@ Rejected because bookmarks, promotion, project facts, hooks, and operational boo
 
 ### Use a generic versioned envelope
 
-Rejected for six request states and three explanatory events. Explicit fields are simpler to inspect, constrain, test, and expose. A future migration should be justified by actual vocabulary growth.
+Rejected because explicit request states and event fields are simpler to inspect than a generic envelope. A future migration should be justified by actual vocabulary growth.
 
 ### Copy SubmitQueue's log topic
 

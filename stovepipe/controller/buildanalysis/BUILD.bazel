@@ -29,6 +29,7 @@ go_test(
     srcs = [
         "buildanalysis_test.go",
         "dlq_test.go",
+        "history_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
