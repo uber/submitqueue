@@ -1036,3 +1036,9 @@ queues:
 		assert.NotNil(t, analyzer)
 	}
 }
+
+func TestDemoTangoProfileLoads(t *testing.T) {
+	cfg, err := loadProfilesConfig("../../demo/provider/git/profiles.tango.yaml")
+	require.NoError(t, err)
+	assert.True(t, cfg.usesTango())
+}

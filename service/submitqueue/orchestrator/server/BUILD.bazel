@@ -130,7 +130,10 @@ go_test(
     ],
     # The pinned git, for the tests that resolve a git change provider against a
     # real repository.
-    data = ["@git"],
+    data = [
+        "//service/submitqueue/demo/provider/git:profiles.tango.yaml",
+        "@git",
+    ],
     embed = [":orchestrator_lib"],  # keep
     env = {
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
