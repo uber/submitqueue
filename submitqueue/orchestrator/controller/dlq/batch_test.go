@@ -68,6 +68,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyLand), "orchestrator-land-dlq")
 
