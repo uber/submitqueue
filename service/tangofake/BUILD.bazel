@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["tangofake.go"],
+    importpath = "github.com/uber/submitqueue/service/tangofake",
+    visibility = [
+        "//service/tangofake:__subpackages__",
+        "//test:__subpackages__",
+    ],
+    deps = [
+        "//platform/extension/gitworkspace:go_default_library",
+        "@com_github_uber_tango//tangopb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["tangofake_test.go"],
+    # The pinned git, for building the repositories the tests read.
+    data = ["@git"],
+    embed = [":go_default_library"],
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+    },
+    deps = [
+        "//platform/extension/gitworkspace/local:go_default_library",
+        "//platform/git/exectest:go_default_library",
+        "//submitqueue/extension/conflict/tango:go_default_library",
+        "//submitqueue/extension/conflict/tango/tangoclient:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_tango//tangopb:go_default_library",
+        "@org_uber_go_yarpc//:go_default_library",
+        "@org_uber_go_yarpc//transport/grpc:go_default_library",
+    ],
+)
