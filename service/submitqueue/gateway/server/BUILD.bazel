@@ -86,8 +86,10 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":gateway_lib"],  # keep
     deps = [
+        "//api/base/mergestrategy/protopb:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//platform/errs:go_default_library",
+        "//service/submitqueue/gateway/server/mapper:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/queueconfig/mock:go_default_library",
         "//submitqueue/gateway/controller:go_default_library",

@@ -24,6 +24,7 @@ import (
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
@@ -75,6 +76,7 @@ func TestProtoToLandRequest(t *testing.T) {
 			got, err := ProtoToLandRequest(tt.req)
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
+				assert.True(t, errs.IsUserError(err))
 				return
 			}
 			require.NoError(t, err)

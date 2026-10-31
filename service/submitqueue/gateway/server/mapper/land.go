@@ -26,6 +26,7 @@ import (
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
@@ -38,7 +39,7 @@ var errUnknownStrategy = errors.New("unknown land strategy in proto message")
 func ProtoToLandRequest(req *pb.LandRequest) (entity.LandRequest, error) {
 	strategy, err := resolveLandStrategy(req.GetStrategy())
 	if err != nil {
-		return entity.LandRequest{}, fmt.Errorf("failed to map land strategy: %w", err)
+		return entity.LandRequest{}, errs.NewUserError(fmt.Errorf("failed to map land strategy: %w", err))
 	}
 	return entity.LandRequest{
 		Queue:        req.GetQueue(),
