@@ -1,0 +1,28 @@
+       *       .        *        .       *
+   .       PULL REQUEST #1000!        .
+       *                            *
+
+          1     000    000    000
+         11    0   0  0   0  0   0
+          1    0   0  0   0  0   0
+          1    0   0  0   0  0   0
+         111    000    000    000
+
+                 (   (   (   (
+                  )   )   )   )
+                 |:| |:| |:| |:|
+              .--|:|-|:|-|:|-|:|--.
+             /~~~~~~~~~~~~~~~~~~~~~\
+            |     HAPPY PR 1000!     |
+            |   ~ ~ ~ ~ ~ ~ ~ ~ ~   |
+          __|_______________________|__
+         /                             \
+        |   EXACTLY-ONCE CAKE           |
+        |   AT-LEAST-ONCE CONFETTI      |
+        |_______________________________|
+       (_________________________________)
+
+       git commit -m "Let there be cake"
+       1000 PRs later, the cake is not a mock.
+
+       Party status: eventually confectionery.
