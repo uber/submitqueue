@@ -45,6 +45,7 @@ go_library(
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/baserevision:go_default_library",
         "//submitqueue/extension/baserevision/git:go_default_library",
+        "//submitqueue/extension/baserevision/github:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/buildrunner/buildkite:go_default_library",
         "//submitqueue/extension/buildrunner/fake:go_default_library",
