@@ -2,15 +2,18 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["baserevision.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/baserevision",
+    srcs = ["git.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/baserevision/git",
     visibility = ["//visibility:public"],
-    deps = ["//platform/extension/gitworkspace:go_default_library"],
+    deps = [
+        "//platform/extension/gitworkspace:go_default_library",
+        "//submitqueue/extension/baserevision:go_default_library",
+    ],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["baserevision_test.go"],
+    srcs = ["git_test.go"],
     embed = [":go_default_library"],
     deps = [
         "//platform/extension/gitworkspace:go_default_library",

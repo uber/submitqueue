@@ -636,6 +636,7 @@ GO_GENERATE_PACKAGES := \
 	./stovepipe/extension/sourcecontrol/... \
 	./stovepipe/extension/storage/... \
 	./submitqueue/core/changeset/... \
+	./submitqueue/extension/baserevision/... \
 	./submitqueue/extension/buildrunner/... \
 	./submitqueue/extension/changeprovider/... \
 	./submitqueue/extension/conflict/... \

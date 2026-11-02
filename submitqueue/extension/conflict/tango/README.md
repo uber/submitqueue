@@ -20,7 +20,7 @@ Each signature is computed against trunk at its own analysis time, without the o
 
 ## Injected pieces
 
-The analyzer owns no connection. A deployment supplies the Tango client adapter, which collects the response and resolves each target's label, and a function that returns the commit SHA of the target branch tip a new batch is analyzed against. `baserevision.FromGit` builds that function over any `gitworkspace.Factory`. The changes of a batch come from the changeset resolver, the signature store is bound to one queue, and one signature cache can be shared by every queue's analyzer. The MySQL implementations of the signature and dictionary stores are in `mysql/`.
+The analyzer owns no connection. A deployment supplies the Tango client adapter, which collects the response and resolves each target's label, and a `baserevision.Resolver` that returns the commit SHA of the target branch tip a new batch is analyzed against. The `baserevision` extension holds the contract and a git implementation over any `gitworkspace.Factory`. The changes of a batch come from the changeset resolver, the signature store is bound to one queue, and one signature cache can be shared by every queue's analyzer. The MySQL implementations of the signature and dictionary stores are in `mysql/`.
 
 ## Reference orchestrator
 

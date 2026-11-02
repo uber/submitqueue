@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/change"
 	changesetmock "github.com/uber/submitqueue/submitqueue/core/changeset/mock"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	baserevisionmock "github.com/uber/submitqueue/submitqueue/extension/baserevision/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -49,17 +50,21 @@ type analyzerHarness struct {
 func newAnalyzerHarness(t *testing.T) *analyzerHarness {
 	t.Helper()
 	ctrl := gomock.NewController(t)
+	baseRevisions := baserevisionmock.NewMockResolver(ctrl)
 	h := &analyzerHarness{
 		signatures: NewMockSignatureStore(ctrl),
 		client:     NewMockChangedTargetsClient(ctrl),
 		changes:    changesetmock.NewMockResolver(ctrl),
 	}
+	baseRevisions.EXPECT().Resolve(gomock.Any(), analyzerTestQueue).DoAndReturn(
+		func(context.Context, string) (string, error) { return analyzerTestBaseRevision, h.baseErr },
+	).AnyTimes()
 	h.analyzer = New(Params{
-		Signatures:   h.signatures,
-		Cache:        NewSignatureCache(1 << 20),
-		Client:       h.client,
-		BaseRevision: func(context.Context, string) (string, error) { return analyzerTestBaseRevision, h.baseErr },
-		Changes:      h.changes,
+		Signatures:    h.signatures,
+		Cache:         NewSignatureCache(1 << 20),
+		Client:        h.client,
+		BaseRevisions: baseRevisions,
+		Changes:       h.changes,
 	})
 	return h
 }
