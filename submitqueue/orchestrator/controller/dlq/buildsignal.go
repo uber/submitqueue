@@ -129,7 +129,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	if _, err := failBatch(ctx, store, c.registry, c.logger, build.BatchID, lastError, failureMeta); err != nil {
+	if _, err := failBatch(ctx, store, c.registry, c.logger, build.BatchID, false, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}

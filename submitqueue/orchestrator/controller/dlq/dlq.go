@@ -186,11 +186,15 @@ func failRequest(ctx context.Context, store orchstorage.Storage, registry consum
 // lastError and metadata are propagated to each member request's terminal
 // Error log.
 //
+// A Landing batch is failed only when failLanding is set, by a caller that
+// knows no merge happened. Otherwise its merge result decides it: Runway may
+// already have put the change on the trunk.
+//
 // It reports whether it transitioned the batch. A caller that only wants to act
 // on real progress — republishing to wake the queue, say — can then tell a
 // first reconcile from a redelivery of one already done, and avoid doing it
 // again forever.
-func failBatch(ctx context.Context, store orchstorage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string, metadata map[string]string) (bool, error) {
+func failBatch(ctx context.Context, store orchstorage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID string, failLanding bool, lastError string, metadata map[string]string) (bool, error) {
 	batch, err := store.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -200,6 +204,13 @@ func failBatch(ctx context.Context, store orchstorage.Storage, registry consumer
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to get batch %s: %w", batchID, err)
+	}
+
+	if batch.State == entity.BatchStateLanding && !failLanding {
+		logger.Infow("dlq reconcile: batch is landing, leaving it to its merge result",
+			"batch_id", batchID,
+		)
+		return false, nil
 	}
 
 	transitioned := false
@@ -240,4 +251,47 @@ func failBatch(ctx context.Context, store orchstorage.Storage, registry consumer
 		}
 	}
 	return transitioned, nil
+}
+
+// landBatch records a merge Runway reported as succeeded: a Landing batch moves
+// to Succeeded and its member requests to Landed. A Succeeded batch repeats the
+// fan-out to repair a partial attempt; any other state is left alone, as the
+// primary landsignal stage would leave it.
+func landBatch(ctx context.Context, store orchstorage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID string) error {
+	batch, err := store.GetBatchStore().Get(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			logger.Warnw("dlq reconcile: batch not found, skipping",
+				"batch_id", batchID,
+			)
+			return nil
+		}
+		return fmt.Errorf("failed to get batch %s: %w", batchID, err)
+	}
+
+	switch batch.State {
+	case entity.BatchStateLanding:
+		if batch, err = corebatch.Transition(ctx, store, batch, entity.BatchStateSucceeded); err != nil {
+			return err
+		}
+	case entity.BatchStateSucceeded:
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
+			return err
+		}
+	default:
+		logger.Infow("dlq reconcile: merged batch is not landing, skipping",
+			"batch_id", batchID,
+			"state", string(batch.State),
+		)
+		return nil
+	}
+
+	for _, requestID := range batch.Contains {
+		if _, err := requestcore.TerminateRequest(ctx, store, registry, requestID, entity.RequestStateLanded, "", map[string]string{
+			"batch_id": batch.ID,
+		}); err != nil {
+			return fmt.Errorf("fan-out for batch %s: %w", batchID, err)
+		}
+	}
+	return nil
 }

@@ -43,6 +43,7 @@ Reconciliation is safe to run more than once for the same message:
 - A batch already in `BatchStateFailed` still fans out to member requests, because a previous attempt may have transitioned the batch but crashed before completing the fan-out. Batches in a different terminal state are left unchanged.
 - Per-request fan-out is itself idempotent via `failRequest`.
 - A request in `RequestStateCancelling` is reconciled to `RequestStateError`, not left in place: DLQ means the pipeline failed to converge, so we cannot confirm the cancel completed cleanly. Writing Error is the honest signal.
+- A batch in `BatchStateLanding` is left to its merge result, because Runway may already have merged it. Only the `land` DLQ, whose merge was never requested, fails it. The `landsignal` DLQ applies the outcome on its message, recording a merged batch as `BatchStateSucceeded` and its requests as `RequestStateLanded`.
 
 ## See also
 

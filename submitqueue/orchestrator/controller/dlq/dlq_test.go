@@ -252,7 +252,7 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", true, "", nil)
 	require.NoError(t, err)
 }
 
@@ -282,7 +282,7 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", false, "", nil)
 	require.NoError(t, err)
 }
 
@@ -299,7 +299,7 @@ func TestFailBatch_DifferentTerminalOutcomeSkipsFanOut(t *testing.T) {
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-			_, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+			_, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "1", false, "", nil)
 			require.NoError(t, err)
 		})
 	}
@@ -338,7 +338,7 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", false, "", nil)
 	require.NoError(t, err)
 }
 
@@ -352,7 +352,7 @@ func TestFailBatch_NotFoundIsNoOp(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-	_, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+	_, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "1", false, "", nil)
 	require.NoError(t, err)
 }
 

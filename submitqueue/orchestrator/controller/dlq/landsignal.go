@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -30,8 +31,8 @@ import (
 
 // landSignalController is the DLQ reconciler for the landsignal topic. Its
 // payload carries a Runway MergeResult whose id is the batch id echoed back, so
-// reconciliation fails that batch directly via failBatch (which also fans out
-// to the member requests).
+// reconciliation applies that merge's outcome to the batch directly: landBatch
+// when it merged, failBatch otherwise. Both fan out to the member requests.
 type landSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -97,7 +98,12 @@ func (c *landSignalController) Process(ctx context.Context, delivery consumer.De
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if _, err := failBatch(ctx, store, c.registry, c.logger, result.Id, lastError, failureMeta); err != nil {
+	if result.Outcome == runwaypb.Outcome_SUCCEEDED {
+		err = landBatch(ctx, store, c.registry, c.logger, result.Id)
+	} else {
+		_, err = failBatch(ctx, store, c.registry, c.logger, result.Id, true, lastError, failureMeta)
+	}
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}

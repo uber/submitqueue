@@ -25,6 +25,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"go.uber.org/zap"
 )
 
@@ -114,7 +115,10 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if _, err := failBatch(ctx, store, c.registry, c.logger, bid.ID, lastError, failureMeta); err != nil {
+	// Land's last step hands the merge to Runway, so its dead letter means the
+	// merge was never requested and a Landing batch can safely fail.
+	failLanding := primaryTopicKey(c.topicKey) == topickey.TopicKeyLand
+	if _, err := failBatch(ctx, store, c.registry, c.logger, bid.ID, failLanding, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}

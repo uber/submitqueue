@@ -126,7 +126,7 @@ func (c *speculateController) Process(ctx context.Context, delivery consumer.Del
 
 	progressed := false
 	for _, batchID := range culprits {
-		transitioned, err := failBatch(ctx, store, c.registry, c.logger, batchID, lastError, failureMeta)
+		transitioned, err := failBatch(ctx, store, c.registry, c.logger, batchID, false, lastError, failureMeta)
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 			return err
