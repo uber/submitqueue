@@ -138,20 +138,24 @@ func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, 
 				return progress, c.recordAbandonment(ctx, store, request.Queue, progress)
 			}
 		} else {
+			superseded, err := notificationSuperseded(progress, request.ID)
+			if err != nil {
+				return entity.IssueTrackingState{}, err
+			}
+			if superseded {
+				return entity.IssueTrackingState{}, nil
+			}
 			order, err := entity.CompareRequestID(request.ID, progress.RequestID)
 			if err != nil {
 				return entity.IssueTrackingState{}, err
 			}
-			if order < 0 || (order == 0 && progress.Finalize) {
-				return entity.IssueTrackingState{}, nil
-			}
 			switch progress.Phase {
 			case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing, entity.IssueTrackingPhaseAbandoning:
-				if order == 0 {
+				if order <= 0 {
 					return entity.IssueTrackingState{}, nil
 				}
 			default:
-				progress = entity.IssueTrackingState{Version: progress.Version}
+				progress = entity.IssueTrackingState{Version: progress.Version, FinalizedRequestID: finalizedRequestID(progress)}
 			}
 		}
 	}

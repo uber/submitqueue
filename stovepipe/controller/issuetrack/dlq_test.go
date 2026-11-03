@@ -436,3 +436,37 @@ func TestRecoveryAcknowledgesUnusableMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryRetainsTerminalBoundaryAcrossANewerAbandonedRefresh(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	final := f.message("build/100", true)
+	require.NoError(t, f.deliver(final, true))
+	require.NoError(t, f.deliver(final, false))
+	require.NoError(t, f.recover(f.message("build/101", false), false))
+	before := f.progress
+	f.reportIssue("build/100", "stale", "unit")
+	require.NoError(t, f.deliver(f.message("build/100", false), false))
+	require.NoError(t, f.recover(f.message("build/100", true), false))
+	require.Equal(t, before, f.progress)
+	require.Empty(t, f.states)
+}
+
+func TestRecoveryOfOlderTerminalAfterNewerRefreshRetainsNewerEvidence(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	f.reportIssue("build/101", "new", "unit")
+	require.NoError(t, f.deliver(f.message("build/101", false), false))
+	newer := f.states[issueKey{"new", "unit"}]
+	require.NoError(t, f.recover(f.message("build/100", true), false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.Equal(t, "build/100", f.progress.BuildID)
+	require.Equal(t, newer, f.states[issueKey{"new", "unit"}])
+	require.Len(t, f.events, 1)
+	require.NoError(t, f.deliver(f.message("build/101", false), false))
+	before := f.progress
+	require.NoError(t, f.recover(f.message("build/100", true), false))
+	require.Equal(t, before, f.progress)
+}

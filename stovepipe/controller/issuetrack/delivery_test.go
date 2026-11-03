@@ -614,3 +614,128 @@ func TestRetryResetsCursorBeforeClosing(t *testing.T) {
 	require.Equal(t, int32(1), f.states[issueKey{"task", "unit"}].Version)
 	require.Len(t, f.logs, 2)
 }
+
+func TestNewerRefreshDoesNotDiscardOlderFinalization(t *testing.T) {
+	for _, observation := range []string{"empty", "unrelated failure", "same failure"} {
+		t.Run(observation, func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build/100", "100", entity.BuildStatusSucceeded)
+			f.source("build/101", "101", entity.BuildStatusRunning)
+			f.seedIssue("old", "unit", entity.IssueStatusOpen)
+			if observation == "unrelated failure" {
+				f.reportIssue("build/101", "new", "unit")
+			} else if observation == "same failure" {
+				f.reportIssue("build/101", "old", "unit")
+			}
+			require.NoError(t, f.deliver(f.message("build/101", false), false))
+			final := f.message("build/100", true)
+			require.NoError(t, f.deliver(final, true))
+			require.NoError(t, f.deliver(final, false))
+			require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+			if observation == "same failure" {
+				require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
+				require.Equal(t, "build/101", f.states[issueKey{"old", "unit"}].LastProcessedBuildID)
+				require.Empty(t, f.logs)
+			} else {
+				require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"old", "unit"}].Status)
+				require.Contains(t, f.logs, logKey{issueKey{"old", "unit"}, "build/100", entity.IssueStatusClosed})
+			}
+			if observation == "unrelated failure" {
+				require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"new", "unit"}].Status)
+				require.Equal(t, "build/101", f.states[issueKey{"new", "unit"}].LastProcessedBuildID)
+			}
+		})
+	}
+}
+
+func TestFinalizedBoundarySurvivesLaterRefreshes(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	f.source("build/101", "101", entity.BuildStatusSucceeded)
+	f.source("build/102", "102", entity.BuildStatusRunning)
+	f.seedIssue("resolved", "unit", entity.IssueStatusOpen)
+	final := f.message("build/101", true)
+	require.NoError(t, f.deliver(final, true))
+	require.NoError(t, f.deliver(final, false))
+	f.reportIssue("build/102", "new", "unit")
+	require.NoError(t, f.deliver(f.message("build/102", false), false))
+	before := f.progress
+	for _, build := range []string{"build/100", "build/101"} {
+		f.reportIssue(build, "resolved", "unit")
+		f.reportIssue(build, "stale", "unit")
+		for _, terminal := range []bool{false, true} {
+			require.NoError(t, f.deliver(f.message(build, terminal), false))
+		}
+	}
+	require.Equal(t, before, f.progress)
+	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"resolved", "unit"}].Status)
+	require.NotContains(t, f.states, issueKey{"stale", "unit"})
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"new", "unit"}].Status)
+	require.Len(t, f.logs, 2)
+}
+
+func TestOlderFinalizationSkipsNewerIssuesAcrossBatches(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusFailed)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	f.seedIssue("zzz", "resolved", entity.IssueStatusOpen)
+	for i := 0; i < 105; i++ {
+		unit := fmt.Sprintf("unit/%03d", i)
+		f.reportIssue("build/100", "task", unit)
+		f.reportIssue("build/101", "task", unit)
+	}
+	refresh := f.message("build/101", false)
+	require.NoError(t, f.deliver(refresh, true))
+	require.NoError(t, f.deliver(refresh, false))
+	final := f.message("build/100", true)
+	require.NoError(t, f.deliver(final, true))
+	require.NoError(t, f.deliver(final, true))
+	require.NoError(t, f.deliver(final, true))
+	require.NoError(t, f.deliver(final, false))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	for key, state := range f.states {
+		if key.task == "task" {
+			require.Equal(t, entity.IssueStatusOpen, state.Status)
+			require.Equal(t, "build/101", state.LastProcessedBuildID)
+		}
+	}
+	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"zzz", "resolved"}].Status)
+	require.Len(t, f.logs, 106)
+}
+
+func TestFailedCompletionCheckpointDoesNotLoseFinalization(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
+	final := f.message("build/100", true)
+	require.NoError(t, f.deliver(final, true))
+	f.failOnPhase = entity.IssueTrackingPhaseFinalized
+	require.ErrorIs(t, f.deliver(final, false), assert.AnError)
+	refresh := f.message("build/101", false)
+	require.NoError(t, f.deliver(refresh, true))
+	require.NoError(t, f.deliver(refresh, false))
+	f.reportIssue("build/100", "stale", "unit")
+	require.NoError(t, f.deliver(f.message("build/100", false), false))
+	require.NotContains(t, f.states, issueKey{"stale", "unit"})
+	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"old", "unit"}].Status)
+	require.Len(t, f.logs, 1)
+}
+
+func TestLegacyTerminalBoundarySurvivesANewerRefresh(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	legacy := currentCursor()
+	legacy.Finalize, legacy.Phase = true, entity.IssueTrackingPhaseFinalized
+	f.retain(legacy)
+	f.reportIssue("build/101", "new", "unit")
+	require.NoError(t, f.deliver(f.message("build/101", false), false))
+	before := f.progress
+	f.reportIssue("build/100", "stale", "unit")
+	require.NoError(t, f.deliver(f.message("build/100", false), false))
+	require.NoError(t, f.deliver(f.message("build/100", true), false))
+	require.Equal(t, before, f.progress)
+	require.NotContains(t, f.states, issueKey{"stale", "unit"})
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"new", "unit"}].Status)
+}

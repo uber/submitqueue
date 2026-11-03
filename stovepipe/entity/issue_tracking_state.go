@@ -40,10 +40,13 @@ const (
 	IssueTrackingPhaseAbandoned IssueTrackingPhase = "abandoned"
 )
 
-// IssueTrackingState is the queue-scoped source-order boundary and resumable reconciliation state.
+// IssueTrackingState is the queue-scoped terminal boundary and resumable reconciliation state.
 type IssueTrackingState struct {
-	// RequestID is the newest accepted source request, compared by ingest order.
+	// RequestID identifies the source request of the current or most recently completed pass.
 	RequestID string `json:"request_id"`
+	// FinalizedRequestID is the newest completed or abandoned terminal source, compared by ingest order.
+	// Empty means no terminal boundary has been retained.
+	FinalizedRequestID string `json:"finalized_request_id"`
 	// BuildID identifies the source build whose pass is underway or most recently completed.
 	BuildID string `json:"build_id"`
 	// NotificationID identifies the message that owns this reconciliation pass.
@@ -67,6 +70,11 @@ type IssueTrackingState struct {
 func (s IssueTrackingState) Validate() error {
 	if err := id.Validate(s.RequestID); err != nil {
 		return fmt.Errorf("invalid issue tracking request ID: %w", err)
+	}
+	if s.FinalizedRequestID != "" {
+		if err := id.Validate(s.FinalizedRequestID); err != nil {
+			return fmt.Errorf("invalid finalized issue tracking request ID: %w", err)
+		}
 	}
 	if s.BuildID == "" {
 		return fmt.Errorf("issue tracking build ID must not be empty")
