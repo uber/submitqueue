@@ -175,8 +175,8 @@ github.com/uber/jaeger-client-go v2.30.0+incompatible h1:D6wyKGCecFaSRUpo8lCVbaO
 github.com/uber/jaeger-client-go v2.30.0+incompatible/go.mod h1:WVhlPFC8FDjOFMMWRy2pZqQJSXxYSwNYOkTr/Z6d3Kk=
 github.com/uber/jaeger-lib v2.4.1+incompatible h1:td4jdvLcExb4cBISKIpHuGoVXh+dVKhn2Um6rjCsSsg=
 github.com/uber/jaeger-lib v2.4.1+incompatible/go.mod h1:ComeNDZlWwrWnDv8aPp0Ba6+uUTzImX/AauajbLI56U=
-github.com/uber/tango v0.0.46 h1:EBmgNXKGzo9Nd7rjcpDd2n+qthsS/GsbvjTwe0vjkGg=
-github.com/uber/tango v0.0.46/go.mod h1:ARewcVj7WUxbNW9Li4aAAvbNZqV9isaEFwhFeQMuVIA=
+github.com/uber/tango v0.0.51 h1:fhtgmgH4PdYPm5UrshHzIjoiOlT8Z70hE2ZPe+gZ4Gk=
+github.com/uber/tango v0.0.51/go.mod h1:ARewcVj7WUxbNW9Li4aAAvbNZqV9isaEFwhFeQMuVIA=
 github.com/uber/tchannel-go v1.34.4 h1:Wi7SSfUQbJ4lPqS4trP1uAZvWu46oK0qz0tOodcfcbY=
 github.com/uber/tchannel-go v1.34.4/go.mod h1:ERHDsQa50nNJxV8Mm6V4nxPWyGvGxiV+T/dUNRzmoC4=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
