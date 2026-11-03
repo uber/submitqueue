@@ -268,7 +268,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			next.Phase = entity.IssueTrackingPhaseFinalized
 		case !progress.Finalize:
 			next.Phase = entity.IssueTrackingPhaseRefreshed
-		case progress.HasTaskWideIssues || build.Status == entity.BuildStatusCancelled:
+		case build.Status == entity.BuildStatusCancelled:
 			next.Phase = entity.IssueTrackingPhaseFinalized
 		default:
 			next.Phase = entity.IssueTrackingPhaseFinalizing
@@ -316,6 +316,15 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 
 	if missing && !reported {
 		return entity.IssueTrackingState{}, fmt.Errorf("closing cursor requires an existing issue")
+	}
+	if !reported && key.unit != "" && progress.HasTaskWideIssues {
+		_, err := store.GetBuildIssueStore().Get(ctx, progress.BuildID, key.task, "")
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return entity.IssueTrackingState{}, fmt.Errorf("check task-wide issue: %w", err)
+		}
+		if err == nil {
+			desired = current.Status
+		}
 	}
 
 	if !missing && current.LastProcessedBuildID != progress.BuildID {

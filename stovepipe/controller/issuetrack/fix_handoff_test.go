@@ -190,8 +190,10 @@ func TestTaskWideFailureStillPublishesRepair(t *testing.T) {
 	f.source("build", "10", entity.BuildStatusFailed)
 	f.seedIssue("existing", "unit", entity.IssueStatusOpen)
 	f.reportIssue("build", "setup", "")
-	require.NoError(t, f.deliver(f.message("build", true), false))
+	msg := f.message("build", true)
+	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(msg, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
-	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"existing", "unit"}].Status)
+	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"existing", "unit"}].Status)
 	require.Len(t, f.fixMessages, 1)
 }

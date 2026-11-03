@@ -39,11 +39,6 @@ func TestIssueTrackingState(t *testing.T) {
 		{"closing without terminal intent", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseFinalizing }},
 		{"finalized without terminal intent", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseFinalized }},
 		{"terminal pass marked refreshed", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseRefreshed; s.Finalize = true }},
-		{"closing with task-wide failure", func(s *IssueTrackingState) {
-			s.Phase = IssueTrackingPhaseFinalizing
-			s.Finalize = true
-			s.HasTaskWideIssues = true
-		}},
 		{"missing build", func(s *IssueTrackingState) { s.BuildID = "" }},
 		{"unknown phase", func(s *IssueTrackingState) { s.Phase = IssueTrackingPhaseUnknown }},
 		{"unsupported phase", func(s *IssueTrackingState) { s.Phase = "other" }},

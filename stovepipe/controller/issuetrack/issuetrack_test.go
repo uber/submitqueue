@@ -25,7 +25,7 @@ import (
 )
 
 func TestBatchRejectsInvalidClosingPass(t *testing.T) {
-	for _, scenario := range []string{"missing terminal intent", "task-wide failure", "canceled build", "running build", "not terminal build"} {
+	for _, scenario := range []string{"missing terminal intent", "canceled build", "running build", "not terminal build"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newFixture(t)
 			f.source("build/100", "100", entity.BuildStatusSucceeded)
@@ -38,8 +38,6 @@ func TestBatchRejectsInvalidClosingPass(t *testing.T) {
 			switch scenario {
 			case "missing terminal intent":
 				progress.Finalize = false
-			case "task-wide failure":
-				progress.HasTaskWideIssues = true
 			case "canceled build":
 				f.source("build/100", "100", entity.BuildStatusCancelled)
 			case "running build":

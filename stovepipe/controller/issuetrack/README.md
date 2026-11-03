@@ -29,12 +29,12 @@ Once the entire build-issue range is exhausted, an opening pass with a nonempty 
 Once the entire build-issue range is exhausted:
 
 - An ordinary refresh becomes `refreshed`.
-- A terminal pass with a task-wide failure, or a canceled build, becomes `finalized` without closing anything. Reported closed issues may still have reopened during refreshing; unreported closed issues remain closed.
-- Any other terminal pass becomes `finalizing`, resetting its cursor to the start of the issue-state range.
+- A canceled build becomes `finalized` without closing anything. Reported closed issues may still have reopened during refreshing; unreported closed issues remain closed.
+- Every other terminal pass becomes `finalizing`, resetting its cursor to the start of the issue-state range.
 
-The `finalizing` phase traverses retained issue states in primary-key order. Each key is looked up in the build's issues: a reported issue remains open, while an absent issue closes. Actual openings and closings are retained in history. Exhausting the issue-state range marks the pass `finalized`, so late refreshes are ignored.
+The `finalizing` phase traverses retained issue states in primary-key order. Each key is looked up in the build's issues: a reported issue remains open, while an absent issue closes unless the same task has a task-wide failure. Such a failure preserves missing target issues in their current status, including closed issues; it does not reopen unreported targets. Issues from other tasks can close, including task-wide issues. The processed build advances for preserved issues as well. Actual openings and closings are retained in history. Exhausting the issue-state range marks the pass `finalized`, so late refreshes are ignored.
 
-No closure occurs before all accumulated build issues have been processed. A task-wide failure in a later batch therefore protects existing issues across every task, not just keys encountered afterward. A later build makes its own decision; the restriction does not carry over. Both walks consume one ordered range at a time; no merge is required.
+No closure occurs before all accumulated build issues have been processed. A task-wide failure in a later batch therefore protects missing targets of that task before any closing work begins. A later build makes its own decision; the restriction does not carry over. Both walks consume one ordered range at a time; no merge is required.
 
 ## Bounded passes
 

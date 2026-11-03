@@ -90,9 +90,6 @@ func (s IssueTrackingState) Validate() error {
 		if !s.Finalize {
 			return fmt.Errorf("finalizing requires terminal intent")
 		}
-		if s.HasTaskWideIssues {
-			return fmt.Errorf("task-wide failures prevent closing missing issues")
-		}
 	case IssueTrackingPhaseFinalized:
 		if !s.Finalize {
 			return fmt.Errorf("finalized requires terminal intent")
