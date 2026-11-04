@@ -209,9 +209,8 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 		return entity.IssueTrackingState{}, fmt.Errorf("canceled builds cannot close missing issues")
 	}
 
-	taskWideIssues := make(map[string]bool)
 	if progress.CursorTaskID != "" {
-		next, err := c.processIssue(ctx, store, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false, taskWideIssues)
+		next, err := c.processIssue(ctx, store, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
@@ -250,7 +249,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			return entity.IssueTrackingState{}, err
 		}
 		previousVersion := progress.Version
-		progress, err = c.processIssue(ctx, store, progress, key, !finalizing, taskWideIssues)
+		progress, err = c.processIssue(ctx, store, progress, key, !finalizing)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
@@ -284,7 +283,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	return progress, nil
 }
 
-func (c *Controller) processIssue(ctx context.Context, store storage.Storage, progress entity.IssueTrackingState, key issueKey, reported bool, taskWideIssues map[string]bool) (entity.IssueTrackingState, error) {
+func (c *Controller) processIssue(ctx context.Context, store storage.Storage, progress entity.IssueTrackingState, key issueKey, reported bool) (entity.IssueTrackingState, error) {
 	if err := ctx.Err(); err != nil {
 		return entity.IssueTrackingState{}, err
 	}
@@ -295,13 +294,14 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 		}
 		reported = err == nil
 	}
-	if key.unit == "" {
-		taskWideIssues[key.task] = reported
-	}
 
 	if !reported && progress.Phase != entity.IssueTrackingPhaseFinalizing {
 		return entity.IssueTrackingState{}, fmt.Errorf("only finalizing passes can close missing issues")
 	}
+	if reported && key.unit == "" && progress.Phase == entity.IssueTrackingPhaseRefreshing {
+		progress.HasTaskWideIssues = true
+	}
+
 	desired := entity.IssueStatusClosed
 	if reported {
 		desired = entity.IssueStatusOpen
@@ -317,15 +317,10 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	if missing && !reported {
 		return entity.IssueTrackingState{}, fmt.Errorf("closing cursor requires an existing issue")
 	}
-	if !reported && key.unit != "" {
-		taskWide, cached := taskWideIssues[key.task]
-		if !cached {
-			_, err := store.GetBuildIssueStore().Get(ctx, progress.BuildID, key.task, "")
-			if err != nil && !errors.Is(err, storage.ErrNotFound) {
-				return entity.IssueTrackingState{}, fmt.Errorf("check task-wide issue: %w", err)
-			}
-			taskWide = err == nil
-			taskWideIssues[key.task] = taskWide
+	if !reported && key.unit != "" && progress.HasTaskWideIssues {
+		taskWide, err := hasTaskWideIssue(ctx, store.GetBuildIssueStore(), progress.BuildID, key.task)
+		if err != nil {
+			return entity.IssueTrackingState{}, err
 		}
 		if taskWide {
 			desired = current.Status
@@ -410,6 +405,18 @@ func (c *Controller) recordHistory(ctx context.Context, store storage.Storage, i
 		return fmt.Errorf("record issue transition: %w", err)
 	}
 	return nil
+}
+
+func hasTaskWideIssue(ctx context.Context, store storage.BuildIssueStore, buildID, taskID string) (bool, error) {
+	// An empty unit ID identifies a task-wide observation.
+	_, err := store.Get(ctx, buildID, taskID, "")
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check task-wide issue: %w", err)
+	}
+	return true, nil
 }
 
 func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next entity.IssueTrackingState) (entity.IssueTrackingState, error) {

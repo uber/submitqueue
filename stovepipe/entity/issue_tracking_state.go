@@ -55,6 +55,8 @@ type IssueTrackingState struct {
 	CursorUnitID string `json:"cursor_unit_id"`
 	// Finalize identifies a terminal reconciliation pass rather than an ordinary refresh.
 	Finalize bool `json:"finalize"`
+	// HasTaskWideIssues records whether this pass has encountered a task-wide issue.
+	HasTaskWideIssues bool `json:"has_task_wide_issues"`
 	// Phase distinguishes active, completed, and abandoned work.
 	Phase IssueTrackingPhase `json:"phase"`
 	// Version is the positive optimistic-lock version of this state.
