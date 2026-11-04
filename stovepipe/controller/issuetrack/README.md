@@ -5,7 +5,7 @@ Issue tracking maintains current issue state and opening/closing history from pe
 ## Applying one issue
 
 1. Read whether the build reports the issue and load its current state.
-2. Reject a source older than the issue's last processed build, using Request order rather than opaque Build IDs.
+2. Skip a source older than the issue's last processed build, using Request order rather than opaque Build IDs.
 3. Before changing the issue, conditionally save its task/unit key as the current queue cursor **after** reading the issue row. Repeat this conditional write even when resuming the same cursor.
 4. Conditionally create or update the issue row. Record the processed build even when its open/closed status stays the same; update the changing build and timestamp only on an actual transition.
 5. Retain opening or closing history from the issue row's changing build and timestamp, then materialize its summary and open-issue lookup. On retry, the inclusive cursor revisits that row and repairs all three before proceeding.
@@ -14,7 +14,7 @@ Closed issue rows are retained, so their versions cannot reset on reopening. A r
 
 ## Ordering requirements
 
-During issue application, the caller must finish the current cursor and its history before moving on or admitting another build. If a replacement worker advances, completing that cursor changes the issue version first. A paused worker's earlier issue write then fails its row guard. A worker that reads later is rejected by source ordering or the conditional cursor write.
+During issue application, the caller must finish the current cursor and its history before moving on or admitting another build. If a replacement worker advances, completing that cursor changes the issue version first. A paused worker's earlier issue write then fails its row guard. A worker that reads later skips an issue already processed by a newer source or fails the conditional cursor write.
 
 The [issue-log materializer](../../core/issuelog/README.md) also orders summary updates by source request, with closing after opening within the same request. A paused projection writer cannot overwrite a newer summary: its conditional write fails, and reloading the winner repeats the source-order check. Lookup entries are then maintained from the latest summary, not the incoming transition. Summary and lookup failures keep the cursor unfinished, just like history failures.
 
@@ -40,7 +40,7 @@ No closure occurs before all accumulated build issues have been processed. A tas
 
 Every delivery processes at most 100 task/unit keys from one ordered range, including a revisited cursor and retained closed rows. Refreshing reads build issues; finalizing reads issue states. The cursor is always inclusive: revisit it to finish the issue and its history, then continue after it. A full batch retains its active phase and requests redelivery. Moving from refreshing to finalizing conditionally saves a reset cursor before any closing work begins.
 
-An unfinished pass completes or is safely abandoned before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own source. Completed notifications and older sources are ignored, as are refreshes after the same Request has finalized or its terminal pass was abandoned. A terminal pass requires a terminal build chosen by its Request in both active phases.
+An unfinished pass completes or is safely abandoned before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own source. Completed notifications and sources at or below `FinalizedRequestID` are ignored. This terminal boundary advances only when a terminal pass completes or is abandoned, and survives every later refresh. It is independent of the source of the current pass: a newer running observation, empty or nonempty, cannot discard an older terminal pass. Each issue instead retains its newest processed source; older passes skip that issue and continue their range. A newer completed terminal pass still supersedes all earlier notifications, including observations for issues with no retained state. A terminal pass requires a terminal build chosen by its Request in both active phases.
 
 Build IDs are opaque; source order comes from Request IDs. All scans are bounded reads under leading primary-key prefixes. There is no transaction spanning progress, issue state, and history.
 
@@ -51,7 +51,7 @@ An error returns to normal consumer retry. The next delivery resumes the cursor 
 1. Conditionally enter `abandoning`, retaining the source, notification, and cursor. Normal deliveries hold for 30 seconds while this phase is present; they cannot start another pass or resume issue application.
 2. If there is a cursor, read its issue and conditionally advance progress after that read. Advance the issue's version without changing its status or transition metadata. This invalidates a paused worker's earlier row guard. If the row has not been created yet, finish that one opening instead: the normal worker can only have saved such a cursor after finding a reported build issue. Creating it prevents the delayed create from succeeding. Closed issue rows are never deleted.
 3. Repair the cursor's opening or closing history, summary, and open-issue lookup from the retained row. Record an `issue_tracking_abandoned` Request-history event keyed by the failed notification, with its build ID.
-4. Conditionally enter `abandoned`. Keep the source-order boundary and notification identity, so the same delivery and older builds cannot restart the abandoned work.
+4. Conditionally enter `abandoned`. Keep the terminal boundary and notification identity, so the same delivery cannot restart the abandoned work. A terminal abandonment also advances `FinalizedRequestID`, preventing that Request and older sources from restarting after later refreshes.
 
 Accepted opens and closes remain in place. Recovery does not scan either issue range, close the remaining issues, change Request or Build outcomes, or release build slots. An abandoned ordinary refresh still permits a new refresh or terminal notification for that Request; an abandoned terminal pass permits only newer Requests. A later successful build can reconcile issues left unchanged by the failed pass.
 
@@ -61,8 +61,10 @@ A notification can fail while helping an older pass. Recovery abandons that save
 
 Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged.
 
-The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery remains separate.
+The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. Final pass admission, completion, and superseded final notifications are logged at info level with their build and request IDs. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery remains separate.
 
 ## Analysis handoff
 
 Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host uses a no-op detector; deployments supply their own detector and register the same normal and recovery paths.
+
+The issue-tracking table must include `finalized_request_id` before deploying these controllers. It is a non-null binary request ID with an empty default. Existing completed or abandoned terminal records supply their own Request ID as the initial boundary; existing refresh records have no retained terminal boundary. Upgrade normal and recovery controllers together: older writers do not preserve the terminal boundary, and older readers reject closing passes containing task-wide failures.

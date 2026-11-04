@@ -32,7 +32,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	store := bound.GetIssueTrackingStore()
 	_, err = store.Get(ctx)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	state := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "notification/10", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
+	state := entity.IssueTrackingState{RequestID: "10", FinalizedRequestID: "9", BuildID: "build/10", NotificationID: "notification/10", Phase: entity.IssueTrackingPhaseRefreshing, Version: 1}
 	require.NoError(t, store.Create(ctx, state))
 	require.ErrorIs(t, store.Create(ctx, state), storage.ErrAlreadyExists)
 	got, err := store.Get(ctx)
@@ -53,6 +53,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	require.NoError(t, store.Update(ctx, state, 2, 3))
 	state.Version = 3
 	state.Phase = entity.IssueTrackingPhaseFinalized
+	state.FinalizedRequestID = "11"
 	require.NoError(t, store.Update(ctx, state, 3, 4))
 	state.Version = 4
 	got, err = store.Get(ctx)
@@ -66,13 +67,13 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		bound, err := factory.For(storage.Config{QueueName: "tracking/terminal"})
 		require.NoError(t, err)
 		store := bound.GetIssueTrackingStore()
-		opening := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "terminal", Phase: entity.IssueTrackingPhaseRefreshing, Finalize: true, HasTaskWideIssues: true, CursorTaskID: "task", CursorUnitID: "unit", Version: 1}
+		opening := entity.IssueTrackingState{RequestID: "10", FinalizedRequestID: "9", BuildID: "build/10", NotificationID: "terminal", Phase: entity.IssueTrackingPhaseRefreshing, Finalize: true, HasTaskWideIssues: true, CursorTaskID: "task", CursorUnitID: "unit", Version: 1}
 		require.NoError(t, store.Create(ctx, opening))
 		got, err := store.Get(ctx)
 		require.NoError(t, err)
 		require.Equal(t, opening, got)
 		finished := opening
-		finished.Phase = entity.IssueTrackingPhaseFinalized
+		finished.Phase = entity.IssueTrackingPhaseFinalizing
 		require.NoError(t, store.Update(ctx, finished, 1, 2))
 		finished.Version = 2
 		got, err = store.Get(ctx)
@@ -99,7 +100,7 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		state := entity.IssueTrackingState{
 			RequestID: "10", BuildID: "build/10", NotificationID: "failed-notification",
 			CursorTaskID: "task", CursorUnitID: "unit",
-			Finalize: true, HasTaskWideIssues: true,
+			Finalize: true, HasTaskWideIssues: true, FinalizedRequestID: "9",
 			Phase: entity.IssueTrackingPhaseAbandoning, Version: 1,
 		}
 		require.NoError(t, store.Create(ctx, state))

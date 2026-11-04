@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
 func TestBatchRejectsInvalidClosingPass(t *testing.T) {
@@ -197,7 +196,7 @@ func TestOlderSourceCannotChangeTheIssue(t *testing.T) {
 	f.retain(progress)
 
 	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
-	require.ErrorIs(t, err, storage.ErrVersionMismatch)
+	require.NoError(t, err)
 	require.Equal(t, current, f.states[issueKey{"task", "unit"}])
 	require.Equal(t, progress, f.progress)
 	require.Empty(t, f.logs)

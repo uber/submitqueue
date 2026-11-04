@@ -31,6 +31,7 @@ func TestIssueTrackingState(t *testing.T) {
 		name   string
 		change func(*IssueTrackingState)
 	}{
+		{"invalid finalized request", func(s *IssueTrackingState) { s.FinalizedRequestID = "invalid" }},
 		{"missing request", func(s *IssueTrackingState) { s.RequestID = "" }},
 		{"noncanonical request", func(s *IssueTrackingState) { s.RequestID = "010" }},
 		{"nonnumeric request", func(s *IssueTrackingState) { s.RequestID = "request/10" }},

@@ -41,12 +41,12 @@ func (s *issueTrackingStore) Get(ctx context.Context) (state entity.IssueTrackin
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 	err := s.db.QueryRowContext(ctx,
-		`SELECT request_id, build_id, notification_id,
+		`SELECT request_id, finalized_request_id, build_id, notification_id,
             cursor_task_id, cursor_unit_id,
             finalize, has_task_wide_issues, phase, version
          FROM issue_tracking WHERE queue = ?`, s.queue).
 		Scan(
-			&state.RequestID, &state.BuildID, &state.NotificationID,
+			&state.RequestID, &state.FinalizedRequestID, &state.BuildID, &state.NotificationID,
 			&state.CursorTaskID, &state.CursorUnitID,
 
 			&state.Finalize, &state.HasTaskWideIssues, &state.Phase, &state.Version,
@@ -67,10 +67,10 @@ func (s *issueTrackingStore) Create(ctx context.Context, state entity.IssueTrack
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO issue_tracking (queue, request_id, build_id, notification_id,
+		`INSERT INTO issue_tracking (queue, request_id, finalized_request_id, build_id, notification_id,
             cursor_task_id, cursor_unit_id,
-            finalize, has_task_wide_issues, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.queue, state.RequestID, state.BuildID, state.NotificationID,
+            finalize, has_task_wide_issues, phase, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.queue, state.RequestID, state.FinalizedRequestID, state.BuildID, state.NotificationID,
 		state.CursorTaskID, state.CursorUnitID,
 		state.Finalize, state.HasTaskWideIssues, state.Phase, state.Version,
 	)
@@ -95,11 +95,11 @@ func (s *issueTrackingStore) Update(ctx context.Context, state entity.IssueTrack
 		return fmt.Errorf("issue tracking guard version must be positive")
 	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE issue_tracking SET request_id = ?, build_id = ?, notification_id = ?,
+		`UPDATE issue_tracking SET request_id = ?, finalized_request_id = ?, build_id = ?, notification_id = ?,
             cursor_task_id = ?, cursor_unit_id = ?,
             finalize = ?, has_task_wide_issues = ?, phase = ?, version = ?
          WHERE queue = ? AND version = ?`,
-		state.RequestID, state.BuildID, state.NotificationID,
+		state.RequestID, state.FinalizedRequestID, state.BuildID, state.NotificationID,
 		state.CursorTaskID, state.CursorUnitID,
 		state.Finalize, state.HasTaskWideIssues, state.Phase, newVersion,
 		s.queue, oldVersion,

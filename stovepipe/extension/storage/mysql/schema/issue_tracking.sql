@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS issue_tracking (
     queue                VARBINARY(255)  NOT NULL,
     request_id           VARBINARY(255)  NOT NULL,
+    finalized_request_id VARBINARY(255)  NOT NULL DEFAULT '',
     build_id             VARBINARY(1020) NOT NULL,
     notification_id      VARBINARY(1020) NOT NULL,
 

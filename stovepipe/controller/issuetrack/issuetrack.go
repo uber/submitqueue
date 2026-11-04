@@ -121,13 +121,15 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 				if progress.NotificationID == notificationID {
 					return nil
 				}
-				order, err := entity.CompareRequestID(request.ID, progress.RequestID)
+				superseded, err := notificationSuperseded(progress, request.ID)
 				if err != nil {
 					return err
 				}
-				if order < 0 || (order == 0 && progress.Finalize) {
-					c.logger.Debugw("ignoring superseded issue tracking notification",
-						"queue", queue, "build_id", build.ID, "request_id", request.ID, "current_request_id", progress.RequestID)
+				if superseded {
+					if notification.GetFinalize() {
+						c.logger.Infow("ignoring superseded issue finalization",
+							"queue", queue, "build_id", build.ID, "request_id", request.ID, "finalized_request_id", finalizedRequestID(progress))
+					}
 					return nil
 				}
 			}
@@ -136,12 +138,13 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 				return fmt.Errorf("issue tracking version exhausted")
 			}
 			next := entity.IssueTrackingState{
-				RequestID:      request.ID,
-				BuildID:        build.ID,
-				NotificationID: notificationID,
-				Phase:          entity.IssueTrackingPhaseRefreshing,
-				Finalize:       notification.GetFinalize(),
-				Version:        progress.Version + 1,
+				RequestID:          request.ID,
+				FinalizedRequestID: finalizedRequestID(progress),
+				BuildID:            build.ID,
+				NotificationID:     notificationID,
+				Phase:              entity.IssueTrackingPhaseRefreshing,
+				Finalize:           notification.GetFinalize(),
+				Version:            progress.Version + 1,
 			}
 			if next.Finalize {
 				if err := requireTerminalBuild(build, request); err != nil {
@@ -159,6 +162,9 @@ func (c *Controller) trackBuild(ctx context.Context, delivery consumer.Delivery,
 			}
 			if err != nil {
 				return fmt.Errorf("start issue tracking pass: %w", err)
+			}
+			if next.Finalize {
+				c.logger.Infow("starting issue finalization", "queue", queue, "build_id", build.ID, "request_id", request.ID, "notification_id", notificationID)
 			}
 			progress = next
 		}
@@ -274,7 +280,11 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			next.Phase = entity.IssueTrackingPhaseFinalizing
 			next.CursorTaskID, next.CursorUnitID = "", ""
 		}
-		return saveProgress(ctx, store.GetIssueTrackingStore(), next)
+		checkpoint, err := saveProgress(ctx, store.GetIssueTrackingStore(), next)
+		if err == nil && checkpoint.Phase == entity.IssueTrackingPhaseFinalized {
+			c.logger.Infow("issue finalization complete", "queue", queue, "build_id", build.ID, "request_id", request.ID, "notification_id", progress.NotificationID, "status", string(build.Status))
+		}
+		return checkpoint, err
 	}
 	if cursorNeedsCheckpoint {
 		return saveProgress(ctx, store.GetIssueTrackingStore(), progress)
@@ -327,6 +337,8 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 		}
 	}
 
+	next := progress
+	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID != progress.BuildID {
 		previous, err := loader.ByID(ctx, current.LastProcessedBuildID, store.GetBuildStore().Get, "last processed build")
 		if err != nil {
@@ -337,12 +349,10 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 			return entity.IssueTrackingState{}, err
 		}
 		if order < 0 {
-			return entity.IssueTrackingState{}, fmt.Errorf("issue already processed a newer source: %w", storage.ErrVersionMismatch)
+			return next, nil
 		}
 	}
 
-	next := progress
-	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID == progress.BuildID && current.Status == desired {
 		if key == (issueKey{progress.CursorTaskID, progress.CursorUnitID}) {
 			return next, c.recordHistory(ctx, store, current)
@@ -423,12 +433,33 @@ func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next en
 	if next.Version == math.MaxInt32 {
 		return entity.IssueTrackingState{}, fmt.Errorf("issue tracking version exhausted")
 	}
+	if next.Finalize && (next.Phase == entity.IssueTrackingPhaseFinalized || next.Phase == entity.IssueTrackingPhaseAbandoned) {
+		next.FinalizedRequestID = next.RequestID
+	}
 	newVersion := next.Version + 1
 	if err := store.Update(ctx, next, next.Version, newVersion); err != nil {
 		return entity.IssueTrackingState{}, fmt.Errorf("checkpoint issue tracking: %w", err)
 	}
 	next.Version = newVersion
 	return next, nil
+}
+
+func finalizedRequestID(progress entity.IssueTrackingState) string {
+	// Completed records written before the terminal boundary existed still fence their source.
+	if progress.FinalizedRequestID == "" && progress.Finalize &&
+		(progress.Phase == entity.IssueTrackingPhaseFinalized || progress.Phase == entity.IssueTrackingPhaseAbandoned) {
+		return progress.RequestID
+	}
+	return progress.FinalizedRequestID
+}
+
+func notificationSuperseded(progress entity.IssueTrackingState, requestID string) (bool, error) {
+	boundary := finalizedRequestID(progress)
+	if boundary == "" {
+		return false, nil
+	}
+	order, err := entity.CompareRequestID(requestID, boundary)
+	return order <= 0, err
 }
 
 func requireTerminalBuild(build entity.Build, request entity.Request) error {
