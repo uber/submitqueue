@@ -400,3 +400,30 @@ func TestMaterializerRetainsOtherEventsWithoutProjectingSummary(t *testing.T) {
 		})
 	}
 }
+
+func TestRepairEventsRemainHistoryOnlyAndDeduplicate(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventBuildAnalysisCompleted, entity.RequestEventIssuesReconciled,
+		entity.RequestEventIssueTrackingAbandoned, entity.RequestEventFixSubmitted,
+		entity.RequestEventFixSubmissionSkipped, entity.RequestEventFixSubmissionAbandoned,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			m, stores, logs, _, _ := newTestMaterializer(t)
+			request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateFailed, Version: 3}
+			candidate := NewRequestEventLog(request, event, "occurrence/1", map[string]string{MetadataKeyBuildID: "build/1"})
+			stored := candidate
+			stored.TimestampMs = testNowMs
+			gomock.InOrder(
+				logs.EXPECT().Create(gomock.Any(), stored).Return(nil),
+				logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists),
+				logs.EXPECT().Get(gomock.Any(), testRequestID, candidate.ID).Return(stored, nil),
+			)
+			require.NoError(t, m.PersistLog(context.Background(), stores, candidate))
+			m.now = func() time.Time { return time.UnixMilli(testNowMs + 1000) }
+			require.NoError(t, m.PersistLog(context.Background(), stores, candidate))
+			require.Empty(t, candidate.State)
+			require.Zero(t, candidate.RequestVersion)
+			require.Empty(t, candidate.OutcomeReason)
+		})
+	}
+}

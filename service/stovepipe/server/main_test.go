@@ -120,9 +120,6 @@ func TestValidationStagesHaveRecovery(t *testing.T) {
 	_, primary, deadLetter := registeredControllers(t)
 	recoveryKeys := topicKeys(deadLetter)
 	for _, controller := range primary {
-		if controller.TopicKey() == stovepipemq.TopicKeyFix {
-			continue
-		}
 		t.Run(controller.Name(), func(t *testing.T) {
 			assert.Contains(t, recoveryKeys, dlq.TopicKey(controller.TopicKey()))
 		})
@@ -135,7 +132,7 @@ func TestFixRegistration(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "fix", name)
 	assert.Contains(t, topicKeys(primary), stovepipemq.TopicKeyFix)
-	assert.NotContains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyFix))
+	assert.Contains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyFix))
 }
 
 func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
@@ -149,6 +146,27 @@ func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
 	stores.EXPECT().For(storage.Config{QueueName: queueName}).Return(store, nil).AnyTimes()
 	store.EXPECT().GetBuildIssueStore().Return(observations).AnyTimes()
 	store.EXPECT().GetIssueStateStore().Return(issues).AnyTimes()
+
+	builds := storagemock.NewMockBuildStore(ctrl)
+	requests := storagemock.NewMockRequestStore(ctrl)
+	history := storagemock.NewMockRequestLogStore(ctrl)
+	store.EXPECT().GetBuildStore().Return(builds).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+	store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	builds.EXPECT().Get(gomock.Any(), buildID).Return(entity.Build{ID: buildID, RequestID: "1"}, nil).AnyTimes()
+	requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{ID: "1", Queue: queueName}, nil).AnyTimes()
+	var retained entity.RequestLog
+	history.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
+		if retained.ID != "" {
+			return storage.ErrAlreadyExists
+		}
+		retained = log
+		return nil
+	}).Times(2)
+	history.EXPECT().Get(gomock.Any(), "1", gomock.Any()).DoAndReturn(func(_ context.Context, _, id string) (entity.RequestLog, error) {
+		require.Equal(t, retained.ID, id)
+		return retained, nil
+	})
 
 	observation := entity.BuildIssue{TaskID: "test", UnitID: "unit", Version: 1}
 	observations.EXPECT().List(gomock.Any(), buildID, gomock.Any()).DoAndReturn(
@@ -196,6 +214,8 @@ func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
 		delivery.EXPECT().Message().Return(message)
 		require.NoError(t, fixController.Process(context.Background(), delivery))
 	}
+	require.Equal(t, entity.RequestEventFixSubmitted, retained.Event)
+	require.Equal(t, "noop/"+buildID, retained.Metadata[requestlog.MetadataKeyFixID])
 }
 
 func TestHookStage(t *testing.T) {

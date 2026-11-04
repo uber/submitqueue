@@ -44,6 +44,8 @@ An unfinished pass completes or is safely abandoned before another source is adm
 
 Build IDs are opaque; source order comes from Request IDs. All scans are bounded reads under leading primary-key prefixes. There is no transaction spanning progress, issue state, and history.
 
+A finalized checkpoint retains `issues_reconciled` in its Request's history before acknowledgement or replacement by a newer pass. The build ID identifies the occurrence. Metadata distinguishes normal reconciliation from cancellation or task-wide suppression of absent-issue closure. A completed nonterminal refresh adds no request-history entry. If history fails after checkpoint persistence, the next primary or recovery delivery repairs that entry before replacing the checkpoint.
+
 ## Recovery and activation
 
 An error returns to normal consumer retry. The next delivery resumes the cursor before advancing. Once that retry policy dead-letters a notification, the recovery controller abandons the failed pass rather than rerunning its remaining batches:
@@ -61,7 +63,7 @@ A notification can fail while helping an older pass. Recovery abandons that save
 
 Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged.
 
-The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery remains separate.
+The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery retains submission outcomes without calling the executor.
 
 ## Analysis handoff
 

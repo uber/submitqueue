@@ -46,9 +46,12 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 	f := &recoveryFixture{fixture: newFixture(t), events: map[string]entity.RequestLog{}}
 	materializer := requestlogmock.NewMockMaterializer(f.mocks)
 	materializer.EXPECT().PersistLog(gomock.Any(), f.store, gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+		func(ctx context.Context, _ storage.Storage, log entity.RequestLog) error {
 			if err := f.fail("recovery/history"); err != nil {
 				return err
+			}
+			if log.Event == entity.RequestEventIssuesReconciled {
+				return f.materializer.PersistLog(ctx, f.store, log)
 			}
 			log.TimestampMs = 1000
 			require.NoError(t, log.Validate())
