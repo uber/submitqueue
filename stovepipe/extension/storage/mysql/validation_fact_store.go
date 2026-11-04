@@ -47,11 +47,12 @@ func (v *validationFactStore) Create(ctx context.Context, fact entity.Validation
 
 	queue := v.queue
 	_, err := v.db.ExecContext(ctx,
-		`INSERT INTO validation_fact (queue, uri, project, degree, request_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO validation_fact (queue, uri, project, project_type, degree, request_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		queue,
 		fact.URI,
 		fact.Project,
+		fact.ProjectType,
 		fact.Degree,
 		fact.RequestID,
 		fact.CreatedAt,
@@ -74,11 +75,12 @@ func (v *validationFactStore) Get(ctx context.Context, uri, project string) (ret
 	queue := v.queue
 	var fact entity.ValidationFact
 	err := v.db.QueryRowContext(ctx,
-		"SELECT uri, project, degree, request_id, created_at FROM validation_fact WHERE queue = ? AND uri = ? AND project = ?",
+		"SELECT uri, project, project_type, degree, request_id, created_at FROM validation_fact WHERE queue = ? AND uri = ? AND project = ?",
 		queue, uri, project,
 	).Scan(
 		&fact.URI,
 		&fact.Project,
+		&fact.ProjectType,
 		&fact.Degree,
 		&fact.RequestID,
 		&fact.CreatedAt,
@@ -102,7 +104,7 @@ func (v *validationFactStore) ListProjects(ctx context.Context, uri, afterProjec
 		return nil, fmt.Errorf("validation fact list limit must be positive")
 	}
 	rows, err := v.db.QueryContext(ctx, `
-		SELECT uri, project, degree, request_id, created_at FROM validation_fact
+		SELECT uri, project, project_type, degree, request_id, created_at FROM validation_fact
 		WHERE queue = ? AND uri = ? AND project > ?
 		ORDER BY project ASC LIMIT ?`,
 		v.queue, uri, afterProject, limit,
@@ -114,7 +116,7 @@ func (v *validationFactStore) ListProjects(ctx context.Context, uri, afterProjec
 
 	for rows.Next() {
 		var fact entity.ValidationFact
-		if err := rows.Scan(&fact.URI, &fact.Project, &fact.Degree, &fact.RequestID, &fact.CreatedAt); err != nil {
+		if err := rows.Scan(&fact.URI, &fact.Project, &fact.ProjectType, &fact.Degree, &fact.RequestID, &fact.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan project fact: %w", err)
 		}
 		ret = append(ret, fact)

@@ -46,7 +46,7 @@ def _pagination_fixture_sql() -> str:
     )
     uri = "git://web/pagination/51?file=src%2Fmain#fragment"
     statements.append(
-        f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','',0.25,'51',2000);"
+        f"INSERT INTO validation_fact (queue,uri,project,degree,request_id,created_at) VALUES ('web/pagination','{uri}','',0.25,'51',2000);"
     )
     for i in range(1, 52):
         degree = 1.0 if i == 50 else 0.25 if i == 1 else 0
@@ -54,7 +54,7 @@ def _pagination_fixture_sql() -> str:
             f"INSERT INTO request_log VALUES ('web/pagination','51','fact-{i}',{2000+i},'','validation_fact_recorded',1,'','{{}}');"
         )
         statements.append(
-            f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
+            f"INSERT INTO validation_fact (queue,uri,project,degree,request_id,created_at) VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
         )
         statements.append(
             f"INSERT INTO project_fact_by_degree VALUES ('web/pagination','{uri}',{degree},'project-{i:02d}');"

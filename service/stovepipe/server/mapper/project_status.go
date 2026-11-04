@@ -90,7 +90,8 @@ func validationFactsToProto(facts []entity.ValidationFact) []*pb.ProjectValidati
 	for _, fact := range facts {
 		degree := fact.Degree
 		projects = append(projects, &pb.ProjectValidation{
-			Project: fact.Project,
+			Project:     fact.Project,
+			ProjectType: fact.ProjectType,
 			Result: &pb.ProjectValidation_BreakageDegree{
 				BreakageDegree: degree,
 			},

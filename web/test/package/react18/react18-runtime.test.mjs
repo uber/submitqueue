@@ -54,7 +54,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
       queue: "repo/main", requestId: "1", updatedAtMs: 100n,
       repositoryResult: { case: "repositoryBreakageDegree", value: 0.25 },
       projectResultsComplete: true, nextPageToken: "",
-      projects: [{ project: "example-project", result: { case: "breakageDegree", value: 0 } }],
+      projects: [{ project: "example-project", projectType: "service", result: { case: "breakageDegree", value: 0 } }],
     }),
     getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 }, events: [] }),
   } });
@@ -116,7 +116,11 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     if (route === "/repo%2Fmain/request/1") {
       assert.match(container.textContent, /example-project/u);
       assert.match(container.textContent, /Repository resultPartial Breakage/u);
-      assert.match(container.textContent, /example-projectGreen/u);
+      const row = [...container.querySelectorAll('table[aria-label="Recorded project results"] tbody tr')]
+        .find(entry => entry.textContent.includes("example-project"));
+      assert.ok(row);
+      assert.deepEqual([...row.querySelectorAll("td")].map(cell => cell.textContent),
+        ["example-project", "service", "Green"]);
       assert.doesNotMatch(container.textContent, /%/u);
     }
     await act(async () => root.unmount());
