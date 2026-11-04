@@ -56,6 +56,7 @@ const model: StovepipePageModel = {
           kind: "requestState",
           label: "accepted",
           outcomeReason: "",
+          details: [],
         },
       ],
     },

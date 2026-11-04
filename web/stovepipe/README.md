@@ -20,6 +20,8 @@ Mount `OpenIssuePagesProvider` with an authenticated `loadPage(href, signal)` ca
 
 Request pages use `/<queue>/request/<request-id>` and load both the current summary and events with `GetRequestHistoryByID`. The summary is displayed above history and is not reconstructed from retained events. Queue pagination uses the backend's opaque continuations, and the latest URL carries no time window.
 
+History's Details column shows retained build IDs, breakage degree, and project-fact counts, including zero values. Multiple fields appear on separate lines; missing metadata displays a dash. Hosts may supply `resolveBuildUrl({ queue, buildId })` to `createStovepipeWeb` to link build IDs to their build provider. The callback runs while loading history and returns an absolute HTTP(S) URL or `undefined` to leave the ID as text. Invalid or unsupported URLs also leave it as text. The library preserves each ID verbatim and places only the resolved URL in the serializable page model; provider-specific URL conventions belong in the host.
+
 The queue's `?view=issues` tab calls `ListOpenIssues` and groups rows by task in backend task/unit order. An empty unit is labeled Task-wide failure and appears first within its task; loading another page extends the existing group. Each row links to its opening request and shows the opening timestamp. The displayed count is loaded issues, not a queue-wide total. Empty batches can carry a continuation, so only an exhausted empty listing says No tracked open issues. This is not a claim of build success or complete coverage. Project attribution, issue history, and repair controls are not part of this view.
 
 Project results use `GetProjectStatusByID` for that exact request, with an empty
