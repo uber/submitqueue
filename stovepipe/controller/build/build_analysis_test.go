@@ -45,6 +45,12 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	var savedBuild entity.Build
 	request := processingRequest(entity.BuildStrategyFull, "")
 	queue := entity.Queue{Name: testQueue, InFlightCount: 1, Version: 1}
+	m.association.DoAndReturn(func(_ context.Context, value entity.Request, old, next int32) error {
+		require.Equal(t, request.Version, old)
+		request = value
+		request.Version = next
+		return nil
+	})
 
 	queueStore := storagemock.NewMockQueueStore(ctrl)
 	issueStore := storagemock.NewMockBuildIssueStore(ctrl)
@@ -76,7 +82,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 		request = value
 		request.Version = next
 		return nil
-	})
+	}).AnyTimes()
 
 	queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
 		return queue, nil

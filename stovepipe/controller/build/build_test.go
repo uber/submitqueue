@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,7 @@ type buildMocks struct {
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
+	association   *gomock.Call
 	metricsScope  tally.TestScope
 }
 
@@ -105,6 +107,9 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 	require.NoError(t, err)
 
 	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	m.association = m.reqStore.EXPECT().Update(gomock.Any(), gomock.Cond(func(request entity.Request) bool {
+		return request.BuildID == testBuildID && request.Version == 1
+	}), int32(1), int32(2)).Return(nil).AnyTimes()
 	return c, m
 }
 
@@ -332,7 +337,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:    "duplicate runner build id is rejected",
+			name:    "runner build belonging to another request is rejected",
 			wantErr: true,
 			setup: func(m buildMocks) {
 				req := processingRequest(entity.BuildStrategyFull, "")
@@ -340,6 +345,7 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
 				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: "other"}, nil)
 			},
 		},
 		{
@@ -508,4 +514,41 @@ func TestAnalysisPublishDeduplicatesRetriesOfTheSameOccasion(t *testing.T) {
 
 	assert.Equal(t, ids[0], ids[1])
 	assert.NotEqual(t, publish.IntentID(testBuildID, "finished"), ids[0])
+}
+
+func TestBuildAssociationIsRetriedBeforeAnyDownstreamPublication(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := processingRequest(entity.BuildStrategyFull, "")
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+	m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+	m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	m.association.Return(assert.AnError).Times(1)
+
+	require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, buildPayload(t, testID))), assert.AnError)
+}
+
+func TestBuildRetryReusesItsAssociation(t *testing.T) {
+	for _, associated := range []bool{false, true} {
+		t.Run(fmt.Sprint(associated), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := processingRequest(entity.BuildStrategyFull, "")
+			if associated {
+				request.BuildID = testBuildID
+			}
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+			m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+			if !associated {
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: testID}, nil)
+			}
+			expectBuildTriggered(m)
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil)
+			m.publisher.EXPECT().Publish(gomock.Any(), "buildanalysis", gomock.Any()).Return(nil)
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildPayload(t, testID))))
+		})
+	}
 }

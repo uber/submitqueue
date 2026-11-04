@@ -295,6 +295,7 @@ func (s *MySQLRequestStoreSuite) TestCreateAndGetWithProcessFields() {
 		State:         entity.RequestStateProcessing,
 		BuildStrategy: entity.BuildStrategyIncrementalSinceGreen,
 		BaseURI:       "git://remote/monorepo/main/green-bbbb",
+		BuildID:       "build/3",
 		Version:       2,
 	}
 	require.NoError(s.T(), s.store.Create(s.ctx, req))
@@ -323,6 +324,7 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 	updated.URI = "git://remote/monorepo/main/resolved"
 	updated.State = entity.RequestStateProcessing
 	updated.BuildStrategy = entity.BuildStrategyFull
+	updated.BuildID = "build/4"
 	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))
 
 	got, err := s.store.Get(s.ctx, req.ID)
@@ -330,6 +332,7 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 	require.Equal(s.T(), "git://remote/monorepo/main/resolved", got.URI)
 	require.Equal(s.T(), entity.RequestStateProcessing, got.State)
 	require.Equal(s.T(), entity.BuildStrategyFull, got.BuildStrategy)
+	require.Equal(s.T(), "build/4", got.BuildID)
 	require.Equal(s.T(), int32(2), got.Version)
 
 	// Stale CAS: oldVersion 1 no longer matches the stored version (2).
