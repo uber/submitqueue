@@ -215,7 +215,7 @@ it.each(["projects=next", "projectPageSize=25"])("preserves the request summary 
     key: "/repo%2Fmain/request/7?" + query,
     projectStatus: { ok: true, data: {
       ...model.projectStatus.data,
-      projects: [{ project: "next-project", breakageDegree: 0 }],
+      projects: [{ project: "next-project", projectType: "", breakageDegree: 0 }],
     } },
   }} />);
   expect(screen.getByText("git://repo/sha")).toBeVisible();

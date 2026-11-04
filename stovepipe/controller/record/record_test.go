@@ -414,8 +414,8 @@ func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 
 func TestResolveProjectResultsMetrics(t *testing.T) {
 	validResults := []projectstatus.Result{
-		{Project: "project-a", Degree: entity.DegreeGreen},
-		{Project: "project-b", Degree: entity.DegreeBroken},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeGreen},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeBroken},
 	}
 	for _, tt := range []struct {
 		name       string
@@ -434,7 +434,7 @@ func TestResolveProjectResultsMetrics(t *testing.T) {
 		{name: "resolver cancellation", resolveErr: context.Canceled, wantResult: "cancel"},
 		{name: "resolver deadline", resolveErr: context.DeadlineExceeded, wantResult: "error"},
 		{name: "invalid project", results: []projectstatus.Result{{Degree: entity.DegreeGreen}}, invalid: true, wantResult: "error"},
-		{name: "invalid degree", results: []projectstatus.Result{{Project: "project-a", Degree: math.NaN()}}, invalid: true, wantResult: "error"},
+		{name: "invalid degree", results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: math.NaN()}}, invalid: true, wantResult: "error"},
 		{name: "duplicate projects", results: []projectstatus.Result{validResults[0], validResults[0]}, invalid: true, wantResult: "error"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -509,14 +509,14 @@ func TestPersistProjectFactsMetrics(t *testing.T) {
 			var results []projectstatus.Result
 			if !tt.empty {
 				results = []projectstatus.Result{
-					{Project: "project-a", Degree: entity.DegreeGreen},
-					{Project: "project-b", Degree: entity.DegreeBroken},
+					{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeGreen},
+					{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeBroken},
 				}
 			}
 			materializer := requestlogmock.NewMockMaterializer(ctrl)
 			c.materializer = materializer
 			for _, result := range results {
-				fact := entity.ValidationFact{URI: request.URI, Project: result.Project, Degree: result.Degree, RequestID: request.ID, CreatedAt: testChangeTime.UnixMilli()}
+				fact := entity.ValidationFact{URI: request.URI, Project: result.ProjectInfo.Name, Degree: result.Degree, RequestID: request.ID, CreatedAt: testChangeTime.UnixMilli()}
 				createErr := tt.factErr
 				if tt.existing {
 					createErr = storage.ErrAlreadyExists
@@ -527,7 +527,7 @@ func TestPersistProjectFactsMetrics(t *testing.T) {
 				}
 				indexErr := tt.indexErr
 				if tt.existing {
-					m.factStore.EXPECT().Get(gomock.Any(), request.URI, result.Project).Return(fact, nil)
+					m.factStore.EXPECT().Get(gomock.Any(), request.URI, result.ProjectInfo.Name).Return(fact, nil)
 					indexErr = storage.ErrAlreadyExists
 				}
 				entry, err := entity.NewProjectFactByDegree(fact)
