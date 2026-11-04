@@ -1,34 +1,26 @@
 import { cleanup, render, screen, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it } from "vitest";
-import type { RequestSummaryModel } from "../entity/index.js";
+import type { HistoryEventModel, RequestSummaryModel } from "../entity/index.js";
 import { History, RequestDetails, RequestList } from "./pages.js";
 import { QueueRequests } from "./queue.js";
 
 afterEach(cleanup);
 
 it("shows labeled history metadata and preserves zeros, opaque IDs and missing values", () => {
-  const details = [
-    [{ label: "Build ID", value: "runner/build/7?attempt=2" }],
-    [{ label: "Breakage degree", value: "0" }],
-    [{ label: "Project facts", value: "0" }],
-    [
-      { label: "Build ID", value: "runner/build/7?attempt=2" },
-      { label: "Duration", value: "4m 32s" },
-      { label: "Attempt", value: "2" },
-    ],
-    [],
+  const events: HistoryEventModel[] = [
+    { id: "triggered", timestampMs: "1000", kind: "event", label: "build_triggered", outcomeReason: "",
+      details: [{ label: "Build ID", value: "runner/build/7?attempt=2" }] },
+    { id: "validation", timestampMs: "2000", kind: "event", label: "validation_fact_recorded", outcomeReason: "",
+      details: [{ label: "Breakage degree", value: "0" }] },
+    { id: "projects", timestampMs: "3000", kind: "event", label: "project_facts_recorded", outcomeReason: "",
+      details: [{ label: "Project facts", value: "0" }] },
+    { id: "legacy-finished", timestampMs: "4000", kind: "event", label: "build_finished", outcomeReason: "", details: [] },
   ];
-  render(<History events={details.map((detail, index) => ({
-    id: String(index), timestampMs: "1000", kind: "event", label: `event_${index}`,
-    outcomeReason: "", details: detail,
-  }))} />);
+  render(<History events={events} />);
   const table = within(screen.getByRole("table", { name: "Request history" }));
   expect(table.getByRole("columnheader", { name: "Details" })).toBeVisible();
   for (const text of ["Build ID: runner/build/7?attempt=2", "Breakage degree: 0", "Project facts: 0"])
     expect(table.getByRole("cell", { name: text })).toBeVisible();
-  expect(table.getByRole("cell", {
-    name: "Build ID: runner/build/7?attempt=2 Duration: 4m 32s Attempt: 2",
-  })).toBeVisible();
   const lastRow = within(table.getAllByRole("row").at(-1)!);
   expect(lastRow.getAllByRole("cell").at(-1)).toHaveTextContent("—");
 });
@@ -38,15 +30,18 @@ it("links resolved build IDs and leaves other values as text", () => {
     id: "build", timestampMs: "1000", kind: "event", label: "build_finished", outcomeReason: "",
     details: [
       { label: "Build ID", value: "runner/build/7?attempt=2", href: "https://builds.example.test/pipeline/builds/7?attempt=2" },
-      { label: "Duration", value: "4m 32s" },
     ],
   }, {
     id: "unresolved", timestampMs: "2000", kind: "event", label: "build_triggered", outcomeReason: "",
     details: [{ label: "Build ID", value: "runner/build/8" }],
+  }, {
+    id: "validation", timestampMs: "3000", kind: "event", label: "validation_fact_recorded", outcomeReason: "",
+    details: [{ label: "Breakage degree", value: "0.5" }],
   }]} />);
   expect(screen.getByRole("link", { name: "runner/build/7?attempt=2" })).toHaveAttribute("href", "https://builds.example.test/pipeline/builds/7?attempt=2");
   expect(screen.queryByRole("link", { name: "runner/build/8" })).toBeNull();
   expect(screen.getByText("runner/build/8")).toBeVisible();
+  expect(screen.getByRole("cell", { name: "Breakage degree: 0.5" })).toBeVisible();
   expect(screen.getAllByRole("link")).toHaveLength(1);
 });
 
