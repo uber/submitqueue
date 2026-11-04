@@ -48,6 +48,9 @@ const (
 type analysisMocks struct {
 	history         map[string]entity.RequestLog
 	historyFailure  *error
+	historyStore    *storagemock.MockRequestLogStore
+	historyRead     *gomock.Call
+	historyCreate   *gomock.Call
 	materializer    requestlog.Materializer
 	request         *entity.Request
 	ctrl            *gomock.Controller
@@ -90,8 +93,9 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m.historyFailure = new(error)
 	m.materializer = requestlog.NewMaterializer(tally.NoopScope)
 	history := storagemock.NewMockRequestLogStore(ctrl)
+	m.historyStore = history
 	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
-	history.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
+	m.historyCreate = history.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
 		if *m.historyFailure != nil {
 			return *m.historyFailure
 		}
@@ -101,7 +105,7 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 		m.history[log.ID] = log
 		return nil
 	}).AnyTimes()
-	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
+	m.historyRead = history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
 		log, exists := m.history[logID]
 		if !exists || log.RequestID != requestID {
 			return entity.RequestLog{}, storage.ErrNotFound
@@ -639,6 +643,11 @@ func TestProcessWaitsForWinningBuildBeforeFinalizing(t *testing.T) {
 
 			require.NoError(t, c.Process(context.Background(), d))
 
+			if outcome == "recorded during detection" {
+				require.Len(t, m.history, 1)
+			} else {
+				require.Empty(t, m.history)
+			}
 			if outcome == "pending" {
 				next := m.expectPass(entity.BuildStatusFailed, nil, nil)
 				m.request.State = entity.RequestStateFailed

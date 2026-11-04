@@ -4,7 +4,7 @@
 
 The controller reloads the queue-scoped Build, invokes the queue's issue detector, and persists each returned build issue individually. Build issues already stored for the same build, task, and unit within a queue are not persisted again, so repeated polls and retries after partial writes are safe. Detector results accompanying an error are discarded.
 
-After successful terminal detection and persistence, the controller retains `build_analysis_completed` with the build ID and complete issue count, including zero. History retention must succeed before the issue-tracking handoff; retries reconcile the same per-build entry. Nonterminal polls add no completion entry.
+Once the Request records the terminal Build as its winning outcome, successful detection and issue persistence retain `build_analysis_completed` before the final issue-tracking handoff. The event snapshots the build ID and issue count, including zero, from the first retained completion. Retries still detect and persist issues, but reuse the retained count and timestamp; a changed count is logged as a detector discrepancy and does not block publication. Concurrent deliveries and uncertain writes converge on the first stored snapshot, while other identity conflicts remain errors. Nonterminal polls and terminal passes waiting for the winning outcome add no completion entry.
 
 After persistence, the controller publishes an issue-tracking notification partitioned by queue. Issue tracking maintains open issues and lifecycle history; analysis never writes them directly. An empty detection result does not delete earlier build issues.
 

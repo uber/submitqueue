@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -32,57 +33,68 @@ import (
 )
 
 func TestSubmittedFixHistoryRepairsWithoutResubmitting(t *testing.T) {
-	c, m := newTestController(t)
-	issue := testIssue()
-	m.expectIssue(issue)
-	m.executor.EXPECT().Submit(gomock.Any(), issue).Return("fix/1", assert.AnError)
-	saved := issueWithFixID(issue, "fix/1")
-	m.observations.EXPECT().Update(gomock.Any(), testBuildID, saved, int32(0), int32(1)).Return(nil)
-	*m.historyFailure = assert.AnError
-	require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
-	require.Empty(t, m.history)
-	*m.historyFailure = nil
-	for i := 0; i < 2; i++ {
-		m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
-		m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{saved}, nil)
-		require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
+	for _, tt := range []struct {
+		name      string
+		submitErr error
+	}{
+		{name: "successful submission"},
+		{name: "identified submission with error", submitErr: assert.AnError},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, m := newTestController(t)
+			issue := testIssue()
+			m.expectIssue(issue)
+			m.executor.EXPECT().Submit(gomock.Any(), issue).Return("fix/1", tt.submitErr)
+			saved := issueWithFixID(issue, "fix/1")
+			m.observations.EXPECT().Update(gomock.Any(), testBuildID, saved, int32(0), int32(1)).Return(nil)
+			*m.historyFailure = assert.AnError
+			require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
+			require.Empty(t, m.history)
+			*m.historyFailure = nil
+			for i := 0; i < 2; i++ {
+				m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
+				m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{saved}, nil)
+				require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
+			}
+			require.Len(t, m.history, 1)
+			var log entity.RequestLog
+			for _, retained := range m.history {
+				log = retained
+			}
+			require.Equal(t, entity.RequestEventFixSubmitted, log.Event)
+			require.Equal(t, map[string]string{
+				requestlog.MetadataKeyBuildID: testBuildID, requestlog.MetadataKeyFixID: "fix/1",
+				requestlog.MetadataKeyTaskID: issue.TaskID, requestlog.MetadataKeyUnitID: issue.UnitID,
+			}, log.Metadata)
+			require.Empty(t, log.State)
+		})
 	}
-	require.Len(t, m.history, 1)
-	var log entity.RequestLog
-	for _, retained := range m.history {
-		log = retained
-	}
-	require.Equal(t, entity.RequestEventFixSubmitted, log.Event)
-	require.Equal(t, map[string]string{
-		requestlog.MetadataKeyBuildID: testBuildID, requestlog.MetadataKeyFixID: "fix/1",
-		requestlog.MetadataKeyTaskID: issue.TaskID, requestlog.MetadataKeyUnitID: issue.UnitID,
-	}, log.Metadata)
-	require.Empty(t, log.State)
 }
 
 func TestFixDLQRetainsDecisionWithoutSubmitting(t *testing.T) {
-	for _, decision := range []string{"associated", "eligible", "ineligible"} {
-		t.Run(decision, func(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		fixID       string
+		issueStatus entity.IssueStatus
+		wantEvent   entity.RequestEvent
+		wantReason  string
+	}{
+		{name: "associated", fixID: "fix/1", wantEvent: entity.RequestEventFixSubmitted},
+		{name: "eligible", issueStatus: entity.IssueStatusOpen, wantEvent: entity.RequestEventFixSubmissionAbandoned, wantReason: "acceptance_unknown"},
+		{name: "ineligible", issueStatus: entity.IssueStatusClosed, wantEvent: entity.RequestEventFixSubmissionSkipped, wantReason: "no_eligible_issue"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			_, m := newTestController(t)
 			c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, messagequeue.TopicKeyFix, "recovery")
 			issue := testIssue()
 			observation := issueIdentity(issue)
-			expected := entity.RequestEventFixSubmissionAbandoned
-			switch decision {
-			case "associated":
-				observation.FixID = "fix/1"
-				expected = entity.RequestEventFixSubmitted
-			case "ineligible":
-				expected = entity.RequestEventFixSubmissionSkipped
-			}
+			observation.FixID = tt.fixID
 			for i := 0; i < 3; i++ {
 				m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
 				m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{observation}, nil)
-				if decision != "associated" {
+				if tt.fixID == "" {
 					current := storedIssue(issue)
-					if decision == "ineligible" {
-						current.Status = entity.IssueStatusClosed
-					}
+					current.Status = tt.issueStatus
 					m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(current, nil)
 					m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(observation)).Return(nil, nil)
 				}
@@ -99,50 +111,68 @@ func TestFixDLQRetainsDecisionWithoutSubmitting(t *testing.T) {
 			}
 			require.Len(t, m.history, 1)
 			for _, log := range m.history {
-				require.Equal(t, expected, log.Event)
+				require.Equal(t, tt.wantEvent, log.Event)
 				require.Equal(t, testBuildID, log.Metadata[requestlog.MetadataKeyBuildID])
-				if decision == "eligible" {
-					require.Equal(t, "acceptance_unknown", log.Metadata[requestlog.MetadataKeyReason])
-				}
+				require.Equal(t, tt.wantReason, log.Metadata[requestlog.MetadataKeyReason])
 			}
 		})
 	}
 }
 
 func TestFixDLQDiscardsInvalidMessages(t *testing.T) {
-	for _, problem := range []string{"payload", "tenant", "missing build"} {
-		t.Run(problem, func(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		configure func(*testing.T, controllerMocks) entityqueue.Message
+	}{
+		{name: "payload", configure: func(t *testing.T, _ controllerMocks) entityqueue.Message {
+			msg := repairMessage(t)
+			msg.Payload = []byte("invalid")
+			return msg
+		}},
+		{name: "tenant", configure: func(t *testing.T, _ controllerMocks) entityqueue.Message {
+			msg := repairMessage(t)
+			msg.Tenant = "other"
+			return msg
+		}},
+		{name: "missing build", configure: func(t *testing.T, m controllerMocks) entityqueue.Message {
+			msg := repairMessage(t)
+			var err error
+			msg.Payload, err = messagequeue.Marshal(&messagequeue.FixRequest{Id: "missing", QueueName: testQueue})
+			require.NoError(t, err)
+			m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
+			m.builds.EXPECT().Get(gomock.Any(), "missing").Return(entity.Build{}, storage.ErrNotFound)
+			return msg
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			_, m := newTestController(t)
 			c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, messagequeue.TopicKeyFix, "recovery")
-			msg := repairMessage(t)
-			switch problem {
-			case "payload":
-				msg.Payload = []byte("invalid")
-			case "tenant":
-				msg.Tenant = "other"
-			case "missing build":
-				var err error
-				msg.Payload, err = messagequeue.Marshal(&messagequeue.FixRequest{Id: "missing", QueueName: testQueue})
-				require.NoError(t, err)
-				m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
-				m.builds.EXPECT().Get(gomock.Any(), "missing").Return(entity.Build{}, storage.ErrNotFound)
-			}
-			require.NoError(t, c.Process(context.Background(), m.delivery(msg)))
+			require.NoError(t, c.Process(context.Background(), m.delivery(tt.configure(t, m))))
 			require.Empty(t, m.history)
 		})
 	}
 }
 
-func TestSubmittedFixHistoryFitsStorageKeyWithMaximumLengthFixID(t *testing.T) {
-	_, m := newTestController(t)
-	observation := issueWithFixID(testIssue(), strings.Repeat("f", 255))
-	request := entity.Request{ID: "1", Queue: testQueue}
-	for i := 0; i < 2; i++ {
-		require.NoError(t, persistFixSubmittedLog(context.Background(), m.materializer, m.store, request, testBuildID, observation))
-	}
-	require.Len(t, m.history, 1)
-	for _, log := range m.history {
-		require.LessOrEqual(t, len(log.ID), 255)
-		require.Equal(t, observation.FixID, log.Metadata[requestlog.MetadataKeyFixID])
+func TestSubmittedFixHistoryPreservesFixID(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		fixID string
+	}{
+		{name: "opaque ID", fixID: "fix/1 "},
+		{name: "maximum length", fixID: strings.Repeat("f", 255)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, m := newTestController(t)
+			observation := issueWithFixID(testIssue(), tt.fixID)
+			request := entity.Request{ID: "1", Queue: testQueue}
+			for i := 0; i < 2; i++ {
+				require.NoError(t, persistFixSubmittedLog(context.Background(), m.materializer, m.store, request, testBuildID, observation))
+			}
+			require.Len(t, m.history, 1)
+			for _, log := range m.history {
+				require.LessOrEqual(t, len(log.ID), 255)
+				require.Equal(t, tt.fixID, log.Metadata[requestlog.MetadataKeyFixID])
+			}
+		})
 	}
 }

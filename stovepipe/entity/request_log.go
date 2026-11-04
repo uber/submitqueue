@@ -34,7 +34,7 @@ const (
 	RequestEventRecordAbandoned RequestEvent = "record_abandoned"
 	// RequestEventBuildAnalysisAbandoned records incomplete build analysis, not a validation outcome.
 	RequestEventBuildAnalysisAbandoned RequestEvent = "build_analysis_abandoned"
-	// RequestEventBuildAnalysisCompleted records complete terminal issue analysis for a build.
+	// RequestEventBuildAnalysisCompleted records completed issue analysis for the winning terminal build.
 	RequestEventBuildAnalysisCompleted RequestEvent = "build_analysis_completed"
 	// RequestEventIssuesReconciled records completed final issue reconciliation for a build.
 	RequestEventIssuesReconciled RequestEvent = "issues_reconciled"

@@ -170,13 +170,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		hold = !finalize && !request.State.IsTerminal()
 	}
 
-	if build.Status.IsTerminal() {
-		log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, build.ID,
-			map[string]string{
-				requestlog.MetadataKeyBuildID:    build.ID,
-				requestlog.MetadataKeyIssueCount: strconv.Itoa(len(issues)),
-			})
-		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+	if finalize {
+		if err := c.retainCompletedAnalysis(ctx, store, request, build.ID, len(issues)); err != nil {
 			return fmt.Errorf("retain completed analysis for build %q: %w", build.ID, err)
 		}
 	}
@@ -197,6 +192,44 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	)
 
 	return nil
+}
+
+func (c *Controller) retainCompletedAnalysis(ctx context.Context, store storage.Storage, request entity.Request, buildID string, issueCount int) error {
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, buildID,
+		map[string]string{
+			requestlog.MetadataKeyBuildID:    buildID,
+			requestlog.MetadataKeyIssueCount: strconv.Itoa(issueCount),
+		})
+	history := store.GetRequestLogStore()
+	retained, err := history.Get(ctx, request.ID, log.ID)
+	if errors.Is(err, storage.ErrNotFound) {
+		persistErr := c.materializer.PersistLog(ctx, store, log)
+		if persistErr == nil {
+			return nil
+		}
+		// A concurrent delivery or uncertain write may have retained the first snapshot.
+		retained, err = history.Get(ctx, request.ID, log.ID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return persistErr
+		}
+		if err != nil {
+			return errors.Join(persistErr, fmt.Errorf("reload completed analysis history: %w", err))
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("load completed analysis history: %w", err)
+	}
+	if retainedCount, ok := retained.Metadata[requestlog.MetadataKeyIssueCount]; ok {
+		if retainedCount != log.Metadata[requestlog.MetadataKeyIssueCount] {
+			c.logger.Warnw("terminal analysis issue count differs from retained completion",
+				"queue", request.Queue, "request_id", request.ID, "build_id", buildID,
+				"retained_issue_count", retainedCount, "observed_issue_count", issueCount)
+		}
+		log.Metadata[requestlog.MetadataKeyIssueCount] = retainedCount
+	} else {
+		delete(log.Metadata, requestlog.MetadataKeyIssueCount)
+	}
+	return c.materializer.PersistLog(ctx, store, log)
 }
 
 func (c *Controller) publishIssueTracking(ctx context.Context, queue, buildID string, finalize bool) error {

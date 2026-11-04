@@ -46,7 +46,7 @@ const (
 	MetadataKeyBrokenProjectFactCount = "broken_project_fact_count"
 	// MetadataKeyBaseURI records the selected build baseline; an empty value means a full build.
 	MetadataKeyBaseURI = "base_uri"
-	// MetadataKeyIssueCount records the complete issue count from terminal build analysis.
+	// MetadataKeyIssueCount records the issue count at the first retained analysis completion.
 	MetadataKeyIssueCount = "issue_count"
 	// MetadataKeyClosureMode records whether absent issues were reconciled or why closure was suppressed.
 	MetadataKeyClosureMode = "closure_mode"
