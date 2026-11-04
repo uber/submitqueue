@@ -64,7 +64,13 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 PROVIDER_COMPOSE_FILE_fake = $(abspath service/submitqueue/docker-compose.fake.yml)
 PROVIDER_COMPOSE_FILE_git = $(abspath service/submitqueue/docker-compose.git.yml)
 PROVIDER_COMPOSE_FILE_github = $(abspath service/submitqueue/docker-compose.provider.yml)
-PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
+# What answers conflict analysis, chosen independently of the provider. Empty
+# keeps the provider's own analyzer; tango adds a fake Tango server and needs
+# PROVIDER=git, whose repository it reads targets from.
+ANALYZER ?=
+ANALYZER_COMPOSE_FILE_tango = $(abspath service/submitqueue/docker-compose.tango.yml)
+ANALYZER_COMPOSE_FILE = $(ANALYZER_COMPOSE_FILE_$(ANALYZER))
+PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))$(if $(ANALYZER_COMPOSE_FILE), -f $(ANALYZER_COMPOSE_FILE))
 
 # Where PROVIDER=git keeps the bare repository it lands into. Outside the
 # repository, so a demo leaves nothing in a checkout, and bind-mounted rather
@@ -165,7 +171,7 @@ build: ## Build all services and examples
 # Build Linux binaries required for the local docker-compose flows (local-*).
 # Bazel-run integration/e2e tests do NOT need these: they build the service
 # binaries hermetically as data dependencies.
-build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-runway-linux ## Build all Linux binaries for Docker
+build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-runway-linux build-tangofake-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
 
 build-runway-linux: ## Build Runway Linux binary for Docker
@@ -389,7 +395,7 @@ local-submitqueue-clean: ## Stop the stack and remove its volumes, images, and P
 	@echo "Cleaning all services and data..."
 	@# The overlay is named so that volumes it declares — Runway's checkouts —
 	@# are removed too, rather than surviving as an orphan.
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down --remove-orphans -v --rmi local
 	@rm -rf "$(SQ_GIT_SANDBOX_DIR)"
 	@echo "All services, volumes, images, and $(SQ_GIT_SANDBOX_DIR) removed."
 
@@ -534,14 +540,18 @@ local-submitqueue-restart: build-all-linux ## Restart all services (rebuild and 
 	@echo "Services restarted!"
 	@make local-submitqueue-ps
 
-local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN)
+local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN; ANALYZER=tango with PROVIDER=git adds a fake Tango server)
+	@test -z "$(ANALYZER)" || test -n "$(ANALYZER_COMPOSE_FILE)" \
+		|| { echo "Unknown ANALYZER '$(ANALYZER)'; the only choice is tango"; exit 2; }
+	@test -z "$(ANALYZER)" || test "$(PROVIDER)" = "git" \
+		|| { echo "ANALYZER=$(ANALYZER) needs PROVIDER=git, got '$(PROVIDER)'"; exit 2; }
 	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
 	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
 		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
 	@test -n "$(PROVIDER_COMPOSE_FILE)" \
 		|| { echo "Provider '$(PROVIDER)' has no compose overlay; add PROVIDER_COMPOSE_FILE_$(PROVIDER) to the Makefile"; exit 2; }
 	@if [ "$(PROVIDER)" = "git" ]; then \
-		$(BAZEL) run //tool/gitsandbox -- -sandbox-dir "$(SQ_GIT_SANDBOX_DIR)" || exit 1; \
+		$(BAZEL) run //tool/gitsandbox -- -sandbox-dir "$(SQ_GIT_SANDBOX_DIR)" $(if $(ANALYZER),-targets) || exit 1; \
 	fi
 	@# Rootless Docker maps container root to the host user; rootful Docker needs
 	@# the host UID:GID explicitly, or the services write files into the sandbox
@@ -572,7 +582,7 @@ local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PRO
 
 local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sandbox; the databases do not survive)
 	@echo "Stopping SubmitQueue services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down --remove-orphans
 	@# Both MySQL services mount anonymous volumes, so `down` detaches them and
 	@# the next `up` creates fresh ones. Saying "data preserved" here would be
 	@# read as "your requests are still there", which they are not.
@@ -584,7 +594,7 @@ local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sand
 
 local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway
 	@echo "Stopping all services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down --remove-orphans
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(RUNWAY_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
 	@echo "Services stopped. Anonymous database volumes are not reused on the next start."
