@@ -31,10 +31,9 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/uber/submitqueue/platform/githubapi"
 	phttp "github.com/uber/submitqueue/platform/http"
 )
-
-const githubAPIVersion = "2026-03-10"
 
 // ErrNotFound is returned when the GitHub Actions API responds with 404 to a
 // request for a resource by ID (e.g. GetRun on an unknown run, or CancelRun
@@ -136,7 +135,7 @@ func (c *Client) GetRun(ctx context.Context, runID int64) (WorkflowRun, error) {
 // run is already terminal or otherwise not cancellable (HTTP 409/422) — the
 // BuildRunner contract treats that as a no-op.
 func (c *Client) CancelRun(ctx context.Context, runID int64) error {
-	status, _, err := phttp.SendRequest(ctx, c.httpClient, http.MethodPost, c.runPath(runID)+"/cancel", nil, c.setHeaders)
+	status, _, err := phttp.SendRequest(ctx, c.httpClient, http.MethodPost, c.runPath(runID)+"/cancel", nil, githubapi.SetRESTHeaders)
 	if err != nil {
 		return err
 	}
@@ -181,7 +180,7 @@ func (c *Client) runPath(runID int64) string {
 // 2xx response, decodes the body into out (when non-nil). A 404 is reported
 // as ErrNotFound so callers can distinguish it from other failures.
 func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out any) error {
-	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, method, rawURL, body, c.setHeaders)
+	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, method, rawURL, body, githubapi.SetRESTHeaders)
 	if err != nil {
 		return err
 	}
@@ -201,12 +200,6 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out
 		}
 	}
 	return nil
-}
-
-func (c *Client) setHeaders(req *http.Request) {
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
 }
 
 // EncodeRunID encodes a GitHub Actions workflow run id as an opaque build id

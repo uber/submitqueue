@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/test/testutil/githubtestrepo",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/githubapi:go_default_library",
         "//platform/http:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@org_golang_x_oauth2//:go_default_library",

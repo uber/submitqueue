@@ -22,10 +22,9 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/uber/submitqueue/platform/githubapi"
 	phttp "github.com/uber/submitqueue/platform/http"
 )
-
-const githubAPIVersion = "2026-03-10"
 
 // pullStateOpen is the REST API state of a pull request that is neither merged
 // nor closed.
@@ -201,7 +200,7 @@ func (c *client) submitMerge(ctx context.Context, number int, req asyncMergeRequ
 		return asyncMergeStatus{}, 0, fmt.Errorf("marshal merge request: %w", err)
 	}
 	path := c.repoPath("pulls", strconv.Itoa(number), "merge-async")
-	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, http.MethodPut, path, body, setHeaders)
+	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, http.MethodPut, path, body, githubapi.SetRESTHeaders)
 	if err != nil {
 		return asyncMergeStatus{}, 0, fmt.Errorf("merge pull request #%d: %w", number, err)
 	}
@@ -244,7 +243,7 @@ func (c *client) getMergeStatus(ctx context.Context, number int, uuid string) (a
 }
 
 func (c *client) getJSON(ctx context.Context, path string, out any) error {
-	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, http.MethodGet, path, nil, setHeaders)
+	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, http.MethodGet, path, nil, githubapi.SetRESTHeaders)
 	if err != nil {
 		return err
 	}
@@ -263,10 +262,4 @@ func (c *client) repoPath(segments ...string) string {
 		path += "/" + url.PathEscape(s)
 	}
 	return path
-}
-
-func setHeaders(req *http.Request) {
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
 }

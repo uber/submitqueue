@@ -43,7 +43,9 @@ func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvid
 
 func servePR(t *testing.T, w http.ResponseWriter, data pullRequestData) {
 	t.Helper()
-	var resp graphqlResponse
+	var resp struct {
+		Data pullRequestQueryData `json:"data"`
+	}
 	resp.Data.Repository.PullRequest = data
 	w.Header().Set("Content-Type", "application/json")
 	require.NoError(t, json.NewEncoder(w).Encode(resp))
