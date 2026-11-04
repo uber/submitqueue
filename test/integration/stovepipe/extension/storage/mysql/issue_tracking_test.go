@@ -62,11 +62,11 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 	require.NoError(t, err)
 	require.Empty(t, opens)
 
-	t.Run("terminal opening checkpoint and task-wide flag", func(t *testing.T) {
+	t.Run("terminal opening checkpoint", func(t *testing.T) {
 		bound, err := factory.For(storage.Config{QueueName: "tracking/terminal"})
 		require.NoError(t, err)
 		store := bound.GetIssueTrackingStore()
-		opening := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "terminal", Phase: entity.IssueTrackingPhaseRefreshing, Finalize: true, HasTaskWideIssues: true, CursorTaskID: "task", CursorUnitID: "unit", Version: 1}
+		opening := entity.IssueTrackingState{RequestID: "10", BuildID: "build/10", NotificationID: "terminal", Phase: entity.IssueTrackingPhaseRefreshing, Finalize: true, CursorTaskID: "task", CursorUnitID: "unit", Version: 1}
 		require.NoError(t, store.Create(ctx, opening))
 		got, err := store.Get(ctx)
 		require.NoError(t, err)
@@ -99,8 +99,8 @@ func testIssueTrackingStore(t *testing.T, ctx context.Context, factory storage.F
 		state := entity.IssueTrackingState{
 			RequestID: "10", BuildID: "build/10", NotificationID: "failed-notification",
 			CursorTaskID: "task", CursorUnitID: "unit",
-			Finalize: true, HasTaskWideIssues: true,
-			Phase: entity.IssueTrackingPhaseAbandoning, Version: 1,
+			Finalize: true,
+			Phase:    entity.IssueTrackingPhaseAbandoning, Version: 1,
 		}
 		require.NoError(t, store.Create(ctx, state))
 		got, err := store.Get(ctx)

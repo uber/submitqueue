@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS issue_tracking (
     cursor_unit_id       VARBINARY(1024) NOT NULL,
 
     finalize             BOOLEAN         NOT NULL DEFAULT FALSE,
-    has_task_wide_issues BOOLEAN         NOT NULL DEFAULT FALSE,
     phase                VARBINARY(32)   NOT NULL,
     version              INT             NOT NULL,
     PRIMARY KEY (queue)

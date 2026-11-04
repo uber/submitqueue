@@ -61,8 +61,9 @@ type fixture struct {
 	buildIssues map[string]map[issueKey]entity.BuildIssue
 	sequence    int
 
-	fixMessages  []entityqueue.Message
-	onFixPublish func(entityqueue.Message)
+	fixMessages     []entityqueue.Message
+	onFixPublish    func(entityqueue.Message)
+	onBuildIssueGet func(build, task, unit string) error
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -290,6 +291,11 @@ func newFixture(t *testing.T) *fixture {
 		return value, nil
 	}).AnyTimes()
 	buildIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, build, task, unit string) (entity.BuildIssue, error) {
+		if f.onBuildIssueGet != nil {
+			if err := f.onBuildIssueGet(build, task, unit); err != nil {
+				return entity.BuildIssue{}, err
+			}
+		}
 		if err := f.fail("build-issues/get"); err != nil {
 			return entity.BuildIssue{}, err
 		}
