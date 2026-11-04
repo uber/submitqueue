@@ -9,11 +9,7 @@ go_library(
         "signature_store.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/mysql",
-    visibility = [
-        "//service/submitqueue/orchestrator:__subpackages__",
-        "//submitqueue/extension/conflict/tango:__subpackages__",
-        "//test/integration/submitqueue/extension/conflict/tango:__subpackages__",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         "//platform/metrics:go_default_library",
         "//submitqueue/extension/conflict/tango:go_default_library",
