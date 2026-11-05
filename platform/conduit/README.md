@@ -47,3 +47,7 @@ Every error is wrapped with the method name.
 
 - **Per-method wrappers.** Each caller keeps its own typed request and result for the methods it calls, and decides what a missing object means for it. A method only one caller uses never lands in this package.
 - **Retries, logging and metrics.** Retry decisions belong to the consumer's error classifiers, and callers already log and record metrics in their own scope.
+
+## Who uses it
+
+- `submitqueue/extension/changeprovider/phabricator` reads diffs with `differential.querydiffs`; the orchestrator's wiring builds its client from the configured endpoint and token.
