@@ -44,7 +44,7 @@ func TestListIssuesByRequestID(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c := controllermock.NewMockListIssuesByRequestIDController(gomock.NewController(t))
-			result := entity.ListIssuesByRequestIDResult{Queue: "queue", RequestID: "7", WinningBuildID: "build", Issues: []entity.RequestIssue{{BuildID: "build", TaskID: "task", UnitID: "unit", FixID: "repair/1"}}, Builds: []entity.IssueBuild{{BuildID: "build", AnalysisStatus: entity.IssueAnalysisCompleted}}, NextPageToken: "next"}
+			result := entity.ListIssuesByRequestIDResult{Queue: "queue", RequestID: "7", Issues: []entity.RequestIssue{{BuildID: "build", TaskID: "task", UnitID: "unit", FixID: "repair/1"}}, NextPageToken: "next"}
 			c.EXPECT().ListIssuesByRequestID(gomock.Any(), entity.ListIssuesByRequestIDRequest{Queue: "queue", RequestID: "7", PageSize: 10, PageToken: "token"}).Return(result, tt.err)
 			server := &StovepipeServer{requestIssuesController: c}
 			got, err := server.ListIssuesByRequestID(context.Background(), &pb.ListIssuesByRequestIDRequest{Queue: "queue", RequestId: "7", PageSize: 10, PageToken: "token"})
@@ -54,7 +54,7 @@ func TestListIssuesByRequestID(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, &pb.ListIssuesByRequestIDResponse{Queue: "queue", RequestId: "7", WinningBuildId: "build", Issues: []*pb.RequestIssue{{BuildId: "build", TaskId: "task", UnitId: "unit", FixId: "repair/1"}}, Builds: []*pb.IssueBuild{{BuildId: "build", AnalysisStatus: "completed"}}, NextPageToken: "next"}, got)
+			require.Equal(t, &pb.ListIssuesByRequestIDResponse{Queue: "queue", RequestId: "7", Issues: []*pb.RequestIssue{{BuildId: "build", TaskId: "task", UnitId: "unit", FixId: "repair/1"}}, NextPageToken: "next"}, got)
 		})
 	}
 }

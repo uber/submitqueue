@@ -38,26 +38,6 @@ type RequestIssue struct {
 	FixID string
 }
 
-// IssueAnalysisStatus is the retained outcome of issue analysis.
-type IssueAnalysisStatus string
-
-const (
-	// IssueAnalysisUnknown means no completion or abandonment is retained.
-	IssueAnalysisUnknown IssueAnalysisStatus = ""
-	// IssueAnalysisCompleted means successful terminal analysis was retained.
-	IssueAnalysisCompleted IssueAnalysisStatus = "completed"
-	// IssueAnalysisAbandoned means analysis was abandoned without retained completion.
-	IssueAnalysisAbandoned IssueAnalysisStatus = "abandoned"
-)
-
-// IssueBuild identifies a build represented in retained request history.
-type IssueBuild struct {
-	// BuildID is the opaque runner-assigned identifier.
-	BuildID string
-	// AnalysisStatus is the retained analysis outcome; unknown does not imply running.
-	AnalysisStatus IssueAnalysisStatus
-}
-
 // ListIssuesByRequestIDResult is a live page of observations with build provenance.
 type ListIssuesByRequestIDResult struct {
 	// Queue contains the selected request.
@@ -66,10 +46,6 @@ type ListIssuesByRequestIDResult struct {
 	RequestID string
 	// Issues contains observations in bytewise build/task/unit order.
 	Issues []RequestIssue
-	// Builds contains all builds identified in retained history in bytewise build-ID order.
-	Builds []IssueBuild
-	// WinningBuildID identifies the build establishing the terminal outcome, when retained.
-	WinningBuildID string
 	// NextPageToken continues the traversal; empty means exhausted, not complete analysis.
 	NextPageToken string
 }

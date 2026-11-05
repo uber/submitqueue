@@ -399,27 +399,17 @@ message RequestIssue {
     string fix_id = 4;
 }
 
-// IssueBuild describes a build represented in retained request history.
-message IssueBuild {
-    // Opaque runner-assigned build identifier.
-    string build_id = 1;
-    // Retained analysis outcome: "completed", "abandoned", or empty when unknown.
-    // Completion takes precedence over an earlier abandonment. Empty does not imply running.
-    string analysis_status = 2;
-}
-
 // ListIssuesByRequestIDResponse contains live observations, not a snapshot across calls.
 message ListIssuesByRequestIDResponse {
+    reserved 4, 5;
+    reserved "builds", "winning_build_id";
+
     // Queue containing the request.
     string queue = 1;
     // Selected request identifier.
     string request_id = 2;
     // Observations ordered by bytewise build ID, task ID, and unit ID.
     repeated RequestIssue issues = 3;
-    // All builds identified by retained history, including those without observations.
-    repeated IssueBuild builds = 4;
-    // Build that established the terminal request outcome; empty when not retained.
-    string winning_build_id = 5;
     // Empty when the traversal is exhausted. A bounded scan can return an empty page with a token.
     string next_page_token = 6;
 }

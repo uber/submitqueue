@@ -54,8 +54,6 @@ export interface StovepipeService {
     queue: string;
     requestId: string;
     issues: { buildId: string; taskId: string; unitId: string; fixId: string }[];
-    builds: { buildId: string; analysisStatus: string }[];
-    winningBuildId: string;
     nextPageToken: string;
   }>;
   listOpenIssues(

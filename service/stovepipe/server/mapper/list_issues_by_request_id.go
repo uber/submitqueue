@@ -24,15 +24,11 @@ func ProtoToListIssuesByRequestIDRequest(req *pb.ListIssuesByRequestIDRequest) e
 	return entity.ListIssuesByRequestIDRequest{Queue: req.GetQueue(), RequestID: req.GetRequestId(), PageSize: req.GetPageSize(), PageToken: req.GetPageToken()}
 }
 
-// ListIssuesByRequestIDResultToProto preserves observations, provenance, and analysis outcomes.
+// ListIssuesByRequestIDResultToProto preserves observations and source build identifiers.
 func ListIssuesByRequestIDResultToProto(result entity.ListIssuesByRequestIDResult) *pb.ListIssuesByRequestIDResponse {
 	issues := make([]*pb.RequestIssue, len(result.Issues))
 	for i, issue := range result.Issues {
 		issues[i] = &pb.RequestIssue{BuildId: issue.BuildID, TaskId: issue.TaskID, UnitId: issue.UnitID, FixId: issue.FixID}
 	}
-	builds := make([]*pb.IssueBuild, len(result.Builds))
-	for i, build := range result.Builds {
-		builds[i] = &pb.IssueBuild{BuildId: build.BuildID, AnalysisStatus: string(build.AnalysisStatus)}
-	}
-	return &pb.ListIssuesByRequestIDResponse{Queue: result.Queue, RequestId: result.RequestID, Issues: issues, Builds: builds, WinningBuildId: result.WinningBuildID, NextPageToken: result.NextPageToken}
+	return &pb.ListIssuesByRequestIDResponse{Queue: result.Queue, RequestId: result.RequestID, Issues: issues, NextPageToken: result.NextPageToken}
 }

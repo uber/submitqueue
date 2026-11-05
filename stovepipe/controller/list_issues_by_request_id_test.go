@@ -85,8 +85,6 @@ func TestRequestIssuesAcrossBuildsAndContinuation(t *testing.T) {
 	got, err := f.controller.ListIssuesByRequestID(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, []entity.RequestIssue{{BuildID: "build/a", TaskID: "task"}, {BuildID: "build/b", TaskID: "task", FixID: "repair/opaque"}}, got.Issues)
-	require.Equal(t, []entity.IssueBuild{{BuildID: "build/a"}, {BuildID: "build/b", AnalysisStatus: entity.IssueAnalysisCompleted}}, got.Builds)
-	require.Equal(t, "build/b", got.WinningBuildID)
 	require.NotEmpty(t, got.NextPageToken)
 	req.PageToken = got.NextPageToken
 	req.PageSize = 1
@@ -175,7 +173,7 @@ func TestRequestIssuesDoesNotReadForeignBuildFromCursor(t *testing.T) {
 	require.True(t, IsInvalidRequest(err))
 }
 
-func TestRequestIssuesNoBuildAndAbandonedAnalysis(t *testing.T) {
+func TestRequestIssuesEmptyObservations(t *testing.T) {
 	for _, logs := range [][]entity.RequestLog{nil, {issueBuildLog("a", entity.RequestEventBuildAnalysisAbandoned)}} {
 		f := newRequestIssuesFixture(t)
 		f.expectHistory(logs)
@@ -186,9 +184,6 @@ func TestRequestIssuesNoBuildAndAbandonedAnalysis(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, got.Issues)
 		require.Empty(t, got.NextPageToken)
-		if len(logs) > 0 {
-			require.Equal(t, entity.IssueAnalysisAbandoned, got.Builds[0].AnalysisStatus)
-		}
 	}
 }
 

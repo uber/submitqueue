@@ -604,17 +604,13 @@ test("retains project paging across views and resets the cursor when page size c
 
 test("lists request observations with build provenance and shareable pagination", async ({ page }) => {
   const result = await client.listIssuesByRequestID({ queue: "web/pagination", requestId: "51", pageSize: 1 });
-  expect(result.winningBuildId).toBe("web/build/51");
   expect(result.issues[0].buildId).toBe("web/build/50");
-  expect(result.builds.map(build => build.analysisStatus)).toEqual(["abandoned", "completed"]);
   await page.goto("/web%2Fpagination/request/51?view=issues");
   const section = page.getByRole("region", { name: "Build and Test Issues", exact: true });
   const rows = section.getByRole("table", { name: "Observed build and test issues" }).locator("tbody tr");
   await expect(rows).toHaveCount(50);
   await expect(rows.first()).toContainText("web/build/50");
   await expect(rows.nth(1)).toContainText("repair/opaque");
-  await expect(section.getByText(/request outcome/)).toContainText("Analysis completed");
-  await expect(section.getByText(/Analysis abandoned/)).toBeVisible();
   await section.getByRole("link", { name: "Next issues →" }).first().click();
   await expect(rows).toHaveCount(5);
   expect(new URL(page.url()).searchParams.has("issues")).toBe(true);

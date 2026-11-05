@@ -23,8 +23,6 @@ export async function loadRequestIssues(
   );
   return {
     issues: result.issues,
-    builds: result.builds,
-    winningBuildId: result.winningBuildId,
     firstHref: pageToken ? href("") : null,
     nextHref: result.nextPageToken ? href(result.nextPageToken) : null,
   };

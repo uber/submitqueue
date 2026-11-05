@@ -17,7 +17,6 @@ package controller
 //go:generate mockgen -source=list_issues_by_request_id.go -destination=mock/list_issues_by_request_id_mock.go -package=mock
 
 import (
-	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -90,20 +89,21 @@ func (c *listIssuesByRequestIDController) ListIssuesByRequestID(ctx context.Cont
 		}
 		return result, err
 	}
-	result = summarizeRequestIssueBuilds(history)
+	result = entity.ListIssuesByRequestIDResult{Queue: history.RequestSummary.Queue, RequestID: history.RequestID, Issues: []entity.RequestIssue{}}
+	buildIDs := requestIssueBuildIDs(history)
 	start := 0
 	if cursor.BuildID != "" {
-		start = slices.IndexFunc(result.Builds, func(build entity.IssueBuild) bool { return build.BuildID == cursor.BuildID })
+		start = slices.Index(buildIDs, cursor.BuildID)
 		if start < 0 {
 			return entity.ListIssuesByRequestIDResult{}, fmt.Errorf("page_token build does not belong to request: %w", ErrInvalidRequest)
 		}
 	}
-	if len(result.Builds) == 0 {
+	if len(buildIDs) == 0 {
 		return result, nil
 	}
 	observations := store.GetBuildIssueStore()
-	for index := start; index < len(result.Builds); index++ {
-		buildID := result.Builds[index].BuildID
+	for index := start; index < len(buildIDs); index++ {
+		buildID := buildIDs[index]
 		after := storage.BuildIssueCursor{}
 		if index == start {
 			after = storage.BuildIssueCursor{TaskID: cursor.TaskID, UnitID: cursor.UnitID}
@@ -121,8 +121,8 @@ func (c *listIssuesByRequestIDController) ListIssuesByRequestID(ctx context.Cont
 		case len(rows) > remaining:
 			last := result.Issues[len(result.Issues)-1]
 			next.BuildID, next.TaskID, next.UnitID = buildID, last.TaskID, last.UnitID
-		case index+1 < len(result.Builds) && (len(result.Issues) == pageSize || index-start+1 == maxIssueBuildsPerPage):
-			next.BuildID = result.Builds[index+1].BuildID
+		case index+1 < len(buildIDs) && (len(result.Issues) == pageSize || index-start+1 == maxIssueBuildsPerPage):
+			next.BuildID = buildIDs[index+1]
 		default:
 			continue
 		}
@@ -162,33 +162,18 @@ func resolveRequestIssuesPage(req entity.ListIssuesByRequestIDRequest) (int, req
 	return pageSize, cursor, nil
 }
 
-func summarizeRequestIssueBuilds(history entity.RequestHistory) entity.ListIssuesByRequestIDResult {
-	result := entity.ListIssuesByRequestIDResult{Queue: history.RequestSummary.Queue, RequestID: history.RequestID, Issues: []entity.RequestIssue{}, Builds: []entity.IssueBuild{}}
-	builds := make(map[string]entity.IssueAnalysisStatus)
-	var terminalVersion int32
+func requestIssueBuildIDs(history entity.RequestHistory) []string {
+	builds := make(map[string]struct{})
 	for _, log := range history.Events {
 		buildID := log.Metadata[requestlog.MetadataKeyBuildID]
-		if buildID == "" {
-			continue
-		}
-		status := builds[buildID]
-		switch log.Event {
-		case entity.RequestEventBuildAnalysisCompleted:
-			status = entity.IssueAnalysisCompleted
-		case entity.RequestEventBuildAnalysisAbandoned:
-			if status != entity.IssueAnalysisCompleted {
-				status = entity.IssueAnalysisAbandoned
-			}
-		}
-		builds[buildID] = status
-		if log.State.IsTerminal() && log.RequestVersion > terminalVersion {
-			result.WinningBuildID = buildID
-			terminalVersion = log.RequestVersion
+		if buildID != "" {
+			builds[buildID] = struct{}{}
 		}
 	}
-	for buildID, status := range builds {
-		result.Builds = append(result.Builds, entity.IssueBuild{BuildID: buildID, AnalysisStatus: status})
+	buildIDs := make([]string, 0, len(builds))
+	for buildID := range builds {
+		buildIDs = append(buildIDs, buildID)
 	}
-	slices.SortFunc(result.Builds, func(a, b entity.IssueBuild) int { return cmp.Compare(a.BuildID, b.BuildID) })
-	return result
+	slices.Sort(buildIDs)
+	return buildIDs
 }

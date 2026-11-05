@@ -70,10 +70,10 @@ def _pagination_fixture_sql() -> str:
         statements.append(
             f"INSERT INTO open_issue VALUES ('web/pagination','{task}','{unit}','web/build/51');"
         )
-    for build, event in [("web/build/50", "build_analysis_abandoned"), ("web/build/51", "build_analysis_completed")]:
+    for build in ["web/build/50", "web/build/51"]:
         metadata = json.dumps({"build_id": build})
         statements.append(
-            f"INSERT INTO request_log VALUES ('web/pagination','51','{event}',3000,'','{event}',0,'','{metadata}');"
+            f"INSERT INTO request_log VALUES ('web/pagination','51','{build}',3000,'','build_triggered',0,'','{metadata}');"
         )
     statements.append(
         "INSERT INTO request_log VALUES ('web/pagination','51','outcome',3001,'failed','',2,'','{\"build_id\":\"web/build/51\"}');"
