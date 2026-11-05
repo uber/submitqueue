@@ -112,6 +112,7 @@ func TestIssueTrackingRegistration(t *testing.T) {
 
 	cfg, ok := registry.SubscriptionConfig(stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
 	require.True(t, ok)
+	assert.Equal(t, 1, cfg.BatchSize)
 	assert.True(t, cfg.DLQ.Enabled)
 	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
 }

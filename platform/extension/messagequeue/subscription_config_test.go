@@ -97,6 +97,13 @@ func TestExtendedSubscriptionConfig(t *testing.T) {
 	assert.True(t, config.DLQ.Enabled)
 }
 
+func TestSingleMessageSubscriptionConfig(t *testing.T) {
+	expected := ExtendedSubscriptionConfig("worker-1", "consumer-1")
+	expected.BatchSize = 1
+
+	assert.Equal(t, expected, SingleMessageSubscriptionConfig("worker-1", "consumer-1"))
+}
+
 func TestSubscriptionConfig_DifferentConsumerGroups(t *testing.T) {
 	// Test that different consumer groups get independent configs
 	tests := []struct {

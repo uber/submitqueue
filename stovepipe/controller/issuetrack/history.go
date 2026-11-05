@@ -16,12 +16,28 @@ package issuetrack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
+
+func terminalAnalysisEvent(ctx context.Context, store storage.Storage, request entity.Request, buildID string) (entity.RequestEvent, error) {
+	for _, event := range []entity.RequestEvent{entity.RequestEventBuildAnalysisCompleted, entity.RequestEventBuildAnalysisAbandoned} {
+		log := requestlog.NewRequestEventLog(request, event, buildID, nil)
+		_, err := store.GetRequestLogStore().Get(ctx, request.ID, log.ID)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return entity.RequestEventUnknown, fmt.Errorf("read terminal analysis readiness: %w", err)
+		}
+		return event, nil
+	}
+	return entity.RequestEventUnknown, nil
+}
 
 func persistIssuesReconciledLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, queue string, progress entity.IssueTrackingState) error {
 	if progress.Phase != entity.IssueTrackingPhaseFinalized {

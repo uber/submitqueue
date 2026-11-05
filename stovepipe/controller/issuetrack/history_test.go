@@ -57,7 +57,7 @@ func TestReconciliationHistoryClosureModes(t *testing.T) {
 			if mode == "reconciled" {
 				require.NoError(t, f.deliver(msg, false))
 			}
-			require.Len(t, f.requestHistory, 1)
+			require.Len(t, f.requestHistory, 2)
 			log := f.requestHistory["10:event/issues_reconciled/build"]
 			require.Equal(t, entity.RequestEventIssuesReconciled, log.Event)
 			require.Equal(t, mode, log.Metadata[requestlog.MetadataKeyClosureMode])
@@ -80,7 +80,7 @@ func TestCompletedReconciliationRepairsHistoryBeforeReplacingCheckpoint(t *testi
 	f.failures["request-history/create"] = 1
 	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
-	require.Empty(t, f.requestHistory)
+	require.NotContains(t, f.requestHistory, "10:event/issues_reconciled/old")
 	completed := f.progress
 	f.source("new", "11", entity.BuildStatusRunning)
 	newer := f.message("new", false)
@@ -91,7 +91,7 @@ func TestCompletedReconciliationRepairsHistoryBeforeReplacingCheckpoint(t *testi
 	require.NoError(t, f.deliver(newer, false))
 	require.Equal(t, "new", f.progress.BuildID)
 	require.Contains(t, f.requestHistory, "10:event/issues_reconciled/old")
-	require.Len(t, f.requestHistory, 1) // A nonterminal refresh adds no event.
+	require.Len(t, f.requestHistory, 2) // Only the older validation has completion and reconciliation events.
 }
 
 func TestIssueTrackingDLQRepairsCompletedPassInsteadOfAbandoning(t *testing.T) {
@@ -105,6 +105,6 @@ func TestIssueTrackingDLQRepairsCompletedPassInsteadOfAbandoning(t *testing.T) {
 	checkpoint := f.progress
 	require.NoError(t, f.recoverHistory(msg, failure.Failure{}))
 	require.Equal(t, checkpoint, f.progress)
-	require.Len(t, f.requestHistory, 1)
+	require.Len(t, f.requestHistory, 2)
 	require.Contains(t, f.requestHistory, "10:event/issues_reconciled/build")
 }

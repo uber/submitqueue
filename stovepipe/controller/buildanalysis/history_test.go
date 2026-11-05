@@ -22,7 +22,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -31,19 +30,17 @@ import (
 
 func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 	for _, tt := range []struct {
-		name            string
-		firstCount      int
-		retryCount      int
-		wantCount       int
-		waitForWinner   bool
-		failHistory     bool
-		failPublication bool
+		name          string
+		firstCount    int
+		retryCount    int
+		wantCount     int
+		waitForWinner bool
+		failHistory   bool
 	}{
 		{name: "empty analysis", wantCount: 0},
 		{name: "idempotent replay", firstCount: 1, retryCount: 1, wantCount: 1},
 		{name: "winner recorded after held pass", firstCount: 1, retryCount: 2, wantCount: 2, waitForWinner: true},
 		{name: "history failure", firstCount: 1, retryCount: 2, wantCount: 2, failHistory: true},
-		{name: "publication failure with more issues", firstCount: 1, retryCount: 2, wantCount: 1, failPublication: true},
 		{name: "replay with fewer issues", firstCount: 2, retryCount: 1, wantCount: 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -73,7 +70,6 @@ func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 				}
 				waiting := pass == 0 && tt.waitForWinner
 				historyFailure := pass == 0 && tt.failHistory
-				publicationFailure := pass == 0 && tt.failPublication
 				if waiting {
 					m.request.TerminalBuildID = ""
 				}
@@ -81,23 +77,13 @@ func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 					*m.historyFailure = assert.AnError
 				} else {
 					*m.historyFailure = nil
-					last = m.expectNotification(t, !waiting, last).Do(func(context.Context, string, entityqueue.Message) {
-						if waiting {
-							require.Empty(t, m.history)
-						} else {
-							require.Len(t, m.history, 1)
-						}
-					})
-					if publicationFailure {
-						last.Return(assert.AnError)
-					}
 				}
 				d := m.delivery(t)
 				if waiting {
 					d.EXPECT().Hold(PollDelayMs).After(last)
 				}
 				err := c.Process(context.Background(), d)
-				if historyFailure || publicationFailure {
+				if historyFailure {
 					require.ErrorIs(t, err, assert.AnError)
 				} else {
 					require.NoError(t, err)
@@ -151,8 +137,7 @@ func TestCompletedAnalysisHistoryRetainsConcurrentSnapshot(t *testing.T) {
 				return tt.createErr
 			})
 			m.historyCreate.After(created)
-			detected := m.expectPass(entity.BuildStatusFailed, nil, nil)
-			m.expectNotification(t, true, detected)
+			m.expectPass(entity.BuildStatusFailed, nil, nil)
 			require.NoError(t, c.Process(context.Background(), m.delivery(t)))
 			require.Len(t, m.history, 1)
 			require.Equal(t, retained, m.history[retained.ID])

@@ -64,8 +64,16 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		c.controller.logger.Errorw("discarding issue tracking dlq message with invalid queue identity", "message_id", msg.ID, "error", err)
 		return nil
 	}
-	if msg.ID == "" || queue == "" || notification.GetBuildId() == "" || msg.PartitionKey != queue {
-		c.controller.logger.Errorw("discarding issue tracking dlq message with invalid identity", "message_id", msg.ID, "queue", queue)
+	if msg.ID == "" {
+		c.controller.logger.Errorw("discarding issue tracking dlq message without a message ID", "queue", queue)
+		return nil
+	}
+	if notification.GetRequestId() == "" {
+		c.controller.logger.Errorw("discarding issue tracking dlq message without a request ID", "message_id", msg.ID, "queue", queue)
+		return nil
+	}
+	if msg.PartitionKey != queue {
+		c.controller.logger.Errorw("discarding issue tracking dlq message from the wrong partition", "message_id", msg.ID, "queue", queue, "partition", msg.PartitionKey)
 		return nil
 	}
 
@@ -74,20 +82,12 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		c.controller.logger.Errorw("discarding issue tracking dlq message for unresolvable queue", "queue", queue, "message_id", msg.ID, "error", err)
 		return nil
 	}
-	build, err := loader.ByID(ctx, notification.GetBuildId(), store.GetBuildStore().Get, "build")
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			c.controller.logger.Errorw("discarding issue tracking dlq message for missing build", "message_id", msg.ID, "error", err)
-			return nil
-		}
-		return err
+	request, err := loader.ByID(ctx, notification.GetRequestId(), store.GetRequestStore().Get, "tracked request")
+	if errors.Is(err, storage.ErrNotFound) {
+		c.controller.logger.Errorw("discarding issue tracking dlq message for missing source", "message_id", msg.ID, "error", err)
+		return nil
 	}
-	request, err := loader.ByID(ctx, build.RequestID, store.GetRequestStore().Get, "request")
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			c.controller.logger.Errorw("discarding issue tracking dlq message for missing request", "message_id", msg.ID, "error", err)
-			return nil
-		}
 		return err
 	}
 	if request.Queue != queue {
@@ -99,7 +99,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		return nil
 	}
 
-	progress, err := c.abandonPass(ctx, store, request, notification, msg.ID)
+	progress, err := c.abandonPass(ctx, store, request, msg.ID)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	return nil
 }
 
-func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, request entity.Request, notification *stovepipemq.IssueTrack, notificationID string) (entity.IssueTrackingState, error) {
+func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, request entity.Request, notificationID string) (entity.IssueTrackingState, error) {
 	tracking := store.GetIssueTrackingStore()
 	progress, err := tracking.Get(ctx)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
@@ -133,39 +133,31 @@ func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, 
 		if err := persistIssuesReconciledLog(ctx, c.materializer, store, request.Queue, progress); err != nil {
 			return entity.IssueTrackingState{}, err
 		}
-		if progress.NotificationID == notificationID {
-			switch progress.Phase {
-			case entity.IssueTrackingPhaseRefreshed, entity.IssueTrackingPhaseFinalized:
+		order, err := entity.CompareRequestID(request.ID, progress.RequestID)
+		if err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+		if order < 0 {
+			return entity.IssueTrackingState{}, nil
+		}
+		switch progress.Phase {
+		case entity.IssueTrackingPhaseFinalized, entity.IssueTrackingPhaseAbandoned:
+			if order == 0 {
 				return progress, nil
-			case entity.IssueTrackingPhaseAbandoned:
-				return progress, c.recordAbandonment(ctx, store, request.Queue, progress)
 			}
-		} else {
-			order, err := entity.CompareRequestID(request.ID, progress.RequestID)
-			if err != nil {
-				return entity.IssueTrackingState{}, err
-			}
-			if order < 0 || (order == 0 && progress.Finalize) {
-				return entity.IssueTrackingState{}, nil
-			}
-			switch progress.Phase {
-			case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing, entity.IssueTrackingPhaseAbandoning:
-				if order == 0 {
-					return entity.IssueTrackingState{}, nil
-				}
-			default:
-				progress = entity.IssueTrackingState{Version: progress.Version}
-			}
+			progress = entity.IssueTrackingState{Version: progress.Version}
 		}
 	}
 
 	if progress.NotificationID == "" {
-		if request.TerminalBuildID != "" && request.TerminalBuildID != notification.GetBuildId() {
-			return entity.IssueTrackingState{}, nil
+		progress.RequestID = request.ID
+		progress.BuildID = request.BuildID
+		if request.TerminalBuildID != "" {
+			progress.BuildID = request.TerminalBuildID
 		}
-		progress.RequestID, progress.BuildID, progress.NotificationID = request.ID, notification.GetBuildId(), notificationID
-		progress.Finalize = notification.GetFinalize()
+		progress.NotificationID = notificationID
 	}
+	progress.Finalize = true
 	progress.Phase = entity.IssueTrackingPhaseAbandoning
 	if progress.Version == 0 {
 		progress.Version = 1
@@ -229,7 +221,11 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 		return entity.IssueTrackingState{}, err
 	}
 	progress.Phase = entity.IssueTrackingPhaseAbandoned
-	return saveProgress(ctx, store.GetIssueTrackingStore(), progress)
+	checkpoint, err := saveProgress(ctx, store.GetIssueTrackingStore(), progress)
+	if err == nil {
+		c.controller.logger.Infow("abandoned issue tracking", "queue", queue, "request_id", checkpoint.RequestID, "build_id", checkpoint.BuildID, "notification_id", checkpoint.NotificationID)
+	}
+	return checkpoint, err
 }
 
 func (c *DLQController) recordAbandonment(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState) error {

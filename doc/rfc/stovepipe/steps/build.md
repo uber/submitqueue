@@ -1,6 +1,6 @@
 # Build stage
 
-Build dispatch retains the request's build association before publishing status and analysis notices. Retries reuse that association instead of triggering again; an uncertain build create is accepted only when its retained request identity matches.
+Build dispatch retains the request's build association before publishing status and analysis notices. Retries reuse that association instead of triggering again; an uncertain build create is accepted only when its retained request identity matches. This supplies the build ID to the request-scoped tracking job already registered at admission.
 
 `build` triggers the build-runner for the scope `process` already decided and hands the resulting build id to `buildsignal`. See [workflow.md](../workflow.md) for where it sits in the pipeline, and [process.md](process.md) for how the scope it reads (`BuildStrategy`, `BaseURI`) is chosen.
 
