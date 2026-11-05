@@ -62,6 +62,8 @@ export interface HistoryEventModel {
   label: string;
   /** Backend reason associated with this occurrence. */
   outcomeReason: string;
+  /** Labeled occurrence metadata with optional absolute HTTP(S) links; empty when unavailable. */
+  details: { label: string; value: string; href?: string }[];
 }
 export interface RequestHistoryModel {
   /** Current materialized lifecycle summary returned with the history. */
