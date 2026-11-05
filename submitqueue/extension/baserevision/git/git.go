@@ -20,7 +20,6 @@ package git
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -29,10 +28,6 @@ import (
 )
 
 const defaultRemote = "origin"
-
-// fullCommitSHA matches the SHA-1 and SHA-256 object formats. Tango needs the
-// full SHA, so an abbreviated one is rejected.
-var fullCommitSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // Target locates the branch whose tip is a queue's base revision.
 type Target struct {
@@ -103,7 +98,7 @@ func (r resolver) Resolve(ctx context.Context, queue string) (string, error) {
 	}
 
 	sha := strings.TrimSpace(outputs[1].Stdout)
-	if !fullCommitSHA.MatchString(sha) {
+	if !baserevision.IsFullCommitSHA(sha) {
 		return "", fmt.Errorf("git returned %q, not a full commit SHA", sha)
 	}
 	return sha, nil

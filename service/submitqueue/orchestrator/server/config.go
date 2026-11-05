@@ -273,6 +273,16 @@ type tangoAnalyzerConfig struct {
 	// Strategy is how Tango computes the base target graph: "unset", "shell"
 	// or "native". Required.
 	Strategy string `yaml:"strategy"`
+	// GitHub names the branch whose tip is the base revision. Required with
+	// the github change provider, which keeps no clone to read it from.
+	GitHub *tangoGitHubConfig `yaml:"github"`
+}
+
+// tangoGitHubConfig locates a queue's target branch on GitHub.
+type tangoGitHubConfig struct {
+	Owner  string `yaml:"owner"`
+	Repo   string `yaml:"repo"`
+	Branch string `yaml:"branch"`
 }
 
 // scorerConfig selects how a queue ranks candidate speculation paths. The

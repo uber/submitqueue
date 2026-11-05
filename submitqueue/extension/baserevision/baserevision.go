@@ -16,7 +16,19 @@ package baserevision
 
 //go:generate mockgen -source=baserevision.go -destination=mock/baserevision_mock.go -package=mock
 
-import "context"
+import (
+	"context"
+	"regexp"
+)
+
+// fullCommitSHA matches the SHA-1 and SHA-256 object formats.
+var fullCommitSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// IsFullCommitSHA reports whether s is a complete commit SHA. A base revision
+// must be one, because the consumers of it reject an abbreviated SHA.
+func IsFullCommitSHA(s string) bool {
+	return fullCommitSHA.MatchString(s)
+}
 
 // Resolver returns the commit a queue's new batches are analyzed against.
 type Resolver interface {
