@@ -158,17 +158,25 @@ func acceptedRequest(id string) entity.Request {
 func TestProcessBuildPublishRequiresRegisteredTopic(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
-	c.registry = consumer.TopicRegistry{}
+	queue := mqmock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(m.publisher)
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: basehook.TopicKeyHook, Name: "stovepipe-hook", Queue: queue},
+	})
+	require.NoError(t, err)
+	c.registry = registry
 
 	request := entity.Request{
 		ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 	}
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
-	expectProcessingLog(t, m, request)
+	logCall := expectProcessingLog(t, m, request)
+	expectStartValidationAnnounce(t, m, request.ID).After(logCall)
 
-	err := c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID)))
+	err = c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID)))
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no queue registered for topic key build")
 	assert.False(t, errs.IsRetryable(err))
 }
 

@@ -14,8 +14,7 @@
 
 // Package process holds the process-stage queue controller. It consumes request
 // ids from ingest, reloads the Request from storage, coalesces older heads, and
-// admits the latest head when a build slot is open. Build queue publish lands in
-// a follow-up PR.
+// admits the latest head when a build slot is open and dispatches its build.
 package process
 
 import (
@@ -124,22 +123,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateProcessing:
-		if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonUnknown); err != nil {
-			return err
-		}
-		// Announce here as well as at admit: this is the only path a redelivery
-		// takes once the transition is durable, so an admit that failed after
-		// persisting would otherwise lose the start event for good. The event id
-		// is derived from the transition, so a repeat carries the id the first
-		// attempt would have and a consumer deduplicates on it.
-		if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
-			return err
-		}
-		if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
-			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
-		}
-		return nil
+		return c.handoffBuild(ctx, store, request)
 	case entity.RequestStateSuperseded:
 		return c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonSupersededByNewerHead)
 	case entity.RequestStateSucceeded, entity.RequestStateFailed, entity.RequestStateCancelled:
@@ -191,7 +175,58 @@ func (c *Controller) processAccepted(ctx context.Context, store storage.Storage,
 		return fmt.Errorf("failed to load queue config for %s: %w", request.Queue, err)
 	}
 
-	return c.admitLatestHead(ctx, store, delivery, request, queueRow, cfg)
+	if queueRow.InFlightCount >= cfg.MaxConcurrent {
+		return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
+	}
+
+	strategy, baseURI, err := c.deriveBuildStrategy(ctx, queueRow, request)
+	if err != nil {
+		return err
+	}
+
+	// The request transition is the admit and the count follows it, so a failure between the two
+	// writes leaves the count low (over-admission by one) rather than a slot nobody owns (a wedge). The
+	// gate is therefore best-effort: two heads that read it open in the same window both pass, and
+	// the release paths' zero clamp reconverges a low count. See doc/rfc/stovepipe/steps/process.md
+	// (in_flight_count integrity); PR #966's owner-keyed slot set is the exact alternative.
+	transitioned, err := c.markProcessing(ctx, store, &request, strategy, baseURI)
+	if err != nil || !transitioned {
+		return err
+	}
+	if err := c.claimBuildSlot(ctx, store, queueRow); err != nil {
+		return err
+	}
+
+	if err := c.handoffBuild(ctx, store, request); err != nil {
+		return err
+	}
+
+	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
+		metrics.TagsFromContext(ctx, metrics.NewTag("strategy", string(request.BuildStrategy)))...,
+	)
+	c.logger.Infow("admitted request to build",
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"uri", request.URI,
+		"build_strategy", string(request.BuildStrategy),
+		"base_uri", request.BaseURI,
+	)
+	return nil
+}
+
+// handoffBuild repeats the durable start announcement and build dispatch on redelivery.
+func (c *Controller) handoffBuild(ctx context.Context, store storage.Storage, request entity.Request) error {
+	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonUnknown); err != nil {
+		return err
+	}
+	if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
+		return err
+	}
+	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
+	}
+	return nil
 }
 
 // coalesce supersedes request when a newer head exists (RFC process step 5), returning
@@ -223,57 +258,6 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 		"latest_request_id", latestRequestID,
 	)
 	return true, nil
-}
-
-// admitLatestHead holds the delivery while the build-slot gate is closed; otherwise it marks the
-// request processing, counts its build slot, and publishes it to build.
-func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
-	if queueRow.InFlightCount >= cfg.MaxConcurrent {
-		return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
-	}
-
-	strategy, baseURI, err := c.deriveBuildStrategy(ctx, queueRow, request)
-	if err != nil {
-		return err
-	}
-
-	// The request transition is the admit and the count follows it, so a failure between the two
-	// writes leaves the count low (over-admission by one) rather than a slot nobody owns (a wedge). The
-	// gate is therefore best-effort: two heads that read it open in the same window both pass, and
-	// the release paths' zero clamp reconverges a low count. See doc/rfc/stovepipe/steps/process.md
-	// (in_flight_count integrity); PR #966's owner-keyed slot set is the exact alternative.
-	transitioned, err := c.markProcessing(ctx, store, &request, strategy, baseURI)
-	if err != nil || !transitioned {
-		return err
-	}
-	if err := c.claimBuildSlot(ctx, store, queueRow); err != nil {
-		return err
-	}
-
-	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonUnknown); err != nil {
-		return err
-	}
-
-	if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
-		return err
-	}
-
-	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
-	}
-
-	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
-		metrics.TagsFromContext(ctx, metrics.NewTag("strategy", string(request.BuildStrategy)))...,
-	)
-	c.logger.Infow("admitted request to build",
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"uri", request.URI,
-		"build_strategy", string(request.BuildStrategy),
-		"base_uri", request.BaseURI,
-	)
-	return nil
 }
 
 func (c *Controller) persistStateLog(ctx context.Context, store storage.Storage, request entity.Request, reason entity.RequestOutcomeReason) error {
