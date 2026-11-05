@@ -29,6 +29,7 @@ import (
 	"context"
 
 	platformbuildkite "github.com/uber/submitqueue/platform/buildkite"
+	"github.com/uber/submitqueue/platform/conduit"
 	"github.com/uber/submitqueue/platform/extension/gitworkspace"
 	gitworkspacelocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
 	gitrepo "github.com/uber/submitqueue/platform/git/repo"
@@ -596,15 +597,13 @@ func (b *profileBuilder) newPhabChangeProvider(cfg phabProviderConfig, where str
 		return nil, fmt.Errorf("%s: failed to build Phabricator HTTP client: %w", where, err)
 	}
 	client.Timeout = timeoutOr(cfg.Timeout, defaultHTTPTimeout)
-
-	baseTransport := client.Transport.(*http.BaseURLTransport)
-	baseTransport.Next = &apiTokenTransport{token: token, next: baseTransport.Next}
+	conduitClient := conduit.NewClient(client, token)
 
 	scope := b.scope.SubScope("changeprovider.phabricator")
 	return func(c changeprovider.Config) changeprovider.ChangeProvider {
 		return phabprovider.NewProvider(phabprovider.Params{
 			Config:       c,
-			HTTPClient:   client,
+			Conduit:      conduitClient,
 			Logger:       b.logger.Sugar(),
 			MetricsScope: scope,
 		})
@@ -812,19 +811,4 @@ func (b *profileBuilder) githubClient(baseURL, timeout, token, where string) (*n
 		Base:   client.Transport,
 	}
 	return client, nil
-}
-
-// apiTokenTransport injects a Phabricator API token as a query parameter in
-// each request.
-type apiTokenTransport struct {
-	token string
-	next  nethttp.RoundTripper
-}
-
-func (t *apiTokenTransport) RoundTrip(req *nethttp.Request) (*nethttp.Response, error) {
-	r := req.Clone(req.Context())
-	q := r.URL.Query()
-	q.Set("api.token", t.token)
-	r.URL.RawQuery = q.Encode()
-	return t.next.RoundTrip(r)
 }
