@@ -10,6 +10,7 @@ import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestDetails, History } from "./pages.js";
 import { QueueRequests } from "./queue.js";
+import { RequestIssues } from "./request-issues.js";
 import { OpenIssues } from "./issues.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
 
@@ -127,6 +128,9 @@ function Page({ model }: { model: StovepipePageModel }) {
                         <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>
                         {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
                           : tab.id === "history" ? history && <History events={history.events} />
+                            : tab.id === "issues" ? model.requestIssues && <Section cacheKey={model.key} result={model.requestIssues}>
+                              {issues => issues && <RequestIssues model={issues} pageKey={model.key} />}
+                            </Section>
                             : <ParagraphSmall color="contentSecondary">Coming soon</ParagraphSmall>}
                       </section>
                     ))}

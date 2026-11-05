@@ -70,6 +70,27 @@ def _pagination_fixture_sql() -> str:
         statements.append(
             f"INSERT INTO open_issue VALUES ('web/pagination','{task}','{unit}','web/build/51');"
         )
+    for build, event in [("web/build/50", "build_analysis_abandoned"), ("web/build/51", "build_analysis_completed")]:
+        metadata = json.dumps({"build_id": build})
+        statements.append(
+            f"INSERT INTO request_log VALUES ('web/pagination','51','{event}',3000,'','{event}',0,'','{metadata}');"
+        )
+    statements.append(
+        "INSERT INTO request_log VALUES ('web/pagination','51','outcome',3001,'failed','',2,'','{\"build_id\":\"web/build/51\"}');"
+    )
+    statements.append(
+        "INSERT INTO build_issue VALUES ('web/pagination','web/build/50','buildtest','','',0);"
+    )
+    for i in range(53):
+        task = "buildtest" if i < 52 else "expensive"
+        unit = "" if i in (0, 52) else f"//packages/test-{i:02d}:go_default_test"
+        fix = "repair/opaque" if i == 0 else ""
+        statements.append(
+            f"INSERT INTO build_issue VALUES ('web/pagination','web/build/51','{task}','{unit}','{fix}',0);"
+        )
+    statements.append(
+        "INSERT INTO build_issue VALUES ('web/pagination','web/build/51','recovered','//pkg:recovered_test','',0);"
+    )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):
         closed = i < closed_issue_count

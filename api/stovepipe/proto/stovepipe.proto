@@ -375,6 +375,55 @@ message ListOpenIssuesResponse {
     string next_page_token = 2;
 }
 
+// ListIssuesByRequestIDRequest selects observations from a request's retained builds.
+message ListIssuesByRequestIDRequest {
+    // Required configured queue containing the request.
+    string queue = 1;
+    // Canonical decimal request identifier returned from Ingest.
+    string request_id = 2;
+    // Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 3;
+    // Opaque continuation bound to the queue and request.
+    string page_token = 4;
+}
+
+// RequestIssue is an observation, independent of the issue's current open/closed status.
+message RequestIssue {
+    // Opaque source build identifier.
+    string build_id = 1;
+    // Logical validation task.
+    string task_id = 2;
+    // Validation unit; empty identifies a task-wide failure.
+    string unit_id = 3;
+    // Opaque repair identifier; empty means no association is recorded.
+    string fix_id = 4;
+}
+
+// IssueBuild describes a build represented in retained request history.
+message IssueBuild {
+    // Opaque runner-assigned build identifier.
+    string build_id = 1;
+    // Retained analysis outcome: "completed", "abandoned", or empty when unknown.
+    // Completion takes precedence over an earlier abandonment. Empty does not imply running.
+    string analysis_status = 2;
+}
+
+// ListIssuesByRequestIDResponse contains live observations, not a snapshot across calls.
+message ListIssuesByRequestIDResponse {
+    // Queue containing the request.
+    string queue = 1;
+    // Selected request identifier.
+    string request_id = 2;
+    // Observations ordered by bytewise build ID, task ID, and unit ID.
+    repeated RequestIssue issues = 3;
+    // All builds identified by retained history, including those without observations.
+    repeated IssueBuild builds = 4;
+    // Build that established the terminal request outcome; empty when not retained.
+    string winning_build_id = 5;
+    // Empty when the traversal is exhausted. A bounded scan can return an empty page with a token.
+    string next_page_token = 6;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -396,4 +445,6 @@ service Stovepipe {
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
     // ListOpenIssues returns current open issues validated against their summaries.
     rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
+    // ListIssuesByRequestID lists observed issues across a request's retained builds.
+    rpc ListIssuesByRequestID(ListIssuesByRequestIDRequest) returns (ListIssuesByRequestIDResponse) {}
 }

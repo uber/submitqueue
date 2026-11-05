@@ -47,6 +47,17 @@ export interface OpenIssueSummary {
 
 /** Hosts supply a transport client; the library has no generated-binding dependency. */
 export interface StovepipeService {
+  listIssuesByRequestID(
+    request: { queue: string; requestId: string; pageSize: number; pageToken: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<{
+    queue: string;
+    requestId: string;
+    issues: { buildId: string; taskId: string; unitId: string; fixId: string }[];
+    builds: { buildId: string; analysisStatus: string }[];
+    winningBuildId: string;
+    nextPageToken: string;
+  }>;
   listOpenIssues(
     request: { queue: string; pageSize: number; pageToken: string },
     options?: { signal?: AbortSignal },

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "ingest.go",
         "list.go",
+        "list_issues_by_request_id.go",
         "list_open_issues.go",
         "project_status.go",
         "queue_status.go",

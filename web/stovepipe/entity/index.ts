@@ -51,6 +51,18 @@ export interface OpenIssuesModel {
   /** Opaque continuation URL; null when no further row was observed. */
   nextHref: string | null;
 }
+export interface RequestIssuesModel {
+  /** Observations on this page with source build and optional repair identifiers. */
+  issues: { buildId: string; taskId: string; unitId: string; fixId: string }[];
+  /** All retained build attempts and their recorded analysis outcomes. */
+  builds: { buildId: string; analysisStatus: string }[];
+  /** Build establishing the terminal request outcome, empty when unknown. */
+  winningBuildId: string;
+  /** First issue page for this request; null on the first page. */
+  firstHref: string | null;
+  /** Opaque continuation URL; null when the traversal is exhausted. */
+  nextHref: string | null;
+}
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
   id: string;
@@ -118,5 +130,6 @@ export type StovepipePageModel = PageBase &
         requestId: string;
         history: ReadResult<RequestHistoryModel>;
         projectStatus: ReadResult<ProjectStatusModel>;
+        requestIssues: ReadResult<RequestIssuesModel> | null;
       }
   );

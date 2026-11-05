@@ -5,10 +5,11 @@ import { instrumentStovepipeWeb } from "./instrumentation";
 
 function createHostFixture() {
   const list = vi.fn().mockResolvedValue({ requests: [], nextPageToken: "" });
+  const listIssuesByRequestID = vi.fn().mockRejectedValue(new Error("private issue failure"));
   const listOpenIssues = vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" });
   const getRequestHistoryByID = vi.fn().mockRejectedValue(new Error("private failure"));
   const getProjectStatusByID = vi.fn().mockRejectedValue(new Error("private failure"));
-  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listOpenIssues, getRequestHistoryByID, getProjectStatusByID } });
+  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listIssuesByRequestID, listOpenIssues, getRequestHistoryByID, getProjectStatusByID } });
   const record = vi.fn();
   const add = vi.fn();
   const span = { setAttribute: vi.fn(), setStatus: vi.fn(), recordException: vi.fn(), end: vi.fn() };
@@ -17,7 +18,7 @@ function createHostFixture() {
   const host = instrumentStovepipeWeb(web,
     { createHistogram, createCounter } as unknown as Meter,
     { startSpan: () => span } as unknown as Tracer);
-  return { host, list, listOpenIssues, web, record, add, span, createHistogram, createCounter };
+  return { host, list, listOpenIssues, listIssuesByRequestID, getRequestHistoryByID, getProjectStatusByID, web, record, add, span, createHistogram, createCounter };
 }
 
 describe("Stovepipe host instrumentation", () => {
@@ -26,6 +27,20 @@ describe("Stovepipe host instrumentation", () => {
     fixture.listOpenIssues.mockRejectedValue(new Error("private issue failure"));
     const result = await fixture.host.handle({ path: "/demo", search: new URLSearchParams({ view: "issues" }) });
     expect(result).toMatchObject({ kind: "render", model: { kind: "issues", issues: { ok: false } } });
+    expect(fixture.add).toHaveBeenCalledWith(1, { outcome: "error" });
+    expect(fixture.span.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR });
+  });
+  it("marks a failed request-issues section as an error when the other sections succeed", async () => {
+    const fixture = createHostFixture();
+    fixture.getRequestHistoryByID.mockResolvedValue({
+      requestSummary: { queue: "demo", requestId: "7", changeUri: "git://repo/sha", baseUri: "", requestState: "failed", stateUpdatedAtMs: 1n, acceptedAtMs: 1n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 },
+      events: [],
+    });
+    fixture.getProjectStatusByID.mockResolvedValue({
+      queue: "demo", requestId: "7", updatedAtMs: 1n, repositoryResult: { case: undefined }, projectResultsComplete: false, projects: [], nextPageToken: "",
+    });
+    const result = await fixture.host.handle({ path: "/demo/request/7", search: new URLSearchParams({ view: "issues" }) });
+    expect(result).toMatchObject({ kind: "render", model: { history: { ok: true }, projectStatus: { ok: true }, requestIssues: { ok: false } } });
     expect(fixture.add).toHaveBeenCalledWith(1, { outcome: "error" });
     expect(fixture.span.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR });
   });

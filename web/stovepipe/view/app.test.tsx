@@ -14,6 +14,7 @@ const model: StovepipePageModel = {
   latestHref: "/repo%2Fmain",
   showLatestLink: false,
   loadedAtMs: 1000,
+  requestIssues: null,
   projectStatus: {
     ok: true,
     data: {
@@ -301,7 +302,39 @@ it.each([
   expect(within(navigation).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   const section = screen.getByRole("region", { name: label });
   expect(section).toBeVisible();
-  if (view === "issues" || view === "fix-attempts") {
+  if (view === "fix-attempts") {
     expect(within(section).getByText("Coming soon")).toBeVisible();
   }
+});
+
+
+it("shows request observations and retains only the same page on refresh failure", () => {
+  const issueModel: StovepipePageModel = { ...model, key: "/repo%2Fmain/request/7?view=issues", requestIssues: { ok: true, data: {
+    issues: [{ buildId: "build/1", taskId: "test", unitId: "", fixId: "repair/opaque" }],
+    builds: [{ buildId: "build/1", analysisStatus: "completed" }, { buildId: "build/2", analysisStatus: "abandoned" }, { buildId: "build/3", analysisStatus: "" }],
+    winningBuildId: "build/1", firstHref: null, nextHref: "/repo%2Fmain/request/7?view=issues&issues=cursor",
+  } } };
+  const { rerender } = render(<StovepipeApp model={issueModel} />);
+  const section = screen.getByRole("region", { name: "Build and Test Issues", exact: true });
+  expect(within(section).getByText("Task-wide failure")).toBeVisible();
+  expect(within(section).getByText("repair/opaque")).toBeVisible();
+  expect(within(section).getByText(/request outcome/)).toHaveTextContent("Analysis completed");
+  expect(within(section).getByText(/Analysis abandoned/)).toBeVisible();
+  expect(within(section).getByText(/No analysis completion recorded/)).toBeVisible();
+  for (const link of within(section).getAllByRole("link", { name: /Next issues/ })) expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?view=issues&issues=cursor");
+  rerender(<StovepipeApp model={{ ...issueModel, requestIssues: { ok: false, error: "Issues unavailable" } }} />);
+  expect(within(section).getByText("repair/opaque")).toBeVisible();
+  expect(within(section).getByRole("alert")).toHaveTextContent("Issues unavailable");
+  rerender(<StovepipeApp model={{ ...issueModel, key: "/repo%2Fmain/request/7?view=issues&issues=cursor", requestIssues: { ok: false, error: "Issues unavailable" } }} />);
+  expect(within(section).queryByText("repair/opaque")).toBeNull();
+});
+
+it("does not describe an empty request issue page as a successful build", () => {
+  render(<StovepipeApp model={{ ...model, key: "/repo%2Fmain/request/7?view=issues", requestIssues: { ok: true, data: {
+    issues: [], builds: [], winningBuildId: "", firstHref: null, nextHref: null,
+  } } }} />);
+  const section = screen.getByRole("region", { name: "Build and Test Issues", exact: true });
+  expect(within(section).getByText("No builds recorded for this request.")).toBeVisible();
+  expect(within(section).getByText(/does not establish build success/)).toBeVisible();
+  expect(within(section).queryByText("Coming soon")).toBeNull();
 });

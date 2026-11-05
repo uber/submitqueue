@@ -38,6 +38,7 @@ type StovepipeServer struct {
 	projectStatusController  controller.ProjectStatusController
 	listController           controller.ListController
 	openIssuesController     controller.ListOpenIssuesController
+	requestIssuesController  controller.ListIssuesByRequestIDController
 	queueStatusController    controller.GetQueueStatusController
 }
 
@@ -50,6 +51,7 @@ func NewStovepipeServer(
 	listController controller.ListController,
 	queueStatusController controller.GetQueueStatusController,
 	openIssuesController controller.ListOpenIssuesController,
+	requestIssuesController controller.ListIssuesByRequestIDController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
@@ -58,6 +60,7 @@ func NewStovepipeServer(
 		projectStatusController:  projectStatusController,
 		listController:           listController,
 		openIssuesController:     openIssuesController,
+		requestIssuesController:  requestIssuesController,
 		queueStatusController:    queueStatusController,
 	}
 }
@@ -160,4 +163,22 @@ func (s *StovepipeServer) ListOpenIssues(ctx context.Context, req *pb.ListOpenIs
 		}
 	}
 	return mapper.ListOpenIssuesResultToProto(result), nil
+}
+
+// ListIssuesByRequestID returns observations across the request's retained builds.
+func (s *StovepipeServer) ListIssuesByRequestID(ctx context.Context, req *pb.ListIssuesByRequestIDRequest) (*pb.ListIssuesByRequestIDResponse, error) {
+	result, err := s.requestIssuesController.ListIssuesByRequestID(ctx, mapper.ProtoToListIssuesByRequestIDRequest(req))
+	if err != nil {
+		switch {
+		case controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case controller.IsRequestHistoryNotFound(err):
+			return nil, status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil, status.FromContextError(err).Err()
+		default:
+			return nil, err
+		}
+	}
+	return mapper.ListIssuesByRequestIDResultToProto(result), nil
 }

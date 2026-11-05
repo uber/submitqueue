@@ -19,3 +19,5 @@ Summary-read failures fail the request rather than returning a partial page. A m
 The API is read-only. It does not repair open-issue rows, scan operational issue state, perform database joins, or require secondary indexes. The issue-log materializer maintains the lookup during normal processing and recovery.
 
 An empty result does not establish build success or complete issue coverage. Historical rows without a materialized lookup are not backfilled by reads. Project-specific filtering, issue history, repair details, and the frontend are outside this API.
+
+For observations associated with a specific request, including issues that later recovered, use the [request issues API](request-issues-api.md).

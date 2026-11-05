@@ -21,6 +21,9 @@ const summary: RequestSummary = {
 };
 function createPageTestContext() {
   const service: StovepipeService = {
+    listIssuesByRequestID: vi.fn().mockResolvedValue({
+      queue: summary.queue, requestId: summary.requestId, issues: [], builds: [], winningBuildId: "", nextPageToken: "",
+    }),
     listOpenIssues: vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" }),
     list: vi
       .fn()
@@ -450,5 +453,41 @@ describe("Stovepipe page loading", () => {
         firstHref: null, nextHref: null,
       },
     } } });
+  });
+});
+
+
+describe("request issue observations", () => {
+  it("loads only the issues tab and preserves request scope, cancellation and project cursors", async () => {
+    const { app, service } = createPageTestContext();
+    const path = "/stovepipe/repo%2Fmain/request/" + summary.requestId;
+    await app.handle({ path, search: new URLSearchParams() });
+    expect(service.listIssuesByRequestID).not.toHaveBeenCalled();
+    vi.mocked(service.listIssuesByRequestID).mockResolvedValue({
+      queue: summary.queue, requestId: summary.requestId,
+      issues: [{ buildId: "build/1", taskId: "test", unitId: "//pkg:test", fixId: "repair/1" }],
+      builds: [{ buildId: "build/1", analysisStatus: "completed" }],
+      winningBuildId: "build/1", nextPageToken: "next+/=",
+    });
+    const signal = new AbortController().signal;
+    const result = await app.handle({ path, search: new URLSearchParams({ view: "issues", issues: "cursor+/=", projects: "project-cursor", projectPageSize: "25" }), signal });
+    expect(service.listIssuesByRequestID).toHaveBeenCalledWith({ queue: summary.queue, requestId: summary.requestId, pageSize: 50, pageToken: "cursor+/=" }, { signal });
+    expect(result).toMatchObject({ kind: "render", model: { kind: "request", requestIssues: { ok: true, data: {
+      issues: [{ buildId: "build/1", taskId: "test", unitId: "//pkg:test", fixId: "repair/1" }],
+      builds: [{ buildId: "build/1", analysisStatus: "completed" }], winningBuildId: "build/1",
+      nextHref: path + "?projects=project-cursor&projectPageSize=25&view=issues&issues=next%2B%2F%3D",
+      firstHref: path + "?projects=project-cursor&projectPageSize=25&view=issues",
+    } } } });
+  });
+  it("handles service failures and mismatched request identities without exposing details", async () => {
+    const { app, service } = createPageTestContext();
+    const path = "/stovepipe/repo%2Fmain/request/" + summary.requestId;
+    for (const mismatch of [false, true]) {
+      if (mismatch) vi.mocked(service.listIssuesByRequestID).mockResolvedValue({ queue: "other", requestId: "1", issues: [], builds: [], winningBuildId: "", nextPageToken: "" });
+      else vi.mocked(service.listIssuesByRequestID).mockRejectedValue(new Error("private issue detail"));
+      const result = await app.handle({ path, search: new URLSearchParams({ view: "issues" }) });
+      expect(result).toMatchObject({ kind: "render", model: { requestIssues: { ok: false }, history: { ok: true } } });
+      expect(JSON.stringify(result)).not.toContain("private issue detail");
+    }
   });
 });

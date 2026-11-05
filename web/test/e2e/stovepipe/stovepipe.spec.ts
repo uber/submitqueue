@@ -12,6 +12,15 @@ const client = createClient(
 );
 test.describe("server-rendered styling", () => {
   test.use({ javaScriptEnabled: false });
+  test("renders request issue observations and pages without JavaScript", async ({ page }) => {
+    await page.goto("/web%2Fpagination/request/51?view=issues");
+    const section = page.getByRole("region", { name: "Build and Test Issues", exact: true });
+    const rows = section.getByRole("table", { name: "Observed build and test issues" }).locator("tbody tr");
+    await expect(rows).toHaveCount(50);
+    await section.getByRole("link", { name: "Next issues →" }).first().click();
+    await expect(rows).toHaveCount(5);
+    await expect(section.getByText("recovered", { exact: true })).toBeVisible();
+  });
   test("styles the queue before hydration", async ({ page }) => {
     await page.goto("/web%2Fpagination");
     await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
@@ -40,7 +49,7 @@ test.describe("server-rendered styling", () => {
     await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
-    for (const label of ["Build and Test Issues", "Fix Attempts"]) {
+    for (const label of ["Fix Attempts"]) {
       await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: label, exact: true }).click();
       await expect(page.getByRole("region", { name: label, exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
     }
@@ -576,7 +585,7 @@ test("retains project paging across views and resets the cursor when page size c
     await views.getByRole("link", { name: label, exact: true }).click();
     const section = page.getByRole("region", { name: label, exact: true });
     await expect(section).toBeVisible();
-    if (label !== "History") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
+    if (label === "Fix Attempts") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
   }
   await views.getByRole("link", { name: "Project Results", exact: true }).click();
   await expect(rows).toHaveCount(25);
@@ -590,4 +599,32 @@ test("retains project paging across views and resets the cursor when page size c
   await page.reload();
   await expect(rows).toHaveCount(51);
   expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("100");
+});
+
+
+test("lists request observations with build provenance and shareable pagination", async ({ page }) => {
+  const result = await client.listIssuesByRequestID({ queue: "web/pagination", requestId: "51", pageSize: 1 });
+  expect(result.winningBuildId).toBe("web/build/51");
+  expect(result.issues[0].buildId).toBe("web/build/50");
+  expect(result.builds.map(build => build.analysisStatus)).toEqual(["abandoned", "completed"]);
+  await page.goto("/web%2Fpagination/request/51?view=issues");
+  const section = page.getByRole("region", { name: "Build and Test Issues", exact: true });
+  const rows = section.getByRole("table", { name: "Observed build and test issues" }).locator("tbody tr");
+  await expect(rows).toHaveCount(50);
+  await expect(rows.first()).toContainText("web/build/50");
+  await expect(rows.nth(1)).toContainText("repair/opaque");
+  await expect(section.getByText(/request outcome/)).toContainText("Analysis completed");
+  await expect(section.getByText(/Analysis abandoned/)).toBeVisible();
+  await section.getByRole("link", { name: "Next issues →" }).first().click();
+  await expect(rows).toHaveCount(5);
+  expect(new URL(page.url()).searchParams.has("issues")).toBe(true);
+  await expect(section.getByText("recovered", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(rows).toHaveCount(5);
+  await section.getByRole("link", { name: "First issues", exact: true }).first().click();
+  await expect(rows).toHaveCount(50);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.screenshot({ path: test.info().outputPath("request-issues-mobile.png") });
 });
