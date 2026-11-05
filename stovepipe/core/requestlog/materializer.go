@@ -131,6 +131,14 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return err
 	}
 
+	if retained.Event == entity.RequestEventFixSubmitted {
+		if err := materializeRequestIssueRepair(ctx, stores, retained); err != nil {
+			m.count(ctx, "projection_failure")
+			return err
+		}
+		return nil
+	}
+
 	if retained.State == entity.RequestStateUnknown &&
 		retained.Event != entity.RequestEventProjectFactsRecorded &&
 		retained.Event != entity.RequestEventRecordAbandoned {

@@ -2320,7 +2320,7 @@ func (x *ListOpenIssuesResponse) GetNextPageToken() string {
 	return ""
 }
 
-// ListIssuesByRequestIDRequest selects observations from a request's retained builds.
+// ListIssuesByRequestIDRequest selects a request's projected issue observations.
 type ListIssuesByRequestIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Required configured queue containing the request.
@@ -2475,7 +2475,7 @@ type ListIssuesByRequestIDResponse struct {
 	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Observations ordered by bytewise build ID, task ID, and unit ID.
 	Issues []*RequestIssue `protobuf:"bytes,3,rep,name=issues,proto3" json:"issues,omitempty"`
-	// Empty when the traversal is exhausted. A bounded scan can return an empty page with a token.
+	// Empty when no further projected observation was observed.
 	NextPageToken string `protobuf:"bytes,6,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

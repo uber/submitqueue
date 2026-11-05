@@ -40,6 +40,10 @@ The MySQL primary key contains the queue, build ID, task ID, and unit ID directl
 
 Existing MySQL deployments must add `fix_id VARCHAR(255) NOT NULL DEFAULT ''` and `version INT NOT NULL DEFAULT 0` to `build_issue` before deploying the new readers and writers. The schema's `CREATE TABLE IF NOT EXISTS` does not alter existing tables.
 
+## Request issue summaries
+
+`RequestIssueSummaryStore` is the request-scoped read projection of build observations, keyed by queue, request, build, task, and unit. It supports complete-key create/get/CAS replacement and bounded request-prefix scans in bytewise build/task/unit order. Observation membership survives recovery; repair IDs come from retained repair-submission events. Projection versions are independent of operational versions. The caller merges sources without clearing a known repair ID and rejects conflicting associations. The new `request_issue_summary` table must exist before deployment. See the [request issues API](../../../doc/rfc/stovepipe/request-issues-api.md) for writer recovery, source retention, and the explicit rebuild command.
+
 ## Issue state
 
 `IssueStateStore` retains the latest open or closed state for each task/unit within its queue. The primary key remains `(queue, task, unit)`; status is a value, not a key component. A closed record retains its first-seen build, last-processed build, last-changing build, transition timestamp, and positive CAS version. Reopening updates the same record with a new first-seen build and a higher version. Records are never deleted, so a stale create cannot reuse an empty key after closure.

@@ -153,6 +153,17 @@ func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
 	store.EXPECT().GetBuildStore().Return(builds).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requests).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	summaries := storagemock.NewMockRequestIssueSummaryStore(ctrl)
+	store.EXPECT().GetRequestIssueSummaryStore().Return(summaries).AnyTimes()
+	var projected entity.RequestIssueSummary
+	summaries.EXPECT().Get(gomock.Any(), "1", buildID, "test", "unit").DoAndReturn(func(context.Context, string, string, string, string) (entity.RequestIssueSummary, error) {
+		if projected.Version == 0 {
+			return entity.RequestIssueSummary{}, storage.ErrNotFound
+		}
+		return projected, nil
+	}).Times(2)
+	summaries.EXPECT().Create(gomock.Any(), entity.RequestIssueSummary{RequestID: "1", BuildID: buildID, TaskID: "test", UnitID: "unit", FixID: "noop/" + buildID, Version: 1}).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary) error { projected = value; return nil })
+
 	builds.EXPECT().Get(gomock.Any(), buildID).Return(entity.Build{ID: buildID, RequestID: "1"}, nil).AnyTimes()
 	requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{ID: "1", Queue: queueName}, nil).AnyTimes()
 	var retained entity.RequestLog

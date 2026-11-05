@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestissue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
@@ -116,6 +117,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if request.Queue != analysis.GetQueueName() {
 		return fmt.Errorf("request queue %q does not match analysis queue %q", request.Queue, analysis.GetQueueName())
 	}
+	if err := requestissue.MaterializeBuild(ctx, store, request.ID, build.ID); err != nil {
+		return fmt.Errorf("repair build observation projection: %w", err)
+	}
 	if request.TerminalBuildID != "" && request.TerminalBuildID != build.ID {
 		return nil
 	}
@@ -149,6 +153,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	for _, issue := range issues {
 		if err := issueStore.Create(ctx, build.ID, issue); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 			return fmt.Errorf("failed to persist build issue build=%q task=%q unit=%q: %w", build.ID, issue.TaskID, issue.UnitID, err)
+		}
+		if err := requestissue.MaterializeObservation(ctx, store.GetRequestIssueSummaryStore(), entity.RequestIssueSummary{RequestID: request.ID, BuildID: build.ID, TaskID: issue.TaskID, UnitID: issue.UnitID, Version: 1}); err != nil {
+			return fmt.Errorf("project detected build observation: %w", err)
 		}
 	}
 

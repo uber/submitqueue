@@ -75,6 +75,11 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 	m.history = map[string]entity.RequestLog{}
 	m.historyFailure = new(error)
 	m.materializer = requestlog.NewMaterializer(tally.NoopScope)
+	projections := storagemock.NewMockRequestIssueSummaryStore(ctrl)
+	m.store.EXPECT().GetRequestIssueSummaryStore().Return(projections).AnyTimes()
+	projections.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.RequestIssueSummary{}, storage.ErrNotFound).AnyTimes()
+	projections.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
 	history := storagemock.NewMockRequestLogStore(ctrl)
 	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
 	history.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {

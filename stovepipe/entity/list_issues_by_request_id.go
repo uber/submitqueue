@@ -14,7 +14,7 @@
 
 package entity
 
-// ListIssuesByRequestIDRequest selects observations across one request's retained builds.
+// ListIssuesByRequestIDRequest selects projected observations for one request.
 type ListIssuesByRequestIDRequest struct {
 	// Queue is the configured queue containing the request.
 	Queue string

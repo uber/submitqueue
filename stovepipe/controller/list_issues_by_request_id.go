@@ -21,17 +21,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"slices"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
-
-const maxIssueBuildsPerPage = 100
 
 type requestIssuesPageToken struct {
 	Version   int    `json:"version"`
@@ -42,7 +37,7 @@ type requestIssuesPageToken struct {
 	UnitID    string `json:"unit_id"`
 }
 
-// ListIssuesByRequestIDController lists observations for a request, including earlier attempts.
+// ListIssuesByRequestIDController lists projected observations for a request, including earlier attempts.
 type ListIssuesByRequestIDController interface {
 	ListIssuesByRequestID(context.Context, entity.ListIssuesByRequestIDRequest) (entity.ListIssuesByRequestIDResult, error)
 }
@@ -82,56 +77,36 @@ func (c *listIssuesByRequestIDController) ListIssuesByRequestID(ctx context.Cont
 	if err != nil {
 		return result, fmt.Errorf("resolve request issue storage: %w", err)
 	}
-	history, err := readRequestHistory(ctx, store, req.Queue, req.RequestID)
+	summary, err := store.GetRequestSummaryStore().Get(ctx, req.RequestID)
 	if err != nil {
-		if storage.IsNotFound(err) && !errs.IsRetryable(err) {
+		if storage.IsNotFound(err) {
 			return result, &RequestHistoryByIDNotFoundError{RequestID: req.RequestID}
 		}
-		return result, err
+		return result, fmt.Errorf("read request summary: %w", err)
 	}
-	result = entity.ListIssuesByRequestIDResult{Queue: history.RequestSummary.Queue, RequestID: history.RequestID, Issues: []entity.RequestIssue{}}
-	buildIDs := requestIssueBuildIDs(history)
-	start := 0
-	if cursor.BuildID != "" {
-		start = slices.Index(buildIDs, cursor.BuildID)
-		if start < 0 {
-			return entity.ListIssuesByRequestIDResult{}, fmt.Errorf("page_token build does not belong to request: %w", ErrInvalidRequest)
-		}
+	if summary.RequestID != req.RequestID || summary.Queue != req.Queue {
+		return result, fmt.Errorf("request summary identity does not match selected request")
 	}
-	if len(buildIDs) == 0 {
-		return result, nil
+	rows, err := store.GetRequestIssueSummaryStore().List(ctx, req.RequestID, storage.RequestIssueRange{
+		After: storage.RequestIssueCursor{BuildID: cursor.BuildID, TaskID: cursor.TaskID, UnitID: cursor.UnitID}, Limit: pageSize + 1,
+	})
+	if err != nil {
+		return result, fmt.Errorf("list request issue projections: %w", err)
 	}
-	observations := store.GetBuildIssueStore()
-	for index := start; index < len(buildIDs); index++ {
-		buildID := buildIDs[index]
-		after := storage.BuildIssueCursor{}
-		if index == start {
-			after = storage.BuildIssueCursor{TaskID: cursor.TaskID, UnitID: cursor.UnitID}
+	result = entity.ListIssuesByRequestIDResult{Queue: req.Queue, RequestID: req.RequestID, Issues: []entity.RequestIssue{}}
+	for _, row := range rows[:min(pageSize, len(rows))] {
+		if row.RequestID != req.RequestID {
+			return entity.ListIssuesByRequestIDResult{}, fmt.Errorf("request issue projection belongs to another request")
 		}
-		remaining := pageSize - len(result.Issues)
-		rows, err := observations.List(ctx, buildID, storage.BuildIssueRange{After: after, Limit: remaining + 1})
-		if err != nil {
-			return entity.ListIssuesByRequestIDResult{}, fmt.Errorf("list issues for build %q: %w", buildID, err)
-		}
-		for _, row := range rows[:min(remaining, len(rows))] {
-			result.Issues = append(result.Issues, entity.RequestIssue{BuildID: buildID, TaskID: row.TaskID, UnitID: row.UnitID, FixID: row.FixID})
-		}
-		next := requestIssuesPageToken{Version: 1, Queue: req.Queue, RequestID: req.RequestID}
-		switch {
-		case len(rows) > remaining:
-			last := result.Issues[len(result.Issues)-1]
-			next.BuildID, next.TaskID, next.UnitID = buildID, last.TaskID, last.UnitID
-		case index+1 < len(buildIDs) && (len(result.Issues) == pageSize || index-start+1 == maxIssueBuildsPerPage):
-			next.BuildID = buildIDs[index+1]
-		default:
-			continue
-		}
-		contents, err := json.Marshal(next)
+		result.Issues = append(result.Issues, entity.RequestIssue{BuildID: row.BuildID, TaskID: row.TaskID, UnitID: row.UnitID, FixID: row.FixID})
+	}
+	if len(rows) > pageSize {
+		last := result.Issues[len(result.Issues)-1]
+		contents, err := json.Marshal(requestIssuesPageToken{Version: 1, Queue: req.Queue, RequestID: req.RequestID, BuildID: last.BuildID, TaskID: last.TaskID, UnitID: last.UnitID})
 		if err != nil {
 			return entity.ListIssuesByRequestIDResult{}, fmt.Errorf("encode request issue continuation: %w", err)
 		}
 		result.NextPageToken = base64.RawURLEncoding.EncodeToString(contents)
-		break
 	}
 	return result, nil
 }
@@ -160,20 +135,4 @@ func resolveRequestIssuesPage(req entity.ListIssuesByRequestIDRequest) (int, req
 		return 0, cursor, fmt.Errorf("invalid page_token fields or request scope: %w", ErrInvalidRequest)
 	}
 	return pageSize, cursor, nil
-}
-
-func requestIssueBuildIDs(history entity.RequestHistory) []string {
-	builds := make(map[string]struct{})
-	for _, log := range history.Events {
-		buildID := log.Metadata[requestlog.MetadataKeyBuildID]
-		if buildID != "" {
-			builds[buildID] = struct{}{}
-		}
-	}
-	buildIDs := make([]string, 0, len(builds))
-	for buildID := range builds {
-		buildIDs = append(buildIDs, buildID)
-	}
-	slices.Sort(buildIDs)
-	return buildIDs
 }

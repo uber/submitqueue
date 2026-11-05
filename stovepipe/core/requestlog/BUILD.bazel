@@ -5,13 +5,16 @@ go_library(
     srcs = [
         "materializer.go",
         "request_acceptance.go",
+        "request_issues.go",
         "request_summary.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/requestlog",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/base/id:go_default_library",
         "//platform/metrics:go_default_library",
         "//platform/publish:go_default_library",
+        "//stovepipe/core/requestissue:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
@@ -23,6 +26,7 @@ go_test(
     srcs = [
         "materializer_test.go",
         "request_acceptance_test.go",
+        "request_issues_test.go",
         "request_summary_test.go",
     ],
     embed = [":go_default_library"],

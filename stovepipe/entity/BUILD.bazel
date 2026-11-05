@@ -26,6 +26,7 @@ go_library(
         "request_acceptance.go",
         "request_history.go",
         "request_id.go",
+        "request_issue_summary.go",
         "request_log.go",
         "request_summary.go",
         "validation_fact.go",

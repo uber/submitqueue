@@ -401,10 +401,10 @@ func TestMaterializerRetainsOtherEventsWithoutProjectingSummary(t *testing.T) {
 	}
 }
 
-func TestRepairEventsRemainHistoryOnlyAndDeduplicate(t *testing.T) {
+func TestOtherAnalysisAndRepairEventsRemainHistoryOnlyAndDeduplicate(t *testing.T) {
 	for _, event := range []entity.RequestEvent{
 		entity.RequestEventBuildAnalysisCompleted, entity.RequestEventIssuesReconciled,
-		entity.RequestEventIssueTrackingAbandoned, entity.RequestEventFixSubmitted,
+		entity.RequestEventIssueTrackingAbandoned,
 		entity.RequestEventFixSubmissionSkipped, entity.RequestEventFixSubmissionAbandoned,
 	} {
 		t.Run(string(event), func(t *testing.T) {

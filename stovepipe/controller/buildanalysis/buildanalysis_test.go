@@ -46,24 +46,28 @@ const (
 )
 
 type analysisMocks struct {
-	history         map[string]entity.RequestLog
-	historyFailure  *error
-	historyStore    *storagemock.MockRequestLogStore
-	historyRead     *gomock.Call
-	historyCreate   *gomock.Call
-	materializer    requestlog.Materializer
-	request         *entity.Request
-	ctrl            *gomock.Controller
-	stores          *storagemock.MockFactory
-	store           *storagemock.MockStorage
-	builds          *storagemock.MockBuildStore
-	requests        *storagemock.MockRequestStore
-	requestRead     *gomock.Call
-	issues          *storagemock.MockBuildIssueStore
-	detectorFactory *buildissuemock.MockDetectorFactory
-	detector        *buildissuemock.MockDetector
-	publisher       *mqmock.MockPublisher
-	scope           tally.TestScope
+	projectionGet    *gomock.Call
+	projectionCreate *gomock.Call
+	projectionRead   *gomock.Call
+	projections      *storagemock.MockRequestIssueSummaryStore
+	history          map[string]entity.RequestLog
+	historyFailure   *error
+	historyStore     *storagemock.MockRequestLogStore
+	historyRead      *gomock.Call
+	historyCreate    *gomock.Call
+	materializer     requestlog.Materializer
+	request          *entity.Request
+	ctrl             *gomock.Controller
+	stores           *storagemock.MockFactory
+	store            *storagemock.MockStorage
+	builds           *storagemock.MockBuildStore
+	requests         *storagemock.MockRequestStore
+	requestRead      *gomock.Call
+	issues           *storagemock.MockBuildIssueStore
+	detectorFactory  *buildissuemock.MockDetectorFactory
+	detector         *buildissuemock.MockDetector
+	publisher        *mqmock.MockPublisher
+	scope            tally.TestScope
 }
 
 func newTestController(t *testing.T) (*Controller, analysisMocks) {
@@ -73,7 +77,7 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m := analysisMocks{
 		ctrl:            ctrl,
 		requests:        storagemock.NewMockRequestStore(ctrl),
-		request:         &entity.Request{ID: "request/1", Queue: testQueue, State: entity.RequestStateProcessing},
+		request:         &entity.Request{ID: "1", Queue: testQueue, State: entity.RequestStateProcessing},
 		stores:          storagemock.NewMockFactory(ctrl),
 		store:           storagemock.NewMockStorage(ctrl),
 		builds:          storagemock.NewMockBuildStore(ctrl),
@@ -88,6 +92,11 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m.store.EXPECT().GetRequestStore().Return(m.requests).AnyTimes()
 	m.requestRead = m.requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string) (entity.Request, error) { return *m.request, nil }).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.issues).AnyTimes()
+	m.projectionRead = m.issues.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.projections = storagemock.NewMockRequestIssueSummaryStore(ctrl)
+	m.store.EXPECT().GetRequestIssueSummaryStore().Return(m.projections).AnyTimes()
+	m.projectionGet = m.projections.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.RequestIssueSummary{}, storage.ErrNotFound).AnyTimes()
+	m.projectionCreate = m.projections.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	m.history = map[string]entity.RequestLog{}
 	m.historyFailure = new(error)
@@ -686,4 +695,42 @@ func TestProcessRejectsQueueMismatchOnOutcomeReload(t *testing.T) {
 	})
 
 	require.Error(t, c.Process(context.Background(), m.delivery(t)))
+}
+
+func TestProcessRepairsPersistedObservationsBeforeSkippingOrDetecting(t *testing.T) {
+	for _, mode := range []string{"losing build", "detector omitted observation", "detector failure"} {
+		t.Run(mode, func(t *testing.T) {
+			c, m := newTestController(t)
+			m.projectionRead.Times(0)
+			m.projectionGet.Times(0)
+			m.projectionCreate.Times(0)
+			m.issues.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: 100}).Return([]entity.BuildIssue{{TaskID: "previously-detected", FixID: "operational-only"}}, nil)
+			m.projections.EXPECT().Get(gomock.Any(), "1", testBuildID, "previously-detected", "").Return(entity.RequestIssueSummary{}, storage.ErrNotFound)
+			projected := m.projections.EXPECT().Create(gomock.Any(), entity.RequestIssueSummary{RequestID: "1", BuildID: testBuildID, TaskID: "previously-detected", Version: 1}).Return(nil)
+			if mode == "losing build" {
+				m.request.TerminalBuildID = "other-build"
+				m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
+				m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: "1", Status: entity.BuildStatusRunning}, nil)
+			} else {
+				var detectErr error
+				if mode == "detector failure" {
+					detectErr = assert.AnError
+				}
+				detected := m.expectPass(entity.BuildStatusRunning, nil, detectErr).After(projected)
+				if mode != "detector failure" {
+					m.expectNotification(t, false, detected)
+				}
+			}
+			delivery := m.delivery(t)
+			if mode == "detector omitted observation" {
+				delivery.EXPECT().Hold(PollDelayMs)
+			}
+			err := c.Process(context.Background(), delivery)
+			if mode == "detector failure" {
+				require.ErrorIs(t, err, assert.AnError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

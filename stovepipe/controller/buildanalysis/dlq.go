@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestissue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -145,6 +146,10 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 			"message_id", msg.ID, "request_id", request.ID, "queue", request.Queue,
 			"message_queue", analysis.GetQueueName())
 		return nil
+	}
+
+	if err := requestissue.MaterializeBuild(ctx, store, request.ID, analysis.GetId()); err != nil {
+		return fmt.Errorf("repair abandoned analysis observations: %w", err)
 	}
 
 	log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, analysis.GetId(),

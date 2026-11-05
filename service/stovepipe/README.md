@@ -6,7 +6,7 @@ Runnable wiring for the **Stovepipe** domain — a single-service domain (the do
 - **`Ingest`** — resolves a queue's head commit, persists a `Request` (and its head URI) to storage, and publishes the request to the **process** stage.
 - **`GetRequestHistoryByID`** — returns the retained request log for one request ID.
 - **`GetRequestHistoryByURI`** — returns retained histories selected by an exact commit URI.
-- **`ListIssuesByRequestID`** — returns paginated observations across a request’s retained builds, including source build IDs and repair associations; see the [request issues API](../../doc/rfc/stovepipe/request-issues-api.md).
+- **`ListIssuesByRequestID`** — returns paginated request-scoped issue read projections, including source build IDs and repair associations; see the [request issues API](../../doc/rfc/stovepipe/request-issues-api.md).
 - **process consumer** (`TopicKeyProcess`) — reloads the persisted `Request` from storage and runs the process stage (`stovepipe/controller/process`).
 - **build consumer** (`TopicKeyBuild`) — reloads the persisted `Request` and triggers the build-runner, then publishes to `buildsignal`.
 - **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.

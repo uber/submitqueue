@@ -71,7 +71,7 @@ type StovepipeClient interface {
 	GetQueueStatus(ctx context.Context, in *GetQueueStatusRequest, opts ...grpc.CallOption) (*GetQueueStatusResponse, error)
 	// ListOpenIssues returns current open issues validated against their summaries.
 	ListOpenIssues(ctx context.Context, in *ListOpenIssuesRequest, opts ...grpc.CallOption) (*ListOpenIssuesResponse, error)
-	// ListIssuesByRequestID lists observed issues across a request's retained builds.
+	// ListIssuesByRequestID lists projected issue observations for one request.
 	ListIssuesByRequestID(ctx context.Context, in *ListIssuesByRequestIDRequest, opts ...grpc.CallOption) (*ListIssuesByRequestIDResponse, error)
 }
 
@@ -208,7 +208,7 @@ type StovepipeServer interface {
 	GetQueueStatus(context.Context, *GetQueueStatusRequest) (*GetQueueStatusResponse, error)
 	// ListOpenIssues returns current open issues validated against their summaries.
 	ListOpenIssues(context.Context, *ListOpenIssuesRequest) (*ListOpenIssuesResponse, error)
-	// ListIssuesByRequestID lists observed issues across a request's retained builds.
+	// ListIssuesByRequestID lists projected issue observations for one request.
 	ListIssuesByRequestID(context.Context, *ListIssuesByRequestIDRequest) (*ListIssuesByRequestIDResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }

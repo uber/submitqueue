@@ -37,12 +37,15 @@ import (
 )
 
 type dlqMocks struct {
-	ctrl         *gomock.Controller
-	factory      *storagemock.MockFactory
-	store        *storagemock.MockStorage
-	builds       *storagemock.MockBuildStore
-	requests     *storagemock.MockRequestStore
-	materializer *requestlogmock.MockMaterializer
+	observations    *storagemock.MockBuildIssueStore
+	observationRead *gomock.Call
+	projections     *storagemock.MockRequestIssueSummaryStore
+	ctrl            *gomock.Controller
+	factory         *storagemock.MockFactory
+	store           *storagemock.MockStorage
+	builds          *storagemock.MockBuildStore
+	requests        *storagemock.MockRequestStore
+	materializer    *requestlogmock.MockMaterializer
 }
 
 func newDLQTestController(t *testing.T) (*DLQController, dlqMocks) {
@@ -59,6 +62,11 @@ func newDLQTestController(t *testing.T) (*DLQController, dlqMocks) {
 	}
 	m.store.EXPECT().GetBuildStore().Return(m.builds).AnyTimes()
 	m.store.EXPECT().GetRequestStore().Return(m.requests).AnyTimes()
+	m.observations = storagemock.NewMockBuildIssueStore(ctrl)
+	m.projections = storagemock.NewMockRequestIssueSummaryStore(ctrl)
+	m.store.EXPECT().GetBuildIssueStore().Return(m.observations).AnyTimes()
+	m.store.EXPECT().GetRequestIssueSummaryStore().Return(m.projections).AnyTimes()
+	m.observationRead = m.observations.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.factory, m.materializer,
 		consumer.TopicKey("buildanalysis_dlq"), "stovepipe-buildanalysis-dlq")
@@ -89,7 +97,7 @@ func TestDLQRetainsHistoryWithoutChangingValidation(t *testing.T) {
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			c, m := newDLQTestController(t)
-			request := entity.Request{ID: "request/1", Queue: testQueue, State: state, Version: 3}
+			request := entity.Request{ID: "1", Queue: testQueue, State: state, Version: 3}
 			m.expectLoad(request)
 			m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 				func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
@@ -120,13 +128,13 @@ func TestDLQReturnsStateAndHistoryErrorsForRetry(t *testing.T) {
 				m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{}, assert.AnError)
 			} else {
 				m.builds.EXPECT().Get(gomock.Any(), testBuildID).
-					Return(entity.Build{ID: testBuildID, RequestID: "request/1", Status: entity.BuildStatusFailed}, nil)
+					Return(entity.Build{ID: testBuildID, RequestID: "1", Status: entity.BuildStatusFailed}, nil)
 
 				if step == "load request" {
-					m.requests.EXPECT().Get(gomock.Any(), "request/1").Return(entity.Request{}, assert.AnError)
+					m.requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, assert.AnError)
 				} else {
-					m.requests.EXPECT().Get(gomock.Any(), "request/1").
-						Return(entity.Request{ID: "request/1", Queue: testQueue}, nil)
+					m.requests.EXPECT().Get(gomock.Any(), "1").
+						Return(entity.Request{ID: "1", Queue: testQueue}, nil)
 					m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(assert.AnError)
 				}
 			}
@@ -170,13 +178,13 @@ func TestDLQAcknowledgesUnusableMessages(t *testing.T) {
 					m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID}, nil)
 				case "missing request":
 					m.builds.EXPECT().Get(gomock.Any(), testBuildID).
-						Return(entity.Build{ID: testBuildID, RequestID: "request/1"}, nil)
-					m.requests.EXPECT().Get(gomock.Any(), "request/1").Return(entity.Request{}, storage.ErrNotFound)
+						Return(entity.Build{ID: testBuildID, RequestID: "1"}, nil)
+					m.requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, storage.ErrNotFound)
 				case "request queue mismatch":
 					m.builds.EXPECT().Get(gomock.Any(), testBuildID).
-						Return(entity.Build{ID: testBuildID, RequestID: "request/1"}, nil)
-					m.requests.EXPECT().Get(gomock.Any(), "request/1").
-						Return(entity.Request{ID: "request/1", Queue: "other/main"}, nil)
+						Return(entity.Build{ID: testBuildID, RequestID: "1"}, nil)
+					m.requests.EXPECT().Get(gomock.Any(), "1").
+						Return(entity.Request{ID: "1", Queue: "other/main"}, nil)
 				}
 			}
 
@@ -209,14 +217,14 @@ func TestDLQDeduplicatesHistoryAcrossRetriesAndNotices(t *testing.T) {
 			return nil
 		},
 	).Times(4)
-	logStore.EXPECT().Get(gomock.Any(), "request/1", gomock.Any()).DoAndReturn(
+	logStore.EXPECT().Get(gomock.Any(), "1", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, id string) (entity.RequestLog, error) {
 			return retained[id], nil
 		},
 	).Times(2)
 
 	for i, buildID := range []string{testBuildID, testBuildID, testBuildID, "build/43"} {
-		request := entity.Request{ID: "request/1", Queue: testQueue, State: entity.RequestStateProcessing, Version: int32(i + 1)}
+		request := entity.Request{ID: "1", Queue: testQueue, State: entity.RequestStateProcessing, Version: int32(i + 1)}
 		if i > 0 {
 			request.State = entity.RequestStateSucceeded
 		}
@@ -244,5 +252,31 @@ func TestDLQDeduplicatesHistoryAcrossRetriesAndNotices(t *testing.T) {
 		log, ok := retained["event/build_analysis_abandoned/"+buildID]
 		require.True(t, ok)
 		assert.Equal(t, buildID, log.Metadata[requestlog.MetadataKeyBuildID])
+	}
+}
+
+func TestDLQRepairsObservationProjectionBeforeAbandonment(t *testing.T) {
+	for _, failProjection := range []bool{false, true} {
+		t.Run(map[bool]string{false: "repaired", true: "retry projection failure"}[failProjection], func(t *testing.T) {
+			c, m := newDLQTestController(t)
+			m.observationRead.Times(0)
+			m.expectLoad(entity.Request{ID: "1", Queue: testQueue, State: entity.RequestStateFailed})
+			m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: 100}).Return([]entity.BuildIssue{{TaskID: "partial"}}, nil)
+			m.projections.EXPECT().Get(gomock.Any(), "1", testBuildID, "partial", "").Return(entity.RequestIssueSummary{}, storage.ErrNotFound)
+			var projectErr error
+			if failProjection {
+				projectErr = assert.AnError
+			}
+			projected := m.projections.EXPECT().Create(gomock.Any(), entity.RequestIssueSummary{RequestID: "1", BuildID: testBuildID, TaskID: "partial", Version: 1}).Return(projectErr)
+			if !failProjection {
+				m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).After(projected)
+			}
+			err := c.Process(context.Background(), m.delivery(analysisMessage(t), false))
+			if failProjection {
+				require.ErrorIs(t, err, assert.AnError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }

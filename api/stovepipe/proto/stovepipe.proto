@@ -375,7 +375,7 @@ message ListOpenIssuesResponse {
     string next_page_token = 2;
 }
 
-// ListIssuesByRequestIDRequest selects observations from a request's retained builds.
+// ListIssuesByRequestIDRequest selects a request's projected issue observations.
 message ListIssuesByRequestIDRequest {
     // Required configured queue containing the request.
     string queue = 1;
@@ -410,7 +410,7 @@ message ListIssuesByRequestIDResponse {
     string request_id = 2;
     // Observations ordered by bytewise build ID, task ID, and unit ID.
     repeated RequestIssue issues = 3;
-    // Empty when the traversal is exhausted. A bounded scan can return an empty page with a token.
+    // Empty when no further projected observation was observed.
     string next_page_token = 6;
 }
 
@@ -435,6 +435,6 @@ service Stovepipe {
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
     // ListOpenIssues returns current open issues validated against their summaries.
     rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
-    // ListIssuesByRequestID lists observed issues across a request's retained builds.
+    // ListIssuesByRequestID lists projected issue observations for one request.
     rpc ListIssuesByRequestID(ListIssuesByRequestIDRequest) returns (ListIssuesByRequestIDResponse) {}
 }

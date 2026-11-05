@@ -15,6 +15,7 @@ go_library(
         "queue_store.go",
         "queue_summary_store.go",
         "request_acceptance_store.go",
+        "request_issue_summary_store.go",
         "request_log_store.go",
         "request_store.go",
         "request_summary_store.go",
@@ -25,6 +26,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/stovepipe/extension/storage/mysql",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/base/id:go_default_library",
         "//platform/metrics:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",

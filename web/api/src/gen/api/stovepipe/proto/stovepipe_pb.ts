@@ -1222,7 +1222,7 @@ export const ListOpenIssuesResponseSchema: GenMessage<ListOpenIssuesResponse> = 
   messageDesc(file_api_stovepipe_proto_stovepipe, 28);
 
 /**
- * ListIssuesByRequestIDRequest selects observations from a request's retained builds.
+ * ListIssuesByRequestIDRequest selects a request's projected issue observations.
  *
  * @generated from message uber.submitqueue.stovepipe.ListIssuesByRequestIDRequest
  */
@@ -1333,7 +1333,7 @@ export type ListIssuesByRequestIDResponse = Message<"uber.submitqueue.stovepipe.
   issues: RequestIssue[];
 
   /**
-   * Empty when the traversal is exhausted. A bounded scan can return an empty page with a token.
+   * Empty when no further projected observation was observed.
    *
    * @generated from field: string next_page_token = 6;
    */
@@ -1475,7 +1475,7 @@ export const Stovepipe: GenService<{
     output: typeof ListOpenIssuesResponseSchema;
   },
   /**
-   * ListIssuesByRequestID lists observed issues across a request's retained builds.
+   * ListIssuesByRequestID lists projected issue observations for one request.
    *
    * @generated from rpc uber.submitqueue.stovepipe.Stovepipe.ListIssuesByRequestID
    */

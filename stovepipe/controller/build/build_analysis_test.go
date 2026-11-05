@@ -118,6 +118,30 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	a := entity.BuildIssue{TaskID: "validation", UnitID: "unit-a"}
 	b := entity.BuildIssue{TaskID: "validation", UnitID: "unit-b"}
 	persisted := map[entity.BuildIssue]bool{}
+	issueStore.EXPECT().List(gomock.Any(), testBuildID, gomock.Any()).DoAndReturn(func(_ context.Context, _ string, _ storage.BuildIssueRange) ([]entity.BuildIssue, error) {
+		issues := []entity.BuildIssue{}
+		for _, issue := range []entity.BuildIssue{a, b} {
+			if persisted[issue] {
+				issues = append(issues, issue)
+			}
+		}
+		return issues, nil
+	}).AnyTimes()
+	summaries := storagemock.NewMockRequestIssueSummaryStore(ctrl)
+	m.store.EXPECT().GetRequestIssueSummaryStore().Return(summaries).AnyTimes()
+	projected := make(map[string]entity.RequestIssueSummary)
+	summaries.EXPECT().Get(gomock.Any(), testID, testBuildID, gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _, _, task, unit string) (entity.RequestIssueSummary, error) {
+		value, exists := projected[unit]
+		if !exists {
+			return entity.RequestIssueSummary{}, storage.ErrNotFound
+		}
+		return value, nil
+	}).AnyTimes()
+	summaries.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary) error {
+		projected[value.UnitID] = value
+		return nil
+	}).AnyTimes()
+
 	issueStore.EXPECT().Create(gomock.Any(), testBuildID, gomock.Any()).DoAndReturn(func(_ context.Context, _ string, issue entity.BuildIssue) error {
 		if persisted[issue] {
 			return storage.ErrAlreadyExists
@@ -191,6 +215,9 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	assert.NotEqual(t, published["issuetrack"][0].ID, published["issuetrack"][1].ID)
 	assert.NotEqual(t, published["issuetrack"][1].ID, published["issuetrack"][2].ID)
 	assert.Equal(t, published["issuetrack"][2].ID, published["issuetrack"][3].ID)
+	require.Len(t, projected, 2)
+	require.Equal(t, testBuildID, projected[a.UnitID].BuildID)
+	require.Equal(t, testID, projected[b.UnitID].RequestID)
 	require.Len(t, history, 1)
 	for _, log := range history {
 		assert.Equal(t, entity.RequestEventBuildAnalysisCompleted, log.Event)
