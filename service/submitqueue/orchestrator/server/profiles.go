@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"fmt"
 	nethttp "net/http"
+	"sync"
 
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 
@@ -36,6 +37,8 @@ import (
 	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/baserevision"
+	baserevisiongit "github.com/uber/submitqueue/submitqueue/extension/baserevision/git"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	buildkiterunner "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite"
 	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
@@ -52,7 +55,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/pathoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/baserevision"
 	tangomysql "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
@@ -761,22 +763,33 @@ func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where str
 		return nil, fmt.Errorf("%s: no change repository provisioned at %q", where, key.Git.RepoPath)
 	}
 	workspaces := cloneWorkspaces{}
-	target := baserevision.Target{Repo: key.Git.RepoPath, Remote: key.Git.Remote, Branch: key.Git.Target}
+	target := baserevisiongit.Target{Repo: key.Git.RepoPath, Remote: key.Git.Remote, Branch: key.Git.Target}
 
 	return analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-		fromGit := baserevision.FromGit(workspaces, map[string]baserevision.Target{c.QueueName: target})
 		return tango.New(tango.Params{
 			Signatures: tangomysql.NewSignatureStore(b.tango.DB, b.scope.SubScope("tango"), c.QueueName),
 			Cache:      b.tango.Cache,
 			Client:     client,
-			BaseRevision: func(ctx context.Context, queue string) (string, error) {
-				repo.Lock()
-				defer repo.Unlock()
-				return fromGit(ctx, queue)
+			BaseRevisions: lockedBaseRevisions{
+				Resolver: baserevisiongit.New(workspaces, map[string]baserevisiongit.Target{c.QueueName: target}),
+				lock:     repo,
 			},
 			Changes: b.resolver,
 		}), nil
 	}), nil
+}
+
+// lockedBaseRevisions holds the clone's lock around each lookup, because the
+// change provider works in the same clone.
+type lockedBaseRevisions struct {
+	baserevision.Resolver
+	lock sync.Locker
+}
+
+func (l lockedBaseRevisions) Resolve(ctx context.Context, queue string) (string, error) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	return l.Resolver.Resolve(ctx, queue)
 }
 
 // cloneWorkspaces serves each repo, named by its clone directory, as a local
