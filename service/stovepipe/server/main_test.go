@@ -70,7 +70,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
 	require.NoError(t, err)
 
-	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry)
+	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry, noopRepairExecutorFactory{})
 	require.NoError(t, err)
 
 	return registry, primary.controllers, deadLetter.controllers

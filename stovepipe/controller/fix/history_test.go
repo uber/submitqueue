@@ -16,65 +16,44 @@ package fix
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
-	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/stovepipe/core/messagequeue"
-	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
-func TestFixDLQRetainsDecisionWithoutSubmitting(t *testing.T) {
-	for _, tt := range []struct {
-		name        string
-		fixID       string
-		issueStatus entity.IssueStatus
-		wantEvent   entity.RequestEvent
-		wantReason  string
-	}{
-		{name: "associated", fixID: "fix/1", wantEvent: entity.RequestEventFixSubmitted},
-		{name: "eligible", issueStatus: entity.IssueStatusOpen, wantEvent: entity.RequestEventFixSubmissionAbandoned, wantReason: "acceptance_unknown"},
-		{name: "ineligible", issueStatus: entity.IssueStatusClosed, wantEvent: entity.RequestEventFixSubmissionSkipped, wantReason: "no_eligible_issue"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			_, m := newTestController(t)
-			c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, messagequeue.TopicKeyFix, "recovery")
+func TestFixDLQRetainsAllDispositionsWithoutSubmitting(t *testing.T) {
+	c, m := newTestController(t)
+	issue := testIssue()
+	m.expectIssue(issue)
+	m.repairs[issue] = map[string]entity.IssueRepair{"first": {Issue: issue, ExecutorID: "first", FixID: "fix"}}
+	dlq := NewDLQController(c.logger, tally.NoopScope, m.stores, m.materializer, m.executors, c.topicKey, c.consumerGroup)
+	require.NoError(t, dlq.Process(context.Background(), m.delivery(repairMessage(t))))
+	require.Len(t, m.history, 1)
+}
+
+func TestFixDLQRetainsUnknownAcceptance(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprint(pending), func(t *testing.T) {
+			c, m := newTestController(t)
 			issue := testIssue()
-			observation := issueIdentity(issue)
-			observation.FixID = tt.fixID
-			for i := 0; i < 3; i++ {
-				m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
-				m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{observation}, nil)
-				if tt.fixID == "" {
-					current := storedIssue(issue)
-					current.Status = tt.issueStatus
-					m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).Return(current, nil)
-					m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(observation)).Return(nil, nil)
-				}
-				d := consumermock.NewMockDelivery(m.ctrl)
-				d.EXPECT().Message().Return(repairMessage(t))
-				if i == 0 {
-					*m.historyFailure = assert.AnError
-					require.ErrorIs(t, c.Process(context.Background(), d), assert.AnError)
-					require.Empty(t, m.history)
-					*m.historyFailure = nil
-				} else {
-					require.NoError(t, c.Process(context.Background(), d))
-				}
+			m.expectIssue(issue)
+			if pending {
+				m.repairs[issue] = map[string]entity.IssueRepair{"first": {Issue: issue, ExecutorID: "first", Version: 1}}
+			}
+			dlq := NewDLQController(c.logger, tally.NoopScope, m.stores, m.materializer, m.executors, c.topicKey, c.consumerGroup)
+			require.NoError(t, dlq.Process(context.Background(), m.delivery(repairMessage(t))))
+			for _, log := range m.history {
+				require.Equal(t, entity.RequestEventFixSubmissionAbandoned, log.Event)
 			}
 			require.Len(t, m.history, 1)
-			for _, log := range m.history {
-				require.Equal(t, tt.wantEvent, log.Event)
-				require.Equal(t, testBuildID, log.Metadata[requestlog.MetadataKeyBuildID])
-				require.Equal(t, tt.wantReason, log.Metadata[requestlog.MetadataKeyReason])
-			}
 		})
 	}
 }
@@ -106,7 +85,7 @@ func TestFixDLQDiscardsInvalidMessages(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, m := newTestController(t)
-			c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, messagequeue.TopicKeyFix, "recovery")
+			c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, m.executors, messagequeue.TopicKeyFix, "recovery")
 			require.NoError(t, c.Process(context.Background(), m.delivery(tt.configure(t, m))))
 			require.Empty(t, m.history)
 		})

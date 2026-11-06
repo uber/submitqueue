@@ -69,32 +69,3 @@ func persistRepairEventLog(ctx context.Context, materializer requestlog.Material
 	})
 	return materializer.PersistLog(ctx, store, log)
 }
-
-func persistFixSubmittedLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, buildID string, observation entity.BuildIssue) error {
-	// The queue-scoped executor's opaque fix ID identifies the accepted attempt.
-	// Restoring this from the durable association must precede any replay skip.
-	// Opaque fix IDs can fill the storage column; the event prefix must still fit its own key.
-	identity := sha256.Sum256([]byte(observation.FixID))
-	log := requestlog.NewRequestEventLog(request, entity.RequestEventFixSubmitted, fmt.Sprintf("%x", identity),
-		map[string]string{
-			requestlog.MetadataKeyBuildID: buildID,
-			requestlog.MetadataKeyTaskID:  observation.TaskID,
-			requestlog.MetadataKeyUnitID:  observation.UnitID,
-			requestlog.MetadataKeyFixID:   observation.FixID,
-		})
-	if err := materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("retain submitted repair %q for build %q: %w", observation.FixID, buildID, err)
-	}
-	return nil
-}
-
-func persistFixSubmissionDecision(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, buildID string, event entity.RequestEvent, reason string) error {
-	log := requestlog.NewRequestEventLog(request, event, buildID, map[string]string{
-		requestlog.MetadataKeyBuildID: buildID,
-		requestlog.MetadataKeyReason:  reason,
-	})
-	if err := materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("retain repair decision for build %q: %w", buildID, err)
-	}
-	return nil
-}
