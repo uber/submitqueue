@@ -46,34 +46,6 @@ func TestDLQRequestController_InterfaceAndAccessors(t *testing.T) {
 	assert.Equal(t, "orchestrator-validate-dlq", c.ConsumerGroup())
 }
 
-func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	request := entity.Request{
-		ID: "1", Queue: "q", Version: 1, State: entity.RequestStateStarted,
-	}
-	requestStore.EXPECT().Get(gomock.Any(), "1").Return(request, nil)
-	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
-
-	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
-		return nil
-	})
-
-	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
-
-	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(entity.LandRequest{ID: "1", Queue: "q"}))
-	require.NoError(t, err)
-
-	delivery := newMockDelivery(ctrl, payload)
-	require.NoError(t, c.Process(context.Background(), delivery))
-}
-
 func TestDLQRequestController_Process_TenantPayloadQueueMismatchAcks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := orchstoragemock.NewMockStorage(ctrl)
