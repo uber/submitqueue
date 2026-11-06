@@ -63,6 +63,20 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		)
 		require.NoError(t, f.materializer.PersistLog(context.Background(), log))
 	})
+
+	t.Run("legacy repair appends history and repairs mappings without erasing diagnostics", func(t *testing.T) {
+		f := newMaterializerReceiptFixture(gomock.NewController(t))
+		known := base
+		known.Status, known.RequestVersion, known.StatusTimestampMs = entity.RequestStatusError, 2, 20
+		known.LastError, known.Metadata = "original failure", map[string]string{"source": "validator"}
+		fallback := entity.NewRequestStatusLog(base.Queue, base.RequestID, known.Status, known.RequestVersion, "", map[string]string{entity.TerminalDetailsUnavailable: "true"})
+		f.logs.EXPECT().Insert(gomock.Any(), fallback).Return(nil)
+		f.summaries.EXPECT().Get(gomock.Any(), base.RequestID).Return(known, nil)
+		f.expectURIMappings(known, nil)
+		f.receipts.EXPECT().Create(gomock.Any(), receiptFromTestSummary(known)).Return(nil)
+		require.NoError(t, f.materializer.PersistLog(context.Background(), fallback))
+	})
+
 }
 
 func TestMaterializer_RecordsLifecycleMetrics(t *testing.T) {
@@ -312,6 +326,48 @@ func TestLogWins(t *testing.T) {
 			incoming: entity.RequestLog{
 				Status: entity.RequestStatusLanded, RequestVersion: 2, TimestampMs: 200,
 			},
+		},
+		{
+			name:     "incomplete legacy repair preserves known same terminal outcome",
+			current:  entity.RequestSummary{Status: entity.RequestStatusError, RequestVersion: 2, StatusTimestampMs: 100, Metadata: map[string]string{"source": "validator"}},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			want:     false,
+		},
+		{
+			name:     "legacy repair promotes non-terminal",
+			current:  entity.RequestSummary{Status: entity.RequestStatusStarted, RequestVersion: 0, StatusTimestampMs: 300, Metadata: nil},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			want:     true,
+		},
+		{
+			name:     "legacy repair respects higher version",
+			current:  entity.RequestSummary{Status: entity.RequestStatusError, RequestVersion: 3, StatusTimestampMs: 100, Metadata: nil},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			want:     false,
+		},
+		{
+			name:     "legacy repair permits newer version",
+			current:  entity.RequestSummary{Status: entity.RequestStatusError, RequestVersion: 1, StatusTimestampMs: 100, Metadata: nil},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			want:     true,
+		},
+		{
+			name:     "legacy repair retains different-status ordering",
+			current:  entity.RequestSummary{Status: entity.RequestStatusLanded, RequestVersion: 2, StatusTimestampMs: 100, Metadata: nil},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			want:     true,
+		},
+		{
+			name:     "legacy repair may replace incomplete diagnostics",
+			current:  entity.RequestSummary{Status: entity.RequestStatusError, RequestVersion: 2, StatusTimestampMs: 100, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: map[string]string{entity.TerminalDetailsUnavailable: "true"}},
+			want:     true,
+		},
+		{
+			name:     "ordinary same-terminal log retains timestamp ordering",
+			current:  entity.RequestSummary{Status: entity.RequestStatusError, RequestVersion: 2, StatusTimestampMs: 100, Metadata: nil},
+			incoming: entity.RequestLog{Status: entity.RequestStatusError, RequestVersion: 2, TimestampMs: 200, Metadata: nil},
+			want:     true,
 		},
 	}
 

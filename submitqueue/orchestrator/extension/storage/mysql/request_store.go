@@ -48,12 +48,12 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	defer func() { storage.CompleteReadMetricsOp(op, retErr) }()
 
 	var req entity.Request
-	var changeURIsJSON []byte
+	var changeURIsJSON, terminalDetailsJSON []byte
 
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, queue, change_uri, land_strategy, state, version FROM request WHERE queue = ? AND id = ?",
+		"SELECT id, queue, change_uri, land_strategy, state, version, terminal_details FROM request WHERE queue = ? AND id = ?",
 		r.queue, id,
-	).Scan(&req.ID, &req.Queue, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
+	).Scan(&req.ID, &req.Queue, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version, &terminalDetailsJSON)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Request{}, storage.WrapNotFound(err)
@@ -65,6 +65,15 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	// Unmarshal the change URIs from JSON
 	if err := json.Unmarshal(changeURIsJSON, &req.Change.URIs); err != nil {
 		return entity.Request{}, fmt.Errorf("failed to unmarshal change URIs for request id=%s: %w", id, err)
+	}
+
+	if terminalDetailsJSON != nil {
+		if err := json.Unmarshal(terminalDetailsJSON, &req.TerminalDetails); err != nil {
+			return entity.Request{}, fmt.Errorf("failed to decode terminal details for request id=%s: %w", id, err)
+		}
+		if req.TerminalDetails.TimestampMs <= 0 {
+			return entity.Request{}, fmt.Errorf("invalid terminal details timestamp for request id=%s", id)
+		}
 	}
 
 	return req, nil
@@ -85,9 +94,14 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 		return fmt.Errorf("failed to marshal change URIs for request id=%s: %w", request.ID, err)
 	}
 
+	terminalDetailsJSON, err := marshalRequestTerminalDetails(request.TerminalDetails)
+	if err != nil {
+		return fmt.Errorf("failed to encode terminal details for request id=%s: %w", request.ID, err)
+	}
+
 	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO request (id, queue, change_uri, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?)",
-		request.ID, request.Queue, changeURIsJSON, request.LandStrategy, request.State, request.Version,
+		"INSERT INTO request (id, queue, change_uri, land_strategy, state, version, terminal_details) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		request.ID, request.Queue, changeURIsJSON, request.LandStrategy, request.State, request.Version, terminalDetailsJSON,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -115,9 +129,14 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 		return fmt.Errorf("failed to marshal change URIs for request id=%s: %w", request.ID, err)
 	}
 
+	terminalDetailsJSON, err := marshalRequestTerminalDetails(request.TerminalDetails)
+	if err != nil {
+		return fmt.Errorf("failed to encode terminal details for request id=%s: %w", request.ID, err)
+	}
+
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
-		changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion,
+		"UPDATE request SET change_uri = ?, land_strategy = ?, state = ?, version = ?, terminal_details = ? WHERE queue = ? AND id = ? AND version = ?",
+		changeURIsJSON, request.LandStrategy, request.State, newVersion, terminalDetailsJSON, request.Queue, request.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -142,4 +161,14 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	}
 
 	return nil
+}
+
+func marshalRequestTerminalDetails(details entity.RequestTerminalDetails) ([]byte, error) {
+	if details.TimestampMs == 0 && details.LastError == "" && len(details.Metadata) == 0 {
+		return nil, nil
+	}
+	if details.TimestampMs <= 0 {
+		return nil, fmt.Errorf("terminal details require a positive timestamp")
+	}
+	return json.Marshal(details)
 }

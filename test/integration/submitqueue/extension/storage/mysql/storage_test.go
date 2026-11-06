@@ -17,8 +17,10 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"os"
 	"testing"
 
+	"github.com/uber/submitqueue/submitqueue/entity"
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -126,4 +128,40 @@ type gatewayMySQLFactory struct {
 // For returns the queue-scoped store aggregate bound to the queue named in config.
 func (f gatewayMySQLFactory) For(config gwstorage.Config) (gwstorage.Storage, error) {
 	return f.backend.For(config.QueueName)
+}
+
+func (s *MySQLStorageIntegrationSuite) TestRequestTerminalDetailsMigration() {
+	t := s.T()
+	db, err := s.stack.ConnectMySQLService("mysql")
+	require.NoError(t, err)
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	// The connection-local table isolates the old-schema migration from the shared contract suite.
+	_, err = db.ExecContext(ctx, `CREATE TEMPORARY TABLE request (
+		queue VARCHAR(255) NOT NULL, id VARCHAR(255) NOT NULL,
+		change_uri JSON NOT NULL, land_strategy VARCHAR(64) NOT NULL,
+		state VARCHAR(64) NOT NULL, version INT NOT NULL,
+		PRIMARY KEY (queue, id)
+	)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO request (queue, id, change_uri, land_strategy, state, version) VALUES ('legacy', '1', '[]', '', 'error', 2)`)
+	require.NoError(t, err)
+	migration, err := os.ReadFile(testutil.Runfile("submitqueue/orchestrator/extension/storage/mysql/migration/001_request_terminal_details.sql"))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, string(migration))
+	require.NoError(t, err)
+	store := mysqlstorage.NewRequestStore(db, tally.NoopScope, "legacy")
+	request, err := store.Get(ctx, "1")
+	require.NoError(t, err)
+	require.Equal(t, entity.RequestTerminalDetails{}, request.TerminalDetails)
+	request.TerminalDetails = entity.RequestTerminalDetails{TimestampMs: 123, LastError: "persisted failure", Metadata: map[string]string{"reason": "migration"}}
+	require.NoError(t, store.Update(ctx, request, 2, 3))
+	retrieved, err := store.Get(ctx, "1")
+	require.NoError(t, err)
+	require.Equal(t, request.TerminalDetails, retrieved.TerminalDetails)
+	_, err = db.ExecContext(ctx, `UPDATE request SET terminal_details = 'null' WHERE queue = 'legacy' AND id = '1'`)
+	require.NoError(t, err)
+	_, err = store.Get(ctx, "1")
+	require.Error(t, err)
 }

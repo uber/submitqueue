@@ -188,6 +188,9 @@ func logWins(log entity.RequestLog, summary entity.RequestSummary) bool {
 		if log.RequestVersion != summary.RequestVersion {
 			return log.RequestVersion > summary.RequestVersion
 		}
+		if log.Status == summary.Status && log.Metadata[entity.TerminalDetailsUnavailable] == "true" && summary.Metadata[entity.TerminalDetailsUnavailable] != "true" {
+			return false
+		}
 	}
 	return log.TimestampMs > summary.StatusTimestampMs
 }

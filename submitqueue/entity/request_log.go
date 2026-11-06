@@ -84,6 +84,9 @@ const (
 	RequestStatusCancelled RequestStatus = "cancelled"
 )
 
+// TerminalDetailsUnavailable marks a legacy terminal log whose original diagnostics are unavailable.
+const TerminalDetailsUnavailable = "terminal_details_unavailable"
+
 // RequestEvent is something that happened to a request while it sat at a status,
 // rather than a status of its own.
 //

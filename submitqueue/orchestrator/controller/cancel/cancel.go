@@ -147,6 +147,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
+	if request.State == entity.RequestStateCancelled {
+		return corerequest.PublishTerminalRequestLog(ctx, c.registry, request)
+	}
+
 	if entity.IsRequestStateTerminal(request.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "already_terminal", 1, metrics.TagsFromContext(ctx)...)
 		return nil

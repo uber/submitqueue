@@ -89,9 +89,10 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	ctx := s.ctx
 
 	request := entity.Request{
-		ID:    "test/create-get",
-		Queue: "test-queue",
-		State: entity.RequestStateStarted,
+		ID:              "test/create-get",
+		Queue:           "test-queue",
+		State:           entity.RequestStateError,
+		TerminalDetails: entity.RequestTerminalDetails{TimestampMs: 123, LastError: "original failure", Metadata: map[string]string{"reason": "test"}},
 		Change: change.Change{
 			URIs: []string{"github://github.example.com/uber/storage-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"},
 		},
@@ -114,6 +115,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	assert.Equal(t, request.Change.URIs, retrieved.Change.URIs)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
 	assert.Equal(t, request.Version, retrieved.Version)
+	assert.Equal(t, request.TerminalDetails, retrieved.TerminalDetails)
 }
 
 // TestStorage_CreateAndGet_StackedPRs tests creating and retrieving a request with stacked PRs
@@ -175,7 +177,8 @@ func (s *StorageContractSuite) TestStorage_Update() {
 	updated := request
 	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
 	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
-	updated.State = entity.RequestStateProcessing
+	updated.State = entity.RequestStateError
+	updated.TerminalDetails = entity.RequestTerminalDetails{TimestampMs: 123, LastError: "original failure", Metadata: map[string]string{"source": "test"}}
 	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, request.Version, request.Version+1)
 	require.NoError(t, err, "failed to update request")
 
@@ -207,7 +210,8 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	updated := request
 	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
 	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
-	updated.State = entity.RequestStateProcessing
+	updated.State = entity.RequestStateError
+	updated.TerminalDetails = entity.RequestTerminalDetails{TimestampMs: 123, LastError: "original failure", Metadata: map[string]string{"source": "test"}}
 	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, 1, 2)
 	require.NoError(t, err, "update with correct version should succeed")
 
@@ -216,6 +220,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	stale.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/3/cccccccccccccccccccccccccccccccccccccccc"}
 	stale.LandStrategy = mergestrategy.MergeStrategyRebase
 	stale.State = entity.RequestStateLanded
+	stale.TerminalDetails = entity.RequestTerminalDetails{TimestampMs: 456, Metadata: map[string]string{"replacement": "losing"}}
 	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, stale, 1, 3)
 	assert.Error(t, err, "update with stale version should fail")
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "should return ErrVersionMismatch")
@@ -233,11 +238,12 @@ func (s *StorageContractSuite) TestStorage_UpdateChangeURIs() {
 	ctx := s.ctx
 
 	tests := []struct {
-		name string
-		uris []string
+		name     string
+		uris     []string
+		metadata map[string]string
 	}{
-		{name: "nil", uris: nil},
-		{name: "empty", uris: []string{}},
+		{name: "nil", uris: nil, metadata: nil},
+		{name: "empty", uris: []string{}, metadata: map[string]string{}},
 	}
 
 	for i, tt := range tests {
@@ -254,11 +260,14 @@ func (s *StorageContractSuite) TestStorage_UpdateChangeURIs() {
 
 			updated := request
 			updated.Change.URIs = tt.uris
+			updated.State = entity.RequestStateCancelled
+			updated.TerminalDetails = entity.RequestTerminalDetails{TimestampMs: 123, Metadata: tt.metadata}
 			require.NoError(t, s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, request.Version, request.Version+1))
 
 			retrieved, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, request.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.uris, retrieved.Change.URIs)
+			assert.Equal(t, updated.TerminalDetails, retrieved.TerminalDetails)
 		})
 	}
 }

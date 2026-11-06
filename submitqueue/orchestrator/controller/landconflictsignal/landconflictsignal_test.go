@@ -17,6 +17,7 @@ package landconflictsignal
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,6 +50,16 @@ func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, erro
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
 	return request
+}
+
+func terminalRequestWithState(request entity.Request, state entity.RequestState) gomock.Matcher {
+	return gomock.Cond(func(got entity.Request) bool {
+		if got.TerminalDetails.TimestampMs <= 0 {
+			return false
+		}
+		got.TerminalDetails = request.TerminalDetails
+		return reflect.DeepEqual(got, requestWithState(request, state))
+	})
 }
 
 func resultPayload(t *testing.T, res runwaymq.MergeResult) []byte {
@@ -146,15 +157,18 @@ func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
-	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).DoAndReturn(func(context.Context, string) (entity.Request, error) { return request, nil }).Times(3)
 	// The request is driven to terminal Error inline (version 1 -> 2).
-	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+	reqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(request, entity.RequestStateError), int32(1), int32(2)).DoAndReturn(func(_ context.Context, snapshot entity.Request, _, newVersion int32) error {
+		request = snapshot
+		request.Version = newVersion
+		return nil
+	})
 
 	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	// One publish is expected — the terminal log entry to the log topic. A publish
-	// to the batch topic would be a bug (gomock fails on the unexpected 2nd call).
+	var terminalLogs []entity.RequestLog
 	var gotTopic string
 	var gotPayload []byte
 	pub := queuemock.NewMockPublisher(ctrl)
@@ -162,9 +176,15 @@ func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			gotTopic = topic
 			gotPayload = msg.Payload
+			entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
+			require.NoError(t, err)
+			terminalLogs = append(terminalLogs, entry)
+			if len(terminalLogs) == 1 {
+				return fmt.Errorf("publish unavailable")
+			}
 			return nil
 		},
-	)
+	).Times(2)
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
@@ -180,10 +200,13 @@ func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_FAILED, Reason: "conflict in foo.go"}
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
-	// Not-landable is an expected terminal outcome, so Process acks (no error).
+	require.Error(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
+	res.Outcome, res.Reason = runwaypb.Outcome_SUCCEEDED, "different retry result"
+	msg = entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
+	require.Len(t, terminalLogs, 2)
+	assert.Equal(t, terminalLogs[0], terminalLogs[1])
 
-	// The single publish is the terminal log entry carrying the conflict reason.
 	assert.Equal(t, "log", gotTopic)
 	logEntry, err := sqmq.UnmarshalRequestLog(gotPayload)
 	require.NoError(t, err)
@@ -197,10 +220,11 @@ func TestFailRequest_UpdateFailureLeavesRequestUnchanged(t *testing.T) {
 
 	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
 	reqStore := storagemock.NewMockRequestStore(ctrl)
-	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(fmt.Errorf("db down"))
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
+	reqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(fmt.Errorf("db down"))
 
 	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(reqStore)
+	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")

@@ -17,6 +17,7 @@ package conclude
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,9 +47,15 @@ func (f staticStorageFactory) For(orchstorage.Config) (orchstorage.Storage, erro
 	return f.store, nil
 }
 
-func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+func requestWithState(request entity.Request, state entity.RequestState) gomock.Matcher {
 	request.State = state
-	return request
+	return gomock.Cond(func(got entity.Request) bool {
+		if got.TerminalDetails.TimestampMs <= 0 {
+			return false
+		}
+		got.TerminalDetails = request.TerminalDetails
+		return reflect.DeepEqual(got, request)
+	})
 }
 
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.

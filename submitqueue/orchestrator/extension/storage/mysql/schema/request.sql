@@ -5,5 +5,6 @@ CREATE TABLE IF NOT EXISTS request (
     land_strategy VARCHAR(64) NOT NULL,
     state VARCHAR(64) NOT NULL,
     version INT NOT NULL,
+    terminal_details JSON NULL,
     PRIMARY KEY (queue, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
