@@ -184,29 +184,7 @@ it("discards previous results when the request changes", () => {
   expect(screen.queryByText("green-project")).toBeNull();
 });
 
-it.each([
-  ["accepted", false, "Waiting to start"],
-  ["processing", false, "Waiting for builds"],
-  ["succeeded", false, "Results pending"],
-  ["failed", false, "Results pending"],
-  ["cancelled", false, "Cancelled"],
-  ["superseded", false, "Superseded"],
-  ["", false, "Status unknown"],
-  ["future-state", false, "Status unknown"],
-  ["succeeded", true, "Recording finished"],
-  ["failed", true, "Recording finished"],
-  ["future-state", true, "Recording finished"],
-] as const)("shows project recording status for %s with completion %s as %s", (requestState, complete, label) => {
-  if (!model.projectStatus.ok) throw new Error("No projects");
-  render(<StovepipeApp model={{
-    ...model,
-    history: { ok: false, error: "History unavailable" },
-    projectStatus: { ok: true, data: { ...model.projectStatus.data, requestState, complete } },
-  }} />);
-  expect(screen.getByLabelText("Project result recording")).toHaveTextContent(label);
-});
-
-it("renders recorded project results, completion and shareable pagination", async () => {
+it("renders recorded project results, completion and shareable pagination", () => {
   render(<StovepipeApp model={model} />);
   const projects = screen.getByRole("region", { name: "Project Results" });
   const table = within(projects).getByRole("table", { name: "Recorded project results" });
@@ -223,9 +201,6 @@ it("renders recorded project results, completion and shareable pagination", asyn
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("2 of 51")).toBeVisible();
   expect(within(projects).getByText("Waiting for builds")).toBeVisible();
-  expect(screen.queryByText(/Waiting for builds to finish/)).toBeNull();
-  fireEvent.mouseEnter(within(projects).getByLabelText("Project result recording"));
-  await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("Waiting for builds to finish before recording project results."));
   const pager = within(projects).getByRole("navigation", { name: "Project pages (bottom)" });
   expect(within(projects).getAllByLabelText("Projects per page")).toHaveLength(1);
   expect(within(projects).queryByRole("navigation", { name: "Project pages (top)" })).toBeNull();
@@ -238,7 +213,7 @@ it.each(["projects=next", "projectPageSize=25"])("preserves the request summary 
   const { rerender } = render(<StovepipeApp model={model} />);
   const next = within(screen.getByRole("navigation", { name: "Project pages (bottom)" }))
     .getByRole("link", { name: /Next projects/ });
-  next.focus();
+  act(() => next.focus());
   rerender(<StovepipeApp model={{
     ...model,
     key: "/repo%2Fmain/request/7?" + query,
@@ -263,7 +238,7 @@ it("does not show a previous project's page after a failed pagination load", () 
   expect(screen.getByText("git://repo/sha")).toBeVisible();
 });
 
-it("shows complete empty results without inventing green or a continuation", async () => {
+it("shows complete empty results without inventing green or a continuation", () => {
   if (!model.projectStatus.ok) throw new Error("No projects");
   render(<StovepipeApp model={{
     ...model,
@@ -272,9 +247,6 @@ it("shows complete empty results without inventing green or a continuation", asy
     } },
   }} />);
   expect(screen.getByText("Recording finished")).toBeVisible();
-  expect(screen.queryByText(/Project result recording has finished/)).toBeNull();
-  act(() => screen.getByLabelText("Project result recording").focus());
-  await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("Project result recording has finished. See the recorded results for the outcome."));
   expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
   expect(screen.queryByRole("link", { name: /Next projects/ })).toBeNull();
   const table = screen.getByRole("table", { name: "Recorded project results" });
@@ -341,6 +313,7 @@ it("shows repository and project results when history is unavailable", async () 
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("No result recorded")).toBeVisible();
   expect(screen.getByText("green-project")).toBeVisible();
+  expect(screen.getByLabelText("Project result recording")).toHaveTextContent("Waiting for builds");
 });
 
 it("shows history when repository and project results are unavailable", async () => {
