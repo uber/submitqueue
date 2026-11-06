@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
+        "conclude.go",
         "find.go",
         "list.go",
         "transition.go",
@@ -10,10 +11,15 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/consumer:go_default_library",
+        "//platform/metrics:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
+        "//submitqueue/orchestrator/core/request:go_default_library",
         "//submitqueue/orchestrator/extension/storage:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
         "@org_golang_x_sync//errgroup:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
 
