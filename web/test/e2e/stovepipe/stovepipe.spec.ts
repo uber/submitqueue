@@ -542,6 +542,12 @@ test("pages through project results without reloading or moving the surrounding 
   const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
   const pager = page.getByRole("navigation", { name: "Project pages (bottom)" });
   await expect(rows).toHaveCount(50);
+  const projectColumns = () => page.getByRole("table", { name: "Recorded project results" })
+    .locator("th").evaluateAll(cells => cells.map(cell => {
+      const { x, width } = cell.getBoundingClientRect();
+      return { x, width };
+    }));
+  const firstPageColumns = await projectColumns();
   await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
   await projectScroll.focus();
   await page.keyboard.press("End");
@@ -550,6 +556,7 @@ test("pages through project results without reloading or moving the surrounding 
   const scrollBeforeNext = await page.evaluate(() => window.scrollY);
   await pager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(rows).toHaveCount(1);
+  expect(await projectColumns()).toEqual(firstPageColumns);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeNext);
   expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
   await expect(pager.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);

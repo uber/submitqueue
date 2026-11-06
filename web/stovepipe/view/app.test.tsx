@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { StovepipeApp } from "./app.js";
@@ -17,6 +17,7 @@ const model: StovepipePageModel = {
   projectStatus: {
     ok: true,
     data: {
+      requestState: "processing",
       updatedAtMs: "1000",
       repositoryBreakageDegree: null,
       complete: false,
@@ -183,7 +184,29 @@ it("discards previous results when the request changes", () => {
   expect(screen.queryByText("green-project")).toBeNull();
 });
 
-it("renders recorded project results, completion and shareable pagination", () => {
+it.each([
+  ["accepted", false, "Waiting to start"],
+  ["processing", false, "Waiting for builds"],
+  ["succeeded", false, "Results pending"],
+  ["failed", false, "Results pending"],
+  ["cancelled", false, "Cancelled"],
+  ["superseded", false, "Superseded"],
+  ["", false, "Status unknown"],
+  ["future-state", false, "Status unknown"],
+  ["succeeded", true, "Recording finished"],
+  ["failed", true, "Recording finished"],
+  ["future-state", true, "Recording finished"],
+] as const)("shows project recording status for %s with completion %s as %s", (requestState, complete, label) => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  render(<StovepipeApp model={{
+    ...model,
+    history: { ok: false, error: "History unavailable" },
+    projectStatus: { ok: true, data: { ...model.projectStatus.data, requestState, complete } },
+  }} />);
+  expect(screen.getByLabelText("Project result recording")).toHaveTextContent(label);
+});
+
+it("renders recorded project results, completion and shareable pagination", async () => {
   render(<StovepipeApp model={model} />);
   const projects = screen.getByRole("region", { name: "Project Results" });
   const table = within(projects).getByRole("table", { name: "Recorded project results" });
@@ -199,16 +222,21 @@ it("renders recorded project results, completion and shareable pagination", () =
   expect(within(projects).queryByText(/%/)).toBeNull();
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("2 of 51")).toBeVisible();
-  expect(within(projects).getByText(/still in progress/)).toBeVisible();
-  for (const link of within(projects).getAllByRole("link", { name: /Next projects/ })) {
-    expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
-  }
+  expect(within(projects).getByText("Waiting for builds")).toBeVisible();
+  expect(screen.queryByText(/Waiting for builds to finish/)).toBeNull();
+  fireEvent.mouseEnter(within(projects).getByLabelText("Project result recording"));
+  await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("Waiting for builds to finish before recording project results."));
+  const pager = within(projects).getByRole("navigation", { name: "Project pages (bottom)" });
+  expect(within(projects).getAllByLabelText("Projects per page")).toHaveLength(1);
+  expect(within(projects).queryByRole("navigation", { name: "Project pages (top)" })).toBeNull();
+  expect(within(pager).getByRole("link", { name: /Next projects/ }))
+    .toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
 });
 
 it.each(["projects=next", "projectPageSize=25"])("preserves the request summary and pager focus when loading %s", (query) => {
   if (!model.projectStatus.ok) throw new Error("No projects");
   const { rerender } = render(<StovepipeApp model={model} />);
-  const next = within(screen.getByRole("navigation", { name: "Project pages (top)" }))
+  const next = within(screen.getByRole("navigation", { name: "Project pages (bottom)" }))
     .getByRole("link", { name: /Next projects/ });
   next.focus();
   rerender(<StovepipeApp model={{
@@ -235,7 +263,7 @@ it("does not show a previous project's page after a failed pagination load", () 
   expect(screen.getByText("git://repo/sha")).toBeVisible();
 });
 
-it("shows complete empty results without inventing green or a continuation", () => {
+it("shows complete empty results without inventing green or a continuation", async () => {
   if (!model.projectStatus.ok) throw new Error("No projects");
   render(<StovepipeApp model={{
     ...model,
@@ -243,13 +271,48 @@ it("shows complete empty results without inventing green or a continuation", () 
       ...model.projectStatus.data, complete: true, projects: [], nextHref: null,
     } },
   }} />);
-  expect(screen.getByText("Project result recording is complete.")).toBeVisible();
+  expect(screen.getByText("Recording finished")).toBeVisible();
+  expect(screen.queryByText(/Project result recording has finished/)).toBeNull();
+  act(() => screen.getByLabelText("Project result recording").focus());
+  await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("Project result recording has finished. See the recorded results for the outcome."));
   expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
   expect(screen.queryByRole("link", { name: /Next projects/ })).toBeNull();
   const table = screen.getByRole("table", { name: "Recorded project results" });
   expect(within(table).getAllByRole("row")).toHaveLength(1);
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("No result recorded")).toBeVisible();
+});
+
+it("explains completed repository-wide breakage without project results", () => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  render(<StovepipeApp model={{
+    ...model,
+    projectStatus: { ok: true, data: {
+      ...model.projectStatus.data, repositoryBreakageDegree: 1, complete: true,
+      projects: [], firstHref: null, nextHref: null,
+    } },
+  }} />);
+  const results = screen.getByRole("region", { name: "Recorded project results" });
+  expect(within(results).getByText("Repository-wide breakage recorded")).toBeVisible();
+  expect(within(results).getByText("This request is fully broken at the repository level. No individual project results were recorded.")).toBeVisible();
+  expect(within(results).queryByRole("table")).toBeNull();
+  expect(screen.queryByText("No project results recorded on this page.")).toBeNull();
+});
+
+it.each([
+  { complete: false, repositoryBreakageDegree: 1, firstHref: null, nextHref: null },
+  { complete: true, repositoryBreakageDegree: null, firstHref: null, nextHref: null },
+  { complete: true, repositoryBreakageDegree: 0, firstHref: null, nextHref: null },
+  { complete: true, repositoryBreakageDegree: 1, firstHref: "/repo%2Fmain/request/7", nextHref: null },
+  { complete: true, repositoryBreakageDegree: 1, firstHref: null, nextHref: "/repo%2Fmain/request/7?projects=next" },
+])("does not infer repository-only breakage from an empty page: %j", (status) => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  render(<StovepipeApp model={{
+    ...model,
+    projectStatus: { ok: true, data: { ...model.projectStatus.data, ...status, projects: [] } },
+  }} />);
+  expect(screen.queryByText("Repository-wide breakage recorded")).toBeNull();
+  expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
 });
 
 it.each([

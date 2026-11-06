@@ -72,6 +72,8 @@ export interface RequestHistoryModel {
   events: HistoryEventModel[];
 }
 export interface ProjectStatusModel {
+  /** Lifecycle state from the same response as recording completion. */
+  requestState: string;
   /** Newest durable result or lifecycle record in Unix milliseconds. */
   updatedAtMs: string;
   /** Whole-repository breakage on [0, 1]; null means no recorded result. */

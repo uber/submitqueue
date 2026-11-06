@@ -51,7 +51,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   const stovepipe = createStovepipeWeb({ queues: [{ name: "repo/main" }], service: {
     list: async () => ({ requests: [], nextPageToken: "" }),
     getProjectStatusByID: async () => ({
-      queue: "repo/main", requestId: "1", updatedAtMs: 100n,
+      queue: "repo/main", requestId: "1", requestState: "failed", updatedAtMs: 100n,
       repositoryResult: { case: "repositoryBreakageDegree", value: 0.25 },
       projectResultsComplete: true, nextPageToken: "",
       projects: [{ project: "example-project", projectType: "service", result: { case: "breakageDegree", value: 0 } }],
@@ -74,8 +74,9 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   const reportError = console.error;
   console.error = (...values) => {
     const message = values.map(String).join(" ");
-    // BaseUI's Popover still uses defaultProps; React 18 warns but hydrates correctly.
-    if (message.includes("Popover") && message.includes("Support for defaultProps will be removed from function components")) {
+    // BaseUI's Popover and StatefulTooltip still use defaultProps; React 18 hydrates correctly.
+    if (message.includes("Support for defaultProps will be removed from function components")
+      && /\b(?:Popover|StatefulTooltip)\b/u.test(String(values[1]))) {
       reportError(...values);
     } else {
       errors.push(message);
