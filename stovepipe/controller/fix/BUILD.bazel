@@ -39,6 +39,7 @@ go_test(
         "//platform/consumer:go_default_library",
         "//platform/consumer/mock:go_default_library",
         "//platform/errs:go_default_library",
+        "//platform/errs/generic:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",
         "//stovepipe/entity:go_default_library",
@@ -51,6 +52,5 @@ go_test(
         "@com_github_uber_go_tally//:go_default_library",
         "@org_uber_go_mock//gomock:go_default_library",
         "@org_uber_go_zap//:go_default_library",
-        "@org_uber_go_zap//zaptest/observer:go_default_library",
     ],
 )

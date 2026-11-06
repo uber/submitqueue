@@ -97,8 +97,8 @@ func (fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunn
 
 type noopRepairExecutorFactory struct{}
 
-func (noopRepairExecutorFactory) For(fixer.Config) (fixer.RepairExecutor, error) {
-	return fixernoop.New(), nil
+func (noopRepairExecutorFactory) For(fixer.Config) ([]fixer.Registration, error) {
+	return []fixer.Registration{{ID: "noop", Executor: fixernoop.New()}}, nil
 }
 
 // hookResolver sends every event to the no-op hook. Which hooks an event goes to is host
@@ -265,7 +265,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer, registry)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer, registry, repairExecutors)
 	if err != nil {
 		return err
 	}
@@ -459,6 +459,7 @@ func registerDLQControllers(
 	store storage.Factory,
 	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
+	repairExecutors fixer.Factory,
 ) (int, error) {
 	var count int
 
@@ -492,7 +493,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	fixDLQController := fix.NewDLQController(logger, scope, store, materializer, dlq.TopicKey(stovepipemq.TopicKeyFix), "stovepipe-fix-dlq")
+	fixDLQController := fix.NewDLQController(logger, scope, store, materializer, repairExecutors, dlq.TopicKey(stovepipemq.TopicKeyFix), "stovepipe-fix-dlq")
 	if err := c.Register(fixDLQController); err != nil {
 		return count, fmt.Errorf("failed to register fix dlq controller: %w", err)
 	}
