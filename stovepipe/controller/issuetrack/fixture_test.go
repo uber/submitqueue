@@ -38,8 +38,8 @@ const testQueue = "validation/main"
 
 type logKey struct {
 	issueKey
-	build  string
-	status entity.IssueStatus
+	build string
+	event entity.IssueEvent
 }
 
 type fixture struct {
@@ -130,7 +130,7 @@ func newFixture(t *testing.T) *fixture {
 		if err := f.fail("history/create"); err != nil {
 			return err
 		}
-		key := logKey{issueKey{log.TaskID, log.UnitID}, log.BuildID, log.Status}
+		key := logKey{issueKey{log.TaskID, log.UnitID}, log.BuildID, log.Event}
 		if _, ok := f.initialLogs[key]; ok {
 			return storage.ErrAlreadyExists
 		}
@@ -140,11 +140,11 @@ func newFixture(t *testing.T) *fixture {
 		f.logs[key] = log
 		return nil
 	}).AnyTimes()
-	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit, build string, status entity.IssueStatus) (entity.IssueLog, error) {
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit, build string, event entity.IssueEvent) (entity.IssueLog, error) {
 		if err := f.fail("history/get"); err != nil {
 			return entity.IssueLog{}, err
 		}
-		key := logKey{issueKey{task, unit}, build, status}
+		key := logKey{issueKey{task, unit}, build, event}
 		if log, ok := f.logs[key]; ok {
 			return log, nil
 		}
@@ -433,7 +433,7 @@ func (f *fixture) reportIssue(build, task, unit string) {
 
 func (f *fixture) seedIssue(task, unit string, status entity.IssueStatus) {
 	f.states[issueKey{task, unit}] = entity.IssueState{TaskID: task, UnitID: unit, Status: status, FirstSeenBuildID: "older", Version: 7, LastProcessedBuildID: "older", LastChangedBuildID: "older", ChangedAtMs: 500}
-	f.initialLogs[logKey{issueKey{task, unit}, "older", status}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Status: status, TimestampMs: 500}
+	f.initialLogs[logKey{issueKey{task, unit}, "older", entity.IssueEvent(status)}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Event: entity.IssueEvent(status), TimestampMs: 500}
 	f.summaries[issueKey{task, unit}] = entity.IssueSummary{TaskID: task, UnitID: unit, Status: status,
 		FirstSeenBuildID: "older", RequestID: "1", BuildID: "older", ChangedAtMs: 500, Version: 1}
 	if status == entity.IssueStatusOpen {
