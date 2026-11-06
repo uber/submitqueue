@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
@@ -63,6 +64,7 @@ type fixture struct {
 	requests       map[string]entity.Request
 	buildIssues    map[string]map[issueKey]entity.BuildIssue
 
+	hookMessages  []entityqueue.Message
 	fixMessages   []entityqueue.Message
 	onFixPublish  func(entityqueue.Message)
 	onHistoryRead func()
@@ -352,7 +354,14 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return f.fail("fix/publish")
 	}).AnyTimes()
-	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: messagequeue.TopicKeyFix, Name: "fix", Queue: queue}})
+	publisher.EXPECT().Publish(gomock.Any(), "hook", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		f.hookMessages = append(f.hookMessages, msg)
+		return f.fail("hook/publish")
+	}).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: messagequeue.TopicKeyFix, Name: "fix", Queue: queue},
+		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
+	})
 	require.NoError(t, err)
 	f.requestHistory = map[string]entity.RequestLog{}
 	f.materializer = requestlog.NewMaterializer(tally.NoopScope)

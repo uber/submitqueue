@@ -26,8 +26,10 @@ import (
 	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/fixrequest"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -278,7 +280,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	}
 
 	if progress.CursorTaskID != "" {
-		next, err := c.processIssue(ctx, store, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false)
+		next, err := c.processIssue(ctx, store, queue, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
@@ -317,7 +319,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			return entity.IssueTrackingState{}, err
 		}
 		previousVersion := progress.Version
-		progress, err = c.processIssue(ctx, store, progress, key, !finalizing)
+		progress, err = c.processIssue(ctx, store, queue, progress, key, !finalizing)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
@@ -358,7 +360,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	return progress, nil
 }
 
-func (c *Controller) processIssue(ctx context.Context, store storage.Storage, progress entity.IssueTrackingState, key issueKey, reported bool) (entity.IssueTrackingState, error) {
+func (c *Controller) processIssue(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState, key issueKey, reported bool) (entity.IssueTrackingState, error) {
 	if err := ctx.Err(); err != nil {
 		return entity.IssueTrackingState{}, err
 	}
@@ -411,7 +413,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID == progress.BuildID && current.Status == desired {
 		if key == (issueKey{progress.CursorTaskID, progress.CursorUnitID}) {
-			return next, persistIssueHistory(ctx, c.materializer, store, current)
+			return next, c.recordIssueTransition(ctx, store, queue, current)
 		}
 		return next, nil
 	}
@@ -425,7 +427,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 
 	if !missing {
 		if current.LastProcessedBuildID == progress.BuildID {
-			if err := persistIssueHistory(ctx, c.materializer, store, current); err != nil {
+			if err := c.recordIssueTransition(ctx, store, queue, current); err != nil {
 				return entity.IssueTrackingState{}, err
 			}
 		}
@@ -460,9 +462,23 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	}
 
 	if missing || current.Status != desired {
-		return next, persistIssueHistory(ctx, c.materializer, store, target)
+		return next, c.recordIssueTransition(ctx, store, queue, target)
 	}
 	return next, nil
+}
+
+func (c *Controller) recordIssueTransition(ctx context.Context, store storage.Storage, queue string, issue entity.IssueState) error {
+	if err := persistIssueHistory(ctx, c.materializer, store, issue); err != nil {
+		return err
+	}
+	if issue.Status == entity.IssueStatusOpen {
+		log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
+		event := hookevent.NewIssueOpened(queue, log)
+		if err := hook.Publish(ctx, c.registry, queue, event, event.GetId()); err != nil {
+			return fmt.Errorf("publish issue opening: %w", err)
+		}
+	}
+	return nil
 }
 
 func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next entity.IssueTrackingState) (entity.IssueTrackingState, error) {

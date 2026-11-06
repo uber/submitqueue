@@ -98,3 +98,32 @@ func TestConstructors_IDsDifferByType(t *testing.T) {
 	assert.NotEqual(t, started.GetId(), cancelled.GetId())
 	assert.NotEqual(t, recorded.GetId(), cancelled.GetId())
 }
+
+func TestIssueOpenedIdentity(t *testing.T) {
+	log := entity.IssueLog{TaskID: "task", UnitID: "unit", BuildID: "build/1", Status: entity.IssueStatusOpen, TimestampMs: 1234}
+	event := NewIssueOpened(testQueue, log)
+	require.NoError(t, basehook.Validate(event))
+	assert.Equal(t, int64(1234), event.GetTimestampMs())
+	assert.Equal(t, Source, event.GetSource())
+	assert.Equal(t, string(TypeIssueOpened), event.GetType())
+	assert.Equal(t, map[string]any{"queue": testQueue, "task_id": "task", "unit_id": "unit", "opening_build_id": "build/1"}, event.GetPayload().AsMap())
+	assert.Equal(t, event, NewIssueOpened(testQueue, log))
+	for _, field := range []string{"queue", "task", "unit", "build"} {
+		t.Run(field, func(t *testing.T) {
+			other, queue := log, testQueue
+			switch field {
+			case "queue":
+				queue += "/other"
+			case "task":
+				other.TaskID += "/other"
+			case "unit":
+				other.UnitID = ""
+			case "build":
+				other.BuildID = "build/2"
+			}
+			changed := NewIssueOpened(queue, other)
+			require.NoError(t, basehook.Validate(changed))
+			assert.NotEqual(t, event.GetId(), changed.GetId())
+		})
+	}
+}

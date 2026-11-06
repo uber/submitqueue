@@ -14,7 +14,10 @@
 
 package entity
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // IssueStatus describes whether a validation issue is open or closed.
 type IssueStatus string
@@ -45,6 +48,8 @@ type IssueState struct {
 	LastChangedBuildID string `json:"last_changed_build_id"`
 	// ChangedAtMs is the latest status transition's timestamp in Unix milliseconds.
 	ChangedAtMs int64 `json:"changed_at_ms"`
+	// Metadata contains namespaced extension state, retained across closing and reopening.
+	Metadata map[string]json.RawMessage `json:"metadata,omitempty"`
 	// Version is the positive optimistic-lock version; it never resets on reopening.
 	Version int32 `json:"version"`
 }
