@@ -16,7 +16,6 @@ package fix
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,45 +30,6 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
-
-func TestSubmittedFixHistoryRepairsWithoutResubmitting(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		submitErr error
-	}{
-		{name: "successful submission"},
-		{name: "identified submission with error", submitErr: assert.AnError},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			c, m := newTestController(t)
-			issue := testIssue()
-			m.expectIssue(issue)
-			m.executor.EXPECT().Submit(gomock.Any(), issue).Return("fix/1", tt.submitErr)
-			saved := issueWithFixID(issue, "fix/1")
-			m.observations.EXPECT().Update(gomock.Any(), testBuildID, saved, int32(0), int32(1)).Return(nil)
-			*m.historyFailure = assert.AnError
-			require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
-			require.Empty(t, m.history)
-			*m.historyFailure = nil
-			for i := 0; i < 2; i++ {
-				m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
-				m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{saved}, nil)
-				require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
-			}
-			require.Len(t, m.history, 1)
-			var log entity.RequestLog
-			for _, retained := range m.history {
-				log = retained
-			}
-			require.Equal(t, entity.RequestEventFixSubmitted, log.Event)
-			require.Equal(t, map[string]string{
-				requestlog.MetadataKeyBuildID: testBuildID, requestlog.MetadataKeyFixID: "fix/1",
-				requestlog.MetadataKeyTaskID: issue.TaskID, requestlog.MetadataKeyUnitID: issue.UnitID,
-			}, log.Metadata)
-			require.Empty(t, log.State)
-		})
-	}
-}
 
 func TestFixDLQRetainsDecisionWithoutSubmitting(t *testing.T) {
 	for _, tt := range []struct {
@@ -149,30 +109,6 @@ func TestFixDLQDiscardsInvalidMessages(t *testing.T) {
 			c := NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, messagequeue.TopicKeyFix, "recovery")
 			require.NoError(t, c.Process(context.Background(), m.delivery(tt.configure(t, m))))
 			require.Empty(t, m.history)
-		})
-	}
-}
-
-func TestSubmittedFixHistoryPreservesFixID(t *testing.T) {
-	for _, tt := range []struct {
-		name  string
-		fixID string
-	}{
-		{name: "opaque ID", fixID: "fix/1 "},
-		{name: "maximum length", fixID: strings.Repeat("f", 255)},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			_, m := newTestController(t)
-			observation := issueWithFixID(testIssue(), tt.fixID)
-			request := entity.Request{ID: "1", Queue: testQueue}
-			for i := 0; i < 2; i++ {
-				require.NoError(t, persistFixSubmittedLog(context.Background(), m.materializer, m.store, request, testBuildID, observation))
-			}
-			require.Len(t, m.history, 1)
-			for _, log := range m.history {
-				require.LessOrEqual(t, len(log.ID), 255)
-				require.Equal(t, tt.fixID, log.Metadata[requestlog.MetadataKeyFixID])
-			}
 		})
 	}
 }

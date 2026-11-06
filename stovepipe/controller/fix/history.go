@@ -17,6 +17,7 @@ package fix
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/errs"
@@ -42,6 +43,31 @@ func loadRequestForBuild(ctx context.Context, store storage.Storage, queue, buil
 		return entity.Request{}, errs.NewUserError(fmt.Errorf("repair request belongs to another queue"))
 	}
 	return request, nil
+}
+
+func persistRepairSubmissionLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, result entity.IssueRepair) error {
+	event := entity.RequestEventFixSubmitted
+	if result.SkipReason != "" {
+		event = entity.RequestEventFixSubmissionSkipped
+	}
+	return persistRepairEventLog(ctx, materializer, store, request, result, event, result.SkipReason)
+}
+
+func persistRepairEventLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, result entity.IssueRepair, event entity.RequestEvent, reason string) error {
+	identity, err := json.Marshal([]string{result.Issue.FirstSeenBuildID, result.Issue.TaskID, result.Issue.UnitID, result.ExecutorID})
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256(identity)
+	log := requestlog.NewRequestEventLog(request, event, fmt.Sprintf("%x", digest), map[string]string{
+		requestlog.MetadataKeyBuildID:    result.Issue.FirstSeenBuildID,
+		requestlog.MetadataKeyTaskID:     result.Issue.TaskID,
+		requestlog.MetadataKeyUnitID:     result.Issue.UnitID,
+		requestlog.MetadataKeyFixID:      result.FixID,
+		requestlog.MetadataKeyReason:     reason,
+		requestlog.MetadataKeyExecutorID: result.ExecutorID,
+	})
+	return materializer.PersistLog(ctx, store, log)
 }
 
 func persistFixSubmittedLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, buildID string, observation entity.BuildIssue) error {
