@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -27,12 +28,12 @@ import (
 )
 
 const listIssueStatesQuery = `
-	SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
+	SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version, metadata
 	FROM issue_state WHERE queue = ?
 	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
 
 const listIssueStatesAfterCursorQuery = `
-	SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
+	SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version, metadata
 	FROM issue_state WHERE queue = ?
 		AND (task_id > ? OR (task_id = ? AND unit_id > ?))
 	ORDER BY task_id ASC, unit_id ASC LIMIT ?`
@@ -56,10 +57,14 @@ func (s *issueStateStore) Create(ctx context.Context, issue entity.IssueState) (
 		return err
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.queue, issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version)
+	metadata, err := json.Marshal(issue.Metadata)
+	if err != nil {
+		return fmt.Errorf("encode issue metadata: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.queue, issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, metadata)
 	if err != nil {
 		if isDuplicateEntry(err) {
 			return fmt.Errorf("issue state task=%q unit=%q: %w", issue.TaskID, issue.UnitID, storage.ErrAlreadyExists)
@@ -82,12 +87,11 @@ func (s *issueStateStore) Get(ctx context.Context, taskID, unitID string) (ret e
 		return entity.IssueState{}, err
 	}
 
-	var issue entity.IssueState
-	err := s.db.QueryRowContext(ctx,
-		`SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
+	issue, err := scanIssueState(s.db.QueryRowContext(ctx,
+		`SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version, metadata
          FROM issue_state WHERE queue = ? AND task_id = ? AND unit_id = ?`,
 		s.queue, taskID, unitID,
-	).Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.LastProcessedBuildID, &issue.LastChangedBuildID, &issue.ChangedAtMs, &issue.Version)
+	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.IssueState{}, storage.WrapNotFound(err)
 	}
@@ -130,8 +134,8 @@ func (s *issueStateStore) List(ctx context.Context, bounds storage.IssueStateRan
 
 	issues := make([]entity.IssueState, 0)
 	for rows.Next() {
-		var issue entity.IssueState
-		if err := rows.Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.LastProcessedBuildID, &issue.LastChangedBuildID, &issue.ChangedAtMs, &issue.Version); err != nil {
+		issue, err := scanIssueState(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue state: %w", err)
 		}
 		issues = append(issues, issue)
@@ -154,9 +158,13 @@ func (s *issueStateStore) Update(ctx context.Context, issue entity.IssueState, o
 	if oldVersion <= 0 {
 		return fmt.Errorf("issue state guard version must be positive")
 	}
+	metadata, err := json.Marshal(issue.Metadata)
+	if err != nil {
+		return fmt.Errorf("encode issue metadata: %w", err)
+	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE issue_state SET status = ?, first_seen_build_id = ?, last_processed_build_id = ?, last_changed_build_id = ?, changed_at_ms = ?, version = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`,
-		issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, newVersion, s.queue, issue.TaskID, issue.UnitID, oldVersion)
+		`UPDATE issue_state SET status = ?, first_seen_build_id = ?, last_processed_build_id = ?, last_changed_build_id = ?, changed_at_ms = ?, version = ?, metadata = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`,
+		issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, newVersion, metadata, s.queue, issue.TaskID, issue.UnitID, oldVersion)
 	if err != nil {
 		return fmt.Errorf("update issue state: %w", err)
 	}
@@ -186,3 +194,21 @@ func (s *issueStateStore) validateIssue(issue entity.IssueState) error {
 }
 
 var _ storage.IssueStateStore = (*issueStateStore)(nil)
+
+type issueStateScanner interface {
+	Scan(...any) error
+}
+
+func scanIssueState(scanner issueStateScanner) (entity.IssueState, error) {
+	var issue entity.IssueState
+	var metadata []byte
+	if err := scanner.Scan(&issue.TaskID, &issue.UnitID, &issue.Status, &issue.FirstSeenBuildID, &issue.LastProcessedBuildID, &issue.LastChangedBuildID, &issue.ChangedAtMs, &issue.Version, &metadata); err != nil {
+		return entity.IssueState{}, err
+	}
+	if len(metadata) != 0 {
+		if err := json.Unmarshal(metadata, &issue.Metadata); err != nil {
+			return entity.IssueState{}, fmt.Errorf("decode issue metadata: %w", err)
+		}
+	}
+	return issue, nil
+}

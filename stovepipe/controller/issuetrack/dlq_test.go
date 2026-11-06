@@ -138,6 +138,8 @@ func TestRecoveryFinishesOnlyTheUncreatedCursor(t *testing.T) {
 	require.Equal(t, int64(1000), issue.ChangedAtMs)
 	require.Len(t, f.logs, 1)
 	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.Empty(t, f.hookMessages)
+	require.Empty(t, f.fixMessages)
 	request, build := f.requests["100"], f.builds["build/100"]
 	require.NoError(t, f.recover(msg, false))
 	require.Equal(t, issue, f.states[issueKey{"task", "unit"}])

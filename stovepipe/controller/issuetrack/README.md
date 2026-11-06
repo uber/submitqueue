@@ -48,6 +48,14 @@ The `finalizing` phase traverses retained issue states in primary-key order. Eac
 
 No closure occurs before all accumulated build issues have been processed. A task-wide failure in a later batch therefore protects existing issues across every task, not just keys encountered afterward. A later build makes its own decision; the restriction does not carry over. Both walks consume one ordered range at a time; no merge is required.
 
+## Opening hooks
+
+After an opening's history and projections are durable, issue tracking publishes an `issue.opened` hook event. This includes reopenings after closure; an issue that remains open in a later build does not create a new opening. The event's payload contains `queue`, `task_id`, `unit_id` (empty for task-wide issues), and `opening_build_id`. Its timestamp is the retained transition timestamp, and its ID hashes the queue/task/unit/opening-build identity. Retrying publication reproduces that identity. Publication must succeed before advancing the cursor. Hosts bind the shared hook topic and pass the topic registry to the normal controller. DLQ recovery repairs accepted state and history without publishing hooks. If publication exhausts normal retries, the opening notification may be lost; reliable delivery beyond that boundary requires a separate durable delivery mechanism.
+
+The hook framework delivers at least once. Implementations that perform external side effects must deduplicate by event ID in durable storage; queue deduplication alone cannot guarantee one external action.
+
+Issue state includes generic namespaced metadata for hook implementations. It survives subsequent observations, closing, and reopening. Hooks resolve the queue's issue store and update a copy of the latest state with its version guard; a concurrent lifecycle or hook write requires reloading before retrying. Metadata changes do not publish lifecycle events.
+
 ## Bounded passes
 
 Every delivery processes at most 100 task/unit keys from one ordered range, including a revisited cursor and retained closed rows. Refreshing reads build issues; finalizing reads issue states. The cursor is always inclusive: revisit it to finish the issue and its history, then continue after it. A full batch retains its active phase and requests redelivery. Moving from refreshing to finalizing conditionally saves a reset cursor before any closing work begins.
