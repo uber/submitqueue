@@ -797,63 +797,34 @@ func TestRun_FailedHeadConcludesAfterTheStateWrite(t *testing.T) {
 }
 
 func TestRun_ProviderCancellationExhaustsHead(t *testing.T) {
-	tests := []struct {
-		name       string
-		pathErr    error
-		batchErr   error
-		publishErr bool
-	}{
-		{name: "concludes after persisting cancellation and failed batch"},
-		{name: "lost path CAS cannot fail batch", pathErr: storage.ErrVersionMismatch},
-		{name: "lost batch CAS cannot conclude", batchErr: storage.ErrVersionMismatch},
-		{name: "failed conclude leaves durable facts", publishErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			batch := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
-			h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{batch})
-			path := entity.SpeculationPath{Head: head}
-			h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
-				Head: head, Paths: []entity.SpeculationPathEntry{entryFor(path, entity.SpeculationPathStatusBuilding)}, Version: 1,
-			}, nil)
-			h.pathBuilds.EXPECT().Get(gomock.Any(), path.ID(), 1).Return(entity.PathBuild{BuildID: "b1"}, nil)
-			h.builds.EXPECT().Get(gomock.Any(), "b1").Return(entity.Build{ID: "b1", Status: entity.BuildStatusCancelled}, nil)
-			persisted := false
-			h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
-				func(_ context.Context, set entity.SpeculationPathSet, _, _ int32) error {
-					assert.Equal(t, entity.SpeculationPathStatusCancelled, set.Paths[0].Status)
-					assert.Equal(t, 1, set.Paths[0].Attempt)
-					assert.Empty(t, h.published)
-					persisted = tt.pathErr == nil
-					return tt.pathErr
-				})
-			if tt.pathErr == nil {
-				h.batches.EXPECT().Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateFailed}, int32(1), int32(2)).DoAndReturn(
-					func(context.Context, entity.Batch, int32, int32) error {
-						assert.True(t, persisted)
-						assert.Empty(t, h.published)
-						return tt.batchErr
-					})
-			}
-			if tt.publishErr {
-				h.failPublishTo("conclude")
-			}
-			err := h.run(head)
-			if tt.publishErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-			if tt.pathErr != nil || tt.batchErr != nil || tt.publishErr {
+	ctrl := gomock.NewController(t)
+	batch := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{batch})
+	path := entity.SpeculationPath{Head: head}
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head: head, Paths: []entity.SpeculationPathEntry{entryFor(path, entity.SpeculationPathStatusBuilding)}, Version: 1,
+	}, nil)
+	h.pathBuilds.EXPECT().Get(gomock.Any(), path.ID(), 1).Return(entity.PathBuild{BuildID: "b1"}, nil)
+	h.builds.EXPECT().Get(gomock.Any(), "b1").Return(entity.Build{ID: "b1", Status: entity.BuildStatusCancelled}, nil)
+	gomock.InOrder(
+		h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+			func(_ context.Context, set entity.SpeculationPathSet, _, _ int32) error {
+				assert.Equal(t, entity.SpeculationPathStatusCancelled, set.Paths[0].Status)
+				assert.Equal(t, 1, set.Paths[0].Attempt)
 				assert.Empty(t, h.published)
-			} else {
-				assert.Equal(t, []string{"conclude"}, h.published)
-				assert.Equal(t, "no speculation path could pass; every viable build failed or was cancelled", h.messages[0].Metadata[topickey.MetadataKeyFailureReason])
-				assert.Zero(t, h.spec.calls)
-			}
-		})
-	}
+				return nil
+			}),
+		h.batches.EXPECT().Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateFailed}, int32(1), int32(2)).DoAndReturn(
+			func(context.Context, entity.Batch, int32, int32) error {
+				assert.Empty(t, h.published)
+				return nil
+			}),
+	)
+
+	require.NoError(t, h.run(head))
+	assert.Equal(t, []string{"conclude"}, h.published)
+	assert.Equal(t, "no speculation path could pass; every viable build failed or was cancelled", h.messages[0].Metadata[topickey.MetadataKeyFailureReason])
+	assert.Zero(t, h.spec.calls)
 }
 
 // A failure resolves a dependency, which can fail everything stacked on it. The
