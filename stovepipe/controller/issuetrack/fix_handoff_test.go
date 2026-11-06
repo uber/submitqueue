@@ -25,7 +25,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-func TestOpeningPassPublishesOneBuildRepairRequest(t *testing.T) {
+func TestOpeningPassPublishesRepairAfterIssueWrites(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		status entity.BuildStatus
@@ -64,7 +64,11 @@ func TestOpeningPassPublishesOneBuildRepairRequest(t *testing.T) {
 				require.Len(t, f.fixMessages, 1)
 			}
 			require.NoError(t, f.deliver(msg, false))
-			require.Len(t, f.fixMessages, 1)
+			if tt.final {
+				require.Len(t, f.fixMessages, 1)
+			} else {
+				require.Len(t, f.fixMessages, 2)
+			}
 		})
 	}
 }
@@ -159,7 +163,7 @@ func TestRepairHandoffRetriesBeforeCompletingPass(t *testing.T) {
 	}
 }
 
-func TestRepairHandoffUsesResumedBuildAndPassIdentity(t *testing.T) {
+func TestRepairHandoffResumesBeforeTheNextRequest(t *testing.T) {
 	f := newFixture(t)
 	f.source("build", "10", entity.BuildStatusRunning)
 	f.source("next-build", "11", entity.BuildStatusRunning)
@@ -169,20 +173,24 @@ func TestRepairHandoffUsesResumedBuildAndPassIdentity(t *testing.T) {
 	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 
 	nextMessage := f.message("next-build", false)
-	require.NoError(t, f.deliver(nextMessage, true))
+	require.NoError(t, f.deliverRequest(nextMessage, _analysisWaitMs))
 	require.Equal(t, "build", f.progress.BuildID)
+	require.Len(t, f.fixMessages, 1)
+	require.NoError(t, f.deliverRequest(msg, _analysisWaitMs))
 	require.Len(t, f.fixMessages, 2)
 	require.Equal(t, f.fixMessages[0].ID, f.fixMessages[1].ID)
 	require.Equal(t, "build", f.fixMessages[1].PartitionKey)
 
-	require.NoError(t, f.deliver(msg, false))
-	require.Len(t, f.fixMessages, 2)
+	f.source("build", "10", entity.BuildStatusFailed)
+	f.analysisEvent("build", entity.RequestEventBuildAnalysisCompleted)
+	require.NoError(t, f.deliverRequest(msg, 0))
+	require.NoError(t, f.deliverRequest(msg, -1))
 
 	f.reportIssue("next-build", "new", "unit")
 	require.NoError(t, f.deliver(nextMessage, false))
-	require.Len(t, f.fixMessages, 3)
-	require.NotEqual(t, f.fixMessages[0].ID, f.fixMessages[2].ID)
-	require.Equal(t, "next-build", f.fixMessages[2].PartitionKey)
+	require.Len(t, f.fixMessages, 4)
+	require.NotEqual(t, f.fixMessages[0].ID, f.fixMessages[3].ID)
+	require.Equal(t, "next-build", f.fixMessages[3].PartitionKey)
 }
 
 func TestTaskWideFailureStillPublishesRepair(t *testing.T) {
@@ -194,4 +202,23 @@ func TestTaskWideFailureStillPublishesRepair(t *testing.T) {
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"existing", "unit"}].Status)
 	require.Len(t, f.fixMessages, 1)
+}
+
+func TestRequestJobPublishesDistinctRepairPassesAndStableRetries(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
+	f.reportIssue("build/100", "old", "unit")
+	job := f.requestJob("build/100")
+	require.NoError(t, f.deliverRequest(job, _analysisWaitMs))
+	require.Len(t, f.fixMessages, 1)
+	f.reportIssue("build/100", "new", "unit")
+	f.failOnPhase = entity.IssueTrackingPhaseRefreshed
+	require.ErrorIs(t, f.deliverRequest(job, -1), assert.AnError)
+	require.Len(t, f.fixMessages, 2)
+	require.NotEqual(t, f.fixMessages[0].ID, f.fixMessages[1].ID)
+	require.NoError(t, f.deliverRequest(job, _analysisWaitMs))
+	require.Len(t, f.fixMessages, 3)
+	require.Equal(t, f.fixMessages[1].ID, f.fixMessages[2].ID)
+	require.Equal(t, "build/100", f.states[issueKey{"new", "unit"}].FirstSeenBuildID)
 }

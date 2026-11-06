@@ -28,7 +28,7 @@ const (
 	IssueTrackingPhaseUnknown IssueTrackingPhase = ""
 	// IssueTrackingPhaseRefreshing means reported build issues are being opened or kept open.
 	IssueTrackingPhaseRefreshing IssueTrackingPhase = "refreshing"
-	// IssueTrackingPhaseRefreshed means a refresh pass completed; later refresh notifications remain eligible.
+	// IssueTrackingPhaseRefreshed means a refresh pass completed; later refresh passes remain eligible.
 	IssueTrackingPhaseRefreshed IssueTrackingPhase = "refreshed"
 	// IssueTrackingPhaseFinalizing means existing issues are being reconciled after all reported issues were applied.
 	IssueTrackingPhaseFinalizing IssueTrackingPhase = "finalizing"
@@ -42,18 +42,18 @@ const (
 
 // IssueTrackingState is the queue-scoped source-order boundary and resumable reconciliation state.
 type IssueTrackingState struct {
-	// RequestID is the newest accepted source request, compared by ingest order.
+	// RequestID identifies the current or most recently completed validation.
 	RequestID string `json:"request_id"`
-	// BuildID identifies the source build whose pass is underway or most recently completed.
+	// BuildID identifies the source build; it can be empty when abandoning before association.
 	BuildID string `json:"build_id"`
-	// NotificationID identifies the message that owns this reconciliation pass.
+	// NotificationID identifies the tracking job owning this pass.
 	NotificationID string `json:"notification_id"`
 	// CursorTaskID identifies the current issue's task; active passes revisit it on continuation.
 	// Empty with an empty CursorUnitID starts the phase's range.
 	CursorTaskID string `json:"cursor_task_id"`
 	// CursorUnitID identifies the unit at the cursor; empty is task-wide.
 	CursorUnitID string `json:"cursor_unit_id"`
-	// Finalize identifies a terminal reconciliation pass rather than an ordinary refresh.
+	// Finalize identifies a terminal pass or a whole-validation abandonment.
 	Finalize bool `json:"finalize"`
 	// HasTaskWideIssues records whether this pass has encountered a task-wide issue.
 	HasTaskWideIssues bool `json:"has_task_wide_issues"`
@@ -69,7 +69,17 @@ func (s IssueTrackingState) Validate() error {
 		return fmt.Errorf("invalid issue tracking request ID: %w", err)
 	}
 	if s.BuildID == "" {
-		return fmt.Errorf("issue tracking build ID must not be empty")
+		switch s.Phase {
+		case IssueTrackingPhaseAbandoning, IssueTrackingPhaseAbandoned:
+			if !s.Finalize {
+				return fmt.Errorf("abandoning a request without a build requires terminal intent")
+			}
+			if s.CursorTaskID != "" {
+				return fmt.Errorf("issue tracking without a build cannot have an issue cursor")
+			}
+		default:
+			return fmt.Errorf("issue tracking build ID must not be empty")
+		}
 	}
 	if s.NotificationID == "" {
 		return fmt.Errorf("issue tracking notification ID must not be empty")
