@@ -32,23 +32,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// RequestIDDecoder extracts the affected request's identity — its ID and its
-// queue — from the raw payload bytes of a DLQ message. Different primary
-// topics carry different payload shapes (CancelRequest on cancel, RequestID
-// on validate / batch), so the caller injects the right
-// decoder for the topic being reconciled. Returning an empty ID is treated as
-// a decode failure.
+// RequestIDDecoder extracts a request's ID and queue from a request-scoped
+// DLQ payload. Returning an empty ID is treated as a decode failure.
 type RequestIDDecoder func(payload []byte) (entity.RequestID, error)
-
-// DecodeCancelRequestID extracts the request ID from a CancelRequest payload
-// (the shape used by the cancel topic).
-func DecodeCancelRequestID(payload []byte) (entity.RequestID, error) {
-	cr, err := sqmq.UnmarshalCancelRequest(payload)
-	if err != nil {
-		return entity.RequestID{}, err
-	}
-	return entity.RequestID{ID: cr.ID, Queue: cr.Queue}, nil
-}
 
 // DecodeRequestID extracts the request ID from a validate or batch payload.
 // primary is the originating topic (TopicKeyValidate or TopicKeyBatch), not the DLQ key.
@@ -59,7 +45,7 @@ func DecodeRequestID(primary consumer.TopicKey) RequestIDDecoder {
 }
 
 // requestController is the DLQ reconciler for request-scoped pipeline stages.
-// It uses the matching decoder for cancel, validate, or batch and fails the
+// It uses the matching decoder for validate or batch and fails the
 // request unless a live batch already owns its outcome.
 type requestController struct {
 	logger        *zap.SugaredLogger
