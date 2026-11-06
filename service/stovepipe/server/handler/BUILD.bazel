@@ -11,6 +11,7 @@ go_library(
         "//stovepipe/controller:go_default_library",
         "//stovepipe/core/queuelog:go_default_library",
         "//stovepipe/core/queuestate:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
     ],
@@ -19,6 +20,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "get_issues_by_request_id_test.go",
         "list_open_issues_test.go",
         "list_test.go",
         "queue_status_test.go",

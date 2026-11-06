@@ -375,6 +375,43 @@ message ListOpenIssuesResponse {
     string next_page_token = 2;
 }
 
+// RequestIssueSummary describes one accepted issue update, not the queue's open-issue set.
+message RequestIssueSummary {
+    // Logical validation task.
+    string task_id = 1;
+    // Validation unit; empty identifies a task-wide failure.
+    string unit_id = 2;
+    // "new" (including reopened), "existing" (reported and already open), or "closed".
+    string kind = 3;
+    // Build whose accepted update produced this result.
+    string build_id = 4;
+    // Build where this occurrence first opened.
+    string first_seen_build_id = 5;
+}
+
+message GetIssuesByRequestIDRequest {
+    // Required configured queue.
+    string queue = 1;
+    // Required canonical positive decimal request ID within the queue.
+    string request_id = 2;
+    // Maximum results to return. Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 3;
+    // Opaque continuation bound to this queue and request.
+    string page_token = 4;
+}
+
+// Completed and abandoned results are stable; in-progress pages are not a snapshot.
+message GetIssuesByRequestIDResponse {
+    // Results in ascending bytewise task/unit order, classified as new, existing, or closed.
+    repeated RequestIssueSummary issues = 1;
+    // "in_progress", "complete", "incomplete" (abandoned), or "unavailable".
+    // Unavailable means recording has not started or predates retained coverage.
+    // Complete describes reconciliation, not build success or absence of open issues.
+    string status = 2;
+    // Empty ends this scan. Restart in-progress scans after completion to include late results.
+    string next_page_token = 3;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -396,4 +433,6 @@ service Stovepipe {
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
     // ListOpenIssues returns current open issues validated against their summaries.
     rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
+    // GetIssuesByRequestID returns accepted issue results for one request.
+    rpc GetIssuesByRequestID(GetIssuesByRequestIDRequest) returns (GetIssuesByRequestIDResponse) {}
 }
