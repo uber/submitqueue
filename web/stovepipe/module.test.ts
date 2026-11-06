@@ -40,6 +40,7 @@ function createPageTestContext(options: Pick<StovepipeWebOptions, "resolveBuildU
     getProjectStatusByID: vi.fn().mockResolvedValue({
       queue: summary.queue,
       requestId: summary.requestId,
+      requestState: "processing",
       updatedAtMs: 9007199254740993n,
       repositoryResult: { case: "repositoryBreakageDegree", value: 0 },
       projectResultsComplete: false,
@@ -432,6 +433,7 @@ describe("Stovepipe page loading", () => {
     expect(result).toMatchObject({ kind: "render", model: { projectStatus: {
       ok: true,
       data: {
+        requestState: "processing",
         updatedAtMs: "9007199254740993",
         repositoryBreakageDegree: 0,
         complete: false,
@@ -514,7 +516,7 @@ describe("Stovepipe page loading", () => {
   it("keeps unknown repository results and empty complete pages distinct from green", async () => {
     const { app, service, paths } = createPageTestContext();
     vi.mocked(service.getProjectStatusByID).mockResolvedValue({
-      queue: summary.queue, requestId: summary.requestId, updatedAtMs: 0n,
+      queue: summary.queue, requestId: summary.requestId, requestState: "succeeded", updatedAtMs: 0n,
       repositoryResult: { case: undefined }, projectResultsComplete: true,
       projects: [], nextPageToken: "",
     });

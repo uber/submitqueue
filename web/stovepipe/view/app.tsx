@@ -64,7 +64,7 @@ function Page({ model }: { model: StovepipePageModel }) {
           <TimeZoneToggle /><RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
       </Block>
-      <Block as="main" paddingTop="scale400" paddingBottom="scale600">
+      <Block as="main" paddingTop="scale400" paddingBottom={model.kind === "request" ? "scale200" : "scale600"}>
         <Block as="nav" aria-label="Queues" display="flex" alignItems="center" flexWrap gridGap="scale500" marginBottom="scale400">
           {model.queues.map((queue) => (
             <Link
@@ -124,7 +124,7 @@ function Page({ model }: { model: StovepipePageModel }) {
                     </ViewNavigation>
                     {views.tabs.map(tab => (
                       <section key={tab.id} className="sq-stovepipe-request-view" aria-label={tab.label} hidden={!tab.selected}>
-                        <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>
+                        {(tab.id !== "projects" || !projects) && <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>}
                         {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
                           : tab.id === "history" ? history && <History events={history.events} />
                             : <ParagraphSmall color="contentSecondary">Coming soon</ParagraphSmall>}
@@ -137,7 +137,7 @@ function Page({ model }: { model: StovepipePageModel }) {
           </Section>
         )}
       </Block>
-      <Block as="footer" paddingTop="scale300" paddingBottom="scale300" font="ParagraphXSmall" color="contentSecondary">
+      <Block as="footer" paddingTop={model.kind === "request" ? "0" : "scale300"} paddingBottom={model.kind === "request" ? "scale200" : "scale300"} font="ParagraphXSmall" color="contentSecondary">
         Loaded <Timestamp value={model.loadedAtMs} />
       </Block>
     </Block>

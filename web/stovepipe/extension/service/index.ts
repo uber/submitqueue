@@ -30,6 +30,7 @@ export interface HistoryEvent {
 export interface ProjectStatus {
   queue: string;
   requestId: string;
+  requestState: string;
   updatedAtMs: bigint;
   repositoryResult:
     | { case: "repositoryBreakageDegree"; value: number }
