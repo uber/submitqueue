@@ -1,6 +1,6 @@
 # DLQ Reconciliation Controllers
 
-This package contains the controllers that drain each primary pipeline topic's `{topic}_dlq` companion and reconcile the affected request or batch into a terminal failed state. They are wired alongside the primary controllers in `service/submitqueue/orchestrator/server/main.go`.
+This package contains the controllers that drain primary pipeline topics' `{topic}_dlq` companions and reconcile the affected request or batch into a terminal failed state. The pipeline topology in `submitqueue/orchestrator/pipeline.go` wires these beside the primary controllers. Start is the exception: its owning controller resumes the full original request rather than manufacturing a failed outcome.
 
 ## Design principles
 
@@ -8,7 +8,9 @@ This package contains the controllers that drain each primary pipeline topic's `
 
 **The implementation is deliberately the simplest and most reliable thing that can work.** Each controller does the same three steps: decode the payload to recover the affected `RequestID` or `BatchID`, fetch the entity, transition it to its terminal failed state with the same optimistic-locking CAS the primary pipeline uses. No business logic, no branching on the original error, no per-stage cleanup. Adding behaviour here trades off the one property the DLQ has to provide — convergence.
 
-**Reconcile only; do not attempt to recover.** A DLQ controller never tries to re-run the failed stage, retry the original action against an external dependency, or repair a partially-completed transition. The original controller already failed; the DLQ controller's only job is to make sure the request and batch state stop saying "in progress" and start saying "failed", so the gateway reports an honest answer and downstream tooling can move on. Recovery, when it is appropriate, is a separate concern handled by an operator or a future reconciliation job — not by this code path.
+**Reconcile failed stages; recover start in place.** Except for start, a DLQ controller never tries to re-run the failed stage, retry the original action against an external dependency, or repair a partially-completed transition. The original controller already failed; the DLQ controller's only job is to make sure the request and batch state stop saying "in progress" and start saying "failed", so the gateway reports an honest answer and downstream tooling can move on. Recovery, when it is appropriate, is a separate concern handled by an operator or a future reconciliation job — not by these generic reconcilers.
+
+The `start_dlq` subscription uses the start controller under the same unlimited-retry final policy. It creates the original Request when absent, then loads the authoritative snapshot after Create or AlreadyExists. Matching Started snapshots replay the Started log and normal `validate` hand-off. Later states and Cancelling retain their current owner; terminal snapshots replay their stored winning terminal log. Conflicting immutable inputs, unknown states, missing snapshots, and malformed messages return errors and remain durable. No tombstone, new request ID, synthetic Error, or return to the finite-budget start subscription is needed.
 
 ## Convergence guarantee
 
@@ -18,7 +20,7 @@ The recognised error condition is handled explicitly in `dlq.go`:
 
 - `storage.ErrNotFound` → logged at warn and treated as success. The request or batch never persisted; there is nothing to reconcile.
 
-Everything else — including `storage.ErrVersionMismatch` on the CAS — is returned without controller-level classification and redelivered until it either succeeds or hits the attempt cap. `ErrVersionMismatch` is already retryable at its declaration, while the always-retryable processor makes every other non-nil reconciliation error retryable too.
+Everything else — including `storage.ErrVersionMismatch` on the CAS — is returned without controller-level classification and redelivered until reconciliation succeeds. `ErrVersionMismatch` is already retryable at its declaration, while the always-retryable processor makes every other non-nil reconciliation error retryable too.
 
 ## Request log entries are published to Gateway
 
@@ -30,10 +32,10 @@ Two controller shapes cover the eleven primary pipeline topics:
 
 | Controller | Topics | Decoded ID | Terminal state |
 |---|---|---|---|
-| `NewDLQRequestController` | `start`, `validate`, `batch`, `cancel`, `log` | `RequestID` | `RequestStateError` |
+| `NewDLQRequestController` | `validate`, `batch`, `cancel` | `RequestID` | `RequestStateError` |
 | `NewDLQBatchController` | `speculate`, `build`, `land`, `conclude` | `BatchID` | `BatchStateFailed` + fan-out to member requests as `RequestStateError` |
 
-`buildsignal` carries a `Build` payload and has its own small dedicated controller. The split exists because the DLQ message payload shape mirrors the primary topic's payload shape (the queue framework preserves bytes verbatim under the `_dlq` topic name), so the decoder is what changes per topic — not the reconciliation step. The package-level `RequestIDDecoder` interface plus `DecodeLandRequestID` / `DecodeCancelRequestID` / `DecodeRequestID` cover the three payload shapes used by request-scoped topics.
+`buildsignal` carries a `Build` payload and has its own small dedicated controller. The split exists because the DLQ message payload shape mirrors the primary topic's payload shape (the queue framework preserves bytes verbatim under the `_dlq` topic name), so the decoder is what changes per topic — not the reconciliation step. The package-level `RequestIDDecoder` interface plus `DecodeCancelRequestID` / `DecodeRequestID` cover the two payload shapes used by request-scoped topics.
 
 ## Idempotency and concurrent activity
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -33,12 +34,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles start queue messages.
-// It consumes requests, persists them to the request store, and publishes to the
-// validate stage. The request write is idempotent on retries. URI claiming and
-// duplicate detection are performed downstream by the validate controller (which
-// claims each URI in the change store with its provider details and consults the
-// request store for liveness). Implements consumer.Controller.
+// Controller persists start requests and repairs their log and validate hand-off.
+// Primary and final-DLQ deliveries preserve the persisted request's current owner.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -88,6 +85,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
+	if landRequest.ID == "" {
+		return fmt.Errorf("land request id is required")
+	}
+
 	store, err := c.stores.For(orchstorage.Config{QueueName: landRequest.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
@@ -116,21 +117,29 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Persist request to storage. ErrAlreadyExists means a queue redelivery of the same
-	// request_id (an at-least-once retry of THIS message), not a cross-request collision.
-	if err := store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	request, err = createOrLoadRequest(ctx, store.GetRequestStore(), request)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
 
-	// Record the "new" status in the request log.
+	switch request.State {
+	case entity.RequestStateStarted:
+	case entity.RequestStateValidated, entity.RequestStateBatched, entity.RequestStateProcessing, entity.RequestStateCancelling:
+		return nil
+	case entity.RequestStateLanded, entity.RequestStateError, entity.RequestStateCancelled:
+		return corerequest.PublishTerminalRequestLog(ctx, c.registry, request)
+	default:
+		return fmt.Errorf("unsupported request state %q for request %s", request.State, request.ID)
+	}
+
 	logEntry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusStarted, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request log: %w", err)
 	}
 
-	if err := c.publish(ctx, topickey.TopicKeyValidate, request.ID, request.Queue); err != nil {
+	if err := c.publishToValidate(ctx, request); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
@@ -143,22 +152,34 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil
 }
 
-// publish publishes a request ID to the specified topic key, stamped with and
-// partitioned by the request's queue.
-//
-// The request ID is the message ID with no cause: a request is handed to the
-// next stage once, so a redelivery that re-hands it is meant to dedup away.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
-	payload, err := sqmq.MarshalID(key, requestID, queue)
+func createOrLoadRequest(ctx context.Context, store storage.RequestStore, initial entity.Request) (entity.Request, error) {
+	if err := store.Create(ctx, initial); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		return entity.Request{}, fmt.Errorf("failed to create request: %w", err)
+	}
+	// Create can lose to a delayed attempt or a later stage; only the persisted snapshot owns replay.
+	request, err := store.Get(ctx, initial.ID)
+	if err != nil {
+		return entity.Request{}, fmt.Errorf("failed to load request after create: %w", err)
+	}
+	if request.ID != initial.ID || request.Queue != initial.Queue ||
+		request.LandStrategy != initial.LandStrategy || !slices.Equal(request.Change.URIs, initial.Change.URIs) {
+		return entity.Request{}, fmt.Errorf("conflicting immutable inputs for request %s in queue %q", initial.ID, initial.Queue)
+	}
+	return request, nil
+}
+
+// publishToValidate uses one stable intent ID so replay deduplicates the hand-off.
+func (c *Controller) publishToValidate(ctx context.Context, request entity.Request) error {
+	payload, err := sqmq.MarshalID(topickey.TopicKeyValidate, request.ID, request.Queue)
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, key, publish.MessageParams{
-		Tenant:       queue,
-		ID:           publish.IntentID(requestID),
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyValidate, publish.MessageParams{
+		Tenant:       request.Queue,
+		ID:           publish.IntentID(request.ID),
 		Payload:      payload,
-		PartitionKey: queue,
+		PartitionKey: request.Queue,
 	}); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}

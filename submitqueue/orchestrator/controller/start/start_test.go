@@ -53,7 +53,7 @@ func newTestController(
 	t *testing.T,
 	ctrl *gomock.Controller,
 	store *orchstoragemock.MockStorage,
-	publishErr error,
+	publishMessage func(string, entityqueue.Message) error,
 ) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
@@ -61,7 +61,10 @@ func newTestController(
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			return publishErr
+			if publishMessage != nil {
+				return publishMessage(topic, msg)
+			}
+			return nil
 		},
 	).AnyTimes()
 
@@ -79,10 +82,17 @@ func newTestController(
 	return NewController(logger, scope, staticStorageFactory{store: store}, registry, topickey.TopicKeyStart, "orchestrator-start")
 }
 
-// newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
+// newMockStorage retains the created snapshot for reconciliation reads.
 func newMockStorage(ctrl *gomock.Controller) *orchstoragemock.MockStorage {
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	var request entity.Request
+	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req entity.Request) error {
+		request = req
+		return nil
+	}).AnyTimes()
+	mockReqStore.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _ string) (entity.Request, error) {
+		return request, nil
+	}).AnyTimes()
 
 	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
@@ -143,19 +153,20 @@ func TestController_Process_RejectsTenantPayloadQueueMismatch(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_InvalidJSON(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
-
-	invalidPayload := []byte(`{"invalid": json"}`)
-	msg := entityqueue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
-	delivery := consumermock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
-
-	err := controller.Process(context.Background(), delivery)
-	require.Error(t, err)
-	assert.False(t, errs.IsRetryable(err))
+func TestController_Process_InvalidPayload(t *testing.T) {
+	for _, payload := range []string{`{"invalid": json"}`, `{"queue": "test-queue"}`} {
+		t.Run(payload, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
+			msg := entityqueue.NewMessage("invalid-msg", []byte(payload), "test-queue", nil)
+			msg.Tenant = "test-queue"
+			delivery := consumermock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			err := controller.Process(context.Background(), delivery)
+			require.Error(t, err)
+			assert.False(t, errs.IsRetryable(err))
+		})
+	}
 }
 
 func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
@@ -169,6 +180,9 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 			return nil
 		},
 	)
+	mockReqStore.EXPECT().Get(gomock.Any(), "42").DoAndReturn(func(_ context.Context, _ string) (entity.Request, error) {
+		return capturedRequest, nil
+	})
 	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
@@ -219,18 +233,65 @@ func TestController_Process_AllStrategies(t *testing.T) {
 	}
 }
 
-func TestController_Process_PublishFailure(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), fmt.Errorf("publish failed"))
-
-	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "123",
-		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
-	})
-
-	assert.Error(t, controller.Process(context.Background(), delivery))
+func TestController_Process_ReplaysFailedHandOff(t *testing.T) {
+	for _, topic := range []consumer.TopicKey{topickey.TopicKeyStart, "start_dlq"} {
+		for _, failure := range []string{"create", "get", "log", "validate", "lost acknowledgment"} {
+			t.Run(string(topic)+"/"+failure, func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				landRequest := entity.LandRequest{ID: "123", Queue: "test-queue", Change: change.Change{URIs: []string{"uri/one", "uri/two"}}, LandStrategy: mergestrategy.MergeStrategyRebase}
+				var persisted entity.Request
+				firstAttempt := true
+				failureErr := fmt.Errorf("dependency failed")
+				requestStore := storagemock.NewMockRequestStore(ctrl)
+				requestStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request entity.Request) error {
+					if persisted.ID != "" {
+						return storage.ErrAlreadyExists
+					}
+					persisted = request
+					if firstAttempt && failure == "create" {
+						return failureErr // The insert succeeded but its response was lost.
+					}
+					return nil
+				}).AnyTimes()
+				requestStore.EXPECT().Get(gomock.Any(), landRequest.ID).DoAndReturn(func(_ context.Context, _ string) (entity.Request, error) {
+					if firstAttempt && failure == "get" {
+						return entity.Request{}, failureErr
+					}
+					return persisted, nil
+				}).AnyTimes()
+				store := orchstoragemock.NewMockStorage(ctrl)
+				store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+				var published []string
+				controller := newTestController(t, ctrl, store, func(topic string, msg entityqueue.Message) error {
+					published = append(published, topic)
+					if topic == "validate" {
+						id, err := sqmq.UnmarshalRequestID(topickey.TopicKeyValidate, msg.Payload)
+						require.NoError(t, err)
+						assert.Equal(t, entity.RequestID{ID: landRequest.ID, Queue: landRequest.Queue}, id)
+					}
+					if firstAttempt && topic == failure {
+						return failureErr
+					}
+					return nil
+				})
+				controller.topicKey = topic
+				delivery := makeDelivery(t, ctrl, landRequest)
+				err := controller.Process(context.Background(), delivery)
+				if failure == "lost acknowledgment" {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, failureErr)
+				}
+				firstAttempt = false
+				published = nil
+				require.NoError(t, controller.Process(context.Background(), delivery))
+				assert.Equal(t, []string{"log", "validate"}, published)
+				assert.Equal(t, landRequest.Change, persisted.Change)
+				assert.Equal(t, landRequest.LandStrategy, persisted.LandStrategy)
+				assert.Equal(t, int32(1), persisted.Version)
+			})
+		}
+	}
 }
 
 func TestController_Process_StorageFailure(t *testing.T) {
@@ -255,24 +316,91 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
-	ctrl := gomock.NewController(t)
+func TestController_Process_AuthoritativeState(t *testing.T) {
+	for _, topic := range []consumer.TopicKey{topickey.TopicKeyStart, "start_dlq"} {
+		for _, state := range []entity.RequestState{entity.RequestStateStarted, entity.RequestStateValidated, entity.RequestStateBatched, entity.RequestStateProcessing, entity.RequestStateCancelling, entity.RequestStateLanded, entity.RequestStateError, entity.RequestStateCancelled, entity.RequestStateUnknown} {
+			t.Run(string(topic)+"/"+string(state), func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				landRequest := entity.LandRequest{ID: "123", Queue: "test-queue", Change: change.Change{URIs: []string{"uri/one", "uri/two"}}, LandStrategy: mergestrategy.MergeStrategyRebase}
+				persisted := entity.Request{ID: landRequest.ID, Queue: landRequest.Queue, Change: landRequest.Change, LandStrategy: landRequest.LandStrategy, State: state, Version: 9, TerminalDetails: entity.RequestTerminalDetails{TimestampMs: 12345, LastError: "winning diagnostic", Metadata: map[string]string{"cause": "stored"}}}
+				requestStore := storagemock.NewMockRequestStore(ctrl)
+				var createErr error
+				if topic != topickey.TopicKeyStart {
+					createErr = fmt.Errorf("duplicate: %w", storage.ErrAlreadyExists)
+				}
+				requestStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(createErr)
+				requestStore.EXPECT().Get(gomock.Any(), landRequest.ID).Return(persisted, nil)
+				store := orchstoragemock.NewMockStorage(ctrl)
+				store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+				var published []string
+				controller := newTestController(t, ctrl, store, func(topic string, msg entityqueue.Message) error {
+					published = append(published, topic)
+					if topic == "log" {
+						log, err := sqmq.UnmarshalRequestLog(msg.Payload)
+						require.NoError(t, err)
+						assert.Equal(t, persisted.Version, log.RequestVersion)
+						if entity.IsRequestStateTerminal(state) {
+							assert.Equal(t, entity.RequestStatus(state), log.Status)
+							assert.Equal(t, persisted.TerminalDetails.TimestampMs, log.TimestampMs)
+							assert.Equal(t, persisted.TerminalDetails.LastError, log.LastError)
+							assert.Equal(t, persisted.TerminalDetails.Metadata, log.Metadata)
+						} else {
+							assert.Equal(t, entity.RequestStatusStarted, log.Status)
+						}
+					}
+					return nil
+				})
+				controller.topicKey = topic
+				err := controller.Process(context.Background(), makeDelivery(t, ctrl, landRequest))
+				switch {
+				case state == entity.RequestStateUnknown:
+					require.Error(t, err)
+				case state == entity.RequestStateStarted:
+					require.NoError(t, err)
+					assert.Equal(t, []string{"log", "validate"}, published)
+				case entity.IsRequestStateTerminal(state):
+					require.NoError(t, err)
+					assert.Equal(t, []string{"log"}, published)
+				default:
+					require.NoError(t, err)
+					assert.Empty(t, published)
+				}
+			})
+		}
+	}
+}
 
-	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(fmt.Errorf("duplicate: %w", storage.ErrAlreadyExists))
-	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
-
-	controller := newTestController(t, ctrl, store, nil)
-
-	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "123",
-		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
-	})
-
-	require.NoError(t, controller.Process(context.Background(), delivery))
+func TestController_Process_RejectsInconsistentSnapshot(t *testing.T) {
+	landRequest := entity.LandRequest{ID: "123", Queue: "test-queue", Change: change.Change{URIs: []string{"uri/one", "uri/two"}}, LandStrategy: mergestrategy.MergeStrategyRebase}
+	for _, conflict := range []string{"id", "queue", "uri order", "strategy", "missing snapshot"} {
+		t.Run(conflict, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			persisted := entity.Request{ID: landRequest.ID, Queue: landRequest.Queue, Change: landRequest.Change, LandStrategy: landRequest.LandStrategy, State: entity.RequestStateStarted, Version: 1}
+			var getErr error
+			switch conflict {
+			case "id":
+				persisted.ID = "456"
+			case "queue":
+				persisted.Queue = "other"
+			case "uri order":
+				persisted.Change.URIs = []string{"uri/two", "uri/one"}
+			case "strategy":
+				persisted.LandStrategy = mergestrategy.MergeStrategyMerge
+			case "missing snapshot":
+				getErr = storage.ErrNotFound
+			}
+			requestStore := storagemock.NewMockRequestStore(ctrl)
+			requestStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			requestStore.EXPECT().Get(gomock.Any(), landRequest.ID).Return(persisted, getErr)
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+			controller := newTestController(t, ctrl, store, func(string, entityqueue.Message) error {
+				require.Fail(t, "inconsistent snapshot must not publish")
+				return nil
+			})
+			require.Error(t, controller.Process(context.Background(), makeDelivery(t, ctrl, landRequest)))
+		})
+	}
 }
 
 func TestController_InterfaceImplementation(t *testing.T) {
