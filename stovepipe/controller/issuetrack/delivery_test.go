@@ -89,8 +89,8 @@ func TestFinalizationOpensKeepsAndClosesIssues(t *testing.T) {
 	require.Equal(t, "build", f.states[issueKey{"c", "unit"}].FirstSeenBuildID)
 	require.Equal(t, int32(8), f.states[issueKey{"closed", ""}].Version)
 	require.Len(t, f.logs, 2)
-	require.Contains(t, f.logs, logKey{issueKey{"a", ""}, "build", entity.IssueStatusClosed})
-	require.Contains(t, f.logs, logKey{issueKey{"c", "unit"}, "build", entity.IssueStatusOpen})
+	require.Contains(t, f.logs, logKey{issueKey{"a", ""}, "build", entity.IssueEventClosed})
+	require.Contains(t, f.logs, logKey{issueKey{"c", "unit"}, "build", entity.IssueEventOpened})
 }
 
 func TestEmptyFinalBuildClosesIssuesButRetainsTheirRows(t *testing.T) {
@@ -266,7 +266,7 @@ func TestRetryRepairsHistoryBeforeFinalizing(t *testing.T) {
 	require.Equal(t, "task", f.progress.CursorTaskID)
 	require.Equal(t, "unit", f.progress.CursorUnitID)
 	require.Equal(t, int32(1), f.states[issueKey{"task", "unit"}].Version)
-	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build", entity.IssueStatusOpen}].TimestampMs)
+	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build", entity.IssueEventOpened}].TimestampMs)
 }
 
 func TestRetryFinishesTheCursorIssueBeforeScanningTheNextBatch(t *testing.T) {
@@ -428,7 +428,7 @@ func TestHistoryRecordsTheActualChangingBuildNotTheLatestProcessedBuild(t *testi
 	require.Empty(t, f.logs)
 	f.controller.nowMs = func() int64 { return 2000 }
 	require.NoError(t, f.deliver(msg, false))
-	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusClosed}].TimestampMs)
+	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventClosed}].TimestampMs)
 	require.Equal(t, changed, f.states[issueKey{"task", "unit"}])
 
 	f.source("build/101", "101", entity.BuildStatusSucceeded)
@@ -466,7 +466,7 @@ func TestTaskWideFailurePreservesAllExistingIssues(t *testing.T) {
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"old", "closed"}].Status)
 	require.Len(t, f.logs, 3)
 	for key := range f.logs {
-		require.Equal(t, entity.IssueStatusOpen, key.status)
+		require.Equal(t, entity.IssueEventOpened, key.event)
 	}
 	require.Equal(t, 1, f.failures["issue/list"])
 
@@ -506,7 +506,7 @@ func TestTaskWideFailureInLaterOpeningBatchPreventsAllClosures(t *testing.T) {
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
 	require.Len(t, f.logs, 106)
 	for key := range f.logs {
-		require.Equal(t, entity.IssueStatusOpen, key.status)
+		require.Equal(t, entity.IssueEventOpened, key.event)
 	}
 }
 
@@ -610,7 +610,7 @@ func TestTaskWideHistoryRetryFinishesWithoutClosing(t *testing.T) {
 	require.NoError(t, f.deliver(msg, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
-	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", ""}, "build", entity.IssueStatusOpen}].TimestampMs)
+	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", ""}, "build", entity.IssueEventOpened}].TimestampMs)
 	require.Equal(t, 1, f.failures["issue/list"])
 }
 
@@ -689,7 +689,7 @@ func TestRequestJobWaitsForAnalysisThenPreservesReopening(t *testing.T) {
 			require.NoError(t, f.deliverRequest(older, 0))
 			require.NoError(t, f.deliverRequest(older, -1))
 			require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
-			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusClosed})
+			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventClosed})
 			wait := _analysisWaitMs
 			if newerTerminal {
 				wait = 0
@@ -697,7 +697,7 @@ func TestRequestJobWaitsForAnalysisThenPreservesReopening(t *testing.T) {
 			require.NoError(t, f.deliverRequest(newer, wait))
 			require.Equal(t, "build/101", f.states[issueKey{"task", "unit"}].FirstSeenBuildID)
 			require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
-			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/101", entity.IssueStatusOpen})
+			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/101", entity.IssueEventOpened})
 			require.NoError(t, f.deliverRequest(older, -1))
 			require.Equal(t, "101", f.progress.RequestID)
 		})

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -35,11 +36,14 @@ type Materializer interface {
 	PersistLog(ctx context.Context, stores storage.Storage, log entity.IssueLog, firstSeenBuildID string) error
 }
 
-type materializer struct{ scope tally.Scope }
+type materializer struct {
+	scope tally.Scope
+	now   func() time.Time
+}
 
 // NewMaterializer creates an issue-log materializer.
 func NewMaterializer(scope tally.Scope) Materializer {
-	return &materializer{scope: scope.SubScope("issue_log_materializer")}
+	return &materializer{scope: scope.SubScope("issue_log_materializer"), now: time.Now}
 }
 
 func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, log entity.IssueLog, firstSeenBuildID string) (retErr error) {
@@ -49,10 +53,17 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if log.FirstSeenBuildID != "" && log.FirstSeenBuildID != firstSeenBuildID {
+		return fmt.Errorf("issue event opening disagrees with source state")
+	}
+	log.FirstSeenBuildID = firstSeenBuildID
+	if log.Event == entity.IssueEventReported && log.TimestampMs == 0 {
+		log.TimestampMs = m.now().UnixMilli()
+	}
 	if err := log.Validate(); err != nil {
 		return fmt.Errorf("invalid issue transition: %w", err)
 	}
-	if firstSeenBuildID == "" || (log.Status == entity.IssueStatusOpen && firstSeenBuildID != log.BuildID) {
+	if firstSeenBuildID == "" || (log.Event == entity.IssueEventOpened && firstSeenBuildID != log.BuildID) {
 		return fmt.Errorf("issue transition has an invalid opening build")
 	}
 
@@ -68,8 +79,14 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return fmt.Errorf("issue transition build identity does not match retained history")
 	}
 
+	if retained.Event == entity.IssueEventReported {
+		return nil
+	}
+	if retained.FirstSeenBuildID != "" {
+		firstSeenBuildID = retained.FirstSeenBuildID
+	}
 	summary := entity.IssueSummary{
-		TaskID: retained.TaskID, UnitID: retained.UnitID, Status: retained.Status,
+		TaskID: retained.TaskID, UnitID: retained.UnitID, Status: entity.IssueStatus(retained.Event),
 		FirstSeenBuildID: firstSeenBuildID, RequestID: build.RequestID, BuildID: retained.BuildID,
 		ChangedAtMs: retained.TimestampMs, Version: 1,
 	}
@@ -87,13 +104,16 @@ func retainIssueLog(ctx context.Context, logs storage.IssueLogStore, log entity.
 		if !errors.Is(err, storage.ErrAlreadyExists) {
 			return entity.IssueLog{}, fmt.Errorf("retain issue transition: %w", err)
 		}
-		retained, err := logs.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Status)
+		retained, err := logs.Get(ctx, log.TaskID, log.UnitID, log.BuildID, log.Event)
 		if err != nil {
 			return entity.IssueLog{}, fmt.Errorf("read retained issue transition: %w", err)
 		}
 		if retained.TaskID != log.TaskID || retained.UnitID != log.UnitID ||
-			retained.BuildID != log.BuildID || retained.Status != log.Status {
+			retained.BuildID != log.BuildID || retained.Event != log.Event {
 			return entity.IssueLog{}, fmt.Errorf("issue transition identity conflicts with retained history")
+		}
+		if retained.FirstSeenBuildID != "" && retained.FirstSeenBuildID != log.FirstSeenBuildID {
+			return entity.IssueLog{}, fmt.Errorf("issue event opening conflicts with retained history")
 		}
 		if err := retained.Validate(); err != nil {
 			return entity.IssueLog{}, fmt.Errorf("invalid retained issue transition: %w", err)

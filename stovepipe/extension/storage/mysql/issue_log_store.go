@@ -44,18 +44,21 @@ func (s *issueLogStore) Create(ctx context.Context, log entity.IssueLog) (retErr
 	if err := log.Validate(); err != nil {
 		return err
 	}
-	if err := s.validateKey(log.TaskID, log.UnitID, log.BuildID, log.Status); err != nil {
+	if err := validateBuildIssueKey(s.queue, log.FirstSeenBuildID, log.TaskID, log.UnitID); err != nil {
+		return err
+	}
+	if err := s.validateKey(log.TaskID, log.UnitID, log.BuildID, log.Event); err != nil {
 		return err
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO issue_log (queue, task_id, unit_id, build_id, event, timestamp_ms)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-		s.queue, log.TaskID, log.UnitID, log.BuildID, log.Status, log.TimestampMs)
+		`INSERT INTO issue_log (queue, task_id, unit_id, build_id, event, timestamp_ms, first_seen_build_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		s.queue, log.TaskID, log.UnitID, log.BuildID, log.Event, log.TimestampMs, log.FirstSeenBuildID)
 	if err != nil {
 		if isDuplicateEntry(err) {
-			return fmt.Errorf("issue log task=%q unit=%q build=%q status=%q: %w",
-				log.TaskID, log.UnitID, log.BuildID, log.Status, storage.ErrAlreadyExists)
+			return fmt.Errorf("issue log task=%q unit=%q build=%q event=%q: %w",
+				log.TaskID, log.UnitID, log.BuildID, log.Event, storage.ErrAlreadyExists)
 		}
 
 		return fmt.Errorf("failed to create issue log: %w", err)
@@ -64,20 +67,20 @@ func (s *issueLogStore) Create(ctx context.Context, log entity.IssueLog) (retErr
 	return nil
 }
 
-func (s *issueLogStore) Get(ctx context.Context, taskID, unitID, buildID string, status entity.IssueStatus) (ret entity.IssueLog, retErr error) {
+func (s *issueLogStore) Get(ctx context.Context, taskID, unitID, buildID string, event entity.IssueEvent) (ret entity.IssueLog, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := s.validateKey(taskID, unitID, buildID, status); err != nil {
+	if err := s.validateKey(taskID, unitID, buildID, event); err != nil {
 		return entity.IssueLog{}, err
 	}
 
 	var log entity.IssueLog
 	err := s.db.QueryRowContext(ctx,
-		`SELECT task_id, unit_id, build_id, event, timestamp_ms
+		`SELECT task_id, unit_id, build_id, event, timestamp_ms, first_seen_build_id
          FROM issue_log WHERE queue = ? AND task_id = ? AND unit_id = ? AND build_id = ? AND event = ?`,
-		s.queue, taskID, unitID, buildID, status,
-	).Scan(&log.TaskID, &log.UnitID, &log.BuildID, &log.Status, &log.TimestampMs)
+		s.queue, taskID, unitID, buildID, event,
+	).Scan(&log.TaskID, &log.UnitID, &log.BuildID, &log.Event, &log.TimestampMs, &log.FirstSeenBuildID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.IssueLog{}, storage.WrapNotFound(err)
 	}
@@ -88,18 +91,18 @@ func (s *issueLogStore) Get(ctx context.Context, taskID, unitID, buildID string,
 	return log, nil
 }
 
-func (s *issueLogStore) validateKey(taskID, unitID, buildID string, status entity.IssueStatus) error {
+func (s *issueLogStore) validateKey(taskID, unitID, buildID string, event entity.IssueEvent) error {
 	if err := validateBuildIssueKey(s.queue, buildID, taskID, unitID); err != nil {
 		return err
 	}
 	if buildID == "" {
 		return fmt.Errorf("issue log build ID must not be empty")
 	}
-	switch status {
-	case entity.IssueStatusOpen, entity.IssueStatusClosed:
+	switch event {
+	case entity.IssueEventOpened, entity.IssueEventReported, entity.IssueEventClosed:
 		return nil
 	default:
-		return fmt.Errorf("invalid issue status %q", status)
+		return fmt.Errorf("invalid issue event %q", event)
 	}
 }
 

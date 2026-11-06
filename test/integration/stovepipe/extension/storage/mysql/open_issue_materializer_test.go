@@ -38,9 +38,9 @@ func testOpenIssueMaterialization(t *testing.T, ctx context.Context, factory sto
 	}
 	materializer := issuelog.NewMaterializer(tally.NoopScope)
 	openIssues := stores.GetOpenIssueStore()
-	opened := entity.IssueLog{TaskID: "validation", UnitID: "unit", BuildID: "build/z", Status: entity.IssueStatusOpen, TimestampMs: 1000}
+	opened := entity.IssueLog{TaskID: "validation", UnitID: "unit", BuildID: "build/z", Event: entity.IssueEventOpened, TimestampMs: 1000}
 	closed := opened
-	closed.BuildID, closed.Status, closed.TimestampMs = "build/a", entity.IssueStatusClosed, 2000
+	closed.BuildID, closed.Event, closed.TimestampMs = "build/a", entity.IssueEventClosed, 2000
 	reopened := opened
 	reopened.BuildID, reopened.TimestampMs = "build/m", 3000
 	for _, step := range []struct {

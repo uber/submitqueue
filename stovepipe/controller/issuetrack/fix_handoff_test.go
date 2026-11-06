@@ -46,7 +46,7 @@ func TestOpeningPassPublishesRepairAfterIssueWrites(t *testing.T) {
 				require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
 				for _, task := range []string{"new", "reopened"} {
 					require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{task, "unit"}].Status)
-					require.Contains(t, f.logs, logKey{issueKey{task, "unit"}, "build", entity.IssueStatusOpen})
+					require.Contains(t, f.logs, logKey{issueKey{task, "unit"}, "build", entity.IssueEventOpened})
 				}
 				payload := &stovepipemq.FixRequest{}
 				require.NoError(t, stovepipemq.Unmarshal(msg.Payload, payload))
