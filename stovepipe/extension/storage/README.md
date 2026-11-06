@@ -42,7 +42,7 @@ Existing MySQL deployments must add `fix_id VARCHAR(255) NOT NULL DEFAULT ''` an
 
 ## Request issue summaries
 
-`RequestIssueSummaryStore` is the request-scoped read projection of build observations, keyed by queue, request, build, task, and unit. It supports complete-key create/get/CAS replacement and bounded request-prefix scans in bytewise build/task/unit order. Observation membership survives recovery; repair IDs come from retained repair-submission events. Projection versions are independent of operational versions. The caller merges sources without clearing a known repair ID and rejects conflicting associations. The new `request_issue_summary` table must exist before deployment. See the [request issues API](../../../doc/rfc/stovepipe/request-issues-api.md) for writer recovery, source retention, and the explicit rebuild command.
+`RequestIssueSummaryStore` is the request-scoped read projection of build observations, keyed by queue, request, build, task, and unit. It supports complete-key create/get/CAS replacement and bounded request-prefix scans in bytewise build/task/unit order. Observation membership survives recovery; repair IDs come from retained repair-submission events. Projection versions are independent of operational versions. The caller merges sources without clearing a known repair ID or historical new/existing classification and rejects conflicting facts. Classification is retained at issue reconciliation; membership and repair replay preserve it. The new `request_issue_summary` table must exist before deployment. See the [request issues API](../../../doc/rfc/stovepipe/request-issues-api.md) for writer recovery, source retention, and the explicit rebuild command.
 
 ## Issue state
 

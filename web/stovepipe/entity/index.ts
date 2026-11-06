@@ -53,7 +53,7 @@ export interface OpenIssuesModel {
 }
 export interface RequestIssuesModel {
   /** Observations on this page with source build and optional repair identifiers. */
-  issues: { buildId: string; taskId: string; unitId: string; fixId: string }[];
+  issues: { buildId: string; taskId: string; unitId: string; fixId: string; novelty: string }[];
   /** First issue page for this request; null on the first page. */
   firstHref: string | null;
   /** Opaque continuation URL; null when the traversal is exhausted. */

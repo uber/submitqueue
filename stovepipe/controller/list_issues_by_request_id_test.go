@@ -62,14 +62,14 @@ func requestIssuesToken(t *testing.T, cursor requestIssuesPageToken) string {
 func TestRequestIssuesListsOnlyReadModelsAndPaginatesAcrossBuilds(t *testing.T) {
 	f := newRequestIssuesFixture(t)
 	first := entity.RequestIssueSummary{RequestID: "7", BuildID: "a", TaskID: "task"}
-	second := entity.RequestIssueSummary{RequestID: "7", BuildID: "b", TaskID: "task", FixID: "repair/opaque"}
+	second := entity.RequestIssueSummary{RequestID: "7", BuildID: "b", TaskID: "task", FixID: "repair/opaque", Novelty: entity.IssueNoveltyExisting}
 	third := entity.RequestIssueSummary{RequestID: "7", BuildID: "b", TaskID: "task", UnitID: "unit"}
 	f.expectRequest()
 	f.issues.EXPECT().List(gomock.Any(), "7", storage.RequestIssueRange{Limit: 3}).Return([]entity.RequestIssueSummary{first, second, third}, nil)
 	req := entity.ListIssuesByRequestIDRequest{Queue: "queue", RequestID: "7", PageSize: 2}
 	got, err := f.controller.ListIssuesByRequestID(context.Background(), req)
 	require.NoError(t, err)
-	require.Equal(t, []entity.RequestIssue{{BuildID: "a", TaskID: "task"}, {BuildID: "b", TaskID: "task", FixID: "repair/opaque"}}, got.Issues)
+	require.Equal(t, []entity.RequestIssue{{BuildID: "a", TaskID: "task"}, {BuildID: "b", TaskID: "task", FixID: "repair/opaque", Novelty: entity.IssueNoveltyExisting}}, got.Issues)
 	require.NotEmpty(t, got.NextPageToken)
 	req.PageSize, req.PageToken = 1, got.NextPageToken
 	f.expectRequest()

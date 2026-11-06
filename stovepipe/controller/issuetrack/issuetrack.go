@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestissue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -346,6 +347,9 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	next := progress
 	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID == progress.BuildID && current.Status == desired {
+		if err := requestissue.MaterializeIssueNovelty(ctx, store, progress.RequestID, progress.BuildID, current); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
 		if key == (issueKey{progress.CursorTaskID, progress.CursorUnitID}) {
 			return next, c.recordHistory(ctx, store, current)
 		}
@@ -393,6 +397,9 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	}
 	if err != nil {
 		return entity.IssueTrackingState{}, fmt.Errorf("apply issue cursor: %w", err)
+	}
+	if err := requestissue.MaterializeIssueNovelty(ctx, store, progress.RequestID, progress.BuildID, target); err != nil {
+		return entity.IssueTrackingState{}, err
 	}
 
 	if missing || current.Status != desired {

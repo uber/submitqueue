@@ -107,6 +107,7 @@ func TestRecoveryKeepsAcceptedIssueChanges(t *testing.T) {
 			}
 			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, status})
 			require.Len(t, f.events, 1)
+			require.Empty(t, f.requestIssues)
 			require.Equal(t, 1, f.failures["issue/list"])
 			require.Equal(t, 1, f.failures["build-issues/list"])
 			require.Equal(t, 1, f.failures["build-issues/get"])
@@ -136,6 +137,7 @@ func TestRecoveryFinishesOnlyTheUncreatedCursor(t *testing.T) {
 	require.Equal(t, "build/100", issue.FirstSeenBuildID)
 	require.Equal(t, int64(1000), issue.ChangedAtMs)
 	require.Len(t, f.logs, 1)
+	require.Equal(t, entity.IssueNoveltyNew, f.requestIssues[[4]string{"100", "build/100", "task", "unit"}].Novelty)
 	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
 	request, build := f.requests["100"], f.builds["build/100"]
 	require.NoError(t, f.recover(msg, false))
@@ -143,6 +145,26 @@ func TestRecoveryFinishesOnlyTheUncreatedCursor(t *testing.T) {
 	require.Len(t, f.events, 1)
 	require.Equal(t, request, f.requests["100"])
 	require.Equal(t, build, f.builds["build/100"])
+}
+
+func TestRecoveryRetriesClassificationBeforeAbandoningAcceptedObservation(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	f.seedIssue("task", "unit", entity.IssueStatusOpen)
+	f.reportIssue("build/100", "task", "unit")
+	msg := f.message("build/100", false)
+	progress := currentCursor()
+	progress.NotificationID = msg.ID
+	f.retain(progress)
+	f.failures["request-issue/create"] = 2
+	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	require.ErrorIs(t, err, assert.AnError)
+	require.ErrorIs(t, f.recover(msg, false), assert.AnError)
+	require.Equal(t, entity.IssueTrackingPhaseAbandoning, f.progress.Phase)
+	require.Empty(t, f.events)
+	require.NoError(t, f.recover(msg, false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.Equal(t, entity.IssueNoveltyExisting, f.requestIssues[[4]string{"100", "build/100", "task", "unit"}].Novelty)
 }
 
 func TestRecoveryKeepsCompletedClosingBatches(t *testing.T) {

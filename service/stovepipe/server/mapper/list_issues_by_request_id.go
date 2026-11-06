@@ -28,7 +28,7 @@ func ProtoToListIssuesByRequestIDRequest(req *pb.ListIssuesByRequestIDRequest) e
 func ListIssuesByRequestIDResultToProto(result entity.ListIssuesByRequestIDResult) *pb.ListIssuesByRequestIDResponse {
 	issues := make([]*pb.RequestIssue, len(result.Issues))
 	for i, issue := range result.Issues {
-		issues[i] = &pb.RequestIssue{BuildId: issue.BuildID, TaskId: issue.TaskID, UnitId: issue.UnitID, FixId: issue.FixID}
+		issues[i] = &pb.RequestIssue{BuildId: issue.BuildID, TaskId: issue.TaskID, UnitId: issue.UnitID, FixId: issue.FixID, Novelty: string(issue.Novelty)}
 	}
 	return &pb.ListIssuesByRequestIDResponse{Queue: result.Queue, RequestId: result.RequestID, Issues: issues, NextPageToken: result.NextPageToken}
 }

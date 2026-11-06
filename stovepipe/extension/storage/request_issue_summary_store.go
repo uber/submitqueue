@@ -41,7 +41,7 @@ type RequestIssueRange struct {
 }
 
 // RequestIssueSummaryStore retains queue-scoped observation read models by request/build/task/unit.
-// The caller merges observations and repair events; projection versions do not order sources.
+// The caller merges observations, classification, and repair events; projection versions do not order sources.
 type RequestIssueSummaryStore interface {
 	// Create returns ErrAlreadyExists when the complete observation key exists.
 	Create(context.Context, entity.RequestIssueSummary) error

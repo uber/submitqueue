@@ -465,14 +465,14 @@ describe("request issue observations", () => {
     expect(service.listIssuesByRequestID).not.toHaveBeenCalled();
     vi.mocked(service.listIssuesByRequestID).mockResolvedValue({
       queue: summary.queue, requestId: summary.requestId,
-      issues: [{ buildId: "build/1", taskId: "test", unitId: "//pkg:test", fixId: "repair/1" }],
+      issues: [{ buildId: "build/1", taskId: "test", unitId: "//pkg:test", fixId: "repair/1", novelty: "new" }],
       nextPageToken: "next+/=",
     });
     const signal = new AbortController().signal;
     const result = await app.handle({ path, search: new URLSearchParams({ view: "issues", issues: "cursor+/=", projects: "project-cursor", projectPageSize: "25" }), signal });
     expect(service.listIssuesByRequestID).toHaveBeenCalledWith({ queue: summary.queue, requestId: summary.requestId, pageSize: 50, pageToken: "cursor+/=" }, { signal });
     expect(result).toMatchObject({ kind: "render", model: { kind: "request", requestIssues: { ok: true, data: {
-      issues: [{ buildId: "build/1", taskId: "test", unitId: "//pkg:test", fixId: "repair/1" }],
+      issues: [{ buildId: "build/1", taskId: "test", unitId: "//pkg:test", fixId: "repair/1", novelty: "new" }],
       nextHref: path + "?projects=project-cursor&projectPageSize=25&view=issues&issues=next%2B%2F%3D",
       firstHref: path + "?projects=project-cursor&projectPageSize=25&view=issues",
     } } } });

@@ -98,7 +98,7 @@ func (c *listIssuesByRequestIDController) ListIssuesByRequestID(ctx context.Cont
 		if row.RequestID != req.RequestID {
 			return entity.ListIssuesByRequestIDResult{}, fmt.Errorf("request issue projection belongs to another request")
 		}
-		result.Issues = append(result.Issues, entity.RequestIssue{BuildID: row.BuildID, TaskID: row.TaskID, UnitID: row.UnitID, FixID: row.FixID})
+		result.Issues = append(result.Issues, entity.RequestIssue{BuildID: row.BuildID, TaskID: row.TaskID, UnitID: row.UnitID, FixID: row.FixID, Novelty: row.Novelty})
 	}
 	if len(rows) > pageSize {
 		last := result.Issues[len(result.Issues)-1]

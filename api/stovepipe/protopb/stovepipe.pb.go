@@ -2403,7 +2403,10 @@ type RequestIssue struct {
 	// Validation unit; empty identifies a task-wide failure.
 	UnitId string `protobuf:"bytes,3,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
 	// Opaque repair identifier; empty means no association is recorded.
-	FixId         string `protobuf:"bytes,4,opt,name=fix_id,json=fixId,proto3" json:"fix_id,omitempty"`
+	FixId string `protobuf:"bytes,4,opt,name=fix_id,json=fixId,proto3" json:"fix_id,omitempty"`
+	// "new" for an opening or reopening in this build; "existing" for a continuing opening.
+	// Empty means no historical classification is retained.
+	Novelty       string `protobuf:"bytes,5,opt,name=novelty,proto3" json:"novelty,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2462,6 +2465,13 @@ func (x *RequestIssue) GetUnitId() string {
 func (x *RequestIssue) GetFixId() string {
 	if x != nil {
 		return x.FixId
+	}
+	return ""
+}
+
+func (x *RequestIssue) GetNovelty() string {
+	if x != nil {
+		return x.Novelty
 	}
 	return ""
 }
@@ -2718,12 +2728,13 @@ const file_stovepipe_proto_rawDesc = "" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x04 \x01(\tR\tpageToken\"r\n" +
+	"page_token\x18\x04 \x01(\tR\tpageToken\"\x8c\x01\n" +
 	"\fRequestIssue\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x17\n" +
 	"\aunit_id\x18\x03 \x01(\tR\x06unitId\x12\x15\n" +
-	"\x06fix_id\x18\x04 \x01(\tR\x05fixId\"\xe4\x01\n" +
+	"\x06fix_id\x18\x04 \x01(\tR\x05fixId\x12\x18\n" +
+	"\anovelty\x18\x05 \x01(\tR\anovelty\"\xe4\x01\n" +
 	"\x1dListIssuesByRequestIDResponse\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1d\n" +
 	"\n" +

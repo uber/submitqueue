@@ -62,9 +62,13 @@ func testRequestIssueProjection(t *testing.T, ctx context.Context, db *sql.DB, f
 	require.ErrorIs(t, projection.Update(ctx, summary, 5, 6), storage.ErrVersionMismatch)
 	summary.FixID = "fix/1"
 	require.NoError(t, projection.Update(ctx, summary, 1, 2))
+	summary.Novelty = entity.IssueNoveltyNew
+	require.NoError(t, requestissue.MaterializeObservation(ctx, projection, summary))
+	require.NoError(t, requestlog.RebuildRequestIssues(ctx, stores, queue, "7"))
 	got, err := projection.Get(ctx, "7", summary.BuildID, summary.TaskID, summary.UnitID)
 	require.NoError(t, err)
-	require.Equal(t, int32(2), got.Version)
+	require.Equal(t, int32(3), got.Version)
+	require.Equal(t, entity.IssueNoveltyNew, got.Novelty)
 	require.Equal(t, int32(1), summary.Version)
 	for _, selection := range []struct{ queue, request string }{{queue, "8"}, {"Request-issues/main", "7"}} {
 		other, err := factory.For(storage.Config{QueueName: selection.queue})
@@ -79,8 +83,10 @@ func testRequestIssueProjection(t *testing.T, ctx context.Context, db *sql.DB, f
 	concurrent := summary
 	concurrent.RequestID = "9"
 	concurrent.FixID = ""
+	concurrent.Novelty = entity.IssueNoveltyUnknown
 	require.NoError(t, projection.Create(ctx, concurrent))
 	concurrent.FixID = "fix/concurrent"
+	concurrent.Novelty = entity.IssueNoveltyExisting
 	results := make(chan error, 2)
 	start := make(chan struct{})
 	for range 2 {
@@ -93,6 +99,7 @@ func testRequestIssueProjection(t *testing.T, ctx context.Context, db *sql.DB, f
 	merged, err := projection.Get(ctx, "9", concurrent.BuildID, concurrent.TaskID, concurrent.UnitID)
 	require.NoError(t, err)
 	require.Equal(t, "fix/concurrent", merged.FixID)
+	require.Equal(t, entity.IssueNoveltyExisting, merged.Novelty)
 	require.Equal(t, int32(2), merged.Version)
 	widest := entity.RequestIssueSummary{RequestID: "7", BuildID: strings.Repeat("😀", 255), TaskID: strings.Repeat("t", 255), UnitID: strings.Repeat("😀", 256), FixID: strings.Repeat("😀", 255), Version: 1}
 	require.NoError(t, projection.Create(ctx, widest))

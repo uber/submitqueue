@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestissue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -221,6 +222,9 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 			return entity.IssueTrackingState{}, fmt.Errorf("fence recovery cursor: %w", err)
 		}
 		if err := c.controller.recordHistory(ctx, store, current); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+		if err := requestissue.MaterializeIssueNovelty(ctx, store, progress.RequestID, progress.BuildID, current); err != nil {
 			return entity.IssueTrackingState{}, err
 		}
 	}

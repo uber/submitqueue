@@ -62,6 +62,7 @@ type fixture struct {
 	builds         map[string]entity.Build
 	requests       map[string]entity.Request
 	buildIssues    map[string]map[issueKey]entity.BuildIssue
+	requestIssues  map[[4]string]entity.RequestIssueSummary
 	sequence       int
 
 	fixMessages  []entityqueue.Message
@@ -75,6 +76,7 @@ func newFixture(t *testing.T) *fixture {
 	f.builds = map[string]entity.Build{}
 	f.requests = map[string]entity.Request{}
 	f.buildIssues = map[string]map[issueKey]entity.BuildIssue{}
+	f.requestIssues = map[[4]string]entity.RequestIssueSummary{}
 	f.summaries = map[issueKey]entity.IssueSummary{}
 	f.openIssues = map[issueKey]entity.OpenIssue{}
 	f.source("older", "1", entity.BuildStatusSucceeded)
@@ -85,12 +87,44 @@ func newFixture(t *testing.T) *fixture {
 	summaries := storagemock.NewMockIssueSummaryStore(f.mocks)
 	openIssues := storagemock.NewMockOpenIssueStore(f.mocks)
 	tracking := storagemock.NewMockIssueTrackingStore(f.mocks)
+	requestIssues := storagemock.NewMockRequestIssueSummaryStore(f.mocks)
 	f.factory.EXPECT().For(storage.Config{QueueName: testQueue}).Return(store, nil).AnyTimes()
 	store.EXPECT().GetIssueStateStore().Return(states).AnyTimes()
 	store.EXPECT().GetIssueLogStore().Return(history).AnyTimes()
 	store.EXPECT().GetIssueSummaryStore().Return(summaries).AnyTimes()
 	store.EXPECT().GetOpenIssueStore().Return(openIssues).AnyTimes()
 	store.EXPECT().GetIssueTrackingStore().Return(tracking).AnyTimes()
+	store.EXPECT().GetRequestIssueSummaryStore().Return(requestIssues).AnyTimes()
+	requestIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request, build, task, unit string) (entity.RequestIssueSummary, error) {
+		value, ok := f.requestIssues[[4]string{request, build, task, unit}]
+		if !ok {
+			return value, storage.ErrNotFound
+		}
+		return value, nil
+	}).AnyTimes()
+	requestIssues.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary) error {
+		if err := f.fail("request-issue/create"); err != nil {
+			return err
+		}
+		key := [4]string{value.RequestID, value.BuildID, value.TaskID, value.UnitID}
+		if _, ok := f.requestIssues[key]; ok {
+			return storage.ErrAlreadyExists
+		}
+		f.requestIssues[key] = value
+		return nil
+	}).AnyTimes()
+	requestIssues.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary, oldVersion, newVersion int32) error {
+		if err := f.fail("request-issue/update"); err != nil {
+			return err
+		}
+		key := [4]string{value.RequestID, value.BuildID, value.TaskID, value.UnitID}
+		if current, ok := f.requestIssues[key]; !ok || current.Version != oldVersion {
+			return storage.ErrVersionMismatch
+		}
+		value.Version = newVersion
+		f.requestIssues[key] = value
+		return nil
+	}).AnyTimes()
 
 	states.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit string) (entity.IssueState, error) {
 		if err := f.fail("issue/get"); err != nil {

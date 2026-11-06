@@ -20,6 +20,7 @@ test.describe("server-rendered styling", () => {
     await section.getByRole("link", { name: "Next issues →" }).first().click();
     await expect(rows).toHaveCount(5);
     await expect(section.getByText("recovered", { exact: true })).toBeVisible();
+  await expect(rows.filter({ hasText: "recovered" }).getByRole("cell", { name: "Unknown", exact: true })).toBeVisible();
   });
   test("styles the queue before hydration", async ({ page }) => {
     await page.goto("/web%2Fpagination");
@@ -605,16 +606,20 @@ test("retains project paging across views and resets the cursor when page size c
 test("lists request observations with build provenance and shareable pagination", async ({ page }) => {
   const result = await client.listIssuesByRequestID({ queue: "web/pagination", requestId: "51", pageSize: 1 });
   expect(result.issues[0].buildId).toBe("web/build/50");
+  expect(result.issues[0].novelty).toBe("existing");
   await page.goto("/web%2Fpagination/request/51?view=issues");
   const section = page.getByRole("region", { name: "Build and Test Issues", exact: true });
   const rows = section.getByRole("table", { name: "Observed build and test issues" }).locator("tbody tr");
   await expect(rows).toHaveCount(50);
   await expect(rows.first()).toContainText("web/build/50");
+  await expect(rows.first().getByRole("cell", { name: "Existing", exact: true })).toBeVisible();
+  await expect(rows.nth(1).getByRole("cell", { name: "New", exact: true })).toBeVisible();
   await expect(rows.nth(1)).toContainText("repair/opaque");
   await section.getByRole("link", { name: "Next issues →" }).first().click();
   await expect(rows).toHaveCount(5);
   expect(new URL(page.url()).searchParams.has("issues")).toBe(true);
   await expect(section.getByText("recovered", { exact: true })).toBeVisible();
+  await expect(rows.filter({ hasText: "recovered" }).getByRole("cell", { name: "Unknown", exact: true })).toBeVisible();
   await page.reload();
   await expect(rows).toHaveCount(5);
   await section.getByRole("link", { name: "First issues", exact: true }).first().click();

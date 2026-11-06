@@ -310,12 +310,13 @@ it.each([
 
 it("shows request observations and retains only the same page on refresh failure", () => {
   const issueModel: StovepipePageModel = { ...model, key: "/repo%2Fmain/request/7?view=issues", requestIssues: { ok: true, data: {
-    issues: [{ buildId: "build/1", taskId: "test", unitId: "", fixId: "repair/opaque" }],
+    issues: [{ buildId: "build/1", taskId: "test", unitId: "", fixId: "repair/opaque", novelty: "existing" }],
     firstHref: null, nextHref: "/repo%2Fmain/request/7?view=issues&issues=cursor",
   } } };
   const { rerender } = render(<StovepipeApp model={issueModel} />);
   const section = screen.getByRole("region", { name: "Build and Test Issues", exact: true });
   expect(within(section).getByText("Task-wide failure")).toBeVisible();
+  expect(within(section).getByRole("cell", { name: "Existing", exact: true })).toBeVisible();
   expect(within(section).getByText("repair/opaque")).toBeVisible();
   expect(within(section).getByRole("cell", { name: "build/1", exact: true })).toBeVisible();
   for (const link of within(section).getAllByRole("link", { name: /Next issues/ })) expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?view=issues&issues=cursor");

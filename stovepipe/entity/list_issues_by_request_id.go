@@ -36,6 +36,8 @@ type RequestIssue struct {
 	UnitID string
 	// FixID is the opaque repair association; empty means none is recorded.
 	FixID string
+	// Novelty distinguishes a new opening from an existing issue; empty means unknown.
+	Novelty IssueNovelty
 }
 
 // ListIssuesByRequestIDResult is a live page of observations with build provenance.

@@ -20,7 +20,19 @@ import (
 	"github.com/uber/submitqueue/platform/base/id"
 )
 
-// RequestIssueSummary is a read model of an observation and its retained repair association.
+// IssueNovelty classifies an observation relative to an issue's opening episode.
+type IssueNovelty string
+
+const (
+	// IssueNoveltyUnknown means no historical classification is retained.
+	IssueNoveltyUnknown IssueNovelty = ""
+	// IssueNoveltyNew means the observed build opened or reopened the issue.
+	IssueNoveltyNew IssueNovelty = "new"
+	// IssueNoveltyExisting means the issue remained open from an earlier build.
+	IssueNoveltyExisting IssueNovelty = "existing"
+)
+
+// RequestIssueSummary retains an observation, historical classification, and repair association.
 // Observation membership survives recovery; repair association does not imply issue recovery.
 type RequestIssueSummary struct {
 	// RequestID is the canonical decimal request identifier within the bound queue.
@@ -33,6 +45,8 @@ type RequestIssueSummary struct {
 	UnitID string
 	// FixID identifies the retained repair association; empty means none is recorded.
 	FixID string
+	// Novelty is the historical new/existing classification for this observation.
+	Novelty IssueNovelty
 	// Version is the positive optimistic-lock version of the projection.
 	Version int32
 }
@@ -47,6 +61,11 @@ func (s RequestIssueSummary) Validate() error {
 	}
 	if s.Version <= 0 {
 		return fmt.Errorf("request issue projection version must be positive")
+	}
+	switch s.Novelty {
+	case IssueNoveltyUnknown, IssueNoveltyNew, IssueNoveltyExisting:
+	default:
+		return fmt.Errorf("invalid request issue novelty %q", s.Novelty)
 	}
 	return nil
 }

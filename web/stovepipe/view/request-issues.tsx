@@ -18,13 +18,14 @@ export function RequestIssues({ model, pageKey }: { model: RequestIssuesModel; p
     </Block>;
   }
   return <>
-    <ParagraphSmall color="contentSecondary">Observed failures across this request’s build attempts. These observations remain after an issue recovers.</ParagraphSmall>
+    <ParagraphSmall color="contentSecondary">Observed failures across this request’s build attempts. New includes reopened issues; existing issues were already open in an earlier build. These observations remain after an issue recovers.</ParagraphSmall>
     {renderIssuePagination()}
-    <Table key={pageKey} label="Observed build and test issues" headers={["Build", "Task", "Unit", "Repair ID"]} fill>
+    <Table key={pageKey} label="Observed build and test issues" headers={["Build", "Task", "Unit", "Classification", "Repair ID"]} fill>
       {model.issues.map(issue => <StyledTableBodyRow key={JSON.stringify([issue.buildId, issue.taskId, issue.unitId])}>
         <StyledTableBodyCell><code>{issue.buildId}</code></StyledTableBodyCell>
         <StyledTableBodyCell>{issue.taskId}</StyledTableBodyCell>
         <StyledTableBodyCell>{issue.unitId ? <code>{issue.unitId}</code> : <Tag closeable={false} kind="neutral" size="small">Task-wide failure</Tag>}</StyledTableBodyCell>
+        <StyledTableBodyCell>{issue.novelty === "new" ? "New" : issue.novelty === "existing" ? "Existing" : "Unknown"}</StyledTableBodyCell>
         <StyledTableBodyCell>{issue.fixId || "None recorded"}</StyledTableBodyCell>
       </StyledTableBodyRow>)}
     </Table>

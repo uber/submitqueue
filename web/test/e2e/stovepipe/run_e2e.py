@@ -82,7 +82,7 @@ def _pagination_fixture_sql() -> str:
         "INSERT INTO build_issue VALUES ('web/pagination','web/build/50','buildtest','','',0);"
     )
     statements.append(
-        "INSERT INTO request_issue_summary VALUES ('web/pagination','51','web/build/50','buildtest','','',1);"
+        "INSERT INTO request_issue_summary VALUES ('web/pagination','51','web/build/50','buildtest','','','existing',1);"
     )
     for i in range(53):
         task = "buildtest" if i < 52 else "expensive"
@@ -92,13 +92,13 @@ def _pagination_fixture_sql() -> str:
             f"INSERT INTO build_issue VALUES ('web/pagination','web/build/51','{task}','{unit}','{fix}',0);"
         )
         statements.append(
-            f"INSERT INTO request_issue_summary VALUES ('web/pagination','51','web/build/51','{task}','{unit}','{fix}',1);"
+            f"INSERT INTO request_issue_summary VALUES ('web/pagination','51','web/build/51','{task}','{unit}','{fix}','new',1);"
         )
     statements.append(
         "INSERT INTO build_issue VALUES ('web/pagination','web/build/51','recovered','//pkg:recovered_test','',0);"
     )
     statements.append(
-        "INSERT INTO request_issue_summary VALUES ('web/pagination','51','web/build/51','recovered','//pkg:recovered_test','',1);"
+        "INSERT INTO request_issue_summary VALUES ('web/pagination','51','web/build/51','recovered','//pkg:recovered_test','','',1);"
     )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):

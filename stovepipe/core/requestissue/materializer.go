@@ -27,8 +27,8 @@ import (
 
 const observationPageSize = 100
 
-// MaterializeObservation merges an observation or a retained repair association.
-// Empty repair IDs never clear associations; different nonempty repair IDs conflict.
+// MaterializeObservation merges independently retained observation facts.
+// Empty fields never clear known facts; conflicting nonempty facts are errors.
 func MaterializeObservation(ctx context.Context, summaries storage.RequestIssueSummaryStore, incoming entity.RequestIssueSummary) error {
 	if err := incoming.Validate(); err != nil {
 		return err
@@ -57,17 +57,25 @@ func MaterializeObservation(ctx context.Context, summaries storage.RequestIssueS
 		if current.RequestID != incoming.RequestID || current.BuildID != incoming.BuildID || current.TaskID != incoming.TaskID || current.UnitID != incoming.UnitID {
 			return fmt.Errorf("request issue projection identity does not match source")
 		}
-		if incoming.FixID == "" || incoming.FixID == current.FixID {
-			return nil
-		}
-		if current.FixID != "" {
+		if incoming.FixID != "" && current.FixID != "" && incoming.FixID != current.FixID {
 			return fmt.Errorf("request issue repair association conflicts with retained source")
+		}
+		if incoming.Novelty != "" && current.Novelty != "" && incoming.Novelty != current.Novelty {
+			return fmt.Errorf("request issue novelty conflicts with retained source")
+		}
+		replacement := current
+		if incoming.FixID != "" {
+			replacement.FixID = incoming.FixID
+		}
+		if incoming.Novelty != "" {
+			replacement.Novelty = incoming.Novelty
+		}
+		if replacement == current {
+			return nil
 		}
 		if current.Version == math.MaxInt32 {
 			return fmt.Errorf("request issue projection version exhausted")
 		}
-		replacement := current
-		replacement.FixID = incoming.FixID
 		if err := summaries.Update(ctx, replacement, current.Version, current.Version+1); errors.Is(err, storage.ErrVersionMismatch) {
 			continue
 		} else if err != nil {
@@ -75,6 +83,24 @@ func MaterializeObservation(ctx context.Context, summaries storage.RequestIssueS
 		}
 		return nil
 	}
+}
+
+// MaterializeIssueNovelty retains classification only for an accepted open observation.
+// A later build's mutable issue state cannot classify an earlier build's observation.
+func MaterializeIssueNovelty(ctx context.Context, stores storage.Storage, requestID, buildID string, issue entity.IssueState) error {
+	if issue.LastProcessedBuildID != buildID || issue.Status != entity.IssueStatusOpen {
+		return nil
+	}
+	if issue.FirstSeenBuildID == "" {
+		return fmt.Errorf("open issue requires an opening build for classification")
+	}
+	novelty := entity.IssueNoveltyExisting
+	if issue.FirstSeenBuildID == buildID {
+		novelty = entity.IssueNoveltyNew
+	}
+	return MaterializeObservation(ctx, stores.GetRequestIssueSummaryStore(), entity.RequestIssueSummary{
+		RequestID: requestID, BuildID: buildID, TaskID: issue.TaskID, UnitID: issue.UnitID, Novelty: novelty, Version: 1,
+	})
 }
 
 // MaterializeBuild repairs observation membership from durable facts, including partial passes.

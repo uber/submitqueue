@@ -397,6 +397,9 @@ message RequestIssue {
     string unit_id = 3;
     // Opaque repair identifier; empty means no association is recorded.
     string fix_id = 4;
+    // "new" for an opening or reopening in this build; "existing" for a continuing opening.
+    // Empty means no historical classification is retained.
+    string novelty = 5;
 }
 
 // ListIssuesByRequestIDResponse contains live observations, not a snapshot across calls.

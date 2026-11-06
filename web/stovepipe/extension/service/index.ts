@@ -53,7 +53,7 @@ export interface StovepipeService {
   ): Promise<{
     queue: string;
     requestId: string;
-    issues: { buildId: string; taskId: string; unitId: string; fixId: string }[];
+    issues: { buildId: string; taskId: string; unitId: string; fixId: string; novelty: string }[];
     nextPageToken: string;
   }>;
   listOpenIssues(

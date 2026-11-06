@@ -30,13 +30,20 @@ func sourceObservation() entity.RequestIssueSummary {
 	return entity.RequestIssueSummary{RequestID: "7", BuildID: "build/1", TaskID: "test", UnitID: "unit", Version: 1}
 }
 
-func TestObservationAndRepairProjectionConvergeInEitherOrder(t *testing.T) {
-	for _, repairFirst := range []bool{false, true} {
-		t.Run(map[bool]string{false: "observation first", true: "repair first"}[repairFirst], func(t *testing.T) {
+func TestObservationRepairAndClassificationConvergeInAnyOrder(t *testing.T) {
+	for _, order := range [][3]string{
+		{"observation", "repair", "classification"}, {"observation", "classification", "repair"},
+		{"repair", "observation", "classification"}, {"repair", "classification", "observation"},
+		{"classification", "observation", "repair"}, {"classification", "repair", "observation"},
+	} {
+		t.Run(order[0]+"/"+order[1], func(t *testing.T) {
 			summaries := storagemock.NewMockRequestIssueSummaryStore(gomock.NewController(t))
 			observation := sourceObservation()
 			repair := observation
 			repair.FixID = "fix/1"
+			classified := observation
+			classified.Novelty = entity.IssueNoveltyNew
+			inputs := map[string]entity.RequestIssueSummary{"observation": observation, "repair": repair, "classification": classified}
 			var retained entity.RequestIssueSummary
 			summaries.EXPECT().Get(gomock.Any(), "7", "build/1", "test", "unit").DoAndReturn(func(context.Context, string, string, string, string) (entity.RequestIssueSummary, error) {
 				if retained.Version == 0 {
@@ -45,21 +52,55 @@ func TestObservationAndRepairProjectionConvergeInEitherOrder(t *testing.T) {
 				return retained, nil
 			}).AnyTimes()
 			summaries.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary) error { retained = value; return nil })
-			if !repairFirst {
-				summaries.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary, _, newVersion int32) error {
-					value.Version = newVersion
-					retained = value
-					return nil
-				})
-			}
-			inputs := []entity.RequestIssueSummary{observation, repair, observation, repair}
-			if repairFirst {
-				inputs[0], inputs[1] = repair, observation
-			}
-			for _, incoming := range inputs {
-				require.NoError(t, MaterializeObservation(context.Background(), summaries, incoming))
+			summaries.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, value entity.RequestIssueSummary, _, newVersion int32) error {
+				value.Version = newVersion
+				retained = value
+				return nil
+			}).AnyTimes()
+			for range 2 {
+				for _, source := range order {
+					require.NoError(t, MaterializeObservation(context.Background(), summaries, inputs[source]))
+				}
 			}
 			require.Equal(t, "fix/1", retained.FixID)
+			require.Equal(t, entity.IssueNoveltyNew, retained.Novelty)
+		})
+	}
+}
+
+func TestClassificationCASRetryPreservesConcurrentRepair(t *testing.T) {
+	summaries := storagemock.NewMockRequestIssueSummaryStore(gomock.NewController(t))
+	observation := sourceObservation()
+	classified := observation
+	classified.Novelty = entity.IssueNoveltyExisting
+	repaired := observation
+	repaired.FixID, repaired.Version = "fix/1", 2
+	merged := repaired
+	merged.Novelty = classified.Novelty
+	gomock.InOrder(
+		summaries.EXPECT().Get(gomock.Any(), "7", "build/1", "test", "unit").Return(observation, nil),
+		summaries.EXPECT().Update(gomock.Any(), classified, int32(1), int32(2)).Return(storage.ErrVersionMismatch),
+		summaries.EXPECT().Get(gomock.Any(), "7", "build/1", "test", "unit").Return(repaired, nil),
+		summaries.EXPECT().Update(gomock.Any(), merged, int32(2), int32(3)).Return(nil),
+	)
+	require.NoError(t, MaterializeObservation(context.Background(), summaries, classified))
+}
+
+func TestClassificationReplayPreservesKnownFactsAndRejectsConflicts(t *testing.T) {
+	for _, novelty := range []entity.IssueNovelty{entity.IssueNoveltyUnknown, entity.IssueNoveltyNew, entity.IssueNoveltyExisting} {
+		t.Run(string(novelty), func(t *testing.T) {
+			summaries := storagemock.NewMockRequestIssueSummaryStore(gomock.NewController(t))
+			retained := sourceObservation()
+			retained.FixID, retained.Novelty = "fix/1", entity.IssueNoveltyNew
+			summaries.EXPECT().Get(gomock.Any(), "7", "build/1", "test", "unit").Return(retained, nil)
+			incoming := sourceObservation()
+			incoming.Novelty = novelty
+			err := MaterializeObservation(context.Background(), summaries, incoming)
+			if novelty == entity.IssueNoveltyExisting {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }

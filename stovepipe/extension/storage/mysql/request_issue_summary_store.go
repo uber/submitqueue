@@ -27,7 +27,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-const requestIssueColumns = `request_id, build_id, task_id, unit_id, fix_id, version`
+const requestIssueColumns = `request_id, build_id, task_id, unit_id, fix_id, novelty, version`
 const listRequestIssuesQuery = `SELECT ` + requestIssueColumns + ` FROM request_issue_summary
     WHERE queue = ? AND request_id = ? ORDER BY build_id ASC, task_id ASC, unit_id ASC LIMIT ?`
 const listRequestIssuesAfterQuery = `SELECT ` + requestIssueColumns + ` FROM request_issue_summary
@@ -52,8 +52,8 @@ func (s *requestIssueSummaryStore) Create(ctx context.Context, summary entity.Re
 	if err := s.validateSummary(summary); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO request_issue_summary (queue, `+requestIssueColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		s.queue, summary.RequestID, summary.BuildID, summary.TaskID, summary.UnitID, summary.FixID, summary.Version)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO request_issue_summary (queue, `+requestIssueColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.queue, summary.RequestID, summary.BuildID, summary.TaskID, summary.UnitID, summary.FixID, summary.Novelty, summary.Version)
 	if isDuplicateEntry(err) {
 		return storage.ErrAlreadyExists
 	}
@@ -70,7 +70,7 @@ func (s *requestIssueSummaryStore) Get(ctx context.Context, requestID, buildID, 
 		return summary, err
 	}
 	err := s.db.QueryRowContext(ctx, `SELECT `+requestIssueColumns+` FROM request_issue_summary WHERE queue = ? AND request_id = ? AND build_id = ? AND task_id = ? AND unit_id = ?`,
-		s.queue, requestID, buildID, taskID, unitID).Scan(&summary.RequestID, &summary.BuildID, &summary.TaskID, &summary.UnitID, &summary.FixID, &summary.Version)
+		s.queue, requestID, buildID, taskID, unitID).Scan(&summary.RequestID, &summary.BuildID, &summary.TaskID, &summary.UnitID, &summary.FixID, &summary.Novelty, &summary.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.RequestIssueSummary{}, storage.WrapNotFound(err)
 	}
@@ -91,9 +91,9 @@ func (s *requestIssueSummaryStore) Update(ctx context.Context, summary entity.Re
 	if oldVersion <= 0 {
 		return fmt.Errorf("request issue guard version must be positive")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE request_issue_summary SET fix_id = ?, version = ?
+	result, err := s.db.ExecContext(ctx, `UPDATE request_issue_summary SET fix_id = ?, novelty = ?, version = ?
         WHERE queue = ? AND request_id = ? AND build_id = ? AND task_id = ? AND unit_id = ? AND version = ?`,
-		summary.FixID, newVersion, s.queue, summary.RequestID, summary.BuildID, summary.TaskID, summary.UnitID, oldVersion)
+		summary.FixID, summary.Novelty, newVersion, s.queue, summary.RequestID, summary.BuildID, summary.TaskID, summary.UnitID, oldVersion)
 	if err != nil {
 		return fmt.Errorf("update request issue summary: %w", err)
 	}
@@ -135,7 +135,7 @@ func (s *requestIssueSummaryStore) List(ctx context.Context, requestID string, b
 	summaries := []entity.RequestIssueSummary{}
 	for rows.Next() {
 		var summary entity.RequestIssueSummary
-		if err := rows.Scan(&summary.RequestID, &summary.BuildID, &summary.TaskID, &summary.UnitID, &summary.FixID, &summary.Version); err != nil {
+		if err := rows.Scan(&summary.RequestID, &summary.BuildID, &summary.TaskID, &summary.UnitID, &summary.FixID, &summary.Novelty, &summary.Version); err != nil {
 			return nil, fmt.Errorf("scan request issue summary: %w", err)
 		}
 		summaries = append(summaries, summary)

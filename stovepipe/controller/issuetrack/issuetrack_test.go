@@ -129,6 +129,46 @@ func TestUnchangedIssueRecordsTheProcessedBuild(t *testing.T) {
 	require.Empty(t, f.logs)
 }
 
+func TestObservationClassificationSurvivesProjectionFailureAndLaterBuilds(t *testing.T) {
+	for _, prior := range []entity.IssueStatus{entity.IssueStatusUnknown, entity.IssueStatusClosed, entity.IssueStatusOpen} {
+		t.Run(string(prior), func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build/100", "100", entity.BuildStatusRunning)
+			if prior != entity.IssueStatusUnknown {
+				f.seedIssue("task", "unit", prior)
+			}
+			f.reportIssue("build/100", "task", "unit")
+			progress := currentCursor()
+			f.retain(progress)
+			key := [4]string{"100", "build/100", "task", "unit"}
+			f.requestIssues[key] = entity.RequestIssueSummary{RequestID: "100", BuildID: "build/100", TaskID: "task", UnitID: "unit", FixID: "repair/1", Version: 1}
+			f.failures["request-issue/update"] = 1
+			_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+			require.ErrorIs(t, err, assert.AnError)
+			accepted := f.states[issueKey{"task", "unit"}]
+			require.Empty(t, f.requestIssues[key].Novelty)
+			_, err = f.controller.processIssue(context.Background(), f.store, f.progress, issueKey{"task", "unit"}, false)
+			require.NoError(t, err)
+			require.Equal(t, accepted, f.states[issueKey{"task", "unit"}])
+			want := entity.IssueNoveltyNew
+			if prior == entity.IssueStatusOpen {
+				want = entity.IssueNoveltyExisting
+			}
+			require.Equal(t, want, f.requestIssues[key].Novelty)
+			require.Equal(t, "repair/1", f.requestIssues[key].FixID)
+
+			f.source("build/101", "101", entity.BuildStatusRunning)
+			next := f.progress
+			next.RequestID, next.BuildID = "101", "build/101"
+			f.retain(next)
+			_, err = f.controller.processIssue(context.Background(), f.store, next, issueKey{"task", "unit"}, true)
+			require.NoError(t, err)
+			require.Equal(t, want, f.requestIssues[key].Novelty)
+			require.Equal(t, entity.IssueNoveltyExisting, f.requestIssues[[4]string{"101", "build/101", "task", "unit"}].Novelty)
+		})
+	}
+}
+
 func TestHistoryRetryUsesTheStoredTransition(t *testing.T) {
 	f := newFixture(t)
 	f.source("build/100", "100", entity.BuildStatusRunning)

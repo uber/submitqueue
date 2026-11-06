@@ -10,7 +10,7 @@ Issue tracking maintains current issue state and opening/closing history from pe
 4. Conditionally create or update the issue row. Record the processed build even when its open/closed status stays the same; update the changing build and timestamp only on an actual transition.
 5. Retain opening or closing history from the issue row's changing build and timestamp, then materialize its summary and open-issue lookup. On retry, the inclusive cursor revisits that row and repairs all three before proceeding.
 
-Closed issue rows are retained, so their versions cannot reset on reopening. A repeated result from the same build needs no new issue write. Its history is repaired when revisiting the current cursor.
+Closed issue rows are retained, so their versions cannot reset on reopening. A repeated result from the same build needs no new issue write. Its history and request-observation classification are repaired when revisiting the current cursor. Accepted open observations retain `new` when this build opened or reopened the issue, otherwise `existing`. Classification is persisted before advancing the cursor and preserved across retries, repair updates, and later builds; recovery finishes classification of the accepted cursor before abandonment.
 
 ## Ordering requirements
 
