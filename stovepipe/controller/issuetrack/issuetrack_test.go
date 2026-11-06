@@ -126,7 +126,9 @@ func TestUnchangedIssueRecordsTheProcessedBuild(t *testing.T) {
 	require.Equal(t, "older", issue.FirstSeenBuildID)
 	require.Equal(t, int64(500), issue.ChangedAtMs)
 	require.Equal(t, int32(8), issue.Version)
-	require.Empty(t, f.logs)
+	require.Len(t, f.logs, 1)
+	require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventReported})
+	require.Equal(t, "older", f.summaries[issueKey{"task", "unit"}].BuildID)
 }
 
 func TestHistoryRetryUsesTheStoredTransition(t *testing.T) {

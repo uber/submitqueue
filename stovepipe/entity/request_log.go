@@ -36,6 +36,8 @@ const (
 	RequestEventBuildAnalysisAbandoned RequestEvent = "build_analysis_abandoned"
 	// RequestEventBuildAnalysisCompleted records completed issue analysis for the winning terminal build.
 	RequestEventBuildAnalysisCompleted RequestEvent = "build_analysis_completed"
+	// RequestEventIssueTrackingStarted records the start of per-request issue result recording.
+	RequestEventIssueTrackingStarted RequestEvent = "issue_tracking_started"
 	// RequestEventIssuesReconciled records completed final issue reconciliation for a build.
 	RequestEventIssuesReconciled RequestEvent = "issues_reconciled"
 	// RequestEventIssueTrackingAbandoned records unfinished issue reconciliation after primary processing stopped.
@@ -153,7 +155,7 @@ func (e RequestLog) validateEvent() error {
 	switch e.Event {
 	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded,
 		RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventBuildAnalysisCompleted,
-		RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,
+		RequestEventIssueTrackingStarted, RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,
 		RequestEventFixSubmitted, RequestEventFixSubmissionSkipped, RequestEventFixSubmissionAbandoned:
 	default:
 		return fmt.Errorf("unknown request event %q", e.Event)

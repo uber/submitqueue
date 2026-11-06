@@ -139,6 +139,10 @@ func TestMySQLStorage(t *testing.T) {
 		testRequestIssueSummaryStore(t, ctx, factory)
 	})
 
+	t.Run("RequestIssueSummaryMaterializer", func(t *testing.T) {
+		testRequestIssueSummaryMaterializer(t, ctx, db, factory)
+	})
+
 	t.Run("ReportedIssueLog", func(t *testing.T) {
 		testReportedIssueLog(t, ctx, factory)
 	})
