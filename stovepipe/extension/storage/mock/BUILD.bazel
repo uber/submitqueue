@@ -6,6 +6,7 @@ go_library(
         "build_issue_store_mock.go",
         "build_store_mock.go",
         "issue_log_store_mock.go",
+        "issue_repair_store_mock.go",
         "issue_state_store_mock.go",
         "issue_summary_store_mock.go",
         "issue_tracking_store_mock.go",
