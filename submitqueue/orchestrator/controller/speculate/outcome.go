@@ -154,8 +154,8 @@ func allAssumptionsSettled(path entity.SpeculationPath, snap snapshot) bool {
 }
 
 // hasNoViableFuture reports whether the head can never pass: every dependency
-// has resolved, and every path consistent with how they resolved has a failed
-// build.
+// has resolved, and every path consistent with how they resolved has exhausted
+// its attempt with a failed or cancelled build.
 //
 // Deliberately conservative — failing a batch that could still have landed is
 // far worse than failing it a tick later, so this errs toward waiting:
@@ -178,7 +178,7 @@ func hasNoViableFuture(head entity.Batch, set entity.SpeculationPathSet, snap sn
 			continue
 		}
 		live++
-		if entry.Status != entity.SpeculationPathStatusFailed {
+		if entry.Status != entity.SpeculationPathStatusFailed && entry.Status != entity.SpeculationPathStatusCancelled {
 			return false
 		}
 	}

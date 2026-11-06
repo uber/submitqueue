@@ -151,10 +151,8 @@ type SpeculationPathEntry struct {
 	Path SpeculationPath
 	// Status is the lifecycle status of the current build attempt.
 	Status SpeculationPathStatus
-	// Attempt is the build attempt number for this path, starting at 1. A path
-	// can be built more than once (e.g. after a prior build is cancelled to free
-	// budget, or fails and is retried), so ID alone does not identify an
-	// execution — (ID, Attempt) does. It increments with each new build.
+	// Attempt is the build attempt number for this path, starting at 1.
+	// The pair (ID, Attempt) uniquely identifies an execution.
 	Attempt int
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
@@ -192,7 +190,7 @@ type PathAction string
 const (
 	// PathActionUnknown is the zero-value sentinel; it is never a valid action.
 	PathActionUnknown PathAction = ""
-	// PathActionBuild proposes starting (or resurrecting) a build for the path.
+	// PathActionBuild proposes starting a build for the path.
 	PathActionBuild PathAction = "build"
 	// PathActionCancel proposes preempting an in-flight path to free build budget.
 	PathActionCancel PathAction = "cancel"

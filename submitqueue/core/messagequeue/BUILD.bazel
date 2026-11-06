@@ -13,6 +13,7 @@ go_library(
         "//service/submitqueue:__subpackages__",
         "//submitqueue:__subpackages__",
         "//test:__subpackages__",
+        "//tool/submitqueue/recovercancelledpaths:__pkg__",
     ],
     deps = [
         "//api/base/change/protopb:go_default_library",
