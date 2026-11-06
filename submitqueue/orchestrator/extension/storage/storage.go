@@ -68,6 +68,9 @@ type Storage interface {
 	// GetSpeculationPathSetStore returns the SpeculationPathSetStore instance.
 	GetSpeculationPathSetStore() basestorage.SpeculationPathSetStore
 
+	// GetDLQReconciliationStore returns the queue-bound reconciliation snapshots.
+	GetDLQReconciliationStore() basestorage.DLQReconciliationStore
+
 	// GetPathBuildStore returns the PathBuildStore instance.
 	GetPathBuildStore() basestorage.PathBuildStore
 }

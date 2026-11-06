@@ -72,3 +72,11 @@ Take the first branch that applies:
 3. **Map** — a pipeline controller needs the lookup at runtime → a dedicated mapping store keyed by the attribute.
 
 The bar for 3 is a hot-path need: one mapping per access path, never per attribute, and never for ops/debug queries — run those against SQL replicas directly. But don't contort 1–2 to dodge a legitimate 3; a primary key that hashes half the entity's fields, or an aggregate bloated into listing everything, is the same duplication hidden in a worse place.
+
+## Final-message reconciliation snapshots
+
+`DLQReconciliationStore` belongs only to the orchestrator aggregate. Its primary key is the bound queue plus the logical source topic, original partition key, and message ID, all compared verbatim. A message ID names its logical cause within that scope: replay repairs the same intent, while a distinct cause needs a distinct ID. A backend delivery ID, attempt, or timestamp does not identify a new obligation.
+
+Records have immutable decimal IDs and full versioned snapshots of captured batch IDs and completion. Callers retain every captured ID, preserve completion monotonically, and clone slices before constructing replacements. An unsuccessful Create caused by duplication requires loading the first persisted record, including its ID. Update guards both that immutable ID and the explicit old version and writes the supplied new version without arithmetic. The ordinary read-after-write contract applies.
+
+Completed markers outlive transport message garbage collection so acknowledgment loss cannot recreate completed work. There is no deletion or automatic retention policy; deployments must budget and monitor exceptional final-message volume independently. No cross-service storage access is introduced. This persistence foundation does not enable queue repair: runtime reconciliation still requires authoritative merge-outcome protection and queue-wide planner fencing.
