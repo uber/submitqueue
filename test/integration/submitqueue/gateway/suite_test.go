@@ -41,6 +41,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	corerequest "github.com/uber/submitqueue/submitqueue/gateway/core/request"
@@ -91,7 +92,7 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 		}))
 
 	// Start the compose stack (Gateway + 2 MySQL DBs)
-	err := s.stack.Up()
+	err := s.stack.Up("mysql-app", "mysql-queue")
 	require.NoError(t, err, "failed to start compose stack")
 
 	s.log.Logf("Compose stack started successfully")
@@ -112,6 +113,20 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
+
+	// Seed retained work before the gateway starts; its missing summary forces a durable retry.
+	queue, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.queueDB, Logger: zap.NewNop(), MetricsScope: tally.NoopScope, Tenants: []string{"test-queue"},
+	})
+	require.NoError(t, err)
+	log := entity.NewRequestStatusLog("test-queue", "910", entity.RequestStatusLanded, 3, "", nil)
+	payload, err := sqmq.Marshal(sqmq.LogFromEntity(log))
+	require.NoError(t, err)
+	msg := entityqueue.NewMessage("retained-terminal-log", payload, "test-queue", nil)
+	msg.Tenant = "test-queue"
+	require.NoError(t, queue.Publisher().Publish(s.ctx, "log_dlq", msg))
+	require.NoError(t, queue.Close())
+	require.NoError(t, s.stack.Up("gateway-service"))
 
 	// Connect to Gateway gRPC service
 	var conn *grpc.ClientConn
@@ -343,6 +358,74 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	_, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 500}, ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 501}})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func (s *GatewayIntegrationSuite) TestFinalLogBacklogRecovery() {
+	t := s.T()
+	const sqid = "910"
+	const queueName = "test-queue"
+	const uri = "uri/final-log-backlog"
+	ticker := time.NewTicker(persistPollInterval)
+	defer ticker.Stop()
+	for {
+		var retries int
+		var acked bool
+		err := s.queueDB.QueryRowContext(s.ctx, `SELECT retry_count, acked FROM queue_delivery_state
+			WHERE tenant = ? AND topic = 'log_dlq' AND consumer_group = 'gateway-log-dlq'`, queueName).Scan(&retries, &acked)
+		if err != sql.ErrNoRows {
+			require.NoError(t, err)
+			assert.False(t, acked, "failed recovery must leave the terminal log durable")
+			if retries > 0 {
+				break
+			}
+		}
+		<-ticker.C
+	}
+
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	queueStore, err := store.For(queueName)
+	require.NoError(t, err)
+	require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, entity.RequestSummary{
+		RequestID: sqid, Queue: queueName, ChangeURIs: []string{uri}, ReceivedAtMs: 910,
+		Status: entity.RequestStatusAccepting, StatusTimestampMs: 910, Version: 1,
+	}))
+	for {
+		var acked bool
+		err := s.queueDB.QueryRowContext(s.ctx, `SELECT acked FROM queue_delivery_state
+			WHERE tenant = ? AND topic = 'log_dlq' AND consumer_group = 'gateway-log-dlq'`, queueName).Scan(&acked)
+		// Acknowledged delivery state can already have been reclaimed by the poll loop.
+		if err == sql.ErrNoRows {
+			break
+		}
+		require.NoError(t, err)
+		if acked {
+			break
+		}
+		<-ticker.C
+	}
+
+	summary, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid, Queue: queueName})
+	require.NoError(t, err)
+	assert.Equal(t, string(entity.RequestStatusLanded), summary.Request.Status)
+	byURI, err := s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: uri, Queue: queueName})
+	require.NoError(t, err)
+	require.Len(t, byURI.Requests, 1)
+	assert.Equal(t, summary.Request, byURI.Requests[0])
+	listed, err := s.client.List(s.ctx, &pb.ListRequest{Queue: queueName,
+		ReceivedLowerBound: &pb.ListRequest_ReceivedAtOrAfterMs{ReceivedAtOrAfterMs: 910},
+		ReceivedUpperBound: &pb.ListRequest_ReceivedBeforeMs{ReceivedBeforeMs: 911},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []*pb.RequestSummary{summary.Request}, listed.Requests)
+	history, err := s.client.GetRequestHistoryByChangeURI(s.ctx, &pb.GetRequestHistoryByChangeURIRequest{ChangeUri: uri, Queue: queueName})
+	require.NoError(t, err)
+	require.Len(t, history.Histories, 1)
+	assert.Equal(t, sqid, history.Histories[0].Sqid)
+	assert.GreaterOrEqual(t, len(history.Histories[0].Events), 2, "replayed audit rows remain in history")
+	for _, event := range history.Histories[0].Events {
+		assert.Equal(t, string(entity.RequestStatusLanded), event.Status)
+	}
 }
 
 // TestRequestLogConsumer verifies the gateway's log-topic consumer in isolation:

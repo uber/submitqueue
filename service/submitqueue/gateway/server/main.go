@@ -29,24 +29,18 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
-	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
-	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
-	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
-	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/platform/lifecycle"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
-	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
-	logctrl "github.com/uber/submitqueue/submitqueue/gateway/controller/log"
 	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	storage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mysql"
@@ -319,24 +313,7 @@ func run() error {
 	}
 	subscriberName := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 
-	// Build the topic registry. The gateway publishes to the start of the
-	// orchestrator pipeline (TopicKeyStart) and the cancel topic (TopicKeyCancel) —
-	// both publish-only. It additionally consumes the log topic (TopicKeyLog):
-	// the gateway persists normal pipeline entries that the orchestrator
-	// publishes there. Orchestrator DLQ reconciliation may repair terminal
-	// request-log projections directly.
-	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: topickey.TopicKeyStart, Name: "start", Queue: mysqlQueue},
-		{Key: topickey.TopicKeyCancel, Name: "cancel", Queue: mysqlQueue},
-		{
-			Key:   topickey.TopicKeyLog,
-			Name:  "log",
-			Queue: mysqlQueue,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "gateway-log",
-			),
-		},
-	})
+	registry, err := newGatewayTopicRegistry(mysqlQueue, subscriberName)
 	if err != nil {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
@@ -389,32 +366,20 @@ func run() error {
 	// Register reflection service for debugging with grpcurl
 	reflection.Register(grpcServer)
 
-	// Create the queue consumer and register the log controller. The orchestrator
-	// publishes normal pipeline entries to the log topic and this consumer writes
-	// them to storage. Orchestrator DLQ reconciliation repairs terminal entries
-	// directly so reconciliation does not depend on another asynchronous path.
-	logConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		errs.NewClassifierProcessor(
-			// Storage (submitqueue/gateway/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
-			// both run on the same MySQL driver, so a single classifier covers
-			// errors surfaced from either backend.
-			genericerrs.Classifier,
-			mysqlerrs.Classifier,
-		),
-		newConsumerGate(logger),
-	)
-
-	logController := logctrl.NewController(logger.Sugar(), scope, materializer, topickey.TopicKeyLog, "gateway-log")
-	if err := logConsumer.Register(logController); err != nil {
-		return fmt.Errorf("failed to register log controller: %w", err)
+	logConsumers, err := newLogConsumers(logger.Sugar(), scope, registry, materializer, newConsumerGate(logger))
+	if err != nil {
+		return err
 	}
+	return serveGateway(ctx, cancel, grpcServer, logConsumers)
+}
 
-	if err := logConsumer.Start(ctx); err != nil {
-		// The error can also be a result of a context cancellation due to SIGINT or SIGTERM.
-		// This is expected, just propagate it.
-		return fmt.Errorf("failed to start log consumer: %w", err)
+func serveGateway(ctx context.Context, cancel context.CancelFunc, grpcServer *grpc.Server, logConsumers lifecycle.Component) (runErr error) {
+	if err := logConsumers.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start log consumers: %w", err)
 	}
-	logger.Info("log consumer started")
+	defer func() {
+		runErr = errors.Join(runErr, logConsumers.Stop(context.Background()))
+	}()
 
 	// Listen on configurable port
 	port := os.Getenv("PORT")
@@ -426,6 +391,8 @@ func run() error {
 		return fmt.Errorf("failed to listen on port %s: %w", port, err)
 	}
 
+	defer listener.Close()
+
 	fmt.Printf("Gateway gRPC server is running on %s\n", port)
 	fmt.Println("Press Ctrl+C to stop, or send a SIGTERM.")
 
@@ -435,50 +402,21 @@ func run() error {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 
-	// Wait for interrupt signal or server critical error
-	// If interruption is signaled, gracefully stop the server
-	// If the server exits with an error, cancel the context to signal the consumer
-	// After this, stop the consumer
-	// If an error happens during shutdown, return the actual error, not the context cancellation error
-	var serverErr error
+	var serverErr, shutdownErr error
 	select {
 	case <-ctx.Done():
-		fmt.Println("Shutting down gateway server due to interruption signal...")
-
-		// Set the error to the context cancellation error to be surfaced as a desired exit code by the main function
-		// to indicate that the server was stopped as intended
-		// It may be overridden by the server error if any
-		err = ctx.Err()
-
-		// stop GRPC server and wait for it to exit
+		shutdownErr = ctx.Err()
 		grpcServer.GracefulStop()
 		serverErr = <-serverErrCh
 	case serverErr = <-serverErrCh:
-		fmt.Println("Shutting down gateway server due to critical GRPC server error...")
-
-		// Cancel the context to signal cancellation to the queue consumer
 		cancel()
 	}
 
-	if serverErr != nil {
-		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
+	if serverErr != nil && !errors.Is(serverErr, grpc.ErrServerStopped) {
+		return fmt.Errorf("GRPC server exited with error: %w", serverErr)
 	}
 
-	// Stop the consumer with a 30s timeout; by this time the context should be
-	// cancelled and the processing threads may already be exiting; recollect them.
-	errStop := logConsumer.Stop(30000)
-	if errStop != nil {
-		errStop = fmt.Errorf("failed to stop consumer: %w", errStop)
-	}
-
-	if errStop != nil || serverErr != nil {
-		// Override context cancellation error with the shutdown error. The server
-		// error is the primary/root failure, so it leads; the consumer-stop error
-		// is secondary cleanup.
-		err = errors.Join(serverErr, errStop)
-	}
-
-	return err
+	return shutdownErr
 }
 
 func validateConfiguredQueueTenants(tenants, configuredQueueNames []string) error {

@@ -332,46 +332,52 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestConsumer_ProcessDelivery_RejectsConflictingTenantMetadata(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	deliveryChan := make(chan extqueue.Delivery, 1)
-	mockSub := queuemock.NewMockSubscriber(ctrl)
-	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
-	mockQ := queuemock.NewMockQueue(ctrl)
-	mockQ.EXPECT().Subscriber().Return(mockSub)
+func TestConsumer_ProcessDelivery_InvalidTenantMetadata(t *testing.T) {
+	for _, final := range []bool{false, true} {
+		for _, settlementErr := range []error{nil, fmt.Errorf("settlement unavailable")} {
+			t.Run(fmt.Sprintf("final=%v settlementError=%v", final, settlementErr != nil), func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				deliveryChan := make(chan extqueue.Delivery, 1)
+				mockSub := queuemock.NewMockSubscriber(ctrl)
+				mockSub.EXPECT().Subscribe(gomock.Any(), "start", gomock.Any()).Return(deliveryChan, nil)
+				mockQ := queuemock.NewMockQueue(ctrl)
+				mockQ.EXPECT().Subscriber().Return(mockSub)
+				config := extqueue.DefaultSubscriptionConfig("worker", "test-group")
+				if final {
+					config = extqueue.DLQSubscriptionConfig("worker", "test-group")
+				}
+				registry, err := NewTopicRegistry([]TopicConfig{{Key: testTopicKeyStart, Name: "start", Queue: mockQ, Subscription: config}})
+				require.NoError(t, err)
+				c := New(zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, errs.NewClassifierProcessor(), consumergatenoop.New())
+				handler := &testController{name: "test-handler", topicKey: testTopicKeyStart, consumerGroup: "test-group",
+					processFunc: func(context.Context, Delivery) error {
+						assert.Fail(t, "controller must not receive inconsistent delivery identity")
+						return nil
+					},
+				}
+				require.NoError(t, c.Register(handler))
+				require.NoError(t, c.Start(context.Background()))
 
-	c := New(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		newRegistry(t, mockQ, testTopicKeyStart, "test-group"),
-		errs.NewClassifierProcessor(),
-		consumergatenoop.New(),
-	)
-	handler := &testController{}
-	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
-		func(context.Context, Delivery) error {
-			assert.Fail(t, "controller must not receive inconsistent delivery identity")
-			return nil
-		},
-	)
-	require.NoError(t, c.Register(handler))
-	require.NoError(t, c.Start(context.Background()))
-
-	msg := entityqueue.NewMessage("mismatch", []byte("payload"), "partition1", map[string]string{
-		entityqueue.MetadataKeyQueueName: "tenant-b",
-	})
-	msg.Tenant = "tenant-a"
-	rejected := make(chan struct{})
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, failure.Failure) error {
-		close(rejected)
-		return nil
-	})
-
-	deliveryChan <- delivery
-	<-rejected
-	require.NoError(t, c.Stop(30000))
+				msg := entityqueue.NewMessage("mismatch", []byte("payload"), "partition1", map[string]string{entityqueue.MetadataKeyQueueName: "tenant-b"})
+				msg.Tenant = "tenant-a"
+				settled := make(chan struct{})
+				delivery := queuemock.NewMockDelivery(ctrl)
+				delivery.EXPECT().Message().Return(msg).AnyTimes()
+				settle := func(context.Context, failure.Failure) error {
+					close(settled)
+					return settlementErr
+				}
+				if final {
+					delivery.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(settle)
+				} else {
+					delivery.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(settle)
+				}
+				deliveryChan <- delivery
+				<-settled
+				require.NoError(t, c.Stop(30000))
+			})
+		}
+	}
 }
 
 func TestConsumer_ProcessDelivery_RejectsEmptyTenant(t *testing.T) {
