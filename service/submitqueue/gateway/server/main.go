@@ -378,7 +378,12 @@ func serveGateway(ctx context.Context, cancel context.CancelFunc, grpcServer *gr
 		return fmt.Errorf("failed to start log consumers: %w", err)
 	}
 	defer func() {
-		runErr = errors.Join(runErr, logConsumers.Stop(context.Background()))
+		stopErr := logConsumers.Stop(context.Background())
+		if stopErr != nil && runErr == context.Canceled {
+			runErr = stopErr
+			return
+		}
+		runErr = errors.Join(runErr, stopErr)
 	}()
 
 	// Listen on configurable port

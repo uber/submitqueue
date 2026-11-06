@@ -145,6 +145,7 @@ func TestServeGateway_ConsumerCleanup(t *testing.T) {
 		{name: "recovery fails and rollback fails", recoveryErr: startErr, stopErr: stopErr, want: []string{"start:primary", "start:recovery", "stop:primary"}},
 		{name: "listener fails and both stop despite cleanup failure", stopErr: stopErr, want: []string{"start:primary", "start:recovery", "stop:recovery", "stop:primary"}},
 		{name: "signal drains both", cancelled: true, want: []string{"start:primary", "start:recovery", "stop:recovery", "stop:primary"}},
+		{name: "signal does not mask shutdown failure", cancelled: true, stopErr: stopErr, want: []string{"start:primary", "start:recovery", "stop:recovery", "stop:primary"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls []string
@@ -167,9 +168,7 @@ func TestServeGateway_ConsumerCleanup(t *testing.T) {
 			if tt.stopErr != nil {
 				assert.ErrorIs(t, err, stopErr)
 			}
-			if tt.cancelled {
-				assert.ErrorIs(t, err, context.Canceled)
-			}
+			assert.Equal(t, tt.cancelled && tt.stopErr == nil, errors.Is(err, context.Canceled))
 			assert.Equal(t, tt.want, calls)
 		})
 	}
