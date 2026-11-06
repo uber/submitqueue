@@ -9,6 +9,7 @@ go_test(
         "list_test.go",
         "open_issues_test.go",
         "queue_status_test.go",
+        "request_issues_test.go",
         "suite_test.go",
     ],
     data = [
@@ -29,6 +30,7 @@ go_test(
         "//platform/consumer:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/publish:go_default_library",
+        "//stovepipe/core/issuelog:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/queuelog:go_default_library",
         "//stovepipe/core/queuestate:go_default_library",

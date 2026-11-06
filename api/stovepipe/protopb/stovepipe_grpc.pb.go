@@ -43,6 +43,7 @@ const (
 	Stovepipe_List_FullMethodName                   = "/uber.submitqueue.stovepipe.Stovepipe/List"
 	Stovepipe_GetQueueStatus_FullMethodName         = "/uber.submitqueue.stovepipe.Stovepipe/GetQueueStatus"
 	Stovepipe_ListOpenIssues_FullMethodName         = "/uber.submitqueue.stovepipe.Stovepipe/ListOpenIssues"
+	Stovepipe_GetIssuesByRequestID_FullMethodName   = "/uber.submitqueue.stovepipe.Stovepipe/GetIssuesByRequestID"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -70,6 +71,8 @@ type StovepipeClient interface {
 	GetQueueStatus(ctx context.Context, in *GetQueueStatusRequest, opts ...grpc.CallOption) (*GetQueueStatusResponse, error)
 	// ListOpenIssues returns current open issues validated against their summaries.
 	ListOpenIssues(ctx context.Context, in *ListOpenIssuesRequest, opts ...grpc.CallOption) (*ListOpenIssuesResponse, error)
+	// GetIssuesByRequestID returns accepted issue results for one request.
+	GetIssuesByRequestID(ctx context.Context, in *GetIssuesByRequestIDRequest, opts ...grpc.CallOption) (*GetIssuesByRequestIDResponse, error)
 }
 
 type stovepipeClient struct {
@@ -170,6 +173,16 @@ func (c *stovepipeClient) ListOpenIssues(ctx context.Context, in *ListOpenIssues
 	return out, nil
 }
 
+func (c *stovepipeClient) GetIssuesByRequestID(ctx context.Context, in *GetIssuesByRequestIDRequest, opts ...grpc.CallOption) (*GetIssuesByRequestIDResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetIssuesByRequestIDResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_GetIssuesByRequestID_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -195,6 +208,8 @@ type StovepipeServer interface {
 	GetQueueStatus(context.Context, *GetQueueStatusRequest) (*GetQueueStatusResponse, error)
 	// ListOpenIssues returns current open issues validated against their summaries.
 	ListOpenIssues(context.Context, *ListOpenIssuesRequest) (*ListOpenIssuesResponse, error)
+	// GetIssuesByRequestID returns accepted issue results for one request.
+	GetIssuesByRequestID(context.Context, *GetIssuesByRequestIDRequest) (*GetIssuesByRequestIDResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -231,6 +246,9 @@ func (UnimplementedStovepipeServer) GetQueueStatus(context.Context, *GetQueueSta
 }
 func (UnimplementedStovepipeServer) ListOpenIssues(context.Context, *ListOpenIssuesRequest) (*ListOpenIssuesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListOpenIssues not implemented")
+}
+func (UnimplementedStovepipeServer) GetIssuesByRequestID(context.Context, *GetIssuesByRequestIDRequest) (*GetIssuesByRequestIDResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetIssuesByRequestID not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -415,6 +433,24 @@ func _Stovepipe_ListOpenIssues_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_GetIssuesByRequestID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetIssuesByRequestIDRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).GetIssuesByRequestID(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_GetIssuesByRequestID_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).GetIssuesByRequestID(ctx, req.(*GetIssuesByRequestIDRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -457,6 +493,10 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListOpenIssues",
 			Handler:    _Stovepipe_ListOpenIssues_Handler,
+		},
+		{
+			MethodName: "GetIssuesByRequestID",
+			Handler:    _Stovepipe_GetIssuesByRequestID_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
