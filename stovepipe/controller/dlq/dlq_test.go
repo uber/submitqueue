@@ -141,6 +141,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
@@ -157,6 +158,7 @@ func TestProcess(t *testing.T) {
 				}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
@@ -168,10 +170,19 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "already failed repairs its missing log",
+			name: "already failed without a stored reason repairs its missing log with the stage reason",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 2)
+			},
+		},
+		{
+			name: "already failed repairs its missing log with the stored reason, not the stage reason",
+			setup: func(m dlqMocks) {
+				request := requestWithState(entity.RequestStateFailed)
+				request.OutcomeReason = entity.RequestOutcomeReasonBuildFailed
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonBuildFailed, 2)
 			},
 		},
 		{
@@ -186,6 +197,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(storage.ErrVersionMismatch)
 			},
 			wantErr: true,
@@ -208,6 +220,7 @@ func TestProcess(t *testing.T) {
 				}, int32(6), int32(7)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
@@ -221,6 +234,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
@@ -232,6 +246,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				request := requestWithState(entity.RequestStateFailed)
 				request.Version = 3

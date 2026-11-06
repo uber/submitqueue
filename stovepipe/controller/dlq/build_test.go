@@ -71,6 +71,7 @@ func TestBuildProcess(t *testing.T) {
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{Name: testQueue, Version: 5}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
+				updated.OutcomeReason = entity.RequestOutcomeReasonProcessingFailed
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
