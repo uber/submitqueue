@@ -2,6 +2,7 @@
 
 import { Fact, Timestamp } from "@submitqueue/web-platform";
 import { Block } from "baseui/block";
+import { StyledLink } from "baseui/link";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { ParagraphSmall } from "baseui/typography";
@@ -105,7 +106,7 @@ export function History({ events }: { events: HistoryEventModel[] }) {
   return events.length ? (
     <Table
       label="Request history"
-      headers={["Time", "Type", "State or event", "Outcome"]}
+      headers={["Time", "Type", "State or event", "Outcome", "Details"]}
       fill
     >
       {events.map((event) => (
@@ -122,6 +123,14 @@ export function History({ events }: { events: HistoryEventModel[] }) {
           </StyledTableBodyCell>
           <StyledTableBodyCell>{event.label}</StyledTableBodyCell>
           <StyledTableBodyCell>{event.outcomeReason || "—"}</StyledTableBodyCell>
+          <StyledTableBodyCell>
+            {event.details.length ? event.details.map((detail) => (
+              <Block key={detail.label} $style={{ overflowWrap: "anywhere", minWidth: "10rem", maxWidth: "28rem" }}>
+                <Block as="span" color="contentSecondary">{detail.label}: </Block>
+                {detail.href ? <StyledLink href={detail.href}>{detail.value}</StyledLink> : detail.value}
+              </Block>
+            )) : "—"}
+          </StyledTableBodyCell>
         </StyledTableBodyRow>
       ))}
     </Table>

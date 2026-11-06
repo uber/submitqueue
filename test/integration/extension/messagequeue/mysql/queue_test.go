@@ -2899,3 +2899,31 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 
 	t.Logf("Verified: watermark advances contiguously with out-of-order acks")
 }
+
+func (s *SQLQueueIntegrationSuite) TestSingleMessageBatchKeepsTheUnacknowledgedHead() {
+	t := s.T()
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(s.testQueueParams(t, func(p *queueMySQL.Params) { p.OnSignal = signalCh }))
+	require.NoError(t, err)
+	defer q.Close()
+	const topic, partition = "single_head_topic", "single-head"
+	for _, id := range []string{"first", "second"} {
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic, testMessage(id, []byte(id), partition, nil)))
+	}
+	config := testSubConfig("single-head-worker", "single-head-group")
+	config.BatchSize = 1
+	deliveries, err := q.Subscriber().Subscribe(s.ctx, topic, config)
+	require.NoError(t, err)
+	first := receive(t, deliveries)
+	require.Equal(t, "first", first.Message().ID)
+	assertNoDelivery(t, deliveries, signalCh, queueMySQL.SignalDeliveryCheck, 3)
+	require.NoError(t, first.Postpone(s.ctx, 0))
+	resumed := receive(t, deliveries)
+	require.Equal(t, "first", resumed.Message().ID)
+	require.Equal(t, 1, resumed.Attempt())
+	assertNoDelivery(t, deliveries, signalCh, queueMySQL.SignalDeliveryCheck, 3)
+	require.NoError(t, resumed.Ack(s.ctx))
+	second := receive(t, deliveries)
+	require.Equal(t, "second", second.Message().ID)
+	require.NoError(t, second.Ack(s.ctx))
+}

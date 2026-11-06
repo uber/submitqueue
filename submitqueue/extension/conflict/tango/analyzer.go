@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/baserevision"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -43,9 +44,8 @@ type Params struct {
 	// Client returns the targets a set of changes affects.
 	Client ChangedTargetsClient
 
-	// BaseRevision returns the full commit SHA of the target branch tip that a
-	// new batch of the named queue is analyzed against.
-	BaseRevision func(ctx context.Context, queue string) (string, error)
+	// BaseRevisions returns the commit a new batch is analyzed against.
+	BaseRevisions baserevision.Resolver
 
 	// Changes resolves a batch into the changes it contains.
 	Changes changeset.Resolver
@@ -114,7 +114,7 @@ func (a *analyzer) signNewBatch(ctx context.Context, batch entity.Batch) (Target
 	if err != nil {
 		return TargetSignature{}, fmt.Errorf("failed to resolve the changes: %w", err)
 	}
-	baseRevision, err := a.BaseRevision(ctx, batch.Queue)
+	baseRevision, err := a.BaseRevisions.Resolve(ctx, batch.Queue)
 	if err != nil {
 		return TargetSignature{}, fmt.Errorf("failed to resolve the base revision of queue %s: %w", batch.Queue, err)
 	}

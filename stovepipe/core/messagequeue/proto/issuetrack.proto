@@ -23,17 +23,16 @@ option java_multiple_files = true;
 option java_outer_classname = "IssueTrackProto";
 option java_package = "com.uber.submitqueue.stovepipe.messagequeue";
 
-// IssueTrack requests queue-scoped reconciliation of persisted build observations.
-// Publish only after successful detection and observation persistence; partition by queue.
+// IssueTrack tracks one validation through its final issue reconciliation.
+// Register in admission order before build dispatch; partition by queue.
 message IssueTrack {
     option (uber.base.messagequeue.topic_keys) = "issuetrack";
 
-    // build_id is the required opaque identifier of the persisted build.
-    string build_id = 1;
-    // queue_name is the required queue namespace of the build.
+    reserved 1, 3;
+    reserved "build_id", "finalize";
+
+    // queue_name identifies the validation queue.
     string queue_name = 2;
-    // finalize requests final reconciliation after successful terminal detection
-    // and persistence, including when no failures were detected.
-    // Otherwise the notification permits opening issues, not resolution by absence.
-    bool finalize = 3;
+    // request_id identifies a validation tracked until finalization or abandonment.
+    string request_id = 4;
 }

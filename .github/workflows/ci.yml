@@ -312,6 +312,21 @@ jobs:
         with:
           target: //test/integration/submitqueue/extension/storage/...
 
+  conflict-integration-test:
+    name: Conflict Extension Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/run-bazel-test
+        with:
+          target: //test/integration/submitqueue/extension/conflict/...
+
   # ---------------------------------------------------------------------------
   # CORE TESTS
   # ---------------------------------------------------------------------------
@@ -417,6 +432,7 @@ jobs:
       - merger-integration-test
       - validator-integration-test
       - storage-integration-test
+      - conflict-integration-test
       - consumer-integration-test
       - web
       - web-e2e

@@ -23,6 +23,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	fixermock "github.com/uber/submitqueue/stovepipe/extension/fixer/mock"
@@ -39,14 +40,19 @@ const (
 )
 
 type controllerMocks struct {
-	ctrl         *gomock.Controller
-	stores       *storagemock.MockFactory
-	store        *storagemock.MockStorage
-	issues       *storagemock.MockIssueStateStore
-	observations *storagemock.MockBuildIssueStore
-	executors    *fixermock.MockFactory
-	executor     *fixermock.MockRepairExecutor
-	logs         *observer.ObservedLogs
+	history        map[string]entity.RequestLog
+	historyFailure *error
+	materializer   requestlog.Materializer
+	builds         *storagemock.MockBuildStore
+	requests       *storagemock.MockRequestStore
+	ctrl           *gomock.Controller
+	stores         *storagemock.MockFactory
+	store          *storagemock.MockStorage
+	issues         *storagemock.MockIssueStateStore
+	observations   *storagemock.MockBuildIssueStore
+	executors      *fixermock.MockFactory
+	executor       *fixermock.MockRepairExecutor
+	logs           *observer.ObservedLogs
 }
 
 func newTestController(t *testing.T) (*Controller, controllerMocks) {
@@ -65,7 +71,37 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 	}
 	m.store.EXPECT().GetIssueStateStore().Return(m.issues).AnyTimes()
 	m.store.EXPECT().GetBuildIssueStore().Return(m.observations).AnyTimes()
-	return NewController(zap.New(core).Sugar(), tally.NoopScope, m.stores, m.executors,
+
+	m.history = map[string]entity.RequestLog{}
+	m.historyFailure = new(error)
+	m.materializer = requestlog.NewMaterializer(tally.NoopScope)
+	history := storagemock.NewMockRequestLogStore(ctrl)
+	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	history.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, log entity.RequestLog) error {
+		if *m.historyFailure != nil {
+			return *m.historyFailure
+		}
+		if _, exists := m.history[log.ID]; exists {
+			return storage.ErrAlreadyExists
+		}
+		m.history[log.ID] = log
+		return nil
+	}).AnyTimes()
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
+		log, exists := m.history[logID]
+		if !exists || log.RequestID != requestID {
+			return entity.RequestLog{}, storage.ErrNotFound
+		}
+		return log, nil
+	}).AnyTimes()
+
+	m.builds = storagemock.NewMockBuildStore(ctrl)
+	m.requests = storagemock.NewMockRequestStore(ctrl)
+	m.store.EXPECT().GetBuildStore().Return(m.builds).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.requests).AnyTimes()
+	m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: "1"}, nil).AnyTimes()
+	m.requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{ID: "1", Queue: testQueue, State: entity.RequestStateFailed}, nil).AnyTimes()
+	return NewController(zap.New(core).Sugar(), tally.NoopScope, m.stores, m.materializer, m.executors,
 		consumer.TopicKey("fix"), "stovepipe-fix"), m
 }
 

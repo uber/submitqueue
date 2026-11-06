@@ -44,9 +44,24 @@ def _pagination_fixture_sql() -> str:
     statements.append(
         "INSERT INTO request_log VALUES ('web/pagination','51','accepted',1000,'accepted','',1,'','{}');"
     )
+    history_details = [
+        ("triggered", "", "build_triggered", {"build_id": "runner/build/51?attempt=2"}),
+        ("finished", "", "build_finished", {"build_id": "runner/build/51?attempt=2"}),
+        ("validation", "", "validation_fact_recorded", {"fact_degree": "0.25"}),
+        ("green", "", "validation_fact_recorded", {"fact_degree": "0"}),
+        ("projects", "", "project_facts_recorded", {"project_fact_count": "51"}),
+        ("empty-projects", "", "project_facts_recorded", {"project_fact_count": "0"}),
+        ("abandoned", "", "build_analysis_abandoned", {"build_id": "runner/build/51?attempt=2"}),
+        ("failed", "failed", "", {"build_id": "runner/build/51?attempt=2"}),
+    ]
+    for index, (event_id, state, event, metadata) in enumerate(history_details):
+        statements.append(
+            "INSERT INTO request_log VALUES "
+            f"('web/pagination','51','{event_id}',{1100+index},'{state}','{event}',1,'','{json.dumps(metadata)}');"
+        )
     uri = "git://web/pagination/51?file=src%2Fmain#fragment"
     statements.append(
-        f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','',0.25,'51',2000);"
+        f"INSERT INTO validation_fact (queue,uri,project,degree,request_id,created_at) VALUES ('web/pagination','{uri}','',0.25,'51',2000);"
     )
     for i in range(1, 52):
         degree = 1.0 if i == 50 else 0.25 if i == 1 else 0
@@ -54,7 +69,7 @@ def _pagination_fixture_sql() -> str:
             f"INSERT INTO request_log VALUES ('web/pagination','51','fact-{i}',{2000+i},'','validation_fact_recorded',1,'','{{}}');"
         )
         statements.append(
-            f"INSERT INTO validation_fact VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
+            f"INSERT INTO validation_fact (queue,uri,project,degree,request_id,created_at) VALUES ('web/pagination','{uri}','project-{i:02d}',{degree},'51',{2000+i});"
         )
         statements.append(
             f"INSERT INTO project_fact_by_degree VALUES ('web/pagination','{uri}',{degree},'project-{i:02d}');"

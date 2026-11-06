@@ -59,10 +59,11 @@ export function ProjectResults({ model, pageKey }: { model: ProjectStatusModel; 
       <ParagraphSmall color="contentSecondary">Results updated: {model.updatedAtMs === "0"
         ? "Unknown" : <Timestamp value={model.updatedAtMs} />}</ParagraphSmall>
       {renderPagination("top")}
-      <Table key={pageKey} label="Recorded project results" headers={["Project", "Recorded result"]} fill>
+      <Table key={pageKey} label="Recorded project results" headers={["Project", "Project type", "Recorded result"]} fill>
         {model.projects.map((entry) => (
           <StyledTableBodyRow key={entry.project}>
             <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
+            <StyledTableBodyCell>{entry.projectType || "Unknown"}</StyledTableBodyCell>
             <StyledTableBodyCell><RecordedResult degree={entry.breakageDegree} /></StyledTableBodyCell>
           </StyledTableBodyRow>
         ))}

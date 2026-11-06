@@ -25,10 +25,10 @@ const model: StovepipePageModel = {
         value, href: "/repo%2Fmain/request/7?projectPageSize=" + value,
       })),
       projects: [
-        { project: "green-project", breakageDegree: 0 },
-        { project: "partial-breakage-project", breakageDegree: 0.25 },
-        { project: "broken-project", breakageDegree: 1 },
-        { project: "unknown-project", breakageDegree: null },
+        { project: "green-project", projectType: "service", breakageDegree: 0 },
+        { project: "partial-breakage-project", projectType: "future-type", breakageDegree: 0.25 },
+        { project: "broken-project", projectType: "", breakageDegree: 1 },
+        { project: "unknown-project", projectType: "", breakageDegree: null },
       ],
       firstHref: null,
       nextHref: "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D",
@@ -56,6 +56,7 @@ const model: StovepipePageModel = {
           kind: "requestState",
           label: "accepted",
           outcomeReason: "",
+          details: [],
         },
       ],
     },
@@ -188,8 +189,11 @@ it("renders recorded project results, completion and shareable pagination", () =
   const table = within(projects).getByRole("table", { name: "Recorded project results" });
   expect(within(table).queryByText(/Repository/)).toBeNull();
   expect(within(table).getByRole("columnheader", { name: "Project" })).toBeVisible();
+  expect(within(table).getByRole("columnheader", { name: "Project type" })).toBeVisible();
+  expect(within(table).getByText("service")).toBeVisible();
+  expect(within(table).getAllByText("Unknown")).toHaveLength(2);
   expect(within(projects).getByText("Green")).toBeVisible();
-  expect(within(table).getByRole("row", { name: "partial-breakage-project Partial Breakage" })).toBeVisible();
+  expect(within(table).getByRole("row", { name: "partial-breakage-project future-type Partial Breakage" })).toBeVisible();
   expect(within(projects).getByText("Breakage")).toBeVisible();
   expect(within(projects).getByText("No result recorded")).toBeVisible();
   expect(within(projects).queryByText(/%/)).toBeNull();
@@ -212,7 +216,7 @@ it.each(["projects=next", "projectPageSize=25"])("preserves the request summary 
     key: "/repo%2Fmain/request/7?" + query,
     projectStatus: { ok: true, data: {
       ...model.projectStatus.data,
-      projects: [{ project: "next-project", breakageDegree: 0 }],
+      projects: [{ project: "next-project", projectType: "", breakageDegree: 0 }],
     } },
   }} />);
   expect(screen.getByText("git://repo/sha")).toBeVisible();

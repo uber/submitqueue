@@ -2,6 +2,18 @@
 
 Issue tracking maintains current issue state and opening/closing history from persisted build issues. Each delivery applies a bounded batch of issues and requests immediate redelivery when more work remains. The reference service registers both the normal and recovery consumers.
 
+## Validation order
+
+Admission registers one request-scoped tracking job before committing the request to processing or dispatching its build. A queue-version check after registration prevents a delayed publisher from admitting an older validation behind a newer registration. A request skipped after registration leaves a harmless job that acknowledges its terminal, unbuilt request. Build dispatch retains the request-to-build association before starting status polling and analysis; retries reuse that association.
+
+The tracking subscription must fetch only the first unacknowledged message in each queue partition. The reference host uses the shared `SingleMessageSubscriptionConfig`, whose message batch size is one; reconciliation still processes up to 100 issue keys per delivery. A larger message batch can prefetch later requests before the current job establishes its hold. Build execution and per-build detection remain concurrent.
+
+A request's job stays at the queue head through ordinary refreshes. Successful refreshes hold for 30 seconds; unfinished batches request immediate redelivery. The current request cannot be replaced until it is finalized or safely abandoned. A later request that reaches processing during recovery waits for that boundary rather than retrying the failed request's remaining work.
+
+Terminal readiness comes from the retained `build_analysis_completed` event, written only after the complete terminal issue set has been saved. `build_analysis_abandoned` explicitly ends incomplete analysis without allowing absence-based closure. These are point reads by the request and deterministic event ID, not scans of history. A completion event takes precedence if duplicate analysis deliveries retained both events. Neither CI status nor an empty issue set establishes readiness. The request, build, issue set, and analysis history must remain available until tracking finishes.
+
+This preserves a close in one validation followed by a new opening in the next, including its first-seen build and fixer eligibility. The next build's issues can accumulate in `build_issue` while its tracking job waits, but they do not change shared issue state or trigger repair until that job becomes current.
+
 ## Applying one issue
 
 1. Read whether the build reports the issue and load its current state.
@@ -22,9 +34,9 @@ The post-read cursor write and processed-build updates, including unchanged stat
 
 ## Refreshing and finalizing
 
-Every pass starts in `refreshing`, applying the build's accumulated issues in primary-key order. Reported issues are opened or kept open; nothing is closed. A terminal notification retains `Finalize = true` in the progress record, so a replacement worker can distinguish terminal work from an ordinary refresh even when helping it through another notification. Encountering a task-wide issue (empty unit ID) sets `HasTaskWideIssues` in that same versioned record. This fact remains set across batches and retries, including when the issue was already applied by an earlier pass.
+Every pass starts in `refreshing`, applying the build's accumulated issues in primary-key order. Reported issues are opened or kept open; nothing is closed. A terminal pass retains `Finalize = true` in the progress record, so a replacement worker can distinguish terminal work from an ordinary refresh. Encountering a task-wide issue (empty unit ID) sets `HasTaskWideIssues` in that same versioned record. This fact remains set across batches and retries, including when the issue was already applied by an earlier pass.
 
-Once the entire build-issue range is exhausted, an opening pass with a nonempty task cursor publishes a build-scoped repair request before saving its next phase. Empty passes and closing sweeps do not publish. Publication failures leave the pass active so retries repeat the handoff after ensuring issue state and history are durable. The repair message identity combines the build and persisted pass notification IDs: retries share an identity, while later passes can trigger another evaluation. The fix controller selects an eligible issue and submits at most one repair per build.
+Once the entire build-issue range is exhausted, an opening pass with a nonempty task cursor publishes a build-scoped repair request before saving its next phase. Empty passes and closing sweeps do not publish. Publication failures leave the pass active so retries repeat the handoff after ensuring issue state and history are durable. The repair message identity includes the persisted checkpoint version: retries before phase completion share an identity, while later refreshes of one long-lived job can trigger another evaluation without depending on queue garbage collection. The fix controller selects an eligible issue and submits at most one repair per build.
 
 Once the entire build-issue range is exhausted:
 
@@ -40,29 +52,37 @@ No closure occurs before all accumulated build issues have been processed. A tas
 
 Every delivery processes at most 100 task/unit keys from one ordered range, including a revisited cursor and retained closed rows. Refreshing reads build issues; finalizing reads issue states. The cursor is always inclusive: revisit it to finish the issue and its history, then continue after it. A full batch retains its active phase and requests redelivery. Moving from refreshing to finalizing conditionally saves a reset cursor before any closing work begins.
 
-An unfinished pass completes or is safely abandoned before another source is admitted. A notification that helps finish a different pass requests redelivery before handling its own source. Completed notifications and older sources are ignored, as are refreshes after the same Request has finalized or its terminal pass was abandoned. A terminal pass requires a terminal build chosen by its Request in both active phases.
+A validation remains current after a completed refresh. Its job is acknowledged only after finalization or whole-validation abandonment; older jobs and duplicate completed jobs are ignored. A terminal pass requires a terminal build chosen by its Request in both active phases.
 
 Build IDs are opaque; source order comes from Request IDs. All scans are bounded reads under leading primary-key prefixes. There is no transaction spanning progress, issue state, and history.
 
+A finalized checkpoint retains `issues_reconciled` in its Request's history before acknowledgement or replacement by a newer pass. The build ID identifies the occurrence. Metadata distinguishes normal reconciliation from cancellation or task-wide suppression of absent-issue closure. A completed nonterminal refresh adds no request-history entry. If history fails after checkpoint persistence, the next primary or recovery delivery repairs that entry before replacing the checkpoint.
+
 ## Recovery and activation
 
-An error returns to normal consumer retry. The next delivery resumes the cursor before advancing. Once that retry policy dead-letters a notification, the recovery controller abandons the failed pass rather than rerunning its remaining batches:
+Retryable errors return to normal consumer retry, and the next delivery resumes the cursor before advancing. Abandoned analysis and requests that end without a build outcome cannot complete tracking, so they return non-retryable errors and go directly to the DLQ. The DLQ controller owns all abandonment cleanup and stops the failed pass rather than rerunning its remaining batches:
 
-1. Conditionally enter `abandoning`, retaining the source, notification, and cursor. Normal deliveries hold for 30 seconds while this phase is present; they cannot start another pass or resume issue application.
+1. Conditionally enter `abandoning`, retaining the source, notification, and cursor. Normal deliveries hold for 30 seconds while this phase is present; they cannot perform cleanup or restart issue application.
 2. If there is a cursor, read its issue and conditionally advance progress after that read. Advance the issue's version without changing its status or transition metadata. This invalidates a paused worker's earlier row guard. If the row has not been created yet, finish that one opening instead: the normal worker can only have saved such a cursor after finding a reported build issue. Creating it prevents the delayed create from succeeding. Closed issue rows are never deleted.
 3. Repair the cursor's opening or closing history, summary, and open-issue lookup from the retained row. Record an `issue_tracking_abandoned` Request-history event keyed by the failed notification, with its build ID.
 4. Conditionally enter `abandoned`. Keep the source-order boundary and notification identity, so the same delivery and older builds cannot restart the abandoned work.
 
-Accepted opens and closes remain in place. Recovery does not scan either issue range, close the remaining issues, change Request or Build outcomes, or release build slots. An abandoned ordinary refresh still permits a new refresh or terminal notification for that Request; an abandoned terminal pass permits only newer Requests. A later successful build can reconcile issues left unchanged by the failed pass.
+Accepted opens and closes remain in place. Recovery does not scan either issue range, close the remaining issues, change Request or Build outcomes, or release build slots. Abandoning a request-scoped job ends that validation's issue tracking, even if only an ordinary refresh had started. A pre-build abandonment retains the request boundary with an empty build ID and no issue cursor, fencing delayed workers before newer requests proceed. A later successful build can reconcile issues left unchanged by the failed pass.
 
 Recovery must finish fencing the current issue and retaining its history before admitting newer work. If a normal write wins the issue CAS first, recovery retries against that accepted row. If a replacement recovery worker advances first, its issue-version change rejects the old write. Merely marking the pass abandoned without touching the cursor row would not provide this protection.
 
-A notification can fail while helping an older pass. Recovery abandons that saved pass first, then requests immediate redelivery to abandon the failed notification's own work if it has not already been superseded. A delayed DLQ delivery never abandons a newer build or a different notification from the same Request.
+If a newer job reaches recovery while an earlier checkpoint is unfinished, recovery abandons that checkpoint first, then requests immediate redelivery to abandon the failed job's own work. A delayed DLQ delivery never abandons a newer request.
 
 Storage and history failures return for retry; hosts must pair recovery with an always-retryable, unlimited-retry DLQ consumer. Only recovery work repeats. Malformed message identities, unresolvable queues, and missing source records are logged and acknowledged.
 
-The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery remains separate.
+The reference service registers queue-partitioned `issuetrack` and `issuetrack_dlq` subscriptions. Normal processing uses backend error classification and the extended bounded retry policy, while recovery uses the existing always-retryable DLQ consumer. The DLQ consumer starts before normal consumption and stops after it. Deploy recovery-aware controllers and provision the issue tables before enabling consumption; older controllers do not recognize the abandonment phases. Completed opening passes publish repair notifications; recovery does not. The reference host also consumes repair notifications with a no-op executor; fix dead-letter recovery retains submission outcomes without calling the executor.
 
 ## Analysis handoff
 
-Build analysis publishes refresh or final notifications after persisting build issues. Final notification requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host uses a no-op detector; deployments supply their own detector and register the same normal and recovery paths.
+Each validation uses the single job registered at admission; analysis does not publish tracking messages. Finalization requires successful terminal detection and the Request's recorded terminal build. Terminal detection returns the complete cumulative issue set, including issues returned by earlier calls, so finalization does not depend on earlier workers finishing their writes. Nonterminal detection may omit earlier issues without removing them from the build's accumulated results. The reference host uses a no-op detector; deployments supply their own detector and register the same normal and recovery paths.
+
+## Rollout
+
+Provision the non-null `request.build_id` column with an empty default before deploying. This is an additive association; existing terminal requests can still use their winning build ID. No new tables, secondary indexes, or cross-key transactions are required.
+
+Pause admission and drain pre-upgrade validations, completing or explicitly abandoning the existing tracking checkpoint before enabling request-scoped registration. Upgrade normal and recovery consumers together and use the single-head tracking subscription before resuming admission. Old per-analysis notifications are not supported. Do not mix old publishers or consumers with the request-scoped flow. To revert, pause admission and finish or safely abandon request-scoped jobs before restoring the old consumers; the added column can remain.

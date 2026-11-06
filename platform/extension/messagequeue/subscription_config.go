@@ -113,6 +113,14 @@ func ExtendedSubscriptionConfig(subscriberName, consumerGroup string) Subscripti
 	return config
 }
 
+// SingleMessageSubscriptionConfig uses extended retries and fetches at most one message per poll.
+// Use it when holding a message must prevent prefetching later messages in its partition.
+func SingleMessageSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
+	config := ExtendedSubscriptionConfig(subscriberName, consumerGroup)
+	config.BatchSize = 1
+	return config
+}
+
 // DefaultSubscriptionConfig returns a SubscriptionConfig with sensible defaults.
 func DefaultSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
 	return SubscriptionConfig{

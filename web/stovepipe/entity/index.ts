@@ -62,6 +62,8 @@ export interface HistoryEventModel {
   label: string;
   /** Backend reason associated with this occurrence. */
   outcomeReason: string;
+  /** Labeled occurrence metadata with optional absolute HTTP(S) links; empty when unavailable. */
+  details: { label: string; value: string; href?: string }[];
 }
 export interface RequestHistoryModel {
   /** Current materialized lifecycle summary returned with the history. */
@@ -81,7 +83,7 @@ export interface ProjectStatusModel {
   /** Supported page sizes and their first-page URLs for this request. */
   pageSizeChoices: { value: number; href: string }[];
   /** Recorded projects on this page; null breakage means no result. */
-  projects: { project: string; breakageDegree: number | null }[];
+  projects: { project: string; projectType: string; breakageDegree: number | null }[];
   /** First project page for this request; null on the first page. */
   firstHref: string | null;
   /** Opaque project continuation URL; null on the final page. */

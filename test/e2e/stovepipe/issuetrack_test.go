@@ -15,6 +15,8 @@
 package e2e_test
 
 import (
+	"time"
+
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -68,19 +70,23 @@ func (s *StovepipeE2ESuite) TestIssueTracking_FinalizesAfterAnalysis() {
 	require.Empty(t, issues)
 }
 
-func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsPrematureFinalNotification() {
+func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsIncompleteAnalysis() {
 	t := s.T()
 	const queue = issueTrackingDLQQueue
 	store, err := s.appStorage.For(queue)
 	require.NoError(t, err)
 	request := entity.Request{
 		ID: "1", Queue: queue, URI: "git://" + queue + "/HEAD",
-		State: entity.RequestStateProcessing, BuildStrategy: entity.BuildStrategyFull, Version: 1,
+		State: entity.RequestStateProcessing, BuildStrategy: entity.BuildStrategyFull, BuildID: "running-build", Version: 1,
 	}
 	build := entity.Build{ID: "running-build", RequestID: request.ID, Status: entity.BuildStatusRunning, Version: 1}
 	require.NoError(t, store.GetRequestStore().Create(s.ctx, request))
 	require.NoError(t, store.GetBuildStore().Create(s.ctx, build))
 	require.NoError(t, store.GetQueueStore().Create(s.ctx, entity.Queue{Name: queue, InFlightCount: 1, Version: 1}))
+	analysis := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, build.ID,
+		map[string]string{requestlog.MetadataKeyBuildID: build.ID})
+	analysis.TimestampMs = time.Now().UnixMilli()
+	require.NoError(t, store.GetRequestLogStore().Create(s.ctx, analysis))
 
 	mq, err := queuemysql.NewQueue(queuemysql.Params{
 		DB: s.queueDB, Logger: zap.NewNop(), MetricsScope: tally.NoopScope, Tenants: []string{queue},
@@ -91,9 +97,9 @@ func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsPrematureFinalNotificat
 		{Key: stovepipemq.TopicKeyIssueTrack, Name: "issuetrack", Queue: mq},
 	})
 	require.NoError(t, err)
-	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{QueueName: queue, BuildId: build.ID, Finalize: true})
+	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{QueueName: queue, RequestId: request.ID})
 	require.NoError(t, err)
-	notificationID := publish.IntentID(build.ID, "premature-final")
+	notificationID := publish.IntentID(request.ID, "issues")
 	require.NoError(t, publish.Message(entityqueue.WithQueueName(s.ctx, queue), registry, stovepipemq.TopicKeyIssueTrack, publish.MessageParams{
 		Tenant: queue, ID: notificationID, Payload: payload, PartitionKey: queue,
 	}))
@@ -103,9 +109,13 @@ func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsPrematureFinalNotificat
 	require.Equal(t, build.ID, progress.BuildID)
 	logs, err := store.GetRequestLogStore().List(s.ctx, request.ID)
 	require.NoError(t, err)
-	require.Len(t, logs, 1)
-	require.Equal(t, entity.RequestEventIssueTrackingAbandoned, logs[0].Event)
-	require.Equal(t, build.ID, logs[0].Metadata[requestlog.MetadataKeyBuildID])
+	require.Len(t, logs, 2)
+	require.ElementsMatch(t,
+		[]entity.RequestEvent{entity.RequestEventBuildAnalysisAbandoned, entity.RequestEventIssueTrackingAbandoned},
+		[]entity.RequestEvent{logs[0].Event, logs[1].Event})
+	for _, log := range logs {
+		require.Equal(t, build.ID, log.Metadata[requestlog.MetadataKeyBuildID])
+	}
 	retainedRequest, err := store.GetRequestStore().Get(s.ctx, request.ID)
 	require.NoError(t, err)
 	require.Equal(t, request, retainedRequest)

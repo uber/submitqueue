@@ -20,14 +20,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -39,13 +40,13 @@ import (
 const PollDelayMs int64 = 120000
 
 // Controller accumulates build issues while builds run and after completion.
-// Terminal analysis must finish persistence and publication before its delivery completes.
+// Terminal analysis must persist all build issues and its completion event before acknowledging.
 type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	stores          storage.Factory
+	materializer    requestlog.Materializer
 	detectorFactory buildissue.DetectorFactory
-	registry        consumer.TopicRegistry
 	topicKey        consumer.TopicKey
 	consumerGroup   string
 }
@@ -54,8 +55,8 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	detectorFactory buildissue.DetectorFactory,
-	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -63,14 +64,14 @@ func NewController(
 		logger:          logger.Named("buildanalysis_controller"),
 		metricsScope:    scope.SubScope("buildanalysis_controller"),
 		stores:          stores,
+		materializer:    materializer,
 		detectorFactory: detectorFactory,
-		registry:        registry,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
 	}
 }
 
-// Process persists before publication and holds while further analysis is needed.
+// Process persists detected issues and holds while further analysis is needed.
 // Errors use normal queue retry or DLQ handling; partial writes are safe to retry.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, "process", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
@@ -126,7 +127,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		if !build.Status.IsTerminal() {
 			c.logger.Warnw("stopping analysis for a terminal request with nonterminal build",
 				"queue", request.Queue, "build_id", build.ID, "request_id", request.ID, "request_state", string(request.State))
-			return nil
+			log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, build.ID,
+				map[string]string{requestlog.MetadataKeyBuildID: build.ID})
+			return c.materializer.PersistLog(ctx, store, log)
 		}
 	}
 
@@ -148,7 +151,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	hold := !build.Status.IsTerminal()
-	finalize := false
+	complete := false
 	if build.Status.IsTerminal() {
 		// Build status can become terminal before buildsignal records the winning build.
 		request, err = loader.ByID(ctx, build.RequestID, store.GetRequestStore().Get, "request")
@@ -161,12 +164,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		if request.TerminalBuildID != "" && request.TerminalBuildID != build.ID {
 			return nil
 		}
-		finalize = request.TerminalBuildID == build.ID
-		hold = !finalize && !request.State.IsTerminal()
+		complete = request.TerminalBuildID == build.ID
+		hold = !complete && !request.State.IsTerminal()
 	}
 
-	if err := c.publishIssueTracking(ctx, request.Queue, build.ID, finalize); err != nil {
-		return err
+	if complete {
+		if err := c.retainCompletedAnalysis(ctx, store, request, build.ID, len(issues)); err != nil {
+			return fmt.Errorf("retain completed analysis for build %q: %w", build.ID, err)
+		}
+		c.logger.Infow("terminal issue analysis ready", "queue", request.Queue, "request_id", request.ID, "build_id", build.ID, "issue_count", len(issues))
 	}
 
 	if hold {
@@ -183,25 +189,42 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	return nil
 }
 
-func (c *Controller) publishIssueTracking(ctx context.Context, queue, buildID string, finalize bool) error {
-	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{
-		BuildId: buildID, QueueName: queue, Finalize: finalize,
-	})
+func (c *Controller) retainCompletedAnalysis(ctx context.Context, store storage.Storage, request entity.Request, buildID string, issueCount int) error {
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, buildID,
+		map[string]string{
+			requestlog.MetadataKeyBuildID:    buildID,
+			requestlog.MetadataKeyIssueCount: strconv.Itoa(issueCount),
+		})
+	history := store.GetRequestLogStore()
+	retained, err := history.Get(ctx, request.ID, log.ID)
+	if errors.Is(err, storage.ErrNotFound) {
+		persistErr := c.materializer.PersistLog(ctx, store, log)
+		if persistErr == nil {
+			return nil
+		}
+		// A concurrent delivery or uncertain write may have retained the first snapshot.
+		retained, err = history.Get(ctx, request.ID, log.ID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return persistErr
+		}
+		if err != nil {
+			return errors.Join(persistErr, fmt.Errorf("reload completed analysis history: %w", err))
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("serialize issue tracking notification: %w", err)
+		return fmt.Errorf("load completed analysis history: %w", err)
 	}
-
-	// Polls reuse one delivery, so no stable occurrence ID distinguishes refreshes.
-	messageID := publish.UniqueID(buildID)
-	if finalize {
-		messageID = publish.IntentID(buildID, "finished")
+	if retainedCount, ok := retained.Metadata[requestlog.MetadataKeyIssueCount]; ok {
+		if retainedCount != log.Metadata[requestlog.MetadataKeyIssueCount] {
+			c.logger.Warnw("terminal analysis issue count differs from retained completion",
+				"queue", request.Queue, "request_id", request.ID, "build_id", buildID,
+				"retained_issue_count", retainedCount, "observed_issue_count", issueCount)
+		}
+		log.Metadata[requestlog.MetadataKeyIssueCount] = retainedCount
+	} else {
+		delete(log.Metadata, requestlog.MetadataKeyIssueCount)
 	}
-	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyIssueTrack, publish.MessageParams{
-		Tenant: queue, ID: messageID, Payload: payload, PartitionKey: queue,
-	}); err != nil {
-		return fmt.Errorf("publish issue tracking notification: %w", err)
-	}
-	return nil
+	return c.materializer.PersistLog(ctx, store, log)
 }
 
 func (c *Controller) Name() string { return "buildanalysis" }

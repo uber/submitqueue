@@ -930,7 +930,7 @@ func TestLoadProfilesConfig_QueueScorerBaseReplacesDefaultBase(t *testing.T) {
 func TestNewTangoAnalyzerFactory(t *testing.T) {
 	key := tangoAnalyzerKey{
 		Analyzer: analyzerConfig{Type: analyzerTypeTango, Tango: &tangoAnalyzerConfig{Remote: "origin", Strategy: "unset"}},
-		Git:      gitProviderConfig{RepoPath: "/var/repos/x", Remote: "origin", Target: "main"},
+		Git:      &gitProviderConfig{RepoPath: "/var/repos/x", Remote: "origin", Target: "main"},
 	}
 	connection, err := tangoclient.Dial("127.0.0.1:0")
 	require.NoError(t, err)
@@ -968,7 +968,49 @@ func TestNewTangoAnalyzerFactory(t *testing.T) {
 	}
 }
 
-func TestNewProfiles_TangoRequiresTheGitChangeProvider(t *testing.T) {
+func TestNewTangoAnalyzerFactory_GitHub(t *testing.T) {
+	connection, err := tangoclient.Dial("127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	tests := []struct {
+		name    string
+		branch  *tangoGitHubConfig
+		token   string
+		wantErr bool
+	}{
+		{name: "with a branch and a token", branch: &tangoGitHubConfig{Owner: "org", Repo: "repo", Branch: "main"}, token: "secret"},
+		{name: "without the branch block", token: "secret", wantErr: true},
+		{name: "with an incomplete branch block", branch: &tangoGitHubConfig{Owner: "org", Repo: "repo"}, token: "secret", wantErr: true},
+		{name: "without a token", branch: &tangoGitHubConfig{Owner: "org", Repo: "repo", Branch: "main"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TEST_TANGO_GITHUB_TOKEN", tt.token)
+			key := tangoAnalyzerKey{
+				Analyzer: analyzerConfig{Type: analyzerTypeTango, Tango: &tangoAnalyzerConfig{Remote: "origin", Strategy: "unset", GitHub: tt.branch}},
+				GitHub:   &githubProviderConfig{TokenEnv: "TEST_TANGO_GITHUB_TOKEN", BaseURL: defaultGitHubBaseURL},
+			}
+			b := &profileBuilder{scope: tally.NoopScope, tango: tangoDeps{DB: db, Connection: connection, Cache: tango.NewSignatureCache(1 << 20)}}
+
+			factory, err := b.newTangoAnalyzerFactory(key, "defaults")
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			analyzer, err := factory.For(conflict.Config{QueueName: "q"})
+			require.NoError(t, err)
+			assert.NotNil(t, analyzer)
+		})
+	}
+}
+
+func TestNewProfiles_TangoRequiresTheGitOrGitHubChangeProvider(t *testing.T) {
 	cfg, err := loadProfilesConfig(writeProfiles(t, `
 tango: {address: "127.0.0.1:0", signatureCacheBytes: 1048576}
 defaults:
@@ -1035,4 +1077,10 @@ queues:
 		require.NoError(t, err)
 		assert.NotNil(t, analyzer)
 	}
+}
+
+func TestDemoTangoProfileLoads(t *testing.T) {
+	cfg, err := loadProfilesConfig("../../demo/provider/git/profiles.tango.yaml")
+	require.NoError(t, err)
+	assert.True(t, cfg.usesTango())
 }

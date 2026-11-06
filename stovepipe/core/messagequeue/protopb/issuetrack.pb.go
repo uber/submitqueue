@@ -37,18 +37,14 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// IssueTrack requests queue-scoped reconciliation of persisted build observations.
-// Publish only after successful detection and observation persistence; partition by queue.
+// IssueTrack tracks one validation through its final issue reconciliation.
+// Register in admission order before build dispatch; partition by queue.
 type IssueTrack struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// build_id is the required opaque identifier of the persisted build.
-	BuildId string `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	// queue_name is the required queue namespace of the build.
+	// queue_name identifies the validation queue.
 	QueueName string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
-	// finalize requests final reconciliation after successful terminal detection
-	// and persistence, including when no failures were detected.
-	// Otherwise the notification permits opening issues, not resolution by absence.
-	Finalize      bool `protobuf:"varint,3,opt,name=finalize,proto3" json:"finalize,omitempty"`
+	// request_id identifies a validation tracked until finalization or abandonment.
+	RequestId     string `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -83,13 +79,6 @@ func (*IssueTrack) Descriptor() ([]byte, []int) {
 	return file_issuetrack_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *IssueTrack) GetBuildId() string {
-	if x != nil {
-		return x.BuildId
-	}
-	return ""
-}
-
 func (x *IssueTrack) GetQueueName() string {
 	if x != nil {
 		return x.QueueName
@@ -97,25 +86,25 @@ func (x *IssueTrack) GetQueueName() string {
 	return ""
 }
 
-func (x *IssueTrack) GetFinalize() bool {
+func (x *IssueTrack) GetRequestId() string {
 	if x != nil {
-		return x.Finalize
+		return x.RequestId
 	}
-	return false
+	return ""
 }
 
 var File_issuetrack_proto protoreflect.FileDescriptor
 
 const file_issuetrack_proto_rawDesc = "" +
 	"\n" +
-	"\x10issuetrack.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"r\n" +
+	"\x10issuetrack.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"z\n" +
 	"\n" +
-	"IssueTrack\x12\x19\n" +
-	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12\x1d\n" +
+	"IssueTrack\x12\x1d\n" +
 	"\n" +
-	"queue_name\x18\x02 \x01(\tR\tqueueName\x12\x1a\n" +
-	"\bfinalize\x18\x03 \x01(\bR\bfinalize:\x0e\x8a\xb5\x18\n" +
-	"issuetrackB\x81\x01\n" +
+	"queue_name\x18\x02 \x01(\tR\tqueueName\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId:\x0e\x8a\xb5\x18\n" +
+	"issuetrackJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04R\bbuild_idR\bfinalizeB\x81\x01\n" +
 	"+com.uber.submitqueue.stovepipe.messagequeueB\x0fIssueTrackProtoP\x01Z?github.com/uber/submitqueue/stovepipe/core/messagequeue/protopbb\x06proto3"
 
 var (

@@ -18,6 +18,13 @@ export interface HistoryEvent {
     | { case: "requestState" | "event"; value: string }
     | { case: undefined; value?: undefined };
   outcomeReason: string;
+  data?: {
+    payload:
+      | { case: "requestState" | "buildTriggered" | "buildFinished" | "buildAnalysisAbandoned"; value: { buildId: string } }
+      | { case: "validationFactRecorded"; value: { factDegree: number } }
+      | { case: "projectFactsRecorded"; value: { projectFactCount: bigint } }
+      | { case: undefined; value?: undefined };
+  } | undefined;
 }
 
 export interface ProjectStatus {
@@ -30,6 +37,7 @@ export interface ProjectStatus {
   projectResultsComplete: boolean;
   projects: {
     project: string;
+    projectType: string;
     result:
       | { case: "breakageDegree"; value: number }
       | { case: undefined; value?: undefined };

@@ -27,6 +27,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -46,9 +47,12 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 	f := &recoveryFixture{fixture: newFixture(t), events: map[string]entity.RequestLog{}}
 	materializer := requestlogmock.NewMockMaterializer(f.mocks)
 	materializer.EXPECT().PersistLog(gomock.Any(), f.store, gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+		func(ctx context.Context, _ storage.Storage, log entity.RequestLog) error {
 			if err := f.fail("recovery/history"); err != nil {
 				return err
+			}
+			if log.Event == entity.RequestEventIssuesReconciled {
+				return f.materializer.PersistLog(ctx, f.store, log)
 			}
 			log.TimestampMs = 1000
 			require.NoError(t, log.Validate())
@@ -214,8 +218,10 @@ func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
 			require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
 			require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
 			require.Len(t, f.events, 1)
+			f.failures["recovery/history"] = 1
 			require.NoError(t, f.recover(msg, false))
 			require.Len(t, f.events, 1)
+			require.Equal(t, 1, f.failures["recovery/history"])
 		})
 	}
 }
@@ -304,24 +310,31 @@ func TestPrimaryWaitsForRecoveryThenAdmitsANewerBuild(t *testing.T) {
 	require.Equal(t, "build/101", f.progress.BuildID)
 }
 
-func TestRecoveryOfAHelperAbandonsTheSavedPassFirst(t *testing.T) {
-	f := newRecoveryFixture(t)
-	f.source("build/100", "100", entity.BuildStatusRunning)
-	f.source("build/101", "101", entity.BuildStatusFailed)
-	f.retain(currentCursor())
-	msg := f.message("build/101", true)
+func TestRecoveryAbandonsEarlierUnfinishedRequestFirst(t *testing.T) {
+	for _, phase := range []entity.IssueTrackingPhase{entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseRefreshed} {
+		t.Run(string(phase), func(t *testing.T) {
+			f := newRecoveryFixture(t)
+			f.source("build/100", "100", entity.BuildStatusRunning)
+			f.source("build/101", "101", entity.BuildStatusFailed)
+			progress := currentCursor()
+			progress.Phase = phase
+			f.retain(progress)
+			msg := f.message("build/101", true)
 
-	require.NoError(t, f.recover(msg, true))
-	require.Equal(t, "build/100", f.progress.BuildID)
-	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
-	require.NoError(t, f.recover(msg, false))
-	require.Equal(t, "build/101", f.progress.BuildID)
-	require.True(t, f.progress.Finalize)
-	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
-	require.Len(t, f.events, 2)
+			require.NoError(t, f.recover(msg, true))
+			require.Equal(t, "build/100", f.progress.BuildID)
+			require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+			require.Len(t, f.events, 1)
+			require.NoError(t, f.recover(msg, false))
+			require.Equal(t, "build/101", f.progress.BuildID)
+			require.True(t, f.progress.Finalize)
+			require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+			require.Len(t, f.events, 2)
+		})
+	}
 }
 
-func TestTerminalNotificationCanFollowAnAbandonedRefresh(t *testing.T) {
+func TestAbandonedRequestIgnoresLaterAnalysisCompletion(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "abandoned refresh", true: "abandoned terminal pass"}[terminal], func(t *testing.T) {
 			f := newRecoveryFixture(t)
@@ -335,16 +348,9 @@ func TestTerminalNotificationCanFollowAnAbandonedRefresh(t *testing.T) {
 			require.NoError(t, f.recover(failed, false))
 
 			final := f.message("build/100", true)
-			if terminal {
-				require.NoError(t, f.deliver(final, false))
-				require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
-				require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"previous", "unit"}].Status)
-			} else {
-				require.NoError(t, f.deliver(final, true))
-				require.NoError(t, f.deliver(final, false))
-				require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
-				require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"previous", "unit"}].Status)
-			}
+			require.NoError(t, f.deliverRequest(final, -1))
+			require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+			require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"previous", "unit"}].Status)
 		})
 	}
 }
@@ -376,7 +382,7 @@ func TestRecoveryHistorySupportsLongNotificationIDs(t *testing.T) {
 }
 
 func TestRecoveryIgnoresCompletedAndUnrelatedPasses(t *testing.T) {
-	for _, scenario := range []string{"completed refresh", "completed terminal pass", "newer build", "different refresh"} {
+	for _, scenario := range []string{"completed terminal pass", "newer build"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusFailed)
@@ -384,14 +390,10 @@ func TestRecoveryIgnoresCompletedAndUnrelatedPasses(t *testing.T) {
 			progress := currentCursor()
 			progress.NotificationID = msg.ID
 			switch scenario {
-			case "completed refresh":
-				progress.Phase = entity.IssueTrackingPhaseRefreshed
 			case "completed terminal pass":
 				progress.Phase, progress.Finalize = entity.IssueTrackingPhaseFinalized, true
 			case "newer build":
 				progress.RequestID, progress.BuildID, progress.NotificationID = "101", "build/101", "newer"
-			case "different refresh":
-				progress.NotificationID = "another-notification"
 			}
 			f.retain(progress)
 			require.NoError(t, f.recover(msg, false))
@@ -403,7 +405,7 @@ func TestRecoveryIgnoresCompletedAndUnrelatedPasses(t *testing.T) {
 }
 
 func TestRecoveryAcknowledgesUnusableMessages(t *testing.T) {
-	for _, scenario := range []string{"payload", "queue", "partition", "message ID", "missing build", "missing request", "request queue", "request ID"} {
+	for _, scenario := range []string{"payload", "queue", "partition", "message ID", "missing queue", "missing source ID", "missing request", "request queue", "request ID"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusFailed)
@@ -417,8 +419,12 @@ func TestRecoveryAcknowledgesUnusableMessages(t *testing.T) {
 				msg.PartitionKey = "another-queue"
 			case "message ID":
 				msg.ID = ""
-			case "missing build":
-				delete(f.builds, "build/100")
+			case "missing queue":
+				payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{RequestId: "100"})
+				require.NoError(t, err)
+				msg.Payload = payload
+			case "missing source ID":
+				msg = f.message("", true)
 			case "missing request":
 				delete(f.requests, "100")
 			case "request queue":
@@ -435,4 +441,34 @@ func TestRecoveryAcknowledgesUnusableMessages(t *testing.T) {
 			require.Empty(t, f.states)
 		})
 	}
+}
+
+func TestRecoveryAbandonsARequestBeforeBuildAssociation(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	job := f.requestJob("build/100")
+	request := f.requests["100"]
+	request.BuildID = ""
+	f.requests["100"] = request
+	require.NoError(t, f.recover(job, false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.Equal(t, "100", f.progress.RequestID)
+	require.Empty(t, f.progress.BuildID)
+	require.Empty(t, f.states)
+	require.Len(t, f.events, 1)
+}
+
+func TestRecoveryAbandonsAnEmptyRefreshWithoutItsBuildRecord(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	job := f.message("build/100", false)
+	progress := currentCursor()
+	progress.Phase = entity.IssueTrackingPhaseRefreshed
+	progress.CursorTaskID, progress.CursorUnitID = "", ""
+	f.retain(progress)
+	delete(f.builds, "build/100")
+	require.NoError(t, f.recover(job, false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.True(t, f.progress.Finalize)
+	require.Len(t, f.events, 1)
 }

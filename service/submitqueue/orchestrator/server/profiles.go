@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"fmt"
 	nethttp "net/http"
+	"sync"
 
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 
@@ -36,6 +37,9 @@ import (
 	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/baserevision"
+	baserevisiongit "github.com/uber/submitqueue/submitqueue/extension/baserevision/git"
+	baserevisiongithub "github.com/uber/submitqueue/submitqueue/extension/baserevision/github"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	buildkiterunner "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite"
 	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
@@ -52,7 +56,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/pathoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/baserevision"
 	tangomysql "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
@@ -308,10 +311,14 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	}
 	var analyzer conflict.Factory
 	if cfg.Analyzer.Type == analyzerTypeTango {
-		if cfg.ChangeProvider.Git == nil {
-			return Profile{}, fmt.Errorf("%s: the tango analyzer needs the git change provider, got %q", where, cfg.ChangeProvider.Type)
+		key := tangoAnalyzerKey{Analyzer: cfg.Analyzer, Git: cfg.ChangeProvider.Git}
+		if cfg.ChangeProvider.Type == changeProviderTypeGitHub {
+			key.GitHub = cfg.ChangeProvider.GitHub
 		}
-		analyzer, err = reuse(b, tangoAnalyzerKey{Analyzer: cfg.Analyzer, Git: *cfg.ChangeProvider.Git}, where, b.newTangoAnalyzerFactory)
+		if key.Git == nil && key.GitHub == nil {
+			return Profile{}, fmt.Errorf("%s: the tango analyzer needs the git or github change provider, got %q", where, cfg.ChangeProvider.Type)
+		}
+		analyzer, err = reuse(b, key, where, b.newTangoAnalyzerFactory)
 	} else {
 		analyzer, err = reuse(b, cfg.Analyzer, where, b.newAnalyzerFactory)
 	}
@@ -737,16 +744,18 @@ func (b *profileBuilder) newAnalyzerFactory(cfg analyzerConfig, where string) (c
 	}), nil
 }
 
-// tangoAnalyzerKey keys the tango analyzer on both the analyzer block and the
-// git block of its queue, because the base revision comes from that clone.
+// tangoAnalyzerKey keys the tango analyzer on the analyzer block and on the
+// change provider block its base revision comes from. Exactly one of Git and
+// GitHub is set.
 type tangoAnalyzerKey struct {
 	Analyzer analyzerConfig
-	Git      gitProviderConfig
+	Git      *gitProviderConfig
+	GitHub   *githubProviderConfig
 }
 
 // newTangoAnalyzerFactory builds a factory for tango analyzers that read the
-// base revision from the queue's own clone. Validation guarantees the
-// process-level pieces are set.
+// base revision from the queue's own clone or from the GitHub API. Validation
+// guarantees the process-level pieces are set.
 func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where string) (conflict.Factory, error) {
 	if b.tango.Connection == nil || b.tango.Cache == nil || b.tango.DB == nil {
 		return nil, fmt.Errorf("%s: the tango analyzer needs a tango connection, signature cache and database", where)
@@ -755,28 +764,73 @@ func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where str
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", where, err)
 	}
-
-	repo, ok := b.repos[key.Git.RepoPath]
-	if !ok {
-		return nil, fmt.Errorf("%s: no change repository provisioned at %q", where, key.Git.RepoPath)
+	baseRevisions, err := b.newBaseRevisions(key, where)
+	if err != nil {
+		return nil, err
 	}
-	workspaces := cloneWorkspaces{}
-	target := baserevision.Target{Repo: key.Git.RepoPath, Remote: key.Git.Remote, Branch: key.Git.Target}
 
 	return analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-		fromGit := baserevision.FromGit(workspaces, map[string]baserevision.Target{c.QueueName: target})
 		return tango.New(tango.Params{
-			Signatures: tangomysql.NewSignatureStore(b.tango.DB, b.scope.SubScope("tango"), c.QueueName),
-			Cache:      b.tango.Cache,
-			Client:     client,
-			BaseRevision: func(ctx context.Context, queue string) (string, error) {
-				repo.Lock()
-				defer repo.Unlock()
-				return fromGit(ctx, queue)
-			},
-			Changes: b.resolver,
+			Signatures:    tangomysql.NewSignatureStore(b.tango.DB, b.scope.SubScope("tango"), c.QueueName),
+			Cache:         b.tango.Cache,
+			Client:        client,
+			BaseRevisions: baseRevisions(c.QueueName),
+			Changes:       b.resolver,
 		}), nil
 	}), nil
+}
+
+// newBaseRevisions returns a function building the base revision resolver of a
+// queue, reading from the queue's clone when the git change provider is used and
+// from the GitHub API otherwise. The clone and the HTTP client are set up once
+// here.
+func (b *profileBuilder) newBaseRevisions(key tangoAnalyzerKey, where string) (func(queue string) baserevision.Resolver, error) {
+	if key.Git != nil {
+		repo, ok := b.repos[key.Git.RepoPath]
+		if !ok {
+			return nil, fmt.Errorf("%s: no change repository provisioned at %q", where, key.Git.RepoPath)
+		}
+		target := baserevisiongit.Target{Repo: key.Git.RepoPath, Remote: key.Git.Remote, Branch: key.Git.Target}
+		return func(queue string) baserevision.Resolver {
+			return lockedBaseRevisions{
+				Resolver: baserevisiongit.New(cloneWorkspaces{}, map[string]baserevisiongit.Target{queue: target}),
+				lock:     repo,
+			}
+		}, nil
+	}
+
+	branch := key.Analyzer.Tango.GitHub
+	if branch == nil || branch.Owner == "" || branch.Repo == "" || branch.Branch == "" {
+		return nil, fmt.Errorf("%s: the tango analyzer on the github change provider needs tango.github with an owner, repo and branch", where)
+	}
+	token, ok := tokenFrom(key.GitHub.TokenEnv)
+	if !ok {
+		return nil, fmt.Errorf("%s: the tango analyzer on the github change provider needs %s to be set", where, key.GitHub.TokenEnv)
+	}
+	client, err := b.githubClient(key.GitHub.BaseURL, key.GitHub.Timeout, token, where)
+	if err != nil {
+		return nil, err
+	}
+	target := baserevisiongithub.Target{Owner: branch.Owner, Repo: branch.Repo, Branch: branch.Branch}
+	return func(queue string) baserevision.Resolver {
+		return baserevisiongithub.New(baserevisiongithub.Params{
+			HTTPClient: client,
+			Targets:    map[string]baserevisiongithub.Target{queue: target},
+		})
+	}, nil
+}
+
+// lockedBaseRevisions holds the clone's lock around each lookup, because the
+// change provider works in the same clone.
+type lockedBaseRevisions struct {
+	baserevision.Resolver
+	lock sync.Locker
+}
+
+func (l lockedBaseRevisions) Resolve(ctx context.Context, queue string) (string, error) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	return l.Resolver.Resolve(ctx, queue)
 }
 
 // cloneWorkspaces serves each repo, named by its clone directory, as a local

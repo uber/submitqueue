@@ -121,31 +121,19 @@ func TestBuildAnalysisRoundTrip(t *testing.T) {
 }
 
 func TestIssueTrackRoundTrip(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		finalize bool
-		wire     string
-	}{
-		{name: "observations", wire: `{"build_id":"build/42","queue_name":"validation/main"}`},
-		{name: "final analysis", finalize: true, wire: `{"build_id":"build/42","queue_name":"validation/main","finalize":true}`},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			notification := &IssueTrack{BuildId: "build/42", QueueName: "validation/main", Finalize: tt.finalize}
-			data, err := Marshal(notification)
-			require.NoError(t, err)
-			assert.JSONEq(t, tt.wire, string(data))
-
-			got := &IssueTrack{}
-			require.NoError(t, Unmarshal(data, got))
-			assert.True(t, proto.Equal(notification, got))
-		})
-	}
+	job := &IssueTrack{RequestId: "42", QueueName: "validation/main"}
+	data, err := Marshal(job)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"request_id":"42","queue_name":"validation/main"}`, string(data))
+	got := &IssueTrack{}
+	require.NoError(t, Unmarshal(data, got))
+	assert.True(t, proto.Equal(job, got))
 }
 
 func TestIssueTrackToleratesUnknownFields(t *testing.T) {
 	got := &IssueTrack{}
-	require.NoError(t, Unmarshal([]byte(`{"build_id":"build/42","queue_name":"validation/main","finalize":true,"future_field":42}`), got))
-	assert.True(t, proto.Equal(&IssueTrack{BuildId: "build/42", QueueName: "validation/main", Finalize: true}, got))
+	require.NoError(t, Unmarshal([]byte(`{"request_id":"42","queue_name":"validation/main","future_field":42}`), got))
+	assert.True(t, proto.Equal(&IssueTrack{RequestId: "42", QueueName: "validation/main"}, got))
 }
 
 func TestFixRequestRoundTrip(t *testing.T) {

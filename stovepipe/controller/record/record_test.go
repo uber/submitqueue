@@ -337,8 +337,8 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	projectStatusResolver.EXPECT().Resolve(
 		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
 	).Return([]projectstatus.Result{
-		{Project: "project-a", Degree: entity.DegreeBroken},
-		{Project: "project-b", Degree: entity.DegreeGreen},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeBroken},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeGreen},
 	}, nil)
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 
@@ -414,8 +414,8 @@ func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
 
 func TestResolveProjectResultsMetrics(t *testing.T) {
 	validResults := []projectstatus.Result{
-		{Project: "project-a", Degree: entity.DegreeGreen},
-		{Project: "project-b", Degree: entity.DegreeBroken},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeGreen},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeBroken},
 	}
 	for _, tt := range []struct {
 		name       string
@@ -434,7 +434,7 @@ func TestResolveProjectResultsMetrics(t *testing.T) {
 		{name: "resolver cancellation", resolveErr: context.Canceled, wantResult: "cancel"},
 		{name: "resolver deadline", resolveErr: context.DeadlineExceeded, wantResult: "error"},
 		{name: "invalid project", results: []projectstatus.Result{{Degree: entity.DegreeGreen}}, invalid: true, wantResult: "error"},
-		{name: "invalid degree", results: []projectstatus.Result{{Project: "project-a", Degree: math.NaN()}}, invalid: true, wantResult: "error"},
+		{name: "invalid degree", results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: math.NaN()}}, invalid: true, wantResult: "error"},
 		{name: "duplicate projects", results: []projectstatus.Result{validResults[0], validResults[0]}, invalid: true, wantResult: "error"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -509,14 +509,14 @@ func TestPersistProjectFactsMetrics(t *testing.T) {
 			var results []projectstatus.Result
 			if !tt.empty {
 				results = []projectstatus.Result{
-					{Project: "project-a", Degree: entity.DegreeGreen},
-					{Project: "project-b", Degree: entity.DegreeBroken},
+					{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeGreen},
+					{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeBroken},
 				}
 			}
 			materializer := requestlogmock.NewMockMaterializer(ctrl)
 			c.materializer = materializer
 			for _, result := range results {
-				fact := entity.ValidationFact{URI: request.URI, Project: result.Project, Degree: result.Degree, RequestID: request.ID, CreatedAt: testChangeTime.UnixMilli()}
+				fact := entity.ValidationFact{URI: request.URI, Project: result.ProjectInfo.Name, Degree: result.Degree, RequestID: request.ID, CreatedAt: testChangeTime.UnixMilli()}
 				createErr := tt.factErr
 				if tt.existing {
 					createErr = storage.ErrAlreadyExists
@@ -527,7 +527,7 @@ func TestPersistProjectFactsMetrics(t *testing.T) {
 				}
 				indexErr := tt.indexErr
 				if tt.existing {
-					m.factStore.EXPECT().Get(gomock.Any(), request.URI, result.Project).Return(fact, nil)
+					m.factStore.EXPECT().Get(gomock.Any(), request.URI, result.ProjectInfo.Name).Return(fact, nil)
 					indexErr = storage.ErrAlreadyExists
 				}
 				entry, err := entity.NewProjectFactByDegree(fact)
@@ -641,8 +641,8 @@ func TestProcess_RejectsInvalidProjectStatusResultsBeforeWritingFacts(t *testing
 	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
 		Return(projectStatusResolver, nil)
 	projectStatusResolver.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return([]projectstatus.Result{
-		{Project: "project-a", Degree: entity.DegreeBroken},
-		{Project: "project-b", Degree: math.NaN()},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeBroken},
+		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: math.NaN()},
 	}, nil)
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 
@@ -1388,8 +1388,8 @@ func TestPersistProjectFactsRepairsIndexOnRetry(t *testing.T) {
 					return nil
 				}),
 			)
-			require.ErrorIs(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: 0.25}}), writeErr)
-			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: 0.75}}))
+			require.ErrorIs(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.25}}), writeErr)
+			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.75}}))
 			snapshot := m.metricsScope.Snapshot()
 			assert.EqualValues(t, 2, snapshot.Counters()["record_controller.persist_project_facts.start+queue="+testQueue].Value())
 			for _, result := range []string{"success", "error"} {
@@ -1411,9 +1411,9 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 		{name: "successful repository", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen},
 		{name: "failed repository without project results", state: entity.RequestStateFailed, degree: entity.DegreeBroken},
 		{name: "failed repository with project results", state: entity.RequestStateFailed, degree: entity.DegreePartial,
-			results: []projectstatus.Result{{Project: "a", Degree: entity.DegreeGreen}, {Project: "b", Degree: 0.25}}},
+			results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a", ProjectType: "service"}, Degree: entity.DegreeGreen}, {ProjectInfo: projectstatus.ProjectInfo{Name: "b", ProjectType: "batch"}, Degree: 0.25}}},
 		{name: "successful repository with project results", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen,
-			results: []projectstatus.Result{{Project: "a", Degree: entity.DegreeGreen}}},
+			results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a", ProjectType: "service"}, Degree: entity.DegreeGreen}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -1442,7 +1442,7 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 				}).Times(len(tt.results) + 1)
 			for _, result := range tt.results {
 				m.indexStore.EXPECT().Create(gomock.Any(), entity.ProjectFactByDegree{
-					URI: testURI, Degree: result.Degree, Project: result.Project,
+					URI: testURI, Degree: result.Degree, Project: result.ProjectInfo.Name,
 				}).Return(nil)
 			}
 			if tt.degree == entity.DegreeGreen {
@@ -1457,7 +1457,8 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Equal(t, tt.degree, facts[""].Degree)
 			for _, result := range tt.results {
-				assert.Equal(t, result.Degree, facts[result.Project].Degree)
+				assert.Equal(t, result.Degree, facts[result.ProjectInfo.Name].Degree)
+				assert.Equal(t, result.ProjectInfo.ProjectType, facts[result.ProjectInfo.Name].ProjectType)
 			}
 			assert.Len(t, m.hooks.events, 1)
 		})
@@ -1477,7 +1478,7 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 	c.projectStatusResolverFactory = factory
 	factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil).Times(2)
 	resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(
-		[]projectstatus.Result{{Project: "a", Degree: entity.DegreeBroken}}, nil).Times(2)
+		[]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a"}, Degree: entity.DegreeBroken}}, nil).Times(2)
 	var stored entity.ValidationFact
 	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
 		assert.Empty(t, fact.Project)
@@ -1536,7 +1537,7 @@ func TestPersistProjectFactsCountsPersistedOutcomes(t *testing.T) {
 				}, log.Metadata)
 				return nil
 			})
-			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{Project: "p", Degree: tt.resolvedDegree}}))
+			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: tt.resolvedDegree}}))
 		})
 	}
 }

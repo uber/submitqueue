@@ -23,6 +23,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -35,6 +36,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	executors     fixer.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -44,6 +46,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	executors fixer.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -52,6 +55,7 @@ func NewController(
 		logger:        logger.Named("fix_controller"),
 		metricsScope:  scope.SubScope("fix_controller"),
 		stores:        stores,
+		materializer:  materializer,
 		executors:     executors,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -67,8 +71,16 @@ func (c *Controller) processBuild(ctx context.Context, queueName, buildID string
 	if err != nil {
 		return fmt.Errorf("failed to select an issue for build %q: %w", buildID, err)
 	}
+	request, err := loadRequestForBuild(ctx, store, queueName, buildID)
+	if err != nil {
+		return err
+	}
+	if observation.FixID != "" {
+		return persistFixSubmittedLog(ctx, c.materializer, store, request, buildID, observation)
+	}
 	if !found {
-		return nil
+		return persistFixSubmissionDecision(ctx, c.materializer, store, request, buildID,
+			entity.RequestEventFixSubmissionSkipped, "no_eligible_issue")
 	}
 
 	executor, err := c.executors.For(fixer.Config{QueueName: queueName})
@@ -116,8 +128,9 @@ func (c *Controller) processBuild(ctx context.Context, queueName, buildID string
 			"queue", queueName, "build_id", buildID,
 			"task_id", issue.TaskID, "unit_id", issue.UnitID,
 			"fix_id", current.FixID, "submitted_fix_id", fixID)
+		updated.FixID = current.FixID
 	}
-	return nil
+	return persistFixSubmittedLog(ctx, c.materializer, store, request, buildID, updated)
 }
 
 func (c *Controller) Name() string { return "fix" }
@@ -140,7 +153,7 @@ func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, i
 		}
 		for _, record := range page {
 			if record.FixID != "" {
-				return entity.BuildIssue{}, false, nil
+				return record, false, nil
 			}
 			if found {
 				continue
