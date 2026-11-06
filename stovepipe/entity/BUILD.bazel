@@ -7,6 +7,7 @@ go_library(
         "build_issue.go",
         "ingest.go",
         "issue_log.go",
+        "issue_repair.go",
         "issue_state.go",
         "issue_summary.go",
         "issue_tracking_state.go",
