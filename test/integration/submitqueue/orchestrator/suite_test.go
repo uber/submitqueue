@@ -34,13 +34,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
@@ -150,17 +151,22 @@ func (s *OrchestratorIntegrationSuite) TestRetainedStartCreatesRequestAndHandsOf
 	landRequest := retainedStartRequest()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	// Watermarks survive GC; complete both consumers before removing their transient evidence.
 	for {
-		var acked bool
-		err := s.queueDB.QueryRowContext(s.ctx, `SELECT acked FROM queue_delivery_state
-			WHERE tenant = ? AND topic = 'start_dlq' AND consumer_group = 'orchestrator-dlq'`, landRequest.Queue).Scan(&acked)
-		if err != sql.ErrNoRows {
-			require.NoError(t, err)
-			if acked {
-				break
-			}
+		var completed int
+		err := s.queueDB.QueryRowContext(s.ctx, `SELECT COUNT(*) FROM queue_offsets
+			WHERE tenant = ? AND partition_key = ? AND offset_acked > 0
+			AND ((topic = 'start_dlq' AND consumer_group = 'orchestrator-dlq')
+			OR (topic = 'validate' AND consumer_group = 'orchestrator'))`, landRequest.Queue, landRequest.Queue).Scan(&completed)
+		require.NoError(t, err)
+		if completed == 2 {
+			break
 		}
 		<-ticker.C
+	}
+	for _, table := range []string{"queue_delivery_state", "queue_messages"} {
+		_, err := s.queueDB.ExecContext(s.ctx, "DELETE FROM "+table+" WHERE tenant = ? AND partition_key = ? AND topic IN ('start_dlq', 'validate')", landRequest.Queue, landRequest.Queue)
+		require.NoError(t, err)
 	}
 	request, err := mysqlstorage.NewRequestStore(s.db, tally.NoopScope, landRequest.Queue).Get(s.ctx, landRequest.ID)
 	require.NoError(t, err)
@@ -169,8 +175,14 @@ func (s *OrchestratorIntegrationSuite) TestRetainedStartCreatesRequestAndHandsOf
 	assert.Equal(t, landRequest.Change, request.Change)
 	assert.Equal(t, landRequest.LandStrategy, request.LandStrategy)
 	var payload []byte
-	require.NoError(t, s.queueDB.QueryRowContext(s.ctx, `SELECT payload FROM queue_messages WHERE tenant = ? AND topic = 'validate'`, landRequest.Queue).Scan(&payload))
-	id, err := sqmq.UnmarshalRequestID(topickey.TopicKeyValidate, payload)
-	require.NoError(t, err)
-	assert.Equal(t, entity.RequestID{ID: request.ID, Queue: request.Queue}, id)
+	// This fixture has no Runway consumer, so the cross-service hand-off remains observable.
+	require.NoError(t, s.queueDB.QueryRowContext(s.ctx, `SELECT payload FROM queue_messages WHERE tenant = ? AND topic = 'merge-conflict-check' AND id = ?`, landRequest.Queue, landRequest.ID).Scan(&payload))
+	check := &runwaymq.MergeRequest{}
+	require.NoError(t, runwaymq.Unmarshal(payload, check))
+	assert.Equal(t, request.ID, check.GetId())
+	assert.Equal(t, request.Queue, check.GetQueueName())
+	require.Len(t, check.GetSteps(), 1)
+	assert.Equal(t, request.ID, check.GetSteps()[0].GetStepId())
+	assert.Equal(t, request.Change.URIs, check.GetSteps()[0].GetChange().GetUris())
+	assert.Equal(t, mergestrategypb.Strategy_REBASE, check.GetSteps()[0].GetStrategy())
 }
