@@ -46,6 +46,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 	}
 	queueScope := s.scope.Tagged(map[string]string{"queue": queueName})
 	return &mysqlStorage{
+		issueRepairStore:         NewIssueRepairStore(s.db, queueName),
 		requestStore:             NewRequestStore(s.db, queueScope.SubScope("request_store"), queueName),
 		requestURIStore:          NewRequestURIStore(s.db, queueScope.SubScope("request_uri_store"), queueName),
 		requestLogStore:          NewRequestLogStore(s.db, queueScope.SubScope("request_log_store"), queueName),
@@ -73,6 +74,7 @@ func (s *Storage) Close() error {
 
 // mysqlStorage is the queue-scoped store aggregate returned by For.
 type mysqlStorage struct {
+	issueRepairStore         storage.IssueRepairStore
 	requestStore             storage.RequestStore
 	requestURIStore          storage.RequestURIStore
 	requestLogStore          storage.RequestLogStore
@@ -167,4 +169,8 @@ func (f *mysqlStorage) GetOpenIssueStore() storage.OpenIssueStore {
 
 func (f *mysqlStorage) GetIssueTrackingStore() storage.IssueTrackingStore {
 	return f.issueTrackingStore
+}
+
+func (f *mysqlStorage) GetIssueRepairStore() storage.IssueRepairStore {
+	return f.issueRepairStore
 }
