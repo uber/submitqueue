@@ -66,6 +66,17 @@ func IsRequestStateHalted(s RequestState) bool {
 	return IsRequestStateTerminal(s) || s == RequestStateCancelling
 }
 
+// RequestTerminalDetails contains the immutable facts of a terminal request outcome.
+// A zero TimestampMs denotes unavailable details on a legacy snapshot.
+type RequestTerminalDetails struct {
+	// TimestampMs is the terminal outcome time in milliseconds since Unix epoch.
+	TimestampMs int64 `json:"timestamp_ms"`
+	// LastError is the diagnostic associated with the terminal outcome, or empty.
+	LastError string `json:"last_error"`
+	// Metadata contains additional diagnostic facts, or nil when absent.
+	Metadata map[string]string `json:"metadata"`
+}
+
 // Request defines a request to land a set of code changes on the source control repository's target branch.
 // The object is immutable after creation.
 type Request struct {
@@ -89,6 +100,8 @@ type Request struct {
 
 	// State is the current state of the land request.
 	State RequestState `json:"state"`
+	// TerminalDetails contains the facts of the terminal outcome, or its zero value when unavailable.
+	TerminalDetails RequestTerminalDetails `json:"terminal_details"`
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`

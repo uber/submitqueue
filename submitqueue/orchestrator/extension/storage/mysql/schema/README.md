@@ -27,3 +27,9 @@ Terminal-state records (and their batches) accumulate as the queue processes wor
 ### Composite primary key: `(queue, uri, request_id)`
 
 The `change` table records per-URI claims by in-flight requests. `request_id` is part of the primary key so that concurrent claims on the same URI by different requests coexist as distinct rows — a same-request retry collides on the PK and is a no-op (`INSERT IGNORE`), while a different-request claim is a new row that `GetByURI` surfaces for overlap detection. `queue` leads the key so queue-scoped lookups are primary-key-prefix scans and the table is shardable by queue.
+
+## Request terminal details
+
+The request snapshot stores its terminal timestamp and diagnostics atomically with its state and version. SQL NULL denotes unavailable legacy details or a non-terminal request; malformed non-NULL details are a read error, not a legacy fallback.
+
+For an existing database, apply `migration/001_request_terminal_details.sql` before deploying new writers. Fresh databases use only this directory's CREATE TABLE scripts. Deploy the gateway's incomplete-repair protection before enabling terminal fallback publishers, and replace old consumers before relying on replay repair. Keep the additive column on code rollback so persisted diagnostics survive.

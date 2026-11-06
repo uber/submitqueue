@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,6 +79,16 @@ func TestToProtoStrategy(t *testing.T) {
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
 	return request
+}
+
+func terminalRequestWithState(request entity.Request, state entity.RequestState) gomock.Matcher {
+	return gomock.Cond(func(got entity.Request) bool {
+		if got.TerminalDetails.TimestampMs <= 0 {
+			return false
+		}
+		got.TerminalDetails = request.TerminalDetails
+		return reflect.DeepEqual(got, requestWithState(request, state))
+	})
 }
 
 // requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
@@ -536,7 +547,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			if tt.wantRejected {
 				// A detected duplicate is terminated (Started → Error) rather than
 				// dead-lettered, then the delivery is acked.
-				mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+				mockReqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 			}
 			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
@@ -614,7 +625,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 	for _, state := range []entity.RequestState{
 		entity.RequestStateCancelled,
 		entity.RequestStateLanded,
-		entity.RequestStateError,
+		entity.RequestStateCancelling,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -709,7 +720,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	store, mockReqStore := newMockStorage(ctrl, request)
 	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
 	// A validator rejection terminates the request (Started → Error) rather than dead-lettering it.
-	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -843,10 +854,18 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
-	store, mockReqStore := newMockStorage(ctrl, request)
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).DoAndReturn(func(context.Context, string) (entity.Request, error) { return request, nil }).Times(3)
+	store := orchstoragemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
-	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(request, entity.RequestStateError), int32(1), int32(2)).DoAndReturn(func(_ context.Context, snapshot entity.Request, _, newVersion int32) error {
+		request = snapshot
+		request.Version = newVersion
+		return nil
+	})
 
+	var terminalLogs []entity.RequestLog
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	// Fail only the terminal log. The "validating" entry this stage now emits on
 	// the way in goes to the same topic, so failing every publish would abort
@@ -855,7 +874,10 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
 			entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 			if err == nil && entry.Status == entity.RequestStatusError {
-				return fmt.Errorf("publish boom")
+				terminalLogs = append(terminalLogs, entry)
+				if len(terminalLogs) == 1 {
+					return fmt.Errorf("publish boom")
+				}
 			}
 			return nil
 		},
@@ -871,7 +893,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	require.NoError(t, err)
 
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
-	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil)
 
 	mockValidator := validatormock.NewMockValidator(ctrl)
 	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("%w: some validation error", validator.ErrRejected))
@@ -890,4 +912,10 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	err = controller.Process(context.Background(), delivery)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to terminate rejected request")
+	require.NoError(t, controller.Process(context.Background(), delivery))
+	require.Len(t, terminalLogs, 2)
+	assert.Equal(t, terminalLogs[0], terminalLogs[1])
+	assert.Contains(t, terminalLogs[1].LastError, "some validation error")
+	assert.Equal(t, request.TerminalDetails.TimestampMs, terminalLogs[1].TimestampMs)
+	assert.Equal(t, int32(2), terminalLogs[1].RequestVersion)
 }

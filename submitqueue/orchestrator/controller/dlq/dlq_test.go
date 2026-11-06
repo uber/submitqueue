@@ -17,6 +17,7 @@ package dlq
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
@@ -64,9 +65,15 @@ func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 	return batch
 }
 
-func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+func requestWithState(request entity.Request, state entity.RequestState) gomock.Matcher {
 	request.State = state
-	return request
+	return gomock.Cond(func(got entity.Request) bool {
+		if got.TerminalDetails.TimestampMs <= 0 {
+			return false
+		}
+		got.TerminalDetails = request.TerminalDetails
+		return reflect.DeepEqual(got, request)
+	})
 }
 
 // failRequest

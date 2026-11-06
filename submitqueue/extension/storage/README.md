@@ -72,3 +72,7 @@ Take the first branch that applies:
 3. **Map** — a pipeline controller needs the lookup at runtime → a dedicated mapping store keyed by the attribute.
 
 The bar for 3 is a hot-path need: one mapping per access path, never per attribute, and never for ops/debug queries — run those against SQL replicas directly. But don't contort 1–2 to dodge a legitimate 3; a primary key that hashes half the entity's fields, or an aggregate bloated into listing everything, is the same duplication hidden in a worse place.
+
+### Terminal request snapshots
+
+A terminal Request replacement includes its outcome timestamp, last error, and metadata in the same conditional write as its state. Same-state replay publishes those persisted facts without another state transition; incoming retry diagnostics cannot replace the winning outcome. Legacy snapshots without details emit an explicitly incomplete log, which can repair a non-terminal summary but cannot erase a known same-status, same-request-version terminal diagnostic. The gateway protection must be deployed before enabling legacy fallback publication.

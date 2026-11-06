@@ -17,6 +17,7 @@ package cancel
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,6 +63,16 @@ func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
 	return request
+}
+
+func terminalRequestWithState(request entity.Request, state entity.RequestState) gomock.Matcher {
+	return gomock.Cond(func(got entity.Request) bool {
+		if got.TerminalDetails.TimestampMs <= 0 {
+			return false
+		}
+		got.TerminalDetails = request.TerminalDetails
+		return reflect.DeepEqual(got, requestWithState(request, state))
+	})
 }
 
 // cancelPayload serializes a CancelRequest to JSON bytes for test message payloads.
@@ -161,7 +172,7 @@ func TestProcess_AlreadyTerminal_NoOp(t *testing.T) {
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{
-		ID: "1", Queue: "q", State: entity.RequestStateCancelled, Version: 5,
+		ID: "1", Queue: "q", State: entity.RequestStateLanded, Version: 5,
 	}, nil)
 
 	store := orchstoragemock.NewMockStorage(ctrl)
@@ -194,10 +205,17 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, pub := newRegistry(t, ctrl)
 
+	var terminalLogs []entity.RequestLog
 	var publishedTopics []string
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, _ entityqueue.Message) error {
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			publishedTopics = append(publishedTopics, topic)
+			entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
+			require.NoError(t, err)
+			terminalLogs = append(terminalLogs, entry)
+			if len(terminalLogs) == 1 {
+				return fmt.Errorf("publish unavailable")
+			}
 			return nil
 		}).AnyTimes()
 
@@ -206,11 +224,17 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 	cancelling := entity.Request{ID: "1", Queue: "q", State: entity.RequestStateCancelling, Version: 3}
 	// Two-step transition: mark Cancelling, then — after TerminateRequest re-reads
 	// the request — the terminal Cancelled CAS.
+	var terminal entity.Request
 	gomock.InOrder(
 		reqStore.EXPECT().Get(gomock.Any(), "1").Return(started, nil),
 		reqStore.EXPECT().Update(gomock.Any(), requestWithState(started, entity.RequestStateCancelling), int32(2), int32(3)).Return(nil),
 		reqStore.EXPECT().Get(gomock.Any(), "1").Return(cancelling, nil),
-		reqStore.EXPECT().Update(gomock.Any(), requestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil),
+		reqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).DoAndReturn(func(_ context.Context, snapshot entity.Request, _, newVersion int32) error {
+			terminal = snapshot
+			terminal.Version = newVersion
+			return nil
+		}),
+		reqStore.EXPECT().Get(gomock.Any(), "1").DoAndReturn(func(context.Context, string) (entity.Request, error) { return terminal, nil }),
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -223,10 +247,15 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "1", "user changed mind"), "1"))
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "1", "changed reason"), "1")))
+	require.Len(t, terminalLogs, 2)
+	assert.Equal(t, terminalLogs[0], terminalLogs[1])
+	assert.Equal(t, "user changed mind", terminalLogs[1].Metadata["reason"])
+	assert.Equal(t, int32(4), terminalLogs[1].RequestVersion)
 
 	// Only the request log entry should have been published.
-	assert.Equal(t, []string{"log"}, publishedTopics)
+	assert.Equal(t, []string{"log", "log"}, publishedTopics)
 }
 
 // TestProcess_AlreadyCancelling_SkipsMarkCancelling exercises the idempotent
@@ -244,7 +273,7 @@ func TestProcess_AlreadyCancelling_SkipsMarkCancelling(t *testing.T) {
 	// see Cancelling (the prior pass already recorded intent).
 	reqStore.EXPECT().Get(gomock.Any(), "1").Return(cancelling, nil).Times(2)
 	// Only the terminal CAS — the mark-cancelling step is a no-op.
-	reqStore.EXPECT().Update(gomock.Any(), requestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil)
+	reqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 
@@ -301,7 +330,7 @@ func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
 		reqStore.EXPECT().Get(gomock.Any(), "1").Return(started, nil),
 		reqStore.EXPECT().Update(gomock.Any(), requestWithState(started, entity.RequestStateCancelling), int32(2), int32(3)).Return(nil),
 		reqStore.EXPECT().Get(gomock.Any(), "1").Return(cancelling, nil),
-		reqStore.EXPECT().Update(gomock.Any(), requestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).
+		reqStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).
 			Return(storage.ErrVersionMismatch),
 	)
 
@@ -579,7 +608,7 @@ func TestProcess_BatchedWithoutMatchCancelsRequest(t *testing.T) {
 		requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil),
 		requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateCancelling), int32(2), int32(3)).Return(nil),
 		requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(cancelling, nil),
-		requestStore.EXPECT().Update(gomock.Any(), requestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil),
+		requestStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil),
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -615,7 +644,7 @@ func TestProcess_CreatingBatchDoesNotSuppressRequestCancellation(t *testing.T) {
 		requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil),
 		requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateCancelling), int32(2), int32(3)).Return(nil),
 		requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(cancelling, nil),
-		requestStore.EXPECT().Update(gomock.Any(), requestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil),
+		requestStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(cancelling, entity.RequestStateCancelled), int32(3), int32(4)).Return(nil),
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)

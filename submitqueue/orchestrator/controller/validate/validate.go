@@ -133,10 +133,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Short-circuit if the request has been halted — either it already reached a
-	// terminal state, or the cancel controller has recorded a cancellation intent
-	// (RequestStateCancelling). Without this guard we would still publish to batch
-	// and spawn a batch for a request that should never proceed.
+	if request.State == entity.RequestStateError {
+		return corerequest.PublishTerminalRequestLog(ctx, c.registry, request)
+	}
+
+	// Cancellation intent halts forward progress even before the terminal outcome.
 	if entity.IsRequestStateHalted(request.State) {
 		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_halted", 1, coremetrics.TagsFromContext(ctx)...)
 		c.logger.Infow("skipping validate for halted request",

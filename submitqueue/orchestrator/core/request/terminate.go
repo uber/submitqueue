@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"time"
 
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -86,7 +88,7 @@ type TerminationResult struct {
 //   - the request is not found: nothing is done (TerminationOutcomeNotFound).
 //
 // The caller owns all logging and metrics — TerminationResult carries the state context needed to do so.
-// lastError and metadata are attached to the published RequestLog for diagnosis.
+// lastError and metadata are captured only by the winning terminal write.
 //
 // A storage.ErrVersionMismatch from the conditional write is returned as-is (it is
 // intrinsically retryable) so the caller's next attempt re-reads and re-evaluates.
@@ -99,7 +101,7 @@ func TerminateRequest(
 	lastError string,
 	metadata map[string]string,
 ) (TerminationResult, error) {
-	status, err := terminalStateToStatus(targetState)
+	_, err := terminalStateToStatus(targetState)
 	if err != nil {
 		return TerminationResult{}, err
 	}
@@ -112,11 +114,7 @@ func TerminateRequest(
 		return TerminationResult{}, fmt.Errorf("failed to get request %s: %w", requestID, err)
 	}
 
-	// logVersion is the request version reflected in the published terminal log.
-	// It stays at the current version on the idempotent same-state path and
-	// advances to the new version only after a successful reconciling write.
 	beforeState := request.State
-	logVersion := request.Version
 	outcome := TerminationOutcomeSuccess
 	switch {
 	case request.State == targetState:
@@ -134,18 +132,19 @@ func TerminateRequest(
 	default:
 		newVersion := request.Version + 1
 		request.State = targetState
+		request.TerminalDetails = entity.RequestTerminalDetails{
+			TimestampMs: time.Now().UnixMilli(),
+			LastError:   lastError,
+			Metadata:    maps.Clone(metadata),
+		}
 		if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 			return TerminationResult{}, fmt.Errorf("failed to update request %s state to %s: %w", requestID, targetState, err)
 		}
 		request.Version = newVersion
-		logVersion = request.Version
 	}
 
-	logEntry := entity.NewRequestStatusLog(request.Queue, requestID, status, logVersion, lastError, metadata)
-	// No occurrence: a request reaches a terminal status once, so every repeat
-	// is a redelivery of that one event and should dedupe away.
-	if err := PublishLog(ctx, registry, logEntry, requestID, ""); err != nil {
-		return TerminationResult{}, fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
+	if err := PublishTerminalRequestLog(ctx, registry, request); err != nil {
+		return TerminationResult{}, err
 	}
 
 	return TerminationResult{

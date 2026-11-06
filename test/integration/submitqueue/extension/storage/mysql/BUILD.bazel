@@ -6,6 +6,7 @@ go_test(
     data = [
         "docker-compose.yml",
         "//submitqueue/gateway/extension/storage/mysql/schema",
+        "//submitqueue/orchestrator/extension/storage/mysql/migration:001_request_terminal_details.sql",
         "//submitqueue/orchestrator/extension/storage/mysql/schema",
     ],
     tags = [
@@ -13,6 +14,7 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//submitqueue/entity:go_default_library",
         "//submitqueue/gateway/extension/storage:go_default_library",
         "//submitqueue/gateway/extension/storage/mysql:go_default_library",
         "//submitqueue/orchestrator/extension/storage:go_default_library",

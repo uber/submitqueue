@@ -17,6 +17,7 @@ package request
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,6 +37,16 @@ import (
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
 	return request
+}
+
+func terminalRequestWithState(request entity.Request, state entity.RequestState) gomock.Matcher {
+	return gomock.Cond(func(got entity.Request) bool {
+		if got.TerminalDetails.TimestampMs <= 0 {
+			return false
+		}
+		got.TerminalDetails = request.TerminalDetails
+		return reflect.DeepEqual(got, requestWithState(request, state))
+	})
 }
 
 // recordingRegistry returns a registry whose publisher appends every published
@@ -109,7 +120,7 @@ func TestTerminateRequest(t *testing.T) {
 			metadata:    map[string]string{"source": "validate"},
 			mockFunc: func(rs *storagemock.MockRequestStore) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
-				rs.EXPECT().Update(gomock.Any(), requestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(nil)
+				rs.EXPECT().Update(gomock.Any(), terminalRequestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 			},
 			wantResult: TerminationResult{
 				Outcome:     TerminationOutcomeSuccess,
@@ -137,6 +148,7 @@ func TestTerminateRequest(t *testing.T) {
 			wantLog: func(t *testing.T, log entity.RequestLog) {
 				assert.Equal(t, entity.RequestStatusError, log.Status)
 				assert.Equal(t, int32(5), log.RequestVersion)
+				assert.Equal(t, "true", log.Metadata[entity.TerminalDetailsUnavailable])
 			},
 		},
 		"already in target terminal state returns republish error": {
@@ -165,17 +177,26 @@ func TestTerminateRequest(t *testing.T) {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
-				rs.EXPECT().Update(gomock.Any(), requestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(storage.ErrVersionMismatch)
+				rs.EXPECT().Update(gomock.Any(), terminalRequestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(storage.ErrVersionMismatch)
 			},
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
 			errMsg:     "version mismatch",
 			errIs:      storage.ErrVersionMismatch,
 		},
+		"update storage error does not publish": {
+			targetState: entity.RequestStateError,
+			mockFunc: func(rs *storagemock.MockRequestStore) {
+				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
+				rs.EXPECT().Update(gomock.Any(), terminalRequestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(fmt.Errorf("db down"))
+			},
+			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
+			errMsg:     "db down",
+		},
 		"publish error after reconcile": {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
-				rs.EXPECT().Update(gomock.Any(), requestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(nil)
+				rs.EXPECT().Update(gomock.Any(), terminalRequestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 			},
 			publishErr: fmt.Errorf("connection refused"),
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
@@ -214,4 +235,41 @@ func TestTerminateRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTerminateRequest_ReplaysWinningFactsAfterPublishFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	ctx := context.Background()
+	stored := entity.Request{ID: "1", Queue: "q", State: entity.RequestStateStarted, Version: 3}
+	metadata := map[string]string{"reason": "original"}
+	requestStore := storagemock.NewMockRequestStore(ctrl)
+	requestStore.EXPECT().Get(gomock.Any(), stored.ID).DoAndReturn(func(context.Context, string) (entity.Request, error) { return stored, nil }).Times(3)
+	requestStore.EXPECT().Update(gomock.Any(), terminalRequestWithState(stored, entity.RequestStateError), int32(3), int32(4)).DoAndReturn(
+		func(_ context.Context, snapshot entity.Request, oldVersion, newVersion int32) error {
+			assert.Equal(t, oldVersion, snapshot.Version)
+			stored = snapshot
+			stored.Version = newVersion
+			metadata["reason"] = "caller mutation"
+			return nil
+		})
+	store := orchstoragemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+	failedRegistry, failedLogs := recordingRegistry(t, ctrl, fmt.Errorf("publisher unavailable"))
+	_, err := TerminateRequest(ctx, store, failedRegistry, stored.ID, entity.RequestStateError, "original failure", metadata)
+	require.Error(t, err)
+	assert.Equal(t, "original", stored.TerminalDetails.Metadata["reason"])
+
+	registry, logs := recordingRegistry(t, ctrl, nil)
+	for range 2 {
+		result, err := TerminateRequest(ctx, store, registry, stored.ID, entity.RequestStateError, "different retry failure", map[string]string{"reason": "different"})
+		require.NoError(t, err)
+		assert.Equal(t, TerminationOutcomeAlreadyInTargetState, result.Outcome)
+	}
+	require.Len(t, *failedLogs, 1)
+	require.Len(t, *logs, 2)
+	assert.Equal(t, (*failedLogs)[0], (*logs)[0])
+	assert.Equal(t, (*logs)[0], (*logs)[1])
+	assert.Equal(t, stored.TerminalDetails.TimestampMs, (*logs)[0].TimestampMs)
+	assert.Equal(t, int32(4), (*logs)[0].RequestVersion)
+	assert.Equal(t, "original failure", (*logs)[0].LastError)
 }

@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "log.go",
+        "terminal_log.go",
         "terminate.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/core/request",
@@ -23,6 +24,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "log_test.go",
+        "terminal_log_test.go",
         "terminate_test.go",
     ],
     embed = [":go_default_library"],
