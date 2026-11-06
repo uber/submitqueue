@@ -20,7 +20,9 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -134,41 +136,77 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		baseURI = request.BaseURI
 	}
 
-	buildID, err := buildRunner.Trigger(ctx, baseURI, request.URI, nil)
-	if err != nil {
-		return fmt.Errorf("failed to trigger build for request %s: %w", request.ID, err)
+	if request.BuildID == "" {
+		buildID, err := buildRunner.Trigger(ctx, baseURI, request.URI, nil)
+		if err != nil {
+			return fmt.Errorf("failed to trigger build for request %s: %w", request.ID, err)
+		}
+		build := entity.Build{ID: buildID.ID, RequestID: request.ID, Status: entity.BuildStatusAccepted, Version: 1}
+		if err := store.GetBuildStore().Create(ctx, build); errors.Is(err, storage.ErrAlreadyExists) {
+			retained, err := loader.ByID(ctx, build.ID, store.GetBuildStore().Get, "existing build")
+			if err != nil {
+				return err
+			}
+			if retained.RequestID != request.ID {
+				return fmt.Errorf("build %s belongs to another request", build.ID)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
+		}
+		request, err = c.associateBuild(ctx, store, request, build.ID)
+		if err != nil {
+			return err
+		}
 	}
-
-	build := entity.Build{
-		ID:        buildID.ID,
-		RequestID: request.ID,
-		Status:    entity.BuildStatusAccepted,
-		Version:   1,
-	}
-	if err := store.GetBuildStore().Create(ctx, build); err != nil {
-		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
-	}
-	if err := c.persistBuildTriggeredLog(ctx, store, request, build.ID); err != nil {
+	if err := c.persistBuildTriggeredLog(ctx, store, request, request.BuildID); err != nil {
 		return err
 	}
 
-	signalErr := c.publishBuildSignal(ctx, build.ID, request.Queue)
+	signalErr := c.publishBuildSignal(ctx, request.BuildID, request.Queue)
 	if signalErr != nil {
-		signalErr = fmt.Errorf("failed to publish build signal for %s: %w", build.ID, signalErr)
+		signalErr = fmt.Errorf("failed to publish build signal for %s: %w", request.BuildID, signalErr)
 	}
 
-	analysisErr := c.publishBuildAnalysis(ctx, build.ID, request.Queue)
+	analysisErr := c.publishBuildAnalysis(ctx, request.BuildID, request.Queue)
 	if err := errs.Group(signalErr, analysisErr); err != nil {
 		return err
 	}
 
 	c.logger.Debugw("triggered build",
 		"request_id", request.ID,
-		"build_id", build.ID,
+		"build_id", request.BuildID,
 		"queue", request.Queue,
 		"base_uri", baseURI,
 	)
 	return nil
+}
+
+func (c *Controller) associateBuild(ctx context.Context, store storage.Storage, request entity.Request, buildID string) (entity.Request, error) {
+	for request.BuildID == "" {
+		if err := ctx.Err(); err != nil {
+			return entity.Request{}, err
+		}
+		if request.Version == math.MaxInt32 {
+			return entity.Request{}, fmt.Errorf("request version exhausted")
+		}
+		next := request
+		next.BuildID = buildID
+		newVersion := request.Version + 1
+		err := store.GetRequestStore().Update(ctx, next, request.Version, newVersion)
+		if errors.Is(err, storage.ErrVersionMismatch) {
+			request, err = c.loadRequest(ctx, store, request.ID)
+			if err != nil {
+				return entity.Request{}, err
+			}
+			continue
+		}
+		if err != nil {
+			return entity.Request{}, fmt.Errorf("associate build with request %s: %w", request.ID, err)
+		}
+		next.Version = newVersion
+		return next, nil
+	}
+	return request, nil
 }
 
 func (c *Controller) persistBuildTriggeredLog(ctx context.Context, store storage.Storage, request entity.Request, buildID string) error {

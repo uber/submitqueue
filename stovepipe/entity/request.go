@@ -115,6 +115,8 @@ type Request struct {
 
 	// State is the current state of the request in the pipeline.
 	State RequestState `json:"state"`
+	// BuildID identifies the associated CI build and is empty before it is triggered.
+	BuildID string `json:"build_id"`
 	// TerminalBuildID is the build that established this request's terminal
 	// state. It is empty when no build established the terminal state.
 	TerminalBuildID string `json:"terminal_build_id"`
