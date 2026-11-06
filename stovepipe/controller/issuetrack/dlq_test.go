@@ -61,7 +61,7 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 			return nil
 		}).AnyTimes()
 	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, materializer, consumer.TopicKey("issuetrack_dlq"), "test-dlq")
-	f.dlq.controller.nowMs = func() int64 { return 1000 }
+	f.dlq.nowMs = func() int64 { return 1000 }
 	return f
 }
 
@@ -237,7 +237,7 @@ func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
 			f.retain(progress)
 			f.failures[step] = 1
 			require.ErrorIs(t, f.recover(msg, false), assert.AnError)
-			f.dlq.controller.nowMs = func() int64 { return 2000 }
+			f.dlq.nowMs = func() int64 { return 2000 }
 
 			require.NoError(t, f.recover(msg, false))
 			issue := f.states[issueKey{"task", "unit"}]

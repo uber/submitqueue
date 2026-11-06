@@ -411,7 +411,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID == progress.BuildID && current.Status == desired {
 		if key == (issueKey{progress.CursorTaskID, progress.CursorUnitID}) {
-			return next, c.recordHistory(ctx, store, current)
+			return next, persistIssueHistory(ctx, c.materializer, store, current)
 		}
 		return next, nil
 	}
@@ -425,7 +425,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 
 	if !missing {
 		if current.LastProcessedBuildID == progress.BuildID {
-			if err := c.recordHistory(ctx, store, current); err != nil {
+			if err := persistIssueHistory(ctx, c.materializer, store, current); err != nil {
 				return entity.IssueTrackingState{}, err
 			}
 		}
@@ -460,17 +460,9 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	}
 
 	if missing || current.Status != desired {
-		return next, c.recordHistory(ctx, store, target)
+		return next, persistIssueHistory(ctx, c.materializer, store, target)
 	}
 	return next, nil
-}
-
-func (c *Controller) recordHistory(ctx context.Context, store storage.Storage, issue entity.IssueState) error {
-	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
-	if err := c.materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
-		return fmt.Errorf("record issue transition: %w", err)
-	}
-	return nil
 }
 
 func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next entity.IssueTrackingState) (entity.IssueTrackingState, error) {

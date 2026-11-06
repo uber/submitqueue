@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -70,6 +71,14 @@ func persistIssuesReconciledLog(ctx context.Context, materializer requestlog.Mat
 		})
 	if err := materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("retain issue reconciliation for build %q: %w", build.ID, err)
+	}
+	return nil
+}
+
+func persistIssueHistory(ctx context.Context, materializer issuelog.Materializer, store storage.Storage, issue entity.IssueState) error {
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
+	if err := materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
+		return fmt.Errorf("record issue transition: %w", err)
 	}
 	return nil
 }
