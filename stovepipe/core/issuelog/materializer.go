@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package issuelog retains issue transitions and projects their latest status.
+// Package issuelog retains issue events and materializes lifecycle and request summaries.
 package issuelog
 
 import (
@@ -29,9 +29,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-// Materializer retains issue history and updates its summary and open-issue lookup.
+// Materializer retains issue events and repairs lifecycle and request-level projections.
 type Materializer interface {
-	// PersistLog repairs the summary and lookup even when the transition already exists.
+	// PersistLog repairs projections even when the event already exists.
+	// Reported events leave lifecycle projections unchanged and assign a zero timestamp on retention.
 	// firstSeenBuildID identifies the opening retained by the source issue state.
 	PersistLog(ctx context.Context, stores storage.Storage, log entity.IssueLog, firstSeenBuildID string) error
 }
@@ -79,24 +80,40 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return fmt.Errorf("issue transition build identity does not match retained history")
 	}
 
-	if retained.Event == entity.IssueEventReported {
+	if retained.Event != entity.IssueEventReported {
+		if retained.FirstSeenBuildID != "" {
+			firstSeenBuildID = retained.FirstSeenBuildID
+		}
+		summary := entity.IssueSummary{TaskID: retained.TaskID, UnitID: retained.UnitID,
+			Status: entity.IssueStatus(retained.Event), FirstSeenBuildID: firstSeenBuildID,
+			RequestID: build.RequestID, BuildID: retained.BuildID, ChangedAtMs: retained.TimestampMs, Version: 1}
+		if err := summary.Validate(); err != nil {
+			return fmt.Errorf("invalid issue summary: %w", err)
+		}
+		if err := materializeIssueSummary(ctx, stores.GetIssueSummaryStore(), summary); err != nil {
+			return err
+		}
+		if err := materializeOpenIssue(ctx, stores, summary.TaskID, summary.UnitID); err != nil {
+			return err
+		}
+	}
+	// Legacy events lack the retained opening needed to reconstruct request summaries.
+	if retained.FirstSeenBuildID == "" {
 		return nil
 	}
-	if retained.FirstSeenBuildID != "" {
-		firstSeenBuildID = retained.FirstSeenBuildID
+	kind := entity.RequestIssueKindClosed
+	switch retained.Event {
+	case entity.IssueEventOpened:
+		kind = entity.RequestIssueKindNew
+	case entity.IssueEventReported:
+		kind = entity.RequestIssueKindExisting
 	}
-	summary := entity.IssueSummary{
-		TaskID: retained.TaskID, UnitID: retained.UnitID, Status: entity.IssueStatus(retained.Event),
-		FirstSeenBuildID: firstSeenBuildID, RequestID: build.RequestID, BuildID: retained.BuildID,
-		ChangedAtMs: retained.TimestampMs, Version: 1,
+	result := entity.RequestIssueSummary{RequestID: build.RequestID, TaskID: retained.TaskID, UnitID: retained.UnitID,
+		Kind: kind, BuildID: retained.BuildID, FirstSeenBuildID: retained.FirstSeenBuildID}
+	if err := result.Validate(); err != nil {
+		return fmt.Errorf("invalid request issue summary: %w", err)
 	}
-	if err := summary.Validate(); err != nil {
-		return fmt.Errorf("invalid issue summary: %w", err)
-	}
-	if err := materializeIssueSummary(ctx, stores.GetIssueSummaryStore(), summary); err != nil {
-		return err
-	}
-	return materializeOpenIssue(ctx, stores, summary.TaskID, summary.UnitID)
+	return materializeRequestIssueSummary(ctx, stores.GetRequestIssueSummaryStore(), result)
 }
 
 func retainIssueLog(ctx context.Context, logs storage.IssueLogStore, log entity.IssueLog) (entity.IssueLog, error) {
@@ -225,3 +242,49 @@ func materializeOpenIssue(ctx context.Context, stores storage.Storage, taskID, u
 }
 
 var _ Materializer = (*materializer)(nil)
+
+func materializeRequestIssueSummary(ctx context.Context, store storage.RequestIssueSummaryStore, incoming entity.RequestIssueSummary) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		current, err := store.Get(ctx, incoming.RequestID, incoming.TaskID, incoming.UnitID)
+		if errors.Is(err, storage.ErrNotFound) {
+			err := store.Create(ctx, incoming)
+			if errors.Is(err, storage.ErrAlreadyExists) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("create request issue summary: %w", err)
+			}
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read request issue summary: %w", err)
+		}
+		if err := current.Validate(); err != nil {
+			return fmt.Errorf("invalid retained request issue summary: %w", err)
+		}
+		expected := incoming
+		expected.Kind = current.Kind
+		expected.Version = current.Version
+		if current != expected {
+			return fmt.Errorf("request issue summary conflicts with retained history")
+		}
+		if current.Kind == entity.RequestIssueKindClosed || current.Kind == incoming.Kind {
+			return nil
+		}
+		if incoming.Kind != entity.RequestIssueKindClosed {
+			return fmt.Errorf("request issue summary conflicts with retained history")
+		}
+		if current.Version == math.MaxInt32 {
+			return fmt.Errorf("request issue summary version exhausted")
+		}
+		if err := store.Update(ctx, incoming, current.Version, current.Version+1); errors.Is(err, storage.ErrVersionMismatch) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("update request issue summary: %w", err)
+		}
+		return nil
+	}
+}

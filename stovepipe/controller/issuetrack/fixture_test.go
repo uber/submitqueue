@@ -44,6 +44,7 @@ type logKey struct {
 
 type fixture struct {
 	requestHistory map[string]entity.RequestLog
+	requestIssues  map[string]map[issueKey]entity.RequestIssueSummary
 	materializer   requestlog.Materializer
 	failOnPhase    entity.IssueTrackingPhase
 	t              *testing.T
@@ -72,6 +73,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{t: t, mocks: gomock.NewController(t), states: map[issueKey]entity.IssueState{}, logs: map[logKey]entity.IssueLog{}, failures: map[string]int{}, initialLogs: map[logKey]entity.IssueLog{}}
 	f.factory = storagemock.NewMockFactory(f.mocks)
+	f.requestIssues = map[string]map[issueKey]entity.RequestIssueSummary{}
 	f.builds = map[string]entity.Build{}
 	f.requests = map[string]entity.Request{}
 	f.buildIssues = map[string]map[issueKey]entity.BuildIssue{}
@@ -84,6 +86,45 @@ func newFixture(t *testing.T) *fixture {
 	history := storagemock.NewMockIssueLogStore(f.mocks)
 	summaries := storagemock.NewMockIssueSummaryStore(f.mocks)
 	openIssues := storagemock.NewMockOpenIssueStore(f.mocks)
+	requestIssues := storagemock.NewMockRequestIssueSummaryStore(f.mocks)
+	store.EXPECT().GetRequestIssueSummaryStore().Return(requestIssues).AnyTimes()
+	requestIssues.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.RequestIssueSummary) error {
+		if err := f.fail("request-issue/create"); err != nil {
+			return err
+		}
+		if f.requestIssues[issue.RequestID] == nil {
+			f.requestIssues[issue.RequestID] = map[issueKey]entity.RequestIssueSummary{}
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		if _, ok := f.requestIssues[issue.RequestID][key]; ok {
+			return storage.ErrAlreadyExists
+		}
+		f.requestIssues[issue.RequestID][key] = issue
+		return nil
+	}).AnyTimes()
+	requestIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request, task, unit string) (entity.RequestIssueSummary, error) {
+		if err := f.fail("request-issue/get"); err != nil {
+			return entity.RequestIssueSummary{}, err
+		}
+		issue, ok := f.requestIssues[request][issueKey{task, unit}]
+		if !ok {
+			return entity.RequestIssueSummary{}, storage.ErrNotFound
+		}
+		return issue, nil
+	}).AnyTimes()
+	requestIssues.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.RequestIssueSummary, oldVersion, newVersion int32) error {
+		if err := f.fail("request-issue/update"); err != nil {
+			return err
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		current, ok := f.requestIssues[issue.RequestID][key]
+		if !ok || current.Version != oldVersion {
+			return storage.ErrVersionMismatch
+		}
+		issue.Version = newVersion
+		f.requestIssues[issue.RequestID][key] = issue
+		return nil
+	}).AnyTimes()
 	tracking := storagemock.NewMockIssueTrackingStore(f.mocks)
 	f.factory.EXPECT().For(storage.Config{QueueName: testQueue}).Return(store, nil).AnyTimes()
 	store.EXPECT().GetIssueStateStore().Return(states).AnyTimes()
