@@ -24,9 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
-	"github.com/uber/submitqueue/submitqueue/entity"
-	storage "github.com/uber/submitqueue/submitqueue/extension/storage"
-	corerequest "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
+	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
 	orchstorage "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage"
 	"go.uber.org/zap"
 )
@@ -110,61 +108,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Map batch terminal state to request state.
-	// We expect the batch to be in a terminal state as written by the land
-	// controller (Succeeded) or the speculate controller (Failed via
-	// failOnDependency, Cancelled via cancelBatch).
-	requestState, err := batchStateToRequestState(batch.State)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1, metrics.TagsFromContext(ctx)...)
-		return fmt.Errorf("unexpected batch state %q for batch %s: %w", batch.State, batch.ID, err)
-	}
-
-	// Reconcile each request to the batch's terminal state and emit a terminal
-	// log entry. TerminateRequest is idempotent under at-least-once delivery: a
-	// prior attempt may have completed the CAS but failed before publishing the
-	// log, so the log publish still runs when the request is already in the
-	// target terminal state, and a request that a concurrent path already drove
-	// to a different terminal state is left untouched. A request referenced by
-	// the batch but missing from the store is a hard error — the whole batch is
-	// retried (and eventually dead-lettered) rather than silently skipped. We
-	// translate the result into per-outcome logs and metrics.
-	// The failure reason rides the conclude message, not the batch: the failing
-	// stage stamps it here and it is empty on the landed and cancelled paths.
-	failureReason := msg.Metadata[topickey.MetadataKeyFailureReason]
-	for _, requestID := range batch.Contains {
-		res, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, requestState, failureReason, map[string]string{
-			"batch_id": batch.ID,
-		})
-		if err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1, metrics.TagsFromContext(ctx)...)
-			return fmt.Errorf("failed to terminate request %s for batch %s: %w", requestID, batch.ID, err)
-		}
-
-		switch res.Outcome {
-		case corerequest.TerminationOutcomeSuccess:
-			c.logger.Infow("updated request state",
-				"batch_id", batch.ID,
-				"request_id", requestID,
-				"new_state", string(res.AfterState),
-			)
-		case corerequest.TerminationOutcomeAlreadyInTargetState:
-			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1, metrics.TagsFromContext(ctx)...)
-		case corerequest.TerminationOutcomeDiverged:
-			c.logger.Warnw("request already in different terminal state, skipping reconcile",
-				"batch_id", batch.ID,
-				"request_id", requestID,
-				"expected_state", string(requestState),
-				"actual_state", string(res.BeforeState),
-			)
-			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1, metrics.TagsFromContext(ctx)...)
-		case corerequest.TerminationOutcomeNotFound:
-			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1, metrics.TagsFromContext(ctx)...)
-			return fmt.Errorf("failed to get request %s for batch %s: %w", requestID, batch.ID, storage.ErrNotFound)
-		}
-	}
-
-	return nil // Success - message will be acked
+	return corebatch.ConcludeBatchRequests(ctx, store, c.registry, c.logger, c.metricsScope, batch, msg.Metadata[topickey.MetadataKeyFailureReason])
 }
 
 // Name returns the controller name for logging and metrics.
@@ -180,18 +124,4 @@ func (c *Controller) TopicKey() consumer.TopicKey {
 // ConsumerGroup returns the consumer group for offset tracking.
 func (c *Controller) ConsumerGroup() string {
 	return c.consumerGroup
-}
-
-// batchStateToRequestState maps a terminal batch state to the corresponding request state.
-func batchStateToRequestState(state entity.BatchState) (entity.RequestState, error) {
-	switch state {
-	case entity.BatchStateSucceeded:
-		return entity.RequestStateLanded, nil
-	case entity.BatchStateFailed:
-		return entity.RequestStateError, nil
-	case entity.BatchStateCancelled:
-		return entity.RequestStateCancelled, nil
-	default:
-		return entity.RequestStateUnknown, fmt.Errorf("non-terminal batch state: %s", state)
-	}
 }
