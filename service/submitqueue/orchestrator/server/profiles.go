@@ -776,6 +776,7 @@ func (b *profileBuilder) newTangoAnalyzerFactory(key tangoAnalyzerKey, where str
 			Client:        client,
 			BaseRevisions: baseRevisions(c.QueueName),
 			Changes:       b.resolver,
+			MetricsScope:  b.scope,
 		}), nil
 	}), nil
 }
