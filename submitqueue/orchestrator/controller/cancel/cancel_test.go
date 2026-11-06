@@ -105,7 +105,7 @@ func newController(t *testing.T, store orchstorage.Storage, registry consumer.To
 	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeyCancel, "orchestrator-cancel")
 }
 
-func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) consumer.Delivery {
+func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) *consumermock.MockDelivery {
 	msg := entityqueue.NewMessage("cancel-msg", payload, partitionKey, nil)
 	msg.Tenant = "q"
 	d := consumermock.NewMockDelivery(ctrl)
@@ -184,21 +184,23 @@ func TestProcess_AlreadyTerminal_NoOp(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestProcess_RequestNotFound_Retryable(t *testing.T) {
+func TestProcess_RequestNotFound_HoldsOriginalDelivery(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, _ := newRegistry(t, ctrl)
-
 	reqStore := storagemock.NewMockRequestStore(ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, storage.ErrNotFound)
-
+	reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, fmt.Errorf("not visible yet: %w", storage.ErrNotFound)).Times(4)
 	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
-
 	controller := newController(t, store, registry)
-	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "1", ""), "1"))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrNotFound)
+	payload := cancelPayload(t, "1", "user changed mind")
+	msg := entityqueue.NewMessage("cancel-msg", payload, "1", nil)
+	msg.Tenant = "q"
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).Times(4)
+	delivery.EXPECT().Hold(waitForRequestDelayMs).Times(4)
+	for range 4 {
+		require.NoError(t, controller.Process(context.Background(), delivery))
+	}
 }
 
 func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
@@ -226,6 +228,7 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 	// the request — the terminal Cancelled CAS.
 	var terminal entity.Request
 	gomock.InOrder(
+		reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, storage.ErrNotFound),
 		reqStore.EXPECT().Get(gomock.Any(), "1").Return(started, nil),
 		reqStore.EXPECT().Update(gomock.Any(), requestWithState(started, entity.RequestStateCancelling), int32(2), int32(3)).Return(nil),
 		reqStore.EXPECT().Get(gomock.Any(), "1").Return(cancelling, nil),
@@ -246,6 +249,9 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 	expectBatchLookup(ctrl, store, batchStore, "1")
 
 	controller := newController(t, store, registry)
+	earlyDelivery := newDelivery(t, ctrl, cancelPayload(t, "1", "user changed mind"), "1")
+	earlyDelivery.EXPECT().Hold(waitForRequestDelayMs)
+	require.NoError(t, controller.Process(context.Background(), earlyDelivery))
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "1", "user changed mind"), "1"))
 	require.Error(t, err)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "1", "changed reason"), "1")))
@@ -753,7 +759,8 @@ func TestProcess_RequestStoreError(t *testing.T) {
 	registry, _ := newRegistry(t, ctrl)
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, fmt.Errorf("db down"))
+	storeErr := fmt.Errorf("db down")
+	reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{}, storeErr)
 
 	store := orchstoragemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
@@ -761,7 +768,7 @@ func TestProcess_RequestStoreError(t *testing.T) {
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "1", ""), "1"))
-	require.Error(t, err)
+	require.ErrorIs(t, err, storeErr)
 }
 
 func TestFindBatches(t *testing.T) {

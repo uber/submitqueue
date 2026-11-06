@@ -57,34 +57,6 @@ func TestDLQRequestController_Process_TenantPayloadQueueMismatchAcks(t *testing.
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
 }
 
-func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	request := entity.Request{
-		ID: "7", Queue: "q", Version: 2, State: entity.RequestStateBatched,
-	}
-	requestStore.EXPECT().Get(gomock.Any(), "7").Return(request, nil)
-	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(2), int32(3)).Return(nil)
-
-	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
-		return nil
-	})
-
-	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
-
-	payload, err := sqmq.Marshal(sqmq.CancelFromEntity(entity.CancelRequest{ID: "7", Queue: "q", Reason: "user"}))
-	require.NoError(t, err)
-
-	delivery := newMockDelivery(ctrl, payload)
-	require.NoError(t, c.Process(context.Background(), delivery))
-}
-
 func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
