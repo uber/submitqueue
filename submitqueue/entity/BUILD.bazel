@@ -11,6 +11,7 @@ go_library(
         "change_provider.go",
         "change_record.go",
         "conflict.go",
+        "dlq_reconciliation.go",
         "land.go",
         "list.go",
         "path_build.go",
