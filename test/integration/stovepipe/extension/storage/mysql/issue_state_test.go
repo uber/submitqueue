@@ -16,6 +16,7 @@ package mysql
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -29,12 +30,12 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 	bound, err := factory.For(storage.Config{QueueName: "issue-state/main"})
 	require.NoError(t, err)
 	store := bound.GetIssueStateStore()
-	issue := entity.IssueState{TaskID: "validation", UnitID: "unit", Status: entity.IssueStatusOpen, FirstSeenBuildID: "build/1", Version: 1, LastProcessedBuildID: "build/1", LastChangedBuildID: "build/1", ChangedAtMs: 1000}
+	issue := entity.IssueState{TaskID: "validation", UnitID: "unit", Status: entity.IssueStatusOpen, FirstSeenBuildID: "build/1", Version: 1, LastProcessedBuildID: "build/1", LastChangedBuildID: "build/1", ChangedAtMs: 1000, Metadata: map[string]json.RawMessage{"hook": json.RawMessage(`{"thread_ts":"123.456"}`)}}
 	require.NoError(t, store.Create(ctx, issue))
 	require.ErrorIs(t, store.Create(ctx, issue), storage.ErrAlreadyExists)
 	got, err := store.Get(ctx, issue.TaskID, issue.UnitID)
 	require.NoError(t, err)
-	require.Equal(t, issue, got)
+	requireEqualIssueState(t, issue, got)
 
 	closed := issue
 	closed.Status = entity.IssueStatusClosed
@@ -44,7 +45,7 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 	closed.Version = 2
 	got, err = store.Get(ctx, issue.TaskID, issue.UnitID)
 	require.NoError(t, err)
-	require.Equal(t, closed, got)
+	requireEqualIssueState(t, closed, got)
 	require.ErrorIs(t, store.Create(ctx, issue), storage.ErrAlreadyExists)
 	require.ErrorIs(t, store.Update(ctx, issue, 1, 2), storage.ErrVersionMismatch)
 
@@ -58,7 +59,7 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 	require.ErrorIs(t, store.Update(ctx, closed, 2, 3), storage.ErrVersionMismatch)
 	got, err = store.Get(ctx, issue.TaskID, issue.UnitID)
 	require.NoError(t, err)
-	require.Equal(t, reopened, got)
+	requireEqualIssueState(t, reopened, got)
 
 	t.Run("queue and byte-exact key isolation", func(t *testing.T) {
 		other, err := factory.For(storage.Config{QueueName: "Issue-state/main"})
@@ -72,7 +73,7 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 			require.NoError(t, store.Create(ctx, value))
 			got, err := store.Get(ctx, key.TaskID, key.UnitID)
 			require.NoError(t, err)
-			require.Equal(t, value, got)
+			requireEqualIssueState(t, value, got)
 		}
 	})
 	t.Run("only one competing version wins", func(t *testing.T) {
@@ -108,9 +109,20 @@ func testIssueStateStore(t *testing.T, ctx context.Context, factory storage.Fact
 		require.NoError(t, store.Create(ctx, value))
 		got, err := store.Get(ctx, value.TaskID, value.UnitID)
 		require.NoError(t, err)
-		require.Equal(t, value, got)
+		requireEqualIssueState(t, value, got)
 		value.UnitID += "x"
 		require.Error(t, store.Create(ctx, value))
 		require.Error(t, store.Update(ctx, value, 1, 2))
 	})
+}
+
+func requireEqualIssueState(t *testing.T, expected, actual entity.IssueState) {
+	t.Helper()
+	expectedMetadata, err := json.Marshal(expected.Metadata)
+	require.NoError(t, err)
+	actualMetadata, err := json.Marshal(actual.Metadata)
+	require.NoError(t, err)
+	require.JSONEq(t, string(expectedMetadata), string(actualMetadata))
+	expected.Metadata, actual.Metadata = nil, nil
+	require.Equal(t, expected, actual)
 }

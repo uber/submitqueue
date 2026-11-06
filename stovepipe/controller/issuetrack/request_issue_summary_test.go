@@ -128,7 +128,7 @@ func TestRecoveryRepairsRequestIssueBeforeAbandoning(t *testing.T) {
 			progress.NotificationID = msg.ID
 			f.retain(progress)
 			f.failures["request-issue/create"] = 1
-			_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, kind != entity.RequestIssueKindClosed)
+			_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, kind != entity.RequestIssueKindClosed)
 			require.ErrorIs(t, err, assert.AnError)
 			f.failures["request-issue/create"] = 1
 			require.ErrorIs(t, f.recover(msg, false), assert.AnError)
@@ -171,12 +171,12 @@ func TestRequestIssueReplayRejectsConflict(t *testing.T) {
 	progress := currentCursor()
 	f.retain(progress)
 	f.reportIssue("build/100", "task", "unit")
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.NoError(t, err)
 	retained := f.requestIssues["100"][issueKey{"task", "unit"}]
 	retained.Kind = entity.RequestIssueKindExisting
 	f.requestIssues["100"][issueKey{"task", "unit"}] = retained
-	_, err = f.controller.processIssue(context.Background(), f.store, f.progress, issueKey{"task", "unit"}, true)
+	_, err = f.controller.processIssue(context.Background(), f.store, testQueue, f.progress, issueKey{"task", "unit"}, true)
 	require.ErrorContains(t, err, "conflicts")
 }
 
