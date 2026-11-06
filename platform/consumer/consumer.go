@@ -308,7 +308,7 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topic
 				m.shutdownPartitions(partitionChs, &wg)
 				return
 			}
-			if m.rejectDeliveryWithInvalidTenant(ctx, controller, delivery) {
+			if m.rejectDeliveryWithInvalidTenant(ctx, controller, delivery, controllerScope) {
 				continue
 			}
 
@@ -340,27 +340,41 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topic
 	}
 }
 
-func (m *consumer) rejectDeliveryWithInvalidTenant(ctx context.Context, controller Controller, delivery extqueue.Delivery) bool {
+func (m *consumer) rejectDeliveryWithInvalidTenant(ctx context.Context, controller Controller, delivery extqueue.Delivery, scope tally.Scope) bool {
 	msg := delivery.Message()
-	if err := entityqueue.ValidateTenantMetadata(msg); err != nil {
-		m.logger.Errorw("rejecting message with inconsistent queue identity",
-			"controller", controller.Name(),
-			"topic_key", controller.TopicKey(),
-			"message_id", msg.ID,
-			"tenant", msg.Tenant,
-			"error", err,
-		)
-		if rejectErr := delivery.Reject(ctx, failure.New(err.Error())); rejectErr != nil {
-			m.logger.Errorw("failed to reject message with inconsistent queue identity",
-				"controller", controller.Name(),
-				"topic_key", controller.TopicKey(),
-				"message_id", msg.ID,
-				"error", rejectErr,
-			)
-		}
-		return true
+	err := entityqueue.ValidateTenantMetadata(msg)
+	if err == nil {
+		return false
 	}
-	return false
+
+	settle := delivery.Reject
+	action := "reject"
+	config, ok := m.registry.SubscriptionConfig(controller.TopicKey(), controller.ConsumerGroup())
+	if ok && config.Retry.MaxAttempts == 0 && !config.DLQ.Enabled {
+		// Reject without a DLQ acknowledges the message, violating final recovery's retention policy.
+		settle = delivery.Nack
+		action = "nack"
+	}
+	metrics.NamedCounter(scope, "envelope", "invalid_identity", 1)
+	m.logger.Errorw("message has inconsistent queue identity",
+		"controller", controller.Name(),
+		"topic_key", controller.TopicKey(),
+		"consumer_group", controller.ConsumerGroup(),
+		"message_id", msg.ID,
+		"tenant", msg.Tenant,
+		"action", action,
+		"error", err,
+	)
+	if settleErr := settle(ctx, failure.New(err.Error())); settleErr != nil {
+		m.logger.Errorw("failed to settle message with inconsistent queue identity",
+			"topic_key", controller.TopicKey(),
+			"consumer_group", controller.ConsumerGroup(),
+			"message_id", msg.ID,
+			"action", action,
+			"error", settleErr,
+		)
+	}
+	return true
 }
 
 // shutdownPartitions closes all partition channels to signal processPartition

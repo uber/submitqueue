@@ -21,6 +21,7 @@ go_test(
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//submitqueue/core/messagequeue:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/gateway/core/request:go_default_library",
