@@ -97,6 +97,9 @@ type Storage interface {
 	// GetBuildIssueStore returns the BuildIssueStore instance.
 	GetBuildIssueStore() BuildIssueStore
 
+	// GetRequestIssueSummaryStore returns immutable per-request issue results.
+	GetRequestIssueSummaryStore() RequestIssueSummaryStore
+
 	// GetIssueStateStore returns the IssueStateStore instance.
 	GetIssueStateStore() IssueStateStore
 
