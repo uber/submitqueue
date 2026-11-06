@@ -34,6 +34,7 @@ type logKey struct {
 }
 
 type materializerFixture struct {
+	requestSummaries           map[string]entity.RequestIssueSummary
 	m                          Materializer
 	stores                     *storagemock.MockStorage
 	logs                       map[logKey]entity.IssueLog
@@ -49,8 +50,44 @@ type materializerFixture struct {
 func newMaterializerFixture(t *testing.T) *materializerFixture {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	f := &materializerFixture{m: NewMaterializer(tally.NoopScope), stores: storagemock.NewMockStorage(ctrl),
+	f := &materializerFixture{requestSummaries: map[string]entity.RequestIssueSummary{}, m: NewMaterializer(tally.NoopScope), stores: storagemock.NewMockStorage(ctrl),
 		logs: make(map[logKey]entity.IssueLog), failures: make(map[string]error)}
+	requestSummaries := storagemock.NewMockRequestIssueSummaryStore(ctrl)
+	f.stores.EXPECT().GetRequestIssueSummaryStore().Return(requestSummaries).AnyTimes()
+	requestSummaries.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req, task, unit string) (entity.RequestIssueSummary, error) {
+		if err := f.failures["request-summary/get"]; err != nil {
+			return entity.RequestIssueSummary{}, err
+		}
+		result, ok := f.requestSummaries[req+":"+task+":"+unit]
+		if !ok {
+			return entity.RequestIssueSummary{}, storage.ErrNotFound
+		}
+		return result, nil
+	}).AnyTimes()
+	requestSummaries.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, result entity.RequestIssueSummary) error {
+		if err := f.failures["request-summary/create"]; err != nil {
+			return err
+		}
+		key := result.RequestID + ":" + result.TaskID + ":" + result.UnitID
+		if _, ok := f.requestSummaries[key]; ok {
+			return storage.ErrAlreadyExists
+		}
+		f.requestSummaries[key] = result
+		return nil
+	}).AnyTimes()
+	requestSummaries.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, result entity.RequestIssueSummary, oldVersion, newVersion int32) error {
+		if err := f.failures["request-summary/update"]; err != nil {
+			return err
+		}
+		key := result.RequestID + ":" + result.TaskID + ":" + result.UnitID
+		current, ok := f.requestSummaries[key]
+		if !ok || current.Version != oldVersion {
+			return storage.ErrVersionMismatch
+		}
+		result.Version = newVersion
+		f.requestSummaries[key] = result
+		return nil
+	}).AnyTimes()
 	logs := storagemock.NewMockIssueLogStore(ctrl)
 	summaries := storagemock.NewMockIssueSummaryStore(ctrl)
 	openIssues := storagemock.NewMockOpenIssueStore(ctrl)
@@ -546,4 +583,38 @@ func TestReportedIssueCannotReopenClosedIssue(t *testing.T) {
 	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
 	require.Equal(t, before, f.summary)
 	require.Empty(t, f.openIssue)
+}
+
+func TestRequestSummaryRepairAndClosureWins(t *testing.T) {
+	f := newMaterializerFixture(t)
+	opened := testIssueLog("build/z", entity.IssueStatusOpen)
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+	require.Equal(t, entity.RequestIssueKindNew, f.requestSummaries["9:validation:unit"].Kind)
+	report := entity.IssueLog{TaskID: "validation", UnitID: "unit", Event: entity.IssueEventReported, BuildID: "build/a"}
+	f.failures["request-summary/create"] = assert.AnError
+	require.ErrorIs(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID), assert.AnError)
+	retained := f.logs[logKey{"validation", "unit", "build/a", entity.IssueEventReported}]
+	delete(f.failures, "request-summary/create")
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
+	require.Equal(t, entity.RequestIssueKindExisting, f.requestSummaries["10:validation:unit"].Kind)
+	require.Equal(t, retained, f.logs[logKey{"validation", "unit", "build/a", entity.IssueEventReported}])
+	closed := testIssueLog("build/a", entity.IssueStatusClosed)
+	f.failures["request-summary/update"] = assert.AnError
+	require.ErrorIs(t, f.m.PersistLog(context.Background(), f.stores, closed, opened.BuildID), assert.AnError)
+	delete(f.failures, "request-summary/update")
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, closed, opened.BuildID))
+	require.Equal(t, entity.RequestIssueKindClosed, f.requestSummaries["10:validation:unit"].Kind)
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
+	require.Equal(t, entity.RequestIssueKindClosed, f.requestSummaries["10:validation:unit"].Kind)
+	require.Equal(t, entity.IssueStatusClosed, f.summary.Status)
+	require.Empty(t, f.openIssue)
+}
+
+func TestLegacyHistoryDoesNotInventRequestSummary(t *testing.T) {
+	f := newMaterializerFixture(t)
+	log := testIssueLog("build/z", entity.IssueStatusOpen)
+	f.logs[logKey{log.TaskID, log.UnitID, log.BuildID, log.Event}] = log
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, log, log.BuildID))
+	require.Equal(t, entity.IssueStatusOpen, f.summary.Status)
+	require.Empty(t, f.requestSummaries)
 }

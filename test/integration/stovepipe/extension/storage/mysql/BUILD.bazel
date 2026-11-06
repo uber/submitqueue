@@ -17,6 +17,7 @@ go_test(
         "queue_state_transitions_test.go",
         "queue_summary_test.go",
         "request_acceptance_test.go",
+        "request_issue_summary_materializer_test.go",
         "request_issue_summary_test.go",
         "storage_test.go",
     ],

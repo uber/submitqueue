@@ -82,3 +82,22 @@ func persistIssueHistory(ctx context.Context, materializer issuelog.Materializer
 	}
 	return nil
 }
+
+// persistReportedIssue records only reports accepted for this pass, not older rows fenced by recovery.
+func persistReportedIssue(ctx context.Context, materializer issuelog.Materializer, store storage.Storage, progress entity.IssueTrackingState, issue entity.IssueState) error {
+	if issue.LastProcessedBuildID != progress.BuildID {
+		return nil
+	}
+	if issue.Status != entity.IssueStatusOpen {
+		return nil
+	}
+	if issue.FirstSeenBuildID == progress.BuildID {
+		return nil
+	}
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, Event: entity.IssueEventReported,
+		BuildID: progress.BuildID, FirstSeenBuildID: issue.FirstSeenBuildID}
+	if err := materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
+		return fmt.Errorf("record reported issue: %w", err)
+	}
+	return nil
+}

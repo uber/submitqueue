@@ -35,6 +35,7 @@ go_test(
         "fixture_test.go",
         "history_test.go",
         "issuetrack_test.go",
+        "request_issue_summary_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
