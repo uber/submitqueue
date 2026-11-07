@@ -23,17 +23,18 @@ import (
 	"github.com/stretchr/testify/require"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	"github.com/uber/submitqueue/platform/errs"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
 func (f *fixture) message(build string, final bool) entityqueue.Message {
 	f.t.Helper()
-	f.sequence++
-	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{BuildId: build, QueueName: testQueue, Finalize: final})
-	require.NoError(f.t, err)
-	msg := entityqueue.NewMessage(fmt.Sprintf("notice/%d", f.sequence), payload, testQueue, nil)
-	msg.Tenant = testQueue
+	msg := f.requestJob(build)
+	if final && f.builds[build].RequestID != "" {
+		f.analysisEvent(build, entity.RequestEventBuildAnalysisCompleted)
+	}
 	return msg
 }
 
@@ -43,6 +44,8 @@ func (f *fixture) deliver(msg entityqueue.Message, hold bool) error {
 	delivery.EXPECT().Message().Return(msg)
 	if hold {
 		delivery.EXPECT().Hold(int64(0))
+	} else {
+		delivery.EXPECT().Hold(_analysisWaitMs).MaxTimes(1)
 	}
 	return f.controller.Process(context.Background(), delivery)
 }
@@ -62,8 +65,6 @@ func TestRefreshOpensReportedIssuesAndKeepsOtherState(t *testing.T) {
 
 	f.reportIssue("build", "task", "next")
 	require.NoError(t, f.deliver(msg, false))
-	require.NotContains(t, f.states, issueKey{"task", "next"})
-	require.NoError(t, f.deliver(f.message("build", false), false))
 	require.Contains(t, f.states, issueKey{"task", "next"})
 	require.Len(t, f.logs, 2)
 	require.Equal(t, int32(1), f.states[issueKey{"task", "unit"}].Version)
@@ -211,19 +212,25 @@ func TestFinalNotificationBeforeLateRefreshAndOlderBuild(t *testing.T) {
 	require.Empty(t, f.states)
 }
 
-func TestAnotherNotificationFinishesTheCursorBeforeItsOwnBuild(t *testing.T) {
+func TestNewerRequestWaitsForThePendingCursorAndFinalization(t *testing.T) {
 	f := newFixture(t)
 	f.source("build/100", "100", entity.BuildStatusRunning)
 	f.source("build/101", "101", entity.BuildStatusSucceeded)
 	f.reportIssue("build/100", "task", "unit")
 	f.retain(currentCursor())
 	incoming := f.message("build/101", true)
-	require.NoError(t, f.deliver(incoming, true))
-	require.Equal(t, entity.IssueTrackingPhaseRefreshed, f.progress.Phase)
-	require.Equal(t, "build/100", f.progress.BuildID)
+	require.NoError(t, f.deliverRequest(incoming, _analysisWaitMs))
+	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
+	require.Empty(t, f.states)
+	older := f.message("build/100", false)
+	require.NoError(t, f.deliverRequest(older, _analysisWaitMs))
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
-	require.NoError(t, f.deliver(incoming, true))
-	require.NoError(t, f.deliver(incoming, false))
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	f.analysisEvent("build/100", entity.RequestEventBuildAnalysisCompleted)
+	require.NoError(t, f.deliverRequest(older, 0))
+	require.NoError(t, f.deliverRequest(older, -1))
+	require.NoError(t, f.deliverRequest(incoming, 0))
+	require.NoError(t, f.deliverRequest(incoming, -1))
 	require.Equal(t, "build/101", f.progress.BuildID)
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
 	require.Equal(t, int32(2), f.states[issueKey{"task", "unit"}].Version)
@@ -308,29 +315,29 @@ func TestReadFailuresDoNotChangeIssues(t *testing.T) {
 }
 
 func TestFinalizationRequiresTheWinningTerminalBuild(t *testing.T) {
-	for _, status := range []entity.BuildStatus{entity.BuildStatusRunning, entity.BuildStatusSucceeded} {
-		t.Run(string(status), func(t *testing.T) {
-			f := newFixture(t)
-			f.source("build", "10", status)
-			request := f.requests["10"]
-			request.TerminalBuildID = ""
-			f.requests["10"] = request
-			require.Error(t, f.deliver(f.message("build", true), false))
-			require.False(t, f.hasProgress)
-			require.Empty(t, f.states)
-		})
-	}
+	f := newFixture(t)
+	f.source("build", "10", entity.BuildStatusRunning)
+	require.Error(t, f.deliver(f.message("build", true), false))
+	require.False(t, f.hasProgress)
+	require.Empty(t, f.states)
+}
+
+func TestTrackingUsesTheRequestsWinningBuild(t *testing.T) {
 	f := newFixture(t)
 	f.source("loser", "10", entity.BuildStatusFailed)
-	request := f.requests["10"]
-	request.TerminalBuildID = "winner"
-	f.requests["10"] = request
-	require.NoError(t, f.deliver(f.message("loser", true), false))
-	require.False(t, f.hasProgress)
+	job := f.message("loser", false)
+	f.reportIssue("loser", "ignored", "unit")
+	f.source("winner", "10", entity.BuildStatusSucceeded)
+	f.analysisEvent("winner", entity.RequestEventBuildAnalysisCompleted)
+	require.NoError(t, f.deliverRequest(job, 0))
+	require.NoError(t, f.deliverRequest(job, -1))
+	require.Equal(t, "winner", f.progress.BuildID)
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+	require.Empty(t, f.states)
 }
 
 func TestProcessRejectsInvalidMessageAndSource(t *testing.T) {
-	for _, kind := range []string{"payload", "partition", "tenant", "missing message ID", "missing build", "request queue", "invalid request ID"} {
+	for _, kind := range []string{"payload", "partition", "tenant", "missing message ID", "missing queue", "missing source ID", "missing build", "request queue", "invalid request ID", "build request"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t)
 			f.source("build", "10", entity.BuildStatusRunning)
@@ -344,6 +351,12 @@ func TestProcessRejectsInvalidMessageAndSource(t *testing.T) {
 				msg.Tenant = "other"
 			case "missing message ID":
 				msg.ID = ""
+			case "missing queue":
+				payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{RequestId: "10"})
+				require.NoError(t, err)
+				msg.Payload = payload
+			case "missing source ID":
+				msg = f.message("", false)
 			case "missing build":
 				delete(f.builds, "build")
 			case "request queue":
@@ -354,6 +367,10 @@ func TestProcessRejectsInvalidMessageAndSource(t *testing.T) {
 				request := f.requests["10"]
 				request.ID = "010"
 				f.requests["10"] = request
+			case "build request":
+				build := f.builds["build"]
+				build.RequestID = "other-request"
+				f.builds["build"] = build
 			}
 			require.Error(t, f.deliver(msg, false))
 			require.False(t, f.hasProgress)
@@ -530,7 +547,7 @@ func TestTaskWideFlagSurvivesNoOpOpeningBatchAndRetry(t *testing.T) {
 	}
 }
 
-func TestAnotherNotificationRetainsTheSavedTerminalIntent(t *testing.T) {
+func TestResumedPassRetainsTheSavedTerminalIntent(t *testing.T) {
 	f := newFixture(t)
 	f.source("build/100", "100", entity.BuildStatusFailed)
 	f.source("build/101", "101", entity.BuildStatusRunning)
@@ -541,13 +558,15 @@ func TestAnotherNotificationRetainsTheSavedTerminalIntent(t *testing.T) {
 	progress.Finalize = true
 	f.retain(progress)
 	msg := f.message("build/101", false)
+	require.NoError(t, f.deliverRequest(msg, _analysisWaitMs))
+	older := f.message("build/100", false)
 
-	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(older, true))
 	require.Equal(t, "build/100", f.progress.BuildID)
 	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
 	require.True(t, f.progress.Finalize)
 	require.Empty(t, f.progress.CursorTaskID)
-	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(older, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.NoError(t, f.deliver(msg, false))
 	require.Equal(t, "build/101", f.progress.BuildID)
@@ -616,4 +635,225 @@ func TestRetryResetsCursorBeforeClosing(t *testing.T) {
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"old", "unit"}].Status)
 	require.Equal(t, int32(1), f.states[issueKey{"task", "unit"}].Version)
 	require.Len(t, f.logs, 2)
+}
+
+func (f *fixture) requestJob(buildID string) entityqueue.Message {
+	f.t.Helper()
+	requestID := f.builds[buildID].RequestID
+	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{RequestId: requestID, QueueName: testQueue})
+	require.NoError(f.t, err)
+	msg := entityqueue.NewMessage(requestID+"/issues", payload, testQueue, nil)
+	msg.Tenant = testQueue
+	return msg
+}
+
+func (f *fixture) analysisEvent(buildID string, event entity.RequestEvent) {
+	f.t.Helper()
+	request := f.requests[f.builds[buildID].RequestID]
+	log := requestlog.NewRequestEventLog(request, event, buildID, map[string]string{requestlog.MetadataKeyBuildID: buildID})
+	log.TimestampMs = 1000
+	f.requestHistory[request.ID+":"+log.ID] = log
+}
+
+func (f *fixture) deliverRequest(msg entityqueue.Message, holdMs int64) error {
+	f.t.Helper()
+	delivery := consumermock.NewMockDelivery(f.mocks)
+	delivery.EXPECT().Message().Return(msg)
+	if holdMs >= 0 {
+		delivery.EXPECT().Hold(holdMs)
+	}
+	return f.controller.Process(context.Background(), delivery)
+}
+
+func TestRequestJobWaitsForAnalysisThenPreservesReopening(t *testing.T) {
+	for _, newerTerminal := range []bool{false, true} {
+		t.Run(fmt.Sprint(newerTerminal), func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build/100", "100", entity.BuildStatusSucceeded)
+			status := entity.BuildStatusRunning
+			if newerTerminal {
+				status = entity.BuildStatusSucceeded
+			}
+			f.source("build/101", "101", status)
+			f.seedIssue("task", "unit", entity.IssueStatusOpen)
+			f.reportIssue("build/101", "task", "unit")
+			older, newer := f.requestJob("build/100"), f.requestJob("build/101")
+			require.NoError(t, f.deliverRequest(older, _analysisWaitMs))
+			if newerTerminal {
+				f.analysisEvent("build/101", entity.RequestEventBuildAnalysisCompleted)
+			}
+			require.NoError(t, f.deliverRequest(newer, _analysisWaitMs))
+			require.Equal(t, "100", f.progress.RequestID)
+			require.Equal(t, "older", f.states[issueKey{"task", "unit"}].FirstSeenBuildID)
+			f.analysisEvent("build/100", entity.RequestEventBuildAnalysisCompleted)
+			require.NoError(t, f.deliverRequest(older, 0))
+			require.NoError(t, f.deliverRequest(older, -1))
+			require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
+			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusClosed})
+			wait := _analysisWaitMs
+			if newerTerminal {
+				wait = 0
+			}
+			require.NoError(t, f.deliverRequest(newer, wait))
+			require.Equal(t, "build/101", f.states[issueKey{"task", "unit"}].FirstSeenBuildID)
+			require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
+			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/101", entity.IssueStatusOpen})
+			require.NoError(t, f.deliverRequest(older, -1))
+			require.Equal(t, "101", f.progress.RequestID)
+		})
+	}
+}
+
+func TestRequestJobWaitsForBuildAssociation(t *testing.T) {
+	for _, state := range []entity.RequestState{entity.RequestStateAccepted, entity.RequestStateProcessing, entity.RequestStateSuperseded, entity.RequestStateFailed} {
+		t.Run(string(state), func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build/100", "100", entity.BuildStatusRunning)
+			msg := f.requestJob("build/100")
+			request := f.requests["100"]
+			request.BuildID = ""
+			request.State = state
+			f.requests["100"] = request
+			wait := int64(-1)
+			if !state.IsTerminal() {
+				wait = _analysisWaitMs
+			}
+			if state == entity.RequestStateFailed {
+				err := f.deliverRequest(msg, -1)
+				require.Error(t, err)
+				require.False(t, errs.IsRetryable(err))
+			} else {
+				require.NoError(t, f.deliverRequest(msg, wait))
+			}
+			require.False(t, f.hasProgress)
+			require.Empty(t, f.states)
+		})
+	}
+}
+
+func TestRequestJobAppliesLaterRefreshesWithoutCompletingTheJob(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	job := f.requestJob("build/100")
+	for _, unit := range []string{"a", "b"} {
+		f.reportIssue("build/100", "task", unit)
+		require.NoError(t, f.deliverRequest(job, _analysisWaitMs))
+		require.Equal(t, "build/100", f.states[issueKey{"task", unit}].FirstSeenBuildID)
+		require.Equal(t, entity.IssueTrackingPhaseRefreshed, f.progress.Phase)
+	}
+}
+
+func TestTrackingSeesAnalysisCompletedAfterTheRequestRead(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	job := f.requestJob("build/100")
+	build := f.builds["build/100"]
+	build.Status = entity.BuildStatusSucceeded
+	f.builds[build.ID] = build
+	f.onHistoryRead = func() {
+		f.onHistoryRead = nil
+		request := f.requests["100"]
+		request.State = entity.RequestStateSucceeded
+		request.TerminalBuildID = build.ID
+		f.requests[request.ID] = request
+		f.analysisEvent(build.ID, entity.RequestEventBuildAnalysisCompleted)
+	}
+
+	require.NoError(t, f.deliverRequest(job, 0))
+	require.NoError(t, f.deliverRequest(job, -1))
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+}
+
+func TestFailedRequestRejectsTrackingWithoutReadingAnalysisHistory(t *testing.T) {
+	f := newFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	job := f.requestJob("build/100")
+	request := f.requests["100"]
+	request.State = entity.RequestStateFailed
+	f.requests["100"] = request
+	f.failures["request-history/get"] = 1
+
+	err := f.deliverRequest(job, -1)
+	require.Error(t, err)
+	require.False(t, errs.IsRetryable(err))
+	require.False(t, f.hasProgress)
+	require.Equal(t, 1, f.failures["request-history/get"])
+}
+
+func TestAnalysisAbandonmentFinishesTheCursorBeforeTheNextRequest(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	f.source("build/101", "101", entity.BuildStatusRunning)
+	older, newer := f.requestJob("build/100"), f.requestJob("build/101")
+	f.reportIssue("build/100", "task", "unit")
+	progress := currentCursor()
+	progress.NotificationID = older.ID
+	f.retain(progress)
+	f.analysisEvent("build/100", entity.RequestEventBuildAnalysisAbandoned)
+	require.NoError(t, f.deliverRequest(newer, _analysisWaitMs))
+	err := f.deliverRequest(older, -1)
+	require.Error(t, err)
+	require.False(t, errs.IsRetryable(err))
+	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
+	require.Empty(t, f.states)
+	require.NoError(t, f.recover(older, false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.Equal(t, "100", f.progress.RequestID)
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
+	require.NoError(t, f.deliverRequest(newer, _analysisWaitMs))
+	require.Equal(t, "101", f.progress.RequestID)
+}
+
+func TestAbandonedRequestCannotRestartAfterALateBuildAssociation(t *testing.T) {
+	f := newRecoveryFixture(t)
+	f.source("build/100", "100", entity.BuildStatusRunning)
+	job := f.requestJob("build/100")
+	request := f.requests["100"]
+	request.BuildID, request.State = "", entity.RequestStateFailed
+	f.requests["100"] = request
+	require.Error(t, f.deliverRequest(job, -1))
+	require.NoError(t, f.recover(job, false))
+	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+	require.Empty(t, f.progress.BuildID)
+	before := f.progress
+	f.source("build/100", "100", entity.BuildStatusSucceeded)
+	request = f.requests["100"]
+	request.BuildID = "build/100"
+	f.requests["100"] = request
+	f.reportIssue("build/100", "task", "unit")
+	f.analysisEvent("build/100", entity.RequestEventBuildAnalysisCompleted)
+	require.NoError(t, f.deliverRequest(job, -1))
+	require.Equal(t, before, f.progress)
+	require.Empty(t, f.states)
+}
+
+func TestDLQResumesAnalysisAbandonmentCleanupAfterHistoryFailure(t *testing.T) {
+	for _, associated := range []bool{false, true} {
+		t.Run(fmt.Sprint(associated), func(t *testing.T) {
+			f := newRecoveryFixture(t)
+			f.source("build/100", "100", entity.BuildStatusRunning)
+			job := f.requestJob("build/100")
+			if associated {
+				progress := currentCursor()
+				progress.NotificationID = job.ID
+				f.retain(progress)
+				f.analysisEvent("build/100", entity.RequestEventBuildAnalysisAbandoned)
+			} else {
+				request := f.requests["100"]
+				request.BuildID, request.State = "", entity.RequestStateFailed
+				f.requests["100"] = request
+			}
+			err := f.deliverRequest(job, -1)
+			require.Error(t, err)
+			require.False(t, errs.IsRetryable(err))
+			f.failures["recovery/history"] = 1
+			require.ErrorIs(t, f.recover(job, false), assert.AnError)
+			require.Equal(t, entity.IssueTrackingPhaseAbandoning, f.progress.Phase)
+			before := f.progress
+			require.NoError(t, f.deliverRequest(job, _recoveryDelayMs))
+			require.Equal(t, before, f.progress)
+			require.NoError(t, f.recover(job, false))
+			require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
+		})
+	}
 }

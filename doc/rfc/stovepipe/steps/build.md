@@ -1,5 +1,7 @@
 # Build stage
 
+Build dispatch retains the request's build association before publishing status and analysis notices. Retries reuse that association instead of triggering again; an uncertain build create is accepted only when its retained request identity matches. This supplies the build ID to the request-scoped tracking job already registered at admission.
+
 `build` triggers the build-runner for the scope `process` already decided and hands the resulting build id to `buildsignal`. See [workflow.md](../workflow.md) for where it sits in the pipeline, and [process.md](process.md) for how the scope it reads (`BuildStrategy`, `BaseURI`) is chosen.
 
 It handles only the trigger: it does not poll for completion, record greenness, or decide incremental-vs-full — those are `buildsignal`'s, `record`'s, and `process`'s jobs respectively.
@@ -10,11 +12,11 @@ It handles only the trigger: it does not poll for completion, record greenness, 
 
 `build` consumes a request id, published by `process` in Phase 1 (see [workflow.md](../workflow.md#workflow)). Both phases drive the same `build` → `buildsignal` machinery against the same `Request` row. The `process`/`analyze` → `build` topic is partitioned by **request id**; see [Partitioning](#partitioning) for the full rationale, including why `build` → `buildsignal` partitions finer (by build id) than SubmitQueue's equivalent topic.
 
-**`build` is not the sole writer of the rows it touches, and its own writes are narrow.** On `Request`, `build` never writes at all — it only reads the `BuildStrategy`/`BaseURI`/`URI` fields `process` set at admit, and it leaves `Request.State` untouched at `processing` throughout (`process`, `buildsignal`, and the DLQ reconciler are `Request.State`'s only writers). On `Build`, `build` is the sole creator — it calls `BuildStore.Create` exactly once, at step 6 — and never mutates the row again; `buildsignal` is the sole writer of `Build.Status`/`Build.Version` afterward (see [buildsignal.md](buildsignal.md#input-and-re-entrancy)). This division is why `build` never needs a CAS/version write of its own: `Create` is the only storage mutation in its algorithm.
+**`build` is not the sole writer of the rows it touches.** It conditionally retains `Request.BuildID` without changing the strategy, baseline, or lifecycle state. The request stays `processing` until its outcome is recorded. On `Build`, this stage creates the row; `buildsignal` remains the sole writer of `Build.Status` and `Build.Version`. Every request association uses the request's version guard and preserves concurrent updates.
 
 `build` is phase-agnostic: it never asks "which phase is this?" It reads whatever scope is already persisted and immutable on the `Request` and acts on it. Phase 2's project-scoped invocation is expected to read project-scoped equivalents of the scope fields off the same `Request`; the exact shape of a project-scoped trigger is left to the `analyze` design, consistent with `workflow.md`'s "project mapping contract" open question — see [Project-scoped `Trigger`: reserved, not yet designed](#project-scoped-trigger-reserved-not-yet-designed) for the resulting gap in the `BuildRunner` contract itself.
 
-In both phases `build` is strictly the trigger — `buildsignal` owns polling — so a crash between `Trigger` and the publish leaves a build no poller ever picks up; the redelivery triggers a replacement and the orphan is accepted waste, mirroring SubmitQueue (see [Idempotency](#idempotency)).
+In both phases `buildsignal` owns polling. A crash before retaining the build association can still orphan a triggered build; after association, redelivery reuses the retained build and retries its handoff (see [Idempotency](#idempotency)).
 
 ## Algorithm
 
@@ -39,13 +41,12 @@ For a delivery carrying request id `R`:
    - baseURI = R.BaseURI if R.BuildStrategy == incremental_since_green, else "" (full build).
    - (headURI = R.URI, baseURI) identify the scope; both are opaque SourceControl tokens.
 
-5. Trigger: buildID, err := buildRunner.Trigger(ctx, baseURI, R.URI, metadata)
+5. If R.BuildID is set, reuse it and proceed to step 7. Otherwise trigger:
+   buildID, err := buildRunner.Trigger(ctx, baseURI, R.URI, metadata)
    - Trigger takes no caller-supplied id; the runner mints the build's identity,
      and buildID becomes Build.ID — SubmitQueue's exact convention (see
      "Alternatives considered" under the contract).
-   - there is deliberately no "already triggered?" pre-check: with a runner-minted
-     id there is no key to check by, so a redelivery re-triggers and downstream
-     idempotency absorbs the duplicate (see Idempotency).
+   - a retry before association can trigger again; the first retained association wins.
    - Trigger is async: it returns promptly with the runner-assigned id, not an outcome.
    - metadata is empty for now; expected to carry real data eventually (e.g. conflict-graph
      info, or other upstream decisions relevant to the build) once a concrete need lands in
@@ -57,11 +58,12 @@ For a delivery carrying request id `R`:
    - the row carries no scope; it is recoverable from the Request's immutable fields
      (see the entity table).
    - a crash between step 5 and this write orphans the triggered build (see Idempotency).
-   - ErrAlreadyExists -> benign (reachable only with a backend that returns deterministic ids
-     for retried triggers); continue to step 7.
+   - ErrAlreadyExists -> reload and verify the retained build belongs to R.
+   - CAS R.BuildID before publishing. On conflict, reload R and reuse an existing association.
    - other store error -> return raw; classifier decides.
 
-7. Publish buildID to the buildsignal topic, partitioned by build id.
+7. Retain the build-triggered history event and publish the associated build ID to
+   buildsignal and buildanalysis, partitioned by build id.
    - each build's poll loop then runs in its own partition (see [Partitioning](#partitioning)).
    - publish failure -> return raw (non-retryable by default); the Build row exists, and the DLQ
      path owns recovery (see Error classification).
@@ -69,24 +71,20 @@ For a delivery carrying request id `R`:
 8. ack.
 ```
 
-`Build.ID` is **minted by the runner at `Trigger`**, exactly as in SubmitQueue's build controller: the runner returns its native id (a Buildkite build number, a CI-gateway job id), `build` adopts it as the `Build`'s key, and that same id travels on every hop that needs a build — `build` → `buildsignal` carries the build id in the message, so the poll loop reaches the `Build` by a direct get on identity it was handed. `buildsignal` → `record` carries the **request id** instead: `record`'s unit of work is a Request, and the build's terminal status and id are projected onto that Request before the publish, so `record` never reaches a `Build` at all. No reader derives a build id from a Request; the persisted terminal build id supplies the Request → Build navigation, while `Build.RequestID` supplies the other direction. Another approach is deriving the key from the Request (`buildKey(R)`) and/or passing a caller-supplied idempotency key to `Trigger`; see [Alternatives considered](#alternatives-considered-for-the-build-identity) for what each would buy and cost.
+`Build.ID` is **minted by the runner at `Trigger`**, exactly as in SubmitQueue's build controller: the runner returns its native id (a Buildkite build number, a CI-gateway job id), `build` adopts it as the `Build`'s key, and that same id travels on every hop that needs a build — `build` → `buildsignal` carries the build id in the message, so the poll loop reaches the `Build` by a direct get on identity it was handed. `buildsignal` → `record` carries the **request id** instead: `record`'s unit of work is a Request, and the build's terminal status and id are projected onto that Request before the publish, so `record` never reaches a `Build` at all. `Request.BuildID` supplies navigation while the build runs, and `TerminalBuildID` identifies the winning terminal build; `Build.RequestID` supplies the other direction. Another approach is deriving the key from the Request (`buildKey(R)`) and/or passing a caller-supplied idempotency key to `Trigger`; see [Alternatives considered](#alternatives-considered-for-the-build-identity) for what each would buy and cost.
 
-`build` writes only the `Build`, and only at creation; it never mutates `Request.State`. The Request stays `processing` (set by `process`) through `build` until `buildsignal` moves it terminal by recording the build's outcome. `Build.Status` is the fine-grained build lifecycle; `Request.State` is the coarse pipeline lifecycle. This is also what keeps `process.md` step 3 correct: because `build` leaves the Request at `processing`, a redelivered `process` message still matches its "if processing, re-publish to build" guard.
+`build` creates the `Build` and retains its association on the Request; it never mutates `Request.State`. The Request stays `processing` (set by `process`) through `build` until `buildsignal` moves it terminal by recording the build's outcome. `Build.Status` is the fine-grained build lifecycle; `Request.State` is the coarse pipeline lifecycle. This is also what keeps `process.md` step 3 correct: because `build` leaves the Request at `processing`, a redelivered `process` message still matches its "if processing, re-publish to build" guard.
 
 ## Idempotency
 
-Every branch is safe under at-least-once redelivery — with SubmitQueue's posture on duplicates adopted wholesale: `build` has no pre-trigger dedup check (there is no caller-derivable key to check by; see [Alternatives considered](#alternatives-considered-for-the-build-identity)), so a redelivery that reaches step 5 starts a second, independent build, and safety comes from downstream idempotency rather than from preventing the duplicate:
+A retained `Request.BuildID` prevents a retry from triggering another build after the association is durable. A failed or uncertain create reuses a retained build only after verifying its request identity. The association CAS reloads on conflict and preserves the first associated build; status and analysis publications always use that retained winner.
 
-- **Request not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
-- **Strategy not yet visible** — retryable; the producing stage's write is not visible on this reader yet.
-- **Request already terminal** (step 2) — ack, no build. A redelivery after `record` finished, or after `process` superseded the head, never starts a stale build.
-- **Redelivery while the Request is still in flight** (crash or failure anywhere in steps 5–8) — the redelivery re-runs from step 1, `Trigger` mints a fresh id, `Create` persists a second `Build` row, and a second poll loop starts. Harmless, in three layers: both builds target the identical `(headURI, baseURI)` scope; each `Build` polls in its own partition and `buildsignal` short-circuits the moment the Request goes terminal (its step 3); and `buildsignal`'s outcome write is first-writer-wins, so the second verdict cannot flip the Request's state or overwrite the create-only validation fact. A build triggered but never persisted (crash between steps 5 and 6) is the same story minus the row: an orphan the runner finishes and nobody ever reads. Wasted CI compute, not a correctness risk — the same accepted trade as SubmitQueue.
-- **Trigger / publish / other store failure** — nothing durable is left half-written that a redelivery can't reconcile; the error rejects to `build_dlq`, and `dlq.NewDLQBuildController` drives a still-`processing` Request to `failed` and releases its Queue slot (see [Fail-closed interaction](#fail-closed-interaction)).
+The remote trigger and local association are not atomic. A crash before retaining the association can still start another build on retry. Unassociated builds are not announced to polling or analysis; they remain accepted CI waste. A terminal request never triggers again. Publication and storage failures use the normal retry/DLQ policy described below.
 
 ## Edge cases
 
 - **Head equals last-green** (`R.URI == R.BaseURI`). `process.md` calls this degenerate and leaves it to `build`. Resolution: run a normal incremental build with an empty delta — pass `baseURI = R.BaseURI` unchanged and let the runner apply zero changes on top of it. This needs no branch in `build`: the runner must already handle "no delta" (two adjacent commits) as valid input. Rejected: skipping the build and copying last-green's result forward, because that would force `build` to reason about whether last-green's *recorded greenness* (not just its URI) is still valid — a `record` concern `build` has no business making.
-- **Phase 2 triggers another build for the same Request.** No collision by construction: every `Trigger` mints a fresh runner id, so the Phase-1 whole-repo build and each Phase-2 project-scoped build get distinct `Build` rows, all carrying the same `RequestID`. Each build's id travels in its own messages, so downstream navigation stays a direct get; how `analyze` obtains and forwards the ids of the project builds it triggers is part of the deferred project-scoped trigger design.
+- **Project-scoped builds.** The current request association identifies one whole-repository validation. Multiple project builds for one Request need separate association identities as part of the still-reserved project-scoped trigger design; they must not reuse this single association.
 
 ## Fail-closed interaction
 
@@ -334,6 +332,7 @@ Single-key reads/writes only — no list-by-request, no query-by-attribute — p
 |---|---|---|
 | `BuildStrategy` | `incremental_since_green` or `full_monorepo`; immutable once set | `process` |
 | `BaseURI` | Last-green URI for incremental; empty for full | `process` |
+| `BuildID` | Associated CI build; empty before triggering | `build` |
 | `TerminalBuildID` | The build that established the terminal state; empty when no build established it | `buildsignal` |
 
 `URI` already exists; `process` sets `BuildStrategy`/`BaseURI` at admit (process.md step 7c) and `build` reads them (step 4). Both are immutable for the Request's life.
@@ -347,4 +346,4 @@ Two topic keys in `stovepipe/core/messagequeue/topics.go` — `TopicKeyBuild` (`
 
 ### Partitioning
 
-`process`/`analyze` → `build` is partitioned by **request id**: per-request build work is independent (the per-Queue concurrency gate already ran in `process`), and a single Request's (rare) duplicate deliveries stay ordered — though with no pre-trigger dedup check that ordering is a tidiness property, not a correctness dependency; duplicates are absorbed downstream (see [Idempotency](#idempotency)). `build` → `buildsignal` is partitioned by **build id** (the runner-assigned `Build.ID`), so each build's poll loop is an independent partition. The id is unique per build, so one `Request`'s several Phase-2 project builds land in distinct partitions — the point: a slow poll on one must not block the others. The flip side of request-id partitioning on the `build` topic is that all of one Request's Phase-2 *triggers* serialize through a single partition; that is fine because `build` is trigger-only and cheap, and the concurrency Phase 2 needs comes from the per-build poll partitions, not from parallel triggering. This is a deliberate divergence from SubmitQueue, which partitions its build poll loop by *batch id* (its unit of work); stovepipe goes finer.
+`process`/`analyze` → `build` is partitioned by **request id**: per-request build work is independent (the per-Queue concurrency gate already ran in `process`), and a single Request's (rare) duplicate deliveries stay ordered — the retained request association makes duplicate deliveries reuse the same build (see [Idempotency](#idempotency)). `build` → `buildsignal` is partitioned by **build id** (the runner-assigned `Build.ID`), so each build's poll loop is an independent partition. The id is unique per build, so one `Request`'s several Phase-2 project builds land in distinct partitions — the point: a slow poll on one must not block the others. The flip side of request-id partitioning on the `build` topic is that all of one Request's Phase-2 *triggers* serialize through a single partition; that is fine because `build` is trigger-only and cheap, and the concurrency Phase 2 needs comes from the per-build poll partitions, not from parallel triggering. This is a deliberate divergence from SubmitQueue, which partitions its build poll loop by *batch id* (its unit of work); stovepipe goes finer.

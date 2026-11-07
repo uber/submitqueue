@@ -9,6 +9,7 @@ go_test(
         "harness_test.go",
         "queuepause_test.go",
         "suite_test.go",
+        "tango_suite_test.go",
     ],
     data = [
         "//platform/extension/counter/mysql/schema",
@@ -16,11 +17,14 @@ go_test(
         "//service/runway/server:docker_test_context",
         "//service/submitqueue:docker-compose.git.yml",
         "//service/submitqueue:docker-compose.provider.yml",
+        "//service/submitqueue:docker-compose.tango.yml",
         "//service/submitqueue:docker-compose.yml",
         "//service/submitqueue/demo/provider/git:config",
         "//service/submitqueue/demo/requests",
         "//service/submitqueue/gateway/server:docker_test_context",
         "//service/submitqueue/orchestrator/server:docker_test_context",
+        "//service/tangofake/server:docker_test_context",
+        "//submitqueue/extension/conflict/tango/mysql/schema",
         "//submitqueue/extension/storage:schema",
         "@git",
         "@git//:git_receive_pack",
@@ -40,9 +44,10 @@ go_test(
         "SQ_GITHUB_TEST_REQUIRED",
         "SQ_GITHUB_TOKEN",
     ],
-    # One shard per top-level suite. Each starts its own Compose stack, so they
-    # run in parallel instead of adding up to the 300s default timeout.
-    shard_count = 3,
+    # One shard per top-level suite, so keep this equal to their number. Each
+    # starts its own Compose stack, so they run in parallel instead of adding up
+    # to the 300s default timeout.
+    shard_count = 4,
     tags = [
         "e2e",
         "integration",
@@ -60,6 +65,7 @@ go_test(
         "//platform/extension/consumergate:go_default_library",
         "//platform/extension/consumergate/file:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
         "//platform/publish:go_default_library",
         "//submitqueue/core/messagequeue:go_default_library",

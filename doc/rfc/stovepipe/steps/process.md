@@ -21,7 +21,7 @@ For a delivery carrying request id `R`:
 2. If R.State is terminal (superseded / succeeded / failed / cancelled):
    - ack and return (idempotent no-op).
 3. If R.State is processing (strategy already recorded):
-   - re-announce validation start and re-publish R to build (either prior publish may have failed), ack, return.
+   - re-announce validation start and re-publish R to build, ack, return.
 4. R.State is accepted. Load the Queue row Q.
 5. Coalesce: if CompareRequestID(R.Queue, R.ID, Q.latest_request_id) < 0:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
@@ -29,15 +29,19 @@ For a delivery carrying request id `R`:
    - defer (hold the delivery) -> re-check on redelivery until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
 7. Admit R:
    a. Derive build strategy + baseline (see "Build-strategy decision").
-   b. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
+   b. Register the tracking job, then CAS the Queue version to revalidate this head.
+      - version conflict -> hold for immediate redelivery, rechecking the head and gate from step 1.
+   c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
       - lost to another writer (no longer accepted) -> ack; that writer owns the outcome and nothing is counted.
-   c. CAS the Queue row: in_flight_count += 1, reloading and retrying on a version conflict without re-gating.
-   d. Announce validation start on the hook topic (see "Hooks").
-   e. Publish R to build.
-   f. ack.
+   d. CAS the Queue row: in_flight_count += 1, reloading and retrying on a version conflict without re-gating.
+   e. Announce validation start on the hook topic (see "Hooks").
+   f. Publish R to build.
+   g. ack.
 ```
 
-Step 5 runs regardless of the gate: an intermediate head is superseded on sight (even mid-validation), because superseding consumes no slot.
+Step 5 runs before the gate: an accepted intermediate head is superseded even when all build slots are occupied, because superseding consumes no slot.
+
+Step 7b reserves the request's place in [issue tracking](../../../../stovepipe/controller/issuetrack/README.md#validation-order) before its build can start. The Queue-version CAS checks that no newer head overtook the registration. If the request is superseded before admission, its tracking job is acknowledged without updating issues.
 
 ## Build-strategy decision
 
@@ -149,7 +153,7 @@ The event type is `validation.repository.started`. Its payload names the Queue a
 Published after the admit CAS and before the publish to `build`:
 
 ```
-CAS accepted -> processing → publish HookEvent → publish to build → ack
+register tracking → validate Queue version → CAS accepted -> processing → publish HookEvent → publish to build → ack
 ```
 
 After the CAS because the payload names the Request rather than snapshotting it, and the two facts a start event exists to carry — the scope it chose and the baseline it builds on — are written by that very CAS. A hook that reloads the Request must not find it still `accepted` with neither set. Before the build publish because the announce is the cheaper of the two to retry: a failed announce leaves nothing downstream to undo, whereas announcing after the build publish would make a failed announce force the redelivery to re-publish a build that was already accepted.
@@ -160,8 +164,8 @@ Only an admit announces. A Request that coalescing supersedes never reaches step
 
 Every branch is safe under redelivery:
 
-- **accepted, no strategy** → full admit path. Nothing has been written yet: a crash before the request CAS leaves no trace, and redelivery re-runs the gate and the admit from scratch.
-- **processing** → re-announce the start event, re-publish to `build`, ack. The `build` consumer is keyed on the request id and idempotent, so a duplicate publish is harmless, and the start event's id is derived from the transition rather than the clock, so a re-announce carries the id the first attempt would have and consumers dedupe on it. Re-announcing here is what makes the event at-least-once rather than at-most-once: this is the only branch a redelivery takes once `processing` is durable, so an admit that failed after the state write would otherwise lose the event for good.
+- **accepted, no strategy** → full admit path. A crash before the request CAS may leave a tracking registration, but no admitted request. Redelivery re-runs the gate and admission using the same registration identity.
+- **processing** → re-announce the start event, re-publish to `build`, ack. Tracking registration already succeeded before the processing transition, so it is not repeated. Stable message IDs make repeated hook and build publications idempotent. Re-announcing repairs an admission that persisted the state but failed before publication.
 - **terminal** (superseded / recorded) → ack, no-op.
 - **deferred (waiting for slot)** → no state or count change; pure deferral (re-enters when the held delivery comes due).
 

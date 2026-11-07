@@ -14,6 +14,28 @@
   width: 10rem;
 }
 
+.sq-stovepipe-request-view[aria-label="Project Results"] > [role="region"] {
+  scrollbar-gutter: stable;
+}
+
+.sq-stovepipe-request-view[aria-label="Project Results"] table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 40rem;
+}
+
+.sq-stovepipe-request-view[aria-label="Project Results"] th:nth-child(2) {
+  width: 12rem;
+}
+
+.sq-stovepipe-request-view[aria-label="Project Results"] th:nth-child(3) {
+  width: 14rem;
+}
+
+.sq-stovepipe-request-view[aria-label="Project Results"] td {
+  overflow-wrap: anywhere;
+}
+
 .sq-stovepipe-request > main,
 .sq-stovepipe-request-view:not([hidden]) {
   display: flex;

@@ -45,6 +45,12 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	var savedBuild entity.Build
 	request := processingRequest(entity.BuildStrategyFull, "")
 	queue := entity.Queue{Name: testQueue, InFlightCount: 1, Version: 1}
+	m.association.DoAndReturn(func(_ context.Context, value entity.Request, old, next int32) error {
+		require.Equal(t, request.Version, old)
+		request = value
+		request.Version = next
+		return nil
+	})
 
 	queueStore := storagemock.NewMockQueueStore(ctrl)
 	issueStore := storagemock.NewMockBuildIssueStore(ctrl)
@@ -76,7 +82,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 		request = value
 		request.Version = next
 		return nil
-	})
+	}).AnyTimes()
 
 	queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
 		return queue, nil
@@ -137,7 +143,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	)
 
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
+		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "analysis")
 	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
 		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
 		stovepipemq.TopicKeyBuildSignal, "signal")
@@ -178,19 +184,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	assert.True(t, persisted[b])
 	assert.True(t, persisted[a])
 
-	require.Len(t, published["issuetrack"], 4)
-	for i, msg := range published["issuetrack"] {
-		assert.Equal(t, testQueue, msg.PartitionKey)
-		assert.Equal(t, testQueue, msg.Tenant)
-		notification := &stovepipemq.IssueTrack{}
-		require.NoError(t, stovepipemq.Unmarshal(msg.Payload, notification))
-		assert.Equal(t, testBuildID, notification.GetBuildId())
-		assert.Equal(t, testQueue, notification.GetQueueName())
-		assert.Equal(t, i > 1, notification.GetFinalize())
-	}
-	assert.NotEqual(t, published["issuetrack"][0].ID, published["issuetrack"][1].ID)
-	assert.NotEqual(t, published["issuetrack"][1].ID, published["issuetrack"][2].ID)
-	assert.Equal(t, published["issuetrack"][2].ID, published["issuetrack"][3].ID)
+	require.Empty(t, published["issuetrack"])
 	require.Len(t, history, 1)
 	for _, log := range history {
 		assert.Equal(t, entity.RequestEventBuildAnalysisCompleted, log.Event)

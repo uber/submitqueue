@@ -6,7 +6,7 @@ import { parseProjectPageSize, StovepipePaths } from "./core/paths.js";
 import { readSection } from "./controller/page.js";
 import { loadQueueRequests } from "./controller/queue.js";
 import { loadOpenIssues } from "./controller/issues.js";
-import { loadRequestHistory } from "./controller/request.js";
+import { loadRequestHistory, type BuildUrlResolver } from "./controller/request.js";
 import { loadProjectStatus } from "./controller/projects.js";
 
 export interface StovepipeWebRequest {
@@ -30,6 +30,8 @@ export interface StovepipeWebOptions {
   queues: readonly Queue[];
   paths?: StovepipePaths;
   authorize?(principal: unknown, queue: string): boolean | Promise<boolean>;
+  /** Maps opaque build IDs to absolute HTTP(S) URLs; undefined leaves the ID as text. */
+  resolveBuildUrl?: BuildUrlResolver;
 }
 export function createStovepipeWeb(options: StovepipeWebOptions) {
   const paths = options.paths ?? new StovepipePaths();
@@ -91,7 +93,7 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
         }
         const [history, projectStatus] = await Promise.all([
           readSection(
-            () => loadRequestHistory(service, paths, queue.name, requestId, request.signal),
+            () => loadRequestHistory(service, paths, queue.name, requestId, options.resolveBuildUrl, request.signal),
             onLog,
             "request history",
           ),

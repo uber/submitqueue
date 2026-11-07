@@ -102,6 +102,22 @@ test("loads and retries issue pages, merges task groups, and refreshes from the 
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
+test("shows retained history metadata, including zero values, in the details column", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51?view=history");
+  const history = page.getByRole("table", { name: "Request history", exact: true });
+  await expect(history.getByRole("columnheader", { name: "Details", exact: true })).toBeVisible();
+  for (const label of ["build_triggered", "build_finished", "build_analysis_abandoned", "failed"]) {
+    const row = history.getByRole("row").filter({ has: page.getByRole("cell", { name: label, exact: true }) });
+    await expect(row.getByRole("cell", { name: "Build ID: runner/build/51?attempt=2", exact: true })).toBeVisible();
+  }
+  for (const text of ["Breakage degree: 0", "Breakage degree: 0.25", "Project facts: 0", "Project facts: 51"])
+    await expect(history.getByRole("cell", { name: text, exact: true })).toBeVisible();
+  const accepted = history.getByRole("row").filter({ has: page.getByRole("cell", { name: "accepted", exact: true }) });
+  await expect(accepted.getByRole("cell").last()).toHaveText("—");
+  await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-history-details.png` });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
 test("continues past an empty issue batch instead of claiming the queue has no issues", async ({ page }) => {
   await page.goto("/web%2Fempty?view=issues");
   await expect(page.getByText("No matching issues in this batch. More results are available.")).toBeVisible();
@@ -526,6 +542,12 @@ test("pages through project results without reloading or moving the surrounding 
   const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
   const pager = page.getByRole("navigation", { name: "Project pages (bottom)" });
   await expect(rows).toHaveCount(50);
+  const projectColumns = () => page.getByRole("table", { name: "Recorded project results" })
+    .locator("th").evaluateAll(cells => cells.map(cell => {
+      const { x, width } = cell.getBoundingClientRect();
+      return { x, width };
+    }));
+  const firstPageColumns = await projectColumns();
   await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
   await projectScroll.focus();
   await page.keyboard.press("End");
@@ -534,6 +556,7 @@ test("pages through project results without reloading or moving the surrounding 
   const scrollBeforeNext = await page.evaluate(() => window.scrollY);
   await pager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(rows).toHaveCount(1);
+  expect(await projectColumns()).toEqual(firstPageColumns);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeNext);
   expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
   await expect(pager.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);

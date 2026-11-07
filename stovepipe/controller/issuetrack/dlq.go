@@ -20,12 +20,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -39,14 +41,26 @@ const _recoveryDelayMs int64 = 30000
 
 // DLQController abandons incomplete issue tracking while retaining accepted issue changes.
 type DLQController struct {
-	controller   *Controller
-	materializer requestlog.Materializer
+	logger              *zap.SugaredLogger
+	metricsScope        tally.Scope
+	stores              storage.Factory
+	materializer        issuelog.Materializer
+	requestMaterializer requestlog.Materializer
+	topicKey            consumer.TopicKey
+	consumerGroup       string
+	nowMs               func() int64
 }
 
 func NewDLQController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, topicKey consumer.TopicKey, consumerGroup string) *DLQController {
 	return &DLQController{
-		controller:   NewController(logger, scope, stores, materializer, consumer.TopicRegistry{}, topicKey, consumerGroup),
-		materializer: materializer,
+		logger:              logger.Named("issuetrack_controller"),
+		metricsScope:        scope.SubScope("issuetrack_controller"),
+		stores:              stores,
+		materializer:        issuelog.NewMaterializer(scope),
+		requestMaterializer: materializer,
+		topicKey:            topicKey,
+		consumerGroup:       consumerGroup,
+		nowMs:               func() int64 { return time.Now().UnixMilli() },
 	}
 }
 
@@ -56,50 +70,50 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	msg := delivery.Message()
 	notification := &stovepipemq.IssueTrack{}
 	if err := stovepipemq.Unmarshal(msg.Payload, notification); err != nil {
-		c.controller.logger.Errorw("discarding malformed issue tracking dlq message", "message_id", msg.ID, "error", err)
+		c.logger.Errorw("discarding malformed issue tracking dlq message", "message_id", msg.ID, "error", err)
 		return nil
 	}
 	queue := notification.GetQueueName()
 	if err := entityqueue.ValidatePayloadQueue(msg, queue); err != nil {
-		c.controller.logger.Errorw("discarding issue tracking dlq message with invalid queue identity", "message_id", msg.ID, "error", err)
+		c.logger.Errorw("discarding issue tracking dlq message with invalid queue identity", "message_id", msg.ID, "error", err)
 		return nil
 	}
-	if msg.ID == "" || queue == "" || notification.GetBuildId() == "" || msg.PartitionKey != queue {
-		c.controller.logger.Errorw("discarding issue tracking dlq message with invalid identity", "message_id", msg.ID, "queue", queue)
+	if msg.ID == "" {
+		c.logger.Errorw("discarding issue tracking dlq message without a message ID", "queue", queue)
+		return nil
+	}
+	if notification.GetRequestId() == "" {
+		c.logger.Errorw("discarding issue tracking dlq message without a request ID", "message_id", msg.ID, "queue", queue)
+		return nil
+	}
+	if msg.PartitionKey != queue {
+		c.logger.Errorw("discarding issue tracking dlq message from the wrong partition", "message_id", msg.ID, "queue", queue, "partition", msg.PartitionKey)
 		return nil
 	}
 
-	store, err := c.controller.stores.For(storage.Config{QueueName: queue})
+	store, err := c.stores.For(storage.Config{QueueName: queue})
 	if err != nil {
-		c.controller.logger.Errorw("discarding issue tracking dlq message for unresolvable queue", "queue", queue, "message_id", msg.ID, "error", err)
+		c.logger.Errorw("discarding issue tracking dlq message for unresolvable queue", "queue", queue, "message_id", msg.ID, "error", err)
 		return nil
 	}
-	build, err := loader.ByID(ctx, notification.GetBuildId(), store.GetBuildStore().Get, "build")
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			c.controller.logger.Errorw("discarding issue tracking dlq message for missing build", "message_id", msg.ID, "error", err)
-			return nil
-		}
-		return err
+	request, err := loader.ByID(ctx, notification.GetRequestId(), store.GetRequestStore().Get, "tracked request")
+	if errors.Is(err, storage.ErrNotFound) {
+		c.logger.Errorw("discarding issue tracking dlq message for missing source", "message_id", msg.ID, "error", err)
+		return nil
 	}
-	request, err := loader.ByID(ctx, build.RequestID, store.GetRequestStore().Get, "request")
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			c.controller.logger.Errorw("discarding issue tracking dlq message for missing request", "message_id", msg.ID, "error", err)
-			return nil
-		}
 		return err
 	}
 	if request.Queue != queue {
-		c.controller.logger.Errorw("discarding issue tracking dlq message for request in another queue", "message_id", msg.ID, "request_id", request.ID)
+		c.logger.Errorw("discarding issue tracking dlq message for request in another queue", "message_id", msg.ID, "request_id", request.ID)
 		return nil
 	}
 	if err := id.Validate(request.ID); err != nil {
-		c.controller.logger.Errorw("discarding issue tracking dlq message with invalid request id", "message_id", msg.ID, "error", err)
+		c.logger.Errorw("discarding issue tracking dlq message with invalid request id", "message_id", msg.ID, "error", err)
 		return nil
 	}
 
-	progress, err := c.abandonPass(ctx, store, request, notification, msg.ID)
+	progress, err := c.abandonPass(ctx, store, request, msg.ID)
 	if err != nil {
 		return err
 	}
@@ -112,15 +126,15 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	if hasFailure {
 		fields = append(fields, "failure", originalFailure.Message, "failure_subjects", originalFailure.Subjects, "failure_detail", originalFailure.Detail)
 	}
-	c.controller.logger.Errorw("issue tracking abandoned; issue state may be incomplete", fields...)
-	metrics.NamedCounter(c.controller.metricsScope, "dlq", "tracking_abandoned", 1, metrics.TagsFromContext(ctx)...)
+	c.logger.Errorw("issue tracking abandoned; issue state may be incomplete", fields...)
+	metrics.NamedCounter(c.metricsScope, "dlq", "tracking_abandoned", 1, metrics.TagsFromContext(ctx)...)
 	if progress.NotificationID != msg.ID {
 		delivery.Hold(0)
 	}
 	return nil
 }
 
-func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, request entity.Request, notification *stovepipemq.IssueTrack, notificationID string) (entity.IssueTrackingState, error) {
+func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, request entity.Request, notificationID string) (entity.IssueTrackingState, error) {
 	tracking := store.GetIssueTrackingStore()
 	progress, err := tracking.Get(ctx)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
@@ -130,42 +144,34 @@ func (c *DLQController) abandonPass(ctx context.Context, store storage.Storage, 
 		if err := progress.Validate(); err != nil {
 			return entity.IssueTrackingState{}, fmt.Errorf("invalid issue tracking recovery: %w", err)
 		}
-		if err := persistIssuesReconciledLog(ctx, c.materializer, store, request.Queue, progress); err != nil {
+		if err := persistIssuesReconciledLog(ctx, c.requestMaterializer, store, request.Queue, progress); err != nil {
 			return entity.IssueTrackingState{}, err
 		}
-		if progress.NotificationID == notificationID {
-			switch progress.Phase {
-			case entity.IssueTrackingPhaseRefreshed, entity.IssueTrackingPhaseFinalized:
+		order, err := entity.CompareRequestID(request.ID, progress.RequestID)
+		if err != nil {
+			return entity.IssueTrackingState{}, err
+		}
+		if order < 0 {
+			return entity.IssueTrackingState{}, nil
+		}
+		switch progress.Phase {
+		case entity.IssueTrackingPhaseFinalized, entity.IssueTrackingPhaseAbandoned:
+			if order == 0 {
 				return progress, nil
-			case entity.IssueTrackingPhaseAbandoned:
-				return progress, c.recordAbandonment(ctx, store, request.Queue, progress)
 			}
-		} else {
-			order, err := entity.CompareRequestID(request.ID, progress.RequestID)
-			if err != nil {
-				return entity.IssueTrackingState{}, err
-			}
-			if order < 0 || (order == 0 && progress.Finalize) {
-				return entity.IssueTrackingState{}, nil
-			}
-			switch progress.Phase {
-			case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing, entity.IssueTrackingPhaseAbandoning:
-				if order == 0 {
-					return entity.IssueTrackingState{}, nil
-				}
-			default:
-				progress = entity.IssueTrackingState{Version: progress.Version}
-			}
+			progress = entity.IssueTrackingState{Version: progress.Version}
 		}
 	}
 
 	if progress.NotificationID == "" {
-		if request.TerminalBuildID != "" && request.TerminalBuildID != notification.GetBuildId() {
-			return entity.IssueTrackingState{}, nil
+		progress.RequestID = request.ID
+		progress.BuildID = request.BuildID
+		if request.TerminalBuildID != "" {
+			progress.BuildID = request.TerminalBuildID
 		}
-		progress.RequestID, progress.BuildID, progress.NotificationID = request.ID, notification.GetBuildId(), notificationID
-		progress.Finalize = notification.GetFinalize()
+		progress.NotificationID = notificationID
 	}
+	progress.Finalize = true
 	progress.Phase = entity.IssueTrackingPhaseAbandoning
 	if progress.Version == 0 {
 		progress.Version = 1
@@ -204,7 +210,7 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 				TaskID: progress.CursorTaskID, UnitID: progress.CursorUnitID,
 				Status: entity.IssueStatusOpen, FirstSeenBuildID: progress.BuildID,
 				LastProcessedBuildID: progress.BuildID, LastChangedBuildID: progress.BuildID,
-				ChangedAtMs: c.controller.nowMs(), Version: 1,
+				ChangedAtMs: c.nowMs(), Version: 1,
 			}
 			err = issues.Create(ctx, current)
 		} else {
@@ -220,7 +226,7 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 		if err != nil {
 			return entity.IssueTrackingState{}, fmt.Errorf("fence recovery cursor: %w", err)
 		}
-		if err := c.controller.recordHistory(ctx, store, current); err != nil {
+		if err := persistIssueHistory(ctx, c.materializer, store, current); err != nil {
 			return entity.IssueTrackingState{}, err
 		}
 	}
@@ -229,7 +235,11 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 		return entity.IssueTrackingState{}, err
 	}
 	progress.Phase = entity.IssueTrackingPhaseAbandoned
-	return saveProgress(ctx, store.GetIssueTrackingStore(), progress)
+	checkpoint, err := saveProgress(ctx, store.GetIssueTrackingStore(), progress)
+	if err == nil {
+		c.logger.Infow("abandoned issue tracking", "queue", queue, "request_id", checkpoint.RequestID, "build_id", checkpoint.BuildID, "notification_id", checkpoint.NotificationID)
+	}
+	return checkpoint, err
 }
 
 func (c *DLQController) recordAbandonment(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState) error {
@@ -238,14 +248,14 @@ func (c *DLQController) recordAbandonment(ctx context.Context, store storage.Sto
 	identity := sha256.Sum256([]byte(progress.NotificationID))
 	log := requestlog.NewRequestEventLog(request, entity.RequestEventIssueTrackingAbandoned, fmt.Sprintf("%x", identity),
 		map[string]string{requestlog.MetadataKeyBuildID: progress.BuildID})
-	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+	if err := c.requestMaterializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("record incomplete issue tracking: %w", err)
 	}
 	return nil
 }
 
-func (c *DLQController) Name() string                { return string(c.controller.topicKey) }
-func (c *DLQController) TopicKey() consumer.TopicKey { return c.controller.topicKey }
-func (c *DLQController) ConsumerGroup() string       { return c.controller.consumerGroup }
+func (c *DLQController) Name() string                { return string(c.topicKey) }
+func (c *DLQController) TopicKey() consumer.TopicKey { return c.topicKey }
+func (c *DLQController) ConsumerGroup() string       { return c.consumerGroup }
 
 var _ consumer.Controller = (*DLQController)(nil)

@@ -56,3 +56,22 @@ func TestIssueTrackingState(t *testing.T) {
 		})
 	}
 }
+
+func TestUnassociatedTrackingCanOnlyBeAbandonedWithoutAnIssueCursor(t *testing.T) {
+	for _, phase := range []IssueTrackingPhase{IssueTrackingPhaseRefreshed, IssueTrackingPhaseRefreshing, IssueTrackingPhaseFinalizing, IssueTrackingPhaseFinalized, IssueTrackingPhaseAbandoning, IssueTrackingPhaseAbandoned} {
+		t.Run(string(phase), func(t *testing.T) {
+			state := IssueTrackingState{RequestID: "10", NotificationID: "10/issues", Phase: phase, Finalize: true, Version: 1}
+			if phase == IssueTrackingPhaseAbandoning || phase == IssueTrackingPhaseAbandoned {
+				require.NoError(t, state.Validate())
+				state.Finalize = false
+				require.Error(t, state.Validate())
+				state.Finalize = true
+				state.CursorUnitID = "unit"
+				require.Error(t, state.Validate())
+				state.CursorUnitID = ""
+				state.CursorTaskID = "task"
+			}
+			require.Error(t, state.Validate())
+		})
+	}
+}

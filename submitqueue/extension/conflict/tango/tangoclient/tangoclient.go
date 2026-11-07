@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package tangoclient implements tango.ChangedTargetsClient over the Tango
-// service's YARPC client. It is the only package that imports Tango's
-// generated types.
+// service's YARPC client. It is the only production package that imports
+// Tango's generated types.
 package tangoclient
 
 import (
@@ -23,8 +23,10 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/uber-go/tally"
 	"github.com/uber/tango/tangopb"
 
+	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/tango"
 )
 
@@ -36,17 +38,31 @@ type Config struct {
 
 	// Strategy is how Tango computes the target graph of the base revision.
 	Strategy tangopb.ComputationStrategy
+
+	// MetricsScope receives the client's metrics. Nil discards them.
+	MetricsScope tally.Scope
 }
 
 type client struct {
-	tangoClient tangopb.TangoYARPCClient
-	config      Config
+	tangoClient  tangopb.TangoYARPCClient
+	config       Config
+	metricsScope tally.Scope
+	metricsTags  []coremetrics.Tag
 }
 
 // New returns a ChangedTargetsClient that asks the Tango service behind
 // tangoClient. It serves one repository, the one named by config.Remote.
 func New(tangoClient tangopb.TangoYARPCClient, config Config) tango.ChangedTargetsClient {
-	return &client{tangoClient: tangoClient, config: config}
+	scope := config.MetricsScope
+	if scope == nil {
+		scope = tally.NoopScope
+	}
+	return &client{
+		tangoClient:  tangoClient,
+		config:       config,
+		metricsScope: scope.SubScope("tango_client"),
+		metricsTags:  []coremetrics.Tag{coremetrics.NewTag("remote", config.Remote)},
+	}
 }
 
 type changedTarget struct {
@@ -54,7 +70,10 @@ type changedTarget struct {
 	distance int32
 }
 
-func (c *client) ChangedTargets(ctx context.Context, request tango.ChangedTargetsRequest) ([]tango.LabelDistance, error) {
+func (c *client) ChangedTargets(ctx context.Context, request tango.ChangedTargetsRequest) (targets []tango.LabelDistance, retErr error) {
+	op := coremetrics.Begin(c.metricsScope, "changed_targets", coremetrics.LongLatencyBuckets, c.metricsTags...)
+	defer func() { op.Complete(retErr) }()
+
 	stream, err := c.tangoClient.GetChangedTargets(ctx, &tangopb.GetChangedTargetsRequest{
 		FirstRevision:  c.description(request.BaseRevision, nil),
 		SecondRevision: c.description(request.BaseRevision, request.ChangeURIs),
@@ -94,7 +113,7 @@ func (c *client) ChangedTargets(ctx context.Context, request tango.ChangedTarget
 		}
 	}
 
-	targets := make([]tango.LabelDistance, 0, len(changed))
+	targets = make([]tango.LabelDistance, 0, len(changed))
 	for _, target := range changed {
 		label, ok := labels[target.localID]
 		if !ok {

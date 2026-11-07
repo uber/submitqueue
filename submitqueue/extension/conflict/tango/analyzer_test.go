@@ -21,11 +21,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	"go.uber.org/mock/gomock"
 
 	"github.com/uber/submitqueue/platform/base/change"
 	changesetmock "github.com/uber/submitqueue/submitqueue/core/changeset/mock"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	baserevisionmock "github.com/uber/submitqueue/submitqueue/extension/baserevision/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -44,22 +46,29 @@ type analyzerHarness struct {
 	baseErr    error
 	changes    *changesetmock.MockResolver
 	analyzer   conflict.Analyzer
+	scope      tally.TestScope
 }
 
 func newAnalyzerHarness(t *testing.T) *analyzerHarness {
 	t.Helper()
 	ctrl := gomock.NewController(t)
+	baseRevisions := baserevisionmock.NewMockResolver(ctrl)
 	h := &analyzerHarness{
 		signatures: NewMockSignatureStore(ctrl),
 		client:     NewMockChangedTargetsClient(ctrl),
 		changes:    changesetmock.NewMockResolver(ctrl),
+		scope:      tally.NewTestScope("", nil),
 	}
+	baseRevisions.EXPECT().Resolve(gomock.Any(), analyzerTestQueue).DoAndReturn(
+		func(context.Context, string) (string, error) { return analyzerTestBaseRevision, h.baseErr },
+	).AnyTimes()
 	h.analyzer = New(Params{
-		Signatures:   h.signatures,
-		Cache:        NewSignatureCache(1 << 20),
-		Client:       h.client,
-		BaseRevision: func(context.Context, string) (string, error) { return analyzerTestBaseRevision, h.baseErr },
-		Changes:      h.changes,
+		Signatures:    h.signatures,
+		Cache:         NewSignatureCache(1 << 20),
+		Client:        h.client,
+		BaseRevisions: baseRevisions,
+		Changes:       h.changes,
+		MetricsScope:  h.scope,
 	})
 	return h
 }
@@ -272,4 +281,171 @@ func TestAnalyzer_Analyze_ExistingSignatureVanishes(t *testing.T) {
 	_, err := h.analyzer.Analyze(context.Background(), analyzerTestNew, nil)
 
 	require.Error(t, err)
+}
+
+func TestAnalyzer_Analyze_Metrics(t *testing.T) {
+	shared := analyzerTestNewSignature().Targets[0].ID
+	const queue = "queue=monorepo"
+
+	tests := []struct {
+		name         string
+		inFlight     []entity.Batch
+		analyses     int
+		setup        func(h *analyzerHarness)
+		wantErr      bool
+		wantCounters map[string]int64
+		wantFinishes []string
+		wantNoCounts []string
+	}{
+		{
+			name:     "a created signature and an overlapping in-flight batch",
+			inFlight: []entity.Batch{analyzerTestBatch("11")},
+			analyses: 1,
+			setup: func(h *analyzerHarness) {
+				h.expectSigningNewBatch(nil)
+				h.signatures.EXPECT().Get(gomock.Any(), "11").Return(analyzerTestSignature("11", shared), true, nil)
+			},
+			wantCounters: map[string]int64{
+				"tango_conflict.analyze.start+" + queue:                            1,
+				"tango_conflict.base_revision.start+" + queue:                      1,
+				"tango_conflict.signature.outcomes+outcome=created," + queue:       1,
+				"tango_conflict.cache.miss+" + queue:                               1,
+				"tango_conflict.conflicts.total+" + queue + ",type=target_overlap": 1,
+			},
+			wantFinishes: []string{
+				"tango_conflict.analyze.finish+" + queue + ",result=success",
+				"tango_conflict.base_revision.finish+" + queue + ",result=success",
+			},
+			wantNoCounts: []string{"tango_conflict.no_signature.total+" + queue},
+		},
+		{
+			name:     "a reused signature never resolves the base revision",
+			analyses: 1,
+			setup: func(h *analyzerHarness) {
+				h.signatures.EXPECT().Get(gomock.Any(), analyzerTestNew.ID).Return(analyzerTestNewSignature(), true, nil)
+			},
+			wantCounters: map[string]int64{
+				"tango_conflict.signature.outcomes+outcome=reused," + queue: 1,
+			},
+			wantNoCounts: []string{"tango_conflict.base_revision.start+" + queue},
+		},
+		{
+			name:     "a lost create race",
+			analyses: 1,
+			setup: func(h *analyzerHarness) {
+				h.expectSigningNewBatch(storage.ErrAlreadyExists)
+				h.signatures.EXPECT().Get(gomock.Any(), analyzerTestNew.ID).Return(analyzerTestSignature(analyzerTestNew.ID, 7), true, nil)
+			},
+			wantCounters: map[string]int64{
+				"tango_conflict.signature.outcomes+outcome=race_lost," + queue: 1,
+			},
+			wantNoCounts: []string{"tango_conflict.signature.outcomes+outcome=created," + queue},
+		},
+		{
+			name:     "a second analysis hits the cache for the in-flight signature",
+			inFlight: []entity.Batch{analyzerTestBatch("11")},
+			analyses: 2,
+			setup: func(h *analyzerHarness) {
+				h.expectSigningNewBatch(nil)
+				h.signatures.EXPECT().Get(gomock.Any(), "11").Return(analyzerTestSignature("11", 1), true, nil).Times(1)
+			},
+			wantCounters: map[string]int64{
+				"tango_conflict.cache.miss+" + queue: 1,
+				"tango_conflict.cache.hit+" + queue:  1,
+			},
+		},
+		{
+			name:     "an in-flight batch with no record is counted",
+			inFlight: []entity.Batch{analyzerTestBatch("11")},
+			analyses: 1,
+			setup: func(h *analyzerHarness) {
+				h.expectSigningNewBatch(nil)
+				h.signatures.EXPECT().Get(gomock.Any(), "11").Return(TargetSignature{}, false, nil)
+			},
+			wantErr: true,
+			wantCounters: map[string]int64{
+				"tango_conflict.no_signature.total+" + queue: 1,
+			},
+			wantFinishes: []string{"tango_conflict.analyze.finish+" + queue + ",result=error"},
+		},
+		{
+			name:     "a base resolver error is visible on the base revision operation",
+			analyses: 1,
+			setup: func(h *analyzerHarness) {
+				h.expectNewBatchNotRecorded()
+				h.changes.EXPECT().ChangesForBatch(gomock.Any(), analyzerTestNew).Return(nil, nil)
+				h.baseErr = analyzerTestFailure
+			},
+			wantErr: true,
+			wantFinishes: []string{
+				"tango_conflict.base_revision.finish+" + queue + ",result=error",
+				"tango_conflict.analyze.finish+" + queue + ",result=error",
+			},
+			wantNoCounts: []string{"tango_conflict.signature.outcomes+outcome=created," + queue},
+		},
+		{
+			name:     "a Tango error fails the analysis and records no signature outcome",
+			analyses: 1,
+			setup: func(h *analyzerHarness) {
+				h.expectNewBatchNotRecorded()
+				h.changes.EXPECT().ChangesForBatch(gomock.Any(), analyzerTestNew).Return(nil, nil)
+				h.client.EXPECT().ChangedTargets(gomock.Any(), gomock.Any()).Return(nil, analyzerTestFailure)
+			},
+			wantErr:      true,
+			wantFinishes: []string{"tango_conflict.analyze.finish+" + queue + ",result=error"},
+			wantNoCounts: []string{"tango_conflict.signature.outcomes+outcome=created," + queue},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newAnalyzerHarness(t)
+			tt.setup(h)
+
+			for range tt.analyses {
+				_, err := h.analyzer.Analyze(context.Background(), analyzerTestNew, tt.inFlight)
+				assert.Equal(t, tt.wantErr, err != nil)
+			}
+
+			snapshot := h.scope.Snapshot()
+			for key, want := range tt.wantCounters {
+				require.Contains(t, snapshot.Counters(), key)
+				assert.Equal(t, want, snapshot.Counters()[key].Value(), key)
+			}
+			for _, key := range tt.wantNoCounts {
+				assert.NotContains(t, snapshot.Counters(), key)
+			}
+			for _, key := range tt.wantFinishes {
+				require.Contains(t, snapshot.Histograms(), key)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_Analyze_Metrics_RecordSizes(t *testing.T) {
+	h := newAnalyzerHarness(t)
+	h.expectSigningNewBatch(nil)
+	h.signatures.EXPECT().Get(gomock.Any(), "11").Return(analyzerTestSignature("11", 1), true, nil)
+
+	_, err := h.analyzer.Analyze(context.Background(), analyzerTestNew, []entity.Batch{analyzerTestBatch("11")})
+	require.NoError(t, err)
+
+	histograms := h.scope.Snapshot().Histograms()
+	targets := histograms["tango_conflict.signature.targets+queue=monorepo"]
+	require.NotNil(t, targets)
+	assert.Equal(t, int64(1), targets.Values()[10], "two targets fall in the bucket bounded by 10")
+	inFlight := histograms["tango_conflict.analyze.in_flight+queue=monorepo"]
+	require.NotNil(t, inFlight)
+	assert.Equal(t, int64(1), inFlight.Values()[1])
+}
+
+func TestAnalyzer_Analyze_NilMetricsScope(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	signatures := NewMockSignatureStore(ctrl)
+	signatures.EXPECT().Get(gomock.Any(), analyzerTestNew.ID).Return(analyzerTestNewSignature(), true, nil)
+	analyzer := New(Params{Signatures: signatures, Cache: NewSignatureCache(1 << 20)})
+
+	conflicts, err := analyzer.Analyze(context.Background(), analyzerTestNew, nil)
+
+	require.NoError(t, err)
+	assert.Empty(t, conflicts)
 }

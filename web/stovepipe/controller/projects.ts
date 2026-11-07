@@ -24,6 +24,7 @@ export async function loadProjectStatus(
   if (result.queue !== queue || result.requestId !== requestId)
     throw new Error("Project response does not identify the selected request");
   return {
+    requestState: result.requestState,
     updatedAtMs: result.updatedAtMs.toString(),
     repositoryBreakageDegree: result.repositoryResult.case === "repositoryBreakageDegree"
       ? breakageDegree(result.repositoryResult.value) : null,

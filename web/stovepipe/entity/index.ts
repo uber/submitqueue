@@ -62,6 +62,8 @@ export interface HistoryEventModel {
   label: string;
   /** Backend reason associated with this occurrence. */
   outcomeReason: string;
+  /** Labeled occurrence metadata with optional absolute HTTP(S) links; empty when unavailable. */
+  details: { label: string; value: string; href?: string }[];
 }
 export interface RequestHistoryModel {
   /** Current materialized lifecycle summary returned with the history. */
@@ -70,6 +72,8 @@ export interface RequestHistoryModel {
   events: HistoryEventModel[];
 }
 export interface ProjectStatusModel {
+  /** Lifecycle state from the same response as recording completion. */
+  requestState: string;
   /** Newest durable result or lifecycle record in Unix milliseconds. */
   updatedAtMs: string;
   /** Whole-repository breakage on [0, 1]; null means no recorded result. */

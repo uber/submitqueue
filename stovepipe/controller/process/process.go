@@ -14,14 +14,15 @@
 
 // Package process holds the process-stage queue controller. It consumes request
 // ids from ingest, reloads the Request from storage, coalesces older heads, and
-// admits the latest head when a build slot is open. Build queue publish lands in
-// a follow-up PR.
+// admits the latest head when a build slot is open, registers issue tracking,
+// and dispatches the build.
 package process
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
@@ -236,6 +237,24 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 	if err != nil {
 		return err
 	}
+
+	if err := c.publishIssueTracking(ctx, request); err != nil {
+		return err
+	}
+	// A delayed registration must not admit an older request behind a newer job.
+	if queueRow.Version == math.MaxInt32 {
+		return fmt.Errorf("queue version exhausted")
+	}
+	newVersion := queueRow.Version + 1
+	err = store.GetQueueStore().Update(ctx, queueRow, queueRow.Version, newVersion)
+	if errors.Is(err, storage.ErrVersionMismatch) {
+		delivery.Hold(0)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("confirm tracking registration before admission: %w", err)
+	}
+	queueRow.Version = newVersion
 
 	// The request transition is the admit and the count follows it, so a failure between the two
 	// writes leaves the count low (over-admission by one) rather than a slot nobody owns (a wedge). The
@@ -457,6 +476,20 @@ func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
 		PartitionKey: id,
 	}); err != nil {
 		return fmt.Errorf("failed to publish build request: %w", err)
+	}
+	return nil
+}
+
+func (c *Controller) publishIssueTracking(ctx context.Context, request entity.Request) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.IssueTrack{RequestId: request.ID, QueueName: request.Queue})
+	if err != nil {
+		return fmt.Errorf("serialize issue tracking registration: %w", err)
+	}
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyIssueTrack, publish.MessageParams{
+		Tenant: request.Queue, ID: publish.IntentID(request.ID, "issues"),
+		Payload: payload, PartitionKey: request.Queue,
+	}); err != nil {
+		return fmt.Errorf("register issue tracking for request %s: %w", request.ID, err)
 	}
 	return nil
 }

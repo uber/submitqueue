@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createStovepipeWeb } from "./module.js";
+import { createStovepipeWeb, type StovepipeWebOptions } from "./module.js";
 import { StovepipePaths } from "./core/paths.js";
 import type {
   StovepipeService,
   RequestSummary,
   ProjectStatus,
+  HistoryEvent,
 } from "./extension/service/index.js";
 
 const summary: RequestSummary = {
@@ -19,7 +20,7 @@ const summary: RequestSummary = {
   projectCount: 51,
   brokenProjectCount: 2,
 };
-function createPageTestContext() {
+function createPageTestContext(options: Pick<StovepipeWebOptions, "resolveBuildUrl"> = {}) {
   const service: StovepipeService = {
     listOpenIssues: vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" }),
     list: vi
@@ -39,6 +40,7 @@ function createPageTestContext() {
     getProjectStatusByID: vi.fn().mockResolvedValue({
       queue: summary.queue,
       requestId: summary.requestId,
+      requestState: "processing",
       updatedAtMs: 9007199254740993n,
       repositoryResult: { case: "repositoryBreakageDegree", value: 0 },
       projectResultsComplete: false,
@@ -55,6 +57,7 @@ function createPageTestContext() {
     service,
     paths,
     queues: [{ name: "repo/main" }],
+    ...options,
   });
   return { service, paths, app };
 }
@@ -276,6 +279,81 @@ describe("Stovepipe page loading", () => {
     });
   });
   it.each([
+    ...(["requestState", "buildTriggered", "buildFinished", "buildAnalysisAbandoned"] as const).map((eventCase) => ({
+      name: eventCase,
+      data: { payload: { case: eventCase, value: { buildId: "runner/build/7?attempt=2" } } },
+      details: [{ label: "Build ID", value: "runner/build/7?attempt=2" }],
+    })),
+    { name: "green validation", data: { payload: { case: "validationFactRecorded", value: { factDegree: 0 } } }, details: [{ label: "Breakage degree", value: "0" }] },
+    { name: "partial breakage", data: { payload: { case: "validationFactRecorded", value: { factDegree: 0.25 } } }, details: [{ label: "Breakage degree", value: "0.25" }] },
+    { name: "no project facts", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 0n } } }, details: [{ label: "Project facts", value: "0" }] },
+    { name: "large project count", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 9007199254740993n } } }, details: [{ label: "Project facts", value: "9007199254740993" }] },
+    { name: "missing metadata", data: undefined, details: [] },
+    { name: "unknown metadata", data: { payload: { case: undefined } }, details: [] },
+    { name: "empty build ID", data: { payload: { case: "buildTriggered", value: { buildId: "" } } }, details: [] },
+  ] satisfies { name: string; data: HistoryEvent["data"]; details: { label: string; value: string }[] }[])("exposes serializable history details for $name", async ({ data, details }) => {
+    const { app, service, paths } = createPageTestContext();
+    vi.mocked(service.getRequestHistoryByID).mockResolvedValue({
+      requestSummary: summary,
+      events: [{ eventId: "e1", timestampMs: 100n, occurrence: { case: "event", value: "retained_event" }, outcomeReason: "", data }],
+    });
+    const result = await app.handle({
+      path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams(),
+    });
+    expect(result).toMatchObject({ kind: "render", model: { history: { ok: true, data: { events: [{ details }] } } } });
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+  it.each(["requestState", "buildTriggered", "buildFinished", "buildAnalysisAbandoned"] as const)("resolves %s build links with the opaque ID and queue", async (payloadCase) => {
+    const href = "https://builds.example.test/pipeline/builds/7?attempt=2";
+    const resolveBuildUrl = vi.fn(() => href);
+    const { app, service, paths } = createPageTestContext({ resolveBuildUrl });
+    vi.mocked(service.getRequestHistoryByID).mockResolvedValue({
+      requestSummary: summary,
+      events: [{
+        eventId: "e1", timestampMs: 100n, occurrence: { case: "event", value: "retained_event" }, outcomeReason: "",
+        data: { payload: { case: payloadCase, value: { buildId: "runner/build/7?attempt=2" } } },
+      }],
+    });
+    const result = await app.handle({ path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams() });
+    expect(resolveBuildUrl).toHaveBeenCalledExactlyOnceWith({ queue: summary.queue, buildId: "runner/build/7?attempt=2" });
+    expect(result).toMatchObject({ kind: "render", model: { history: { ok: true, data: { events: [{
+      details: [{ label: "Build ID", value: "runner/build/7?attempt=2", href }],
+    }] } } } });
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+  it.each([undefined, "", "not a URL", "/build/7", "//builds.example.test/7", "javascript:alert(1)", "data:text/html,build"])("leaves build IDs as text when the resolver returns %j", async (href) => {
+    const { app, service, paths } = createPageTestContext({ resolveBuildUrl: () => href });
+    vi.mocked(service.getRequestHistoryByID).mockResolvedValue({
+      requestSummary: summary,
+      events: [{
+        eventId: "e1", timestampMs: 100n, occurrence: { case: "event", value: "build_triggered" }, outcomeReason: "",
+        data: { payload: { case: "buildTriggered", value: { buildId: "runner/build/7" } } },
+      }],
+    });
+    const result = await app.handle({ path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams() });
+    if (result.kind !== "render" || result.model.kind !== "request" || !result.model.history.ok)
+      throw new Error("No history page");
+    expect(result.model.history.data.events[0]?.details).toEqual([{ label: "Build ID", value: "runner/build/7" }]);
+  });
+  it("does not resolve links for metadata without a build ID", async () => {
+    const resolveBuildUrl = vi.fn(() => "https://builds.example.test/7");
+    const { app, service, paths } = createPageTestContext({ resolveBuildUrl });
+    const metadata: HistoryEvent["data"][] = [
+      undefined,
+      { payload: { case: "validationFactRecorded", value: { factDegree: 0 } } },
+      { payload: { case: "buildTriggered", value: { buildId: "" } } },
+    ];
+    vi.mocked(service.getRequestHistoryByID).mockResolvedValue({
+      requestSummary: summary,
+      events: metadata.map((data, index): HistoryEvent => ({
+        eventId: String(index), timestampMs: 100n, occurrence: { case: "event", value: "retained_event" }, outcomeReason: "", data,
+      })),
+    });
+    const result = await app.handle({ path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams() });
+    expect(result).toMatchObject({ kind: "render", model: { history: { ok: true } } });
+    expect(resolveBuildUrl).not.toHaveBeenCalled();
+  });
+  it.each([
     { name: "missing summary", requestSummary: undefined },
     { name: "another request", requestSummary: { ...summary, requestId: "7" } },
     { name: "another queue", requestSummary: { ...summary, queue: "other" } },
@@ -355,6 +433,7 @@ describe("Stovepipe page loading", () => {
     expect(result).toMatchObject({ kind: "render", model: { projectStatus: {
       ok: true,
       data: {
+        requestState: "processing",
         updatedAtMs: "9007199254740993",
         repositoryBreakageDegree: 0,
         complete: false,
@@ -437,7 +516,7 @@ describe("Stovepipe page loading", () => {
   it("keeps unknown repository results and empty complete pages distinct from green", async () => {
     const { app, service, paths } = createPageTestContext();
     vi.mocked(service.getProjectStatusByID).mockResolvedValue({
-      queue: summary.queue, requestId: summary.requestId, updatedAtMs: 0n,
+      queue: summary.queue, requestId: summary.requestId, requestState: "succeeded", updatedAtMs: 0n,
       repositoryResult: { case: undefined }, projectResultsComplete: true,
       projects: [], nextPageToken: "",
     });

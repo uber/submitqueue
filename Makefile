@@ -64,7 +64,13 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 PROVIDER_COMPOSE_FILE_fake = $(abspath service/submitqueue/docker-compose.fake.yml)
 PROVIDER_COMPOSE_FILE_git = $(abspath service/submitqueue/docker-compose.git.yml)
 PROVIDER_COMPOSE_FILE_github = $(abspath service/submitqueue/docker-compose.provider.yml)
-PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
+# What answers conflict analysis, chosen independently of the provider. Empty
+# keeps the provider's own analyzer; tango adds a fake Tango server and needs
+# PROVIDER=git, whose repository it reads targets from.
+ANALYZER ?=
+ANALYZER_COMPOSE_FILE_tango = $(abspath service/submitqueue/docker-compose.tango.yml)
+ANALYZER_COMPOSE_FILE = $(ANALYZER_COMPOSE_FILE_$(ANALYZER))
+PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))$(if $(ANALYZER_COMPOSE_FILE), -f $(ANALYZER_COMPOSE_FILE))
 
 # Where PROVIDER=git keeps the bare repository it lands into. Outside the
 # repository, so a demo leaves nothing in a checkout, and bind-mounted rather
@@ -154,7 +160,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps docs-build docs-serve e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator integration-test-submitqueue-validator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go web-build web-check web-e2e-test web-image-load web-install web-proto help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug build-tangofake-linux check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps docs-build docs-serve e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator integration-test-submitqueue-validator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache test-race tidy tidy-bazel tidy-go web-build web-check web-e2e-test web-image-load web-install web-proto help
 
 
 build: ## Build all services and examples
@@ -165,7 +171,7 @@ build: ## Build all services and examples
 # Build Linux binaries required for the local docker-compose flows (local-*).
 # Bazel-run integration/e2e tests do NOT need these: they build the service
 # binaries hermetically as data dependencies.
-build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-runway-linux ## Build all Linux binaries for Docker
+build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-runway-linux build-tangofake-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
 
 build-runway-linux: ## Build Runway Linux binary for Docker
@@ -223,6 +229,14 @@ build-stovepipe-linux-debug: ## Build Stovepipe Linux debug binary for Docker/de
 	@cp -f bazel-bin/service/stovepipe/server/stovepipe_/stovepipe .docker-bin/stovepipe-debug 2>/dev/null || \
 	 cp -f bazel-bin/service/stovepipe/server/stovepipe .docker-bin/stovepipe-debug
 	@echo "Stovepipe Linux debug binary ready at .docker-bin/stovepipe-debug"
+
+build-tangofake-linux: ## Build the fake Tango server's Linux binary for Docker
+	@echo "Building the fake Tango server Linux binary for Docker..."
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/tangofake/server:server
+	@mkdir -p .docker-bin
+	@cp -f bazel-bin/service/tangofake/server/server_/server .docker-bin/tangofake 2>/dev/null || \
+	 cp -f bazel-bin/service/tangofake/server/server .docker-bin/tangofake
+	@echo "Fake Tango server Linux binary ready at .docker-bin/tangofake"
 
 check-gazelle: ## Check BUILD.bazel files are up to date
 	@echo "Running Gazelle to check BUILD files..."
@@ -381,7 +395,7 @@ local-submitqueue-clean: ## Stop the stack and remove its volumes, images, and P
 	@echo "Cleaning all services and data..."
 	@# The overlay is named so that volumes it declares — Runway's checkouts —
 	@# are removed too, rather than surviving as an orphan.
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down --remove-orphans -v --rmi local
 	@rm -rf "$(SQ_GIT_SANDBOX_DIR)"
 	@echo "All services, volumes, images, and $(SQ_GIT_SANDBOX_DIR) removed."
 
@@ -416,6 +430,11 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 	done
 	@echo "Applying counter schema to mysql-app..."
 	@for file in platform/extension/counter/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
+	@echo "Applying Tango conflict analyzer schema to mysql-app..."
+	@for file in submitqueue/extension/conflict/tango/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
@@ -521,14 +540,18 @@ local-submitqueue-restart: build-all-linux ## Restart all services (rebuild and 
 	@echo "Services restarted!"
 	@make local-submitqueue-ps
 
-local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN)
+local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN; ANALYZER=tango with PROVIDER=git adds a fake Tango server)
+	@test -z "$(ANALYZER)" || test -n "$(ANALYZER_COMPOSE_FILE)" \
+		|| { echo "Unknown ANALYZER '$(ANALYZER)'; the only choice is tango"; exit 2; }
+	@test -z "$(ANALYZER)" || test "$(PROVIDER)" = "git" \
+		|| { echo "ANALYZER=$(ANALYZER) needs PROVIDER=git, got '$(PROVIDER)'"; exit 2; }
 	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
 	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
 		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
 	@test -n "$(PROVIDER_COMPOSE_FILE)" \
 		|| { echo "Provider '$(PROVIDER)' has no compose overlay; add PROVIDER_COMPOSE_FILE_$(PROVIDER) to the Makefile"; exit 2; }
 	@if [ "$(PROVIDER)" = "git" ]; then \
-		$(BAZEL) run //tool/gitsandbox -- -sandbox-dir "$(SQ_GIT_SANDBOX_DIR)" || exit 1; \
+		$(BAZEL) run //tool/gitsandbox -- -sandbox-dir "$(SQ_GIT_SANDBOX_DIR)" $(if $(ANALYZER),-targets) || exit 1; \
 	fi
 	@# Rootless Docker maps container root to the host user; rootful Docker needs
 	@# the host UID:GID explicitly, or the services write files into the sandbox
@@ -559,7 +582,7 @@ local-submitqueue-start: build-all-linux web-image-load ## Start full stack (PRO
 
 local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sandbox; the databases do not survive)
 	@echo "Stopping SubmitQueue services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down --remove-orphans
 	@# Both MySQL services mount anonymous volumes, so `down` detaches them and
 	@# the next `up` creates fresh ones. Saying "data preserved" here would be
 	@# read as "your requests are still there", which they are not.
@@ -571,7 +594,7 @@ local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sand
 
 local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway
 	@echo "Stopping all services..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -f $(WEB_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down --remove-orphans
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_WEB_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(RUNWAY_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
 	@echo "Services stopped. Anonymous database volumes are not reused on the next start."
@@ -636,6 +659,7 @@ GO_GENERATE_PACKAGES := \
 	./stovepipe/extension/sourcecontrol/... \
 	./stovepipe/extension/storage/... \
 	./submitqueue/core/changeset/... \
+	./submitqueue/extension/baserevision/... \
 	./submitqueue/extension/buildrunner/... \
 	./submitqueue/extension/changeprovider/... \
 	./submitqueue/extension/conflict/... \

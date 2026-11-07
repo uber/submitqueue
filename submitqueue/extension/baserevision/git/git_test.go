@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package baserevision
+package git
 
 import (
 	"context"
@@ -38,7 +38,7 @@ const (
 
 var errTestFailure = errors.New("dependency down")
 
-func TestFromGit(t *testing.T) {
+func TestResolver_Resolve(t *testing.T) {
 	tests := []struct {
 		name      string
 		queue     string
@@ -142,7 +142,7 @@ func TestFromGit(t *testing.T) {
 				}
 			}
 
-			got, err := FromGit(factory, map[string]Target{testQueue: tt.target})(context.Background(), tt.queue)
+			got, err := New(factory, map[string]Target{testQueue: tt.target}).Resolve(context.Background(), tt.queue)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -154,7 +154,7 @@ func TestFromGit(t *testing.T) {
 	}
 }
 
-func TestFromGit_RepoLocks(t *testing.T) {
+func TestResolver_Resolve_RepoLocks(t *testing.T) {
 	validOutputs := []gitworkspace.Output{{Alias: "fetch"}, {Alias: "tip", Stdout: testSHA}}
 
 	t.Run("calls on one repo never overlap", func(t *testing.T) {
@@ -172,7 +172,7 @@ func TestFromGit_RepoLocks(t *testing.T) {
 			inFlight.Add(-1)
 			return validOutputs, nil
 		}).AnyTimes()
-		baseRevision := FromGit(factory, map[string]Target{
+		resolver := New(factory, map[string]Target{
 			"main-queue":    {Repo: testRepo, Branch: "main"},
 			"release-queue": {Repo: testRepo, Branch: "release"},
 		})
@@ -186,7 +186,7 @@ func TestFromGit_RepoLocks(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := baseRevision(context.Background(), queue)
+				_, err := resolver.Resolve(context.Background(), queue)
 				assert.NoError(t, err)
 			}()
 		}
@@ -209,7 +209,7 @@ func TestFromGit_RepoLocks(t *testing.T) {
 			})
 			workspace.EXPECT().Close().Return(nil)
 		}
-		baseRevision := FromGit(factory, map[string]Target{
+		resolver := New(factory, map[string]Target{
 			"queue-x": {Repo: "repo-x", Branch: "main"},
 			"queue-y": {Repo: "repo-y", Branch: "main"},
 		})
@@ -219,7 +219,7 @@ func TestFromGit_RepoLocks(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := baseRevision(context.Background(), queue)
+				_, err := resolver.Resolve(context.Background(), queue)
 				assert.NoError(t, err)
 			}()
 		}
