@@ -38,4 +38,4 @@ Retire unused tables separately from application cleanup:
 2. Retain the table and its SQL definition until no deployed or rollback-supported binary depends on them.
 3. Delete the table through an explicit, reviewed migration using the deployment's schema tooling, then remove its SQL definition. Removing a schema file alone is not a deletion migration.
 
-`request_summary_by_queue` is unused by the gateway and retained pending retirement through this process.
+The legacy `request_summary_by_queue` projection is no longer part of this schema. Existing deployments must retire it through their schema tooling; removing its SQL definition does not drop an existing table. Retain the definition in any schema generator's input until that deployment has completed retirement.
