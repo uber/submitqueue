@@ -44,6 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
+	"github.com/uber/submitqueue/platform/githubapi"
 	phttp "github.com/uber/submitqueue/platform/http"
 )
 
@@ -61,8 +62,6 @@ const (
 	Host = "github.com"
 	// APIBaseURL is the REST API root for Host.
 	APIBaseURL = "https://api.github.com"
-
-	apiVersion = "2026-03-10"
 )
 
 // TestRepo creates fixtures in the test repository and removes them when the
@@ -344,11 +343,7 @@ func (r *TestRepo) send(method, path string, body, out any) (int, string) {
 		payload, err = json.Marshal(body)
 		require.NoError(r.t, err)
 	}
-	code, resp, err := phttp.SendRequest(context.Background(), r.httpClient, method, path, payload, func(r *http.Request) {
-		r.Header.Set("Accept", "application/vnd.github+json")
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("X-GitHub-Api-Version", apiVersion)
-	})
+	code, resp, err := phttp.SendRequest(context.Background(), r.httpClient, method, path, payload, githubapi.SetRESTHeaders)
 	if err != nil {
 		r.t.Logf("%s %s: %v", method, path, err)
 		return 0, ""

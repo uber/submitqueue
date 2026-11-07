@@ -14,6 +14,7 @@ Cross-domain packages shared by SubmitQueue, Stovepipe, and other services in th
 - **pipeline/** — Typed engine that assembles a service's queue topology into one lifecycle component.
 - **publish/** — Topic-key publish plumbing and the message-ID convention that controls deduplication.
 - **buildkite/**, **githubactions/** — Vendor CI clients over `platform/http`: the REST calls and provider-specific vocabulary (state strings, id encoding) shared by every domain's `BuildRunner` backend. They deliberately define no interface, so they are plumbing rather than extensions — each domain keeps its own `BuildRunner` contract under `{domain}/extension/buildrunner` and adapts these clients to it.
+- **githubapi/** — Request conventions every direct GitHub API caller shares: the REST headers pinned to one API version, and the GraphQL envelope with its errors. Not a client: callers keep their own `*http.Client` and typed requests.
 - **base/** — Shared domain entities (`change`, `messagequeue`, and related subpackages). Root package `base` is documentation-only.
 - **extension/** — Shared extension interfaces and implementations reused across domains (`counter`, `messagequeue`, and backends such as `mysql`). A package belongs here only if it defines a behavioral interface with its `Config` and `Factory` interface; a vendor client with no interface belongs directly under `platform/`.
 
