@@ -31,9 +31,9 @@ Two controller shapes cover the eleven primary pipeline topics:
 | Controller | Topics | Decoded ID | Terminal state |
 |---|---|---|---|
 | `NewDLQRequestController` | `start`, `validate`, `batch`, `cancel`, `log` | `RequestID` | `RequestStateError` |
-| `NewDLQBatchController` | `speculate`, `build`, `land`, `conclude` | `BatchID` | `BatchStateFailed` + fan-out to member requests as `RequestStateError` |
+| `NewDLQBatchController` | `build`, `land`, `conclude` | `BatchID` | `BatchStateFailed` + fan-out to member requests as `RequestStateError` |
 
-`buildsignal` carries a `Build` payload and has its own small dedicated controller. The split exists because the DLQ message payload shape mirrors the primary topic's payload shape (the queue framework preserves bytes verbatim under the `_dlq` topic name), so the decoder is what changes per topic — not the reconciliation step. The package-level `RequestIDDecoder` interface plus `DecodeLandRequestID` / `DecodeCancelRequestID` / `DecodeRequestID` cover the three payload shapes used by request-scoped topics.
+`buildsignal` carries a `Build` payload and has its own small dedicated controller. `speculate` and `dependency-analysis` carry a `BatchID` but have dedicated controllers, because the batch on their message is not necessarily the one at fault: a speculate run re-plans the whole queue, and a dependency-analysis batch may be a duplicate whose requests another batch already carries. See the doc comments in `speculate.go` and `dependencyanalysis.go`. The split exists because the DLQ message payload shape mirrors the primary topic's payload shape (the queue framework preserves bytes verbatim under the `_dlq` topic name), so the decoder is what changes per topic — not the reconciliation step. The package-level `RequestIDDecoder` interface plus `DecodeLandRequestID` / `DecodeCancelRequestID` / `DecodeRequestID` cover the three payload shapes used by request-scoped topics.
 
 ## Idempotency and concurrent activity
 
