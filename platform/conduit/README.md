@@ -24,6 +24,8 @@ The context bounds the request, so cancelling it or hitting its deadline aborts 
 
 Other HTTP clients in `platform/` leave auth to a transport the wiring installs. Conduit cannot work that way: once the parameters are JSON, it reads the token only from `__conduit__` and silently ignores an `api.token` query or form field, answering `ERR-INVALID-SESSION`. A transport would have to decode and rewrite the request body, so the token is passed to `NewClient` instead.
 
+That makes `*Client` the counterpart of the authenticated `*http.Client` GitHub callers take (see `platform/githubapi`): service wiring builds it once from its own credentials, and extensions receive it.
+
 ## What a call returns
 
 | Conduit's reply | `Call` returns |
