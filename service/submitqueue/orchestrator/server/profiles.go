@@ -586,19 +586,16 @@ func (b *profileBuilder) newGitHubChangeProvider(cfg githubProviderConfig, where
 
 // newPhabChangeProvider returns a function building the Phabricator change
 // provider for a given queue, or nil when its token is unset. As with GitHub,
-// the HTTP client is built once here.
+// the Conduit client is built once here.
 func (b *profileBuilder) newPhabChangeProvider(cfg phabProviderConfig, where string) (func(changeprovider.Config) changeprovider.ChangeProvider, error) {
 	token, ok := tokenFrom(cfg.TokenEnv)
 	if !ok {
 		return nil, nil
 	}
-	client, err := http.NewClient(cfg.Endpoint)
+	conduitClient, err := b.conduitClient(cfg.Endpoint, cfg.Timeout, token, where)
 	if err != nil {
-		return nil, fmt.Errorf("%s: failed to build Phabricator HTTP client: %w", where, err)
+		return nil, err
 	}
-	client.Timeout = timeoutOr(cfg.Timeout, defaultHTTPTimeout)
-	conduitClient := conduit.NewClient(client, token)
-
 	scope := b.scope.SubScope("changeprovider.phabricator")
 	return func(c changeprovider.Config) changeprovider.ChangeProvider {
 		return phabprovider.NewProvider(phabprovider.Params{
@@ -811,4 +808,16 @@ func (b *profileBuilder) githubClient(baseURL, timeout, token, where string) (*n
 		Base:   client.Transport,
 	}
 	return client, nil
+}
+
+// conduitClient builds a Conduit client rooted at a Phabricator host. It is the
+// counterpart of githubClient: Conduit reads its token from the request body,
+// so the token goes to the client rather than to a transport.
+func (b *profileBuilder) conduitClient(endpoint, timeout, token, where string) (*conduit.Client, error) {
+	client, err := http.NewClient(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build Phabricator HTTP client: %w", where, err)
+	}
+	client.Timeout = timeoutOr(timeout, defaultHTTPTimeout)
+	return conduit.NewClient(client, token), nil
 }
