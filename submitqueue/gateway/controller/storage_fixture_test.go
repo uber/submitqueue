@@ -53,6 +53,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 	fixture.storage.EXPECT().GetRequestSummaryStore().Return(fixture.summaryStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestLogStore().Return(fixture.logStore).AnyTimes()
 	fixture.storage.EXPECT().GetRequestURIStore().Return(fixture.uriStore).AnyTimes()
+	fixture.storage.EXPECT().GetQueueRequestStatusStore().Return(permissiveStatusRecords(ctrl)).AnyTimes()
 
 	fixture.summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.RequestSummary) error {
 		fixture.mu.Lock()
@@ -152,6 +153,7 @@ func readModelFactory(
 	}
 	if uris != nil {
 		store.EXPECT().GetRequestURIStore().Return(uris).AnyTimes()
+		store.EXPECT().GetQueueRequestStatusStore().Return(permissiveStatusRecords(ctrl)).AnyTimes()
 	}
 	return factoryForStorage(ctrl, store)
 }
@@ -160,4 +162,13 @@ func readModelFactory(
 // queue-scoped aggregate.
 func (f *controllerStorageFixture) newMaterializer(ctrl *gomock.Controller) *requestcore.Materializer {
 	return requestcore.NewMaterializer(f.newFactory(ctrl))
+}
+
+// permissiveStatusRecords returns a QueueRequestStatusStore that accepts every record write;
+// these tests are not about status records.
+func permissiveStatusRecords(ctrl *gomock.Controller) *storagemock.MockQueueRequestStatusStore {
+	records := storagemock.NewMockQueueRequestStatusStore(ctrl)
+	records.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	records.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return records
 }

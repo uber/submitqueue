@@ -17,6 +17,7 @@ go_library(
         "queue_batch_state.go",
         "queue_config.go",
         "queue_pause.go",
+        "queue_request_status.go",
         "request.go",
         "request_batch.go",
         "request_history.go",
@@ -40,6 +41,7 @@ go_test(
     srcs = [
         "batch_test.go",
         "build_test.go",
+        "queue_request_status_test.go",
         "request_log_test.go",
         "request_test.go",
         "speculation_test.go",

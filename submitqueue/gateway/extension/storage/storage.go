@@ -55,4 +55,7 @@ type Storage interface {
 
 	// GetRequestURIStore returns the RequestURIStore instance.
 	GetRequestURIStore() basestorage.RequestURIStore
+
+	// GetQueueRequestStatusStore returns the QueueRequestStatusStore instance.
+	GetQueueRequestStatusStore() basestorage.QueueRequestStatusStore
 }
