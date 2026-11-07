@@ -251,6 +251,7 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
 	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
 	require.NoError(t, err)
@@ -281,6 +282,7 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
 	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
 	require.NoError(t, err)
@@ -337,9 +339,108 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
 	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
 	require.NoError(t, err)
+}
+
+// A lost ack leaves two batch attempts for one request. Failing one must not
+// terminate a request the other, still live, batch carries.
+func TestFailBatch_SkipsRequestCarriedByAnotherLiveBatch(t *testing.T) {
+	for _, state := range []entity.BatchState{
+		entity.BatchStateCreated,
+		entity.BatchStateSpeculating,
+		entity.BatchStateLanding,
+		entity.BatchStateCancelling,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			batch := entity.Batch{
+				ID: "1", Queue: "q", Contains: []string{"1"},
+				State: entity.BatchStateSpeculating, Version: 2,
+			}
+			other := entity.Batch{
+				ID: "2", Queue: "q", Contains: []string{"1"},
+				State: state, Version: 1,
+			}
+			batchStore := storagemock.NewMockBatchStore(ctrl)
+			batchStore.EXPECT().Get(gomock.Any(), "1").Return(batch, nil).AnyTimes()
+			batchStore.EXPECT().Get(gomock.Any(), "2").Return(other, nil).AnyTimes()
+			batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
+
+			associations := storagemock.NewMockRequestBatchStore(ctrl)
+			associations.EXPECT().GetByRequestID(gomock.Any(), "1").Return([]entity.RequestBatch{
+				{RequestID: "1", BatchID: "1", Version: 1},
+				{RequestID: "1", BatchID: "2", Version: 1},
+			}, nil)
+
+			// Request store with no EXPECTs: the request must not be touched.
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
+			store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
+
+			transitioned, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+			require.NoError(t, err)
+			assert.True(t, transitioned)
+		})
+	}
+}
+
+// The batch being reconciled never counts as its own members' owner, and a
+// batch that already concluded owns nothing.
+func TestFailBatch_FansOutWhenNoOtherLiveBatchCarriesRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		otherState entity.BatchState
+	}{
+		{name: "no other batch"},
+		{name: "other batch failed", otherState: entity.BatchStateFailed},
+		{name: "other batch succeeded", otherState: entity.BatchStateSucceeded},
+		{name: "other batch cancelled", otherState: entity.BatchStateCancelled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			batch := entity.Batch{
+				ID: "1", Queue: "q", Contains: []string{"1"},
+				State: entity.BatchStateSpeculating, Version: 2,
+			}
+			batchStore := storagemock.NewMockBatchStore(ctrl)
+			batchStore.EXPECT().Get(gomock.Any(), "1").Return(batch, nil).AnyTimes()
+			batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
+
+			associations := []entity.RequestBatch{{RequestID: "1", BatchID: "1", Version: 1}}
+			if tt.otherState != "" {
+				other := entity.Batch{ID: "2", Queue: "q", Contains: []string{"1"}, State: tt.otherState, Version: 1}
+				batchStore.EXPECT().Get(gomock.Any(), "2").Return(other, nil).AnyTimes()
+				associations = append(associations, entity.RequestBatch{RequestID: "1", BatchID: "2", Version: 1})
+			}
+			associationStore := storagemock.NewMockRequestBatchStore(ctrl)
+			associationStore.EXPECT().GetByRequestID(gomock.Any(), "1").Return(associations, nil)
+
+			request := entity.Request{ID: "1", Queue: "q", Version: 1, State: entity.RequestStateBatched}
+			requestStore := storagemock.NewMockRequestStore(ctrl)
+			requestStore.EXPECT().Get(gomock.Any(), "1").Return(request, nil)
+			requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+
+			registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error { return nil })
+
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(associationStore).AnyTimes()
+			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+
+			_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "1", "", nil)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestFailBatch_NotFoundIsNoOp(t *testing.T) {

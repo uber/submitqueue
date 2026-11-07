@@ -143,6 +143,7 @@ func TestDLQSpeculateController_Process_Attribution(t *testing.T) {
 			store := orchstoragemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 			store.EXPECT().GetQueueBatchStateStore().Return(queueBatchState).AnyTimes()
 
 			var republished []string
