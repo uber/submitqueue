@@ -138,38 +138,3 @@ func collectIssues(ctx context.Context, store storage.Storage, buildID string) (
 		bounds.After = storage.BuildIssueCursor{TaskID: last.TaskID, UnitID: last.UnitID}
 	}
 }
-
-func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, issues storage.IssueStateStore, buildID string) (entity.BuildIssue, bool, error) {
-	bounds := storage.BuildIssueRange{Limit: buildIssuePageSize}
-	var candidate entity.BuildIssue
-	found := false
-	for {
-		page, err := observations.List(ctx, buildID, bounds)
-		if err != nil {
-			return entity.BuildIssue{}, false, err
-		}
-		if len(page) == 0 {
-			return candidate, found, nil
-		}
-		for _, record := range page {
-			if record.FixID != "" {
-				return record, false, nil
-			}
-			if found {
-				continue
-			}
-			issue, err := issues.Get(ctx, record.TaskID, record.UnitID)
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return entity.BuildIssue{}, false, err
-			}
-			if issue.Status == entity.IssueStatusOpen && issue.FirstSeenBuildID == buildID {
-				candidate, found = record, true
-			}
-		}
-		last := page[len(page)-1]
-		bounds.After = storage.BuildIssueCursor{TaskID: last.TaskID, UnitID: last.UnitID}
-	}
-}
