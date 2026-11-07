@@ -19,3 +19,11 @@ Cross-domain packages shared by SubmitQueue, Stovepipe, and other services in th
 - **extension/** — Shared extension interfaces and implementations reused across domains (`counter`, `messagequeue`, and backends such as `mysql`). A package belongs here only if it defines a behavioral interface with its `Config` and `Factory` interface; a vendor client with no interface belongs directly under `platform/`.
 
 Domain-scoped infrastructure and extensions stay under each domain (for example `submitqueue/core/`, `submitqueue/extension/`).
+
+## Calling a vendor API
+
+GitHub and Phabricator callers split the work across the same three layers:
+
+- **Protocol**: `githubapi/` and `conduit/` hold what every caller of the API would otherwise repeat, which is request encoding and the response envelope with its errors. They have no endpoint methods.
+- **Endpoints**: each extension keeps the calls it makes, with its own typed requests and results, and takes the authenticated connection as a dependency. That dependency is the smallest type that can carry the API's auth: an `*http.Client` for GitHub, whose token rides in a transport, and a `*conduit.Client` for Phabricator, whose token has to be inside the request body.
+- **Wiring**: the service's server reads the credentials, builds each connection once with a timeout, and hands it to the extensions that use it, as `githubClient` and `conduitClient` do in the orchestrator's `profiles.go`.
