@@ -25,7 +25,7 @@ defaults:
 queues:
   - name: demo-queue
     # Reads pull request metadata from GitHub's GraphQL API. For GitHub
-    # Enterprise, add `github: {baseUrl: https://ghe.example.com/api/v3}`.
+    # Enterprise, add `github: {baseUrl: https://ghe.example.com/api/v3, host: ghe.example.com}`.
     changeProvider: {type: github}
 
     # Serializes batches that touch a shared directory, so changes land in
