@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -23,6 +24,9 @@ type Params struct {
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
 	// configuring the base URL (via BaseURLTransport) and auth (via a transport layer).
 	HTTPClient *http.Client
+	// Host is the GitHub instance change URIs must name (e.g. "github.com"):
+	// the one HTTPClient talks to.
+	Host string
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
@@ -34,18 +38,24 @@ type provider struct {
 	// cfg is the per-queue identity this provider was built for.
 	cfg          changeprovider.Config
 	httpClient   *http.Client
+	host         string
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 }
 
-// NewProvider creates a new GitHub ChangeProvider.
-func NewProvider(params Params) changeprovider.ChangeProvider {
+// NewProvider creates a new GitHub ChangeProvider. It errors when Host is
+// missing.
+func NewProvider(params Params) (changeprovider.ChangeProvider, error) {
+	if params.Host == "" {
+		return nil, errors.New("github change provider: Host is required")
+	}
 	return &provider{
 		cfg:          params.Config,
 		httpClient:   params.HTTPClient,
+		host:         params.Host,
 		logger:       params.Logger.Named("github_changeprovider"),
 		metricsScope: params.MetricsScope.SubScope("github_changeprovider"),
-	}
+	}, nil
 }
 
 // Get retrieves change information from GitHub for the request's change.
@@ -71,8 +81,9 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 		"uris", change.URIs,
 	)
 
-	// Validate stacked changes are consistent (same provider, org, and repo)
-	if err := validateChangeConsistency(changeIDs); err != nil {
+	// Checked before any API call: HTTPClient would read a PR on another host
+	// from this one.
+	if err := validateChangeConsistency(changeIDs, p.host); err != nil {
 		return nil, err
 	}
 

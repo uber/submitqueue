@@ -498,9 +498,7 @@ func (b *profileBuilder) newChangeProviderFactory(cfg changeProviderConfig, wher
 		if makeProvider == nil {
 			return nil, fmt.Errorf("%s: github change provider needs %s to be set", where, cfg.GitHub.TokenEnv)
 		}
-		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
-			return makeProvider(c), nil
-		}), nil
+		return changeProviderFunc(makeProvider), nil
 
 	case changeProviderTypePhabricator:
 		makeProvider, err := b.newPhabChangeProvider(*cfg.Phabricator, where)
@@ -529,8 +527,9 @@ func (b *profileBuilder) newChangeProviderFactory(cfg changeProviderConfig, wher
 // unusable partway through a migration.
 func (b *profileBuilder) newRoutingChangeProviderFactory(cfg changeProviderConfig, where string) (changeprovider.Factory, error) {
 	var (
-		makeGitHub, makePhab func(changeprovider.Config) changeprovider.ChangeProvider
-		err                  error
+		makeGitHub func(changeprovider.Config) (changeprovider.ChangeProvider, error)
+		makePhab   func(changeprovider.Config) changeprovider.ChangeProvider
+		err        error
 	)
 	if cfg.GitHub != nil {
 		if makeGitHub, err = b.newGitHubChangeProvider(*cfg.GitHub, where); err != nil {
@@ -552,9 +551,14 @@ func (b *profileBuilder) newRoutingChangeProviderFactory(cfg changeProviderConfi
 	}
 
 	return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
-		var gh, phab changeprovider.ChangeProvider
+		var (
+			gh, phab changeprovider.ChangeProvider
+			err      error
+		)
 		if makeGitHub != nil {
-			gh = makeGitHub(c)
+			if gh, err = makeGitHub(c); err != nil {
+				return nil, fmt.Errorf("%s: %w", where, err)
+			}
 		}
 		if makePhab != nil {
 			phab = makePhab(c)
@@ -570,7 +574,7 @@ func (b *profileBuilder) newRoutingChangeProviderFactory(cfg changeProviderConfi
 // newGitHubChangeProvider returns a function building the GitHub change provider
 // for a given queue, or nil when its token is unset. The HTTP client and metrics
 // scope are built once here; only the per-queue wrapper is built per call.
-func (b *profileBuilder) newGitHubChangeProvider(cfg githubProviderConfig, where string) (func(changeprovider.Config) changeprovider.ChangeProvider, error) {
+func (b *profileBuilder) newGitHubChangeProvider(cfg githubProviderConfig, where string) (func(changeprovider.Config) (changeprovider.ChangeProvider, error), error) {
 	token, ok := tokenFrom(cfg.TokenEnv)
 	if !ok {
 		return nil, nil
@@ -580,10 +584,11 @@ func (b *profileBuilder) newGitHubChangeProvider(cfg githubProviderConfig, where
 		return nil, err
 	}
 	scope := b.scope.SubScope("changeprovider.github")
-	return func(c changeprovider.Config) changeprovider.ChangeProvider {
+	return func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 		return githubprovider.NewProvider(githubprovider.Params{
 			Config:       c,
 			HTTPClient:   client,
+			Host:         cfg.Host,
 			Logger:       b.logger.Sugar(),
 			MetricsScope: scope,
 		})
