@@ -52,6 +52,8 @@ const (
 	MetadataKeyClosureMode = "closure_mode"
 	// MetadataKeyFixID identifies an opaque repair attempt.
 	MetadataKeyFixID = "fix_id"
+	// MetadataKeyExecutorID identifies the queue-local registered repair backend.
+	MetadataKeyExecutorID = "executor_id"
 	// MetadataKeyTaskID identifies the validation task associated with a repair attempt.
 	MetadataKeyTaskID = "task_id"
 	// MetadataKeyUnitID identifies the validation unit; empty means a task-wide issue.

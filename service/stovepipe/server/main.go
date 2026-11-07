@@ -97,8 +97,8 @@ func (fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunn
 
 type noopRepairExecutorFactory struct{}
 
-func (noopRepairExecutorFactory) For(fixer.Config) (fixer.RepairExecutor, error) {
-	return fixernoop.New(), nil
+func (noopRepairExecutorFactory) For(fixer.Config) ([]fixer.Registration, error) {
+	return []fixer.Registration{{ID: "noop", Executor: fixernoop.New()}}, nil
 }
 
 // hookResolver sends every event to the no-op hook. Which hooks an event goes to is host
