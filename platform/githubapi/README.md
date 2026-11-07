@@ -7,6 +7,8 @@ The parts of a GitHub API request that every direct caller would otherwise repea
 
 This package is not a client. Each caller keeps its own `*http.Client` (API root from `platform/http.BaseURLTransport`, auth from a transport) and its own typed requests and responses, and decides what a missing resource means for it.
 
+Its Phabricator counterpart, `platform/conduit`, does hold a client, because Conduit reads the API token from the request body, where a transport cannot add it.
+
 ## Who uses it
 
 - `platform/githubactions` and `runway/extension/merger/github` (REST)
