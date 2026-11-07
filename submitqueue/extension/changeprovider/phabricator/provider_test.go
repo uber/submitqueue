@@ -100,6 +100,29 @@ func TestProvider_Get(t *testing.T) {
 	}
 }
 
+func TestProvider_Get_UnavailableDiff(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		result map[string]*diffResult
+	}{
+		{name: "missing diff", result: validDiffResponse()},
+		{name: "null diff", result: map[string]*diffResult{"100": validDiffResponse()["100"], "101": nil}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				serveConduit(t, w, tt.result)
+			}))
+			t.Cleanup(server.Close)
+			p := newTestProvider(t, &http.Client{Transport: &testTransport{baseURL: server.URL}})
+			infos, err := p.Get(t.Context(), entity.Request{Change: change.Change{
+				URIs: []string{"phab://phab.example.com/D200/100", "phab://phab.example.com/D201/101"},
+			}})
+			require.Error(t, err)
+			assert.Nil(t, infos)
+		})
+	}
+}
+
 func TestProvider_Get_MultipleDiffs(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
