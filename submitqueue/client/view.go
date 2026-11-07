@@ -148,8 +148,8 @@ func Draw(rows []*Row, status string) {
 }
 
 // digest reduces a request's recorded history to the trail worth showing, the
-// status it currently holds, and the error the latest event carried. A status
-// recorded more than once in a row is one step in the trail, not several.
+// status it currently holds, and its diagnostic. Terminal outcomes take precedence
+// over later nonterminal entries. Consecutive repeated statuses form one trail step.
 //
 // The history holds two kinds of entry. A status is a position the request
 // reached, and those are the trail's spine. An event is something that happened
@@ -193,13 +193,17 @@ func digest(events []*pb.HistoryEvent) (trail []string, status, note string) {
 	}
 
 	for _, e := range events {
-		if e == nil {
+		if e == nil || (e.Status == "" && e.Event == "") {
 			continue
 		}
-		if e.Status == "" {
-			if e.Event == "" {
-				continue
+		// Late cancellation intents and background work cannot reopen a settled request.
+		if !terminalStatuses[status] || terminalStatuses[e.Status] {
+			if e.Status != "" {
+				status = e.Status
 			}
+			note = e.LastError
+		}
+		if e.Status == "" {
 			if counts[e.Event] == 0 {
 				pending = append(pending, e.Event)
 			}
@@ -217,13 +221,6 @@ func digest(events []*pb.HistoryEvent) (trail []string, status, note string) {
 	}
 	flush()
 
-	if last := events[len(events)-1]; last != nil {
-		status, note = last.Status, last.LastError
-	}
-	// The last entry may be an event, which leaves the request where it was.
-	if status == "" {
-		status = currentStatus(events)
-	}
 	return trail, status, note
 }
 
@@ -239,17 +236,6 @@ func annotate(order []string, counts map[string]int) []string {
 		out = append(out, event)
 	}
 	return out
-}
-
-// currentStatus is the last position the request reached, ignoring anything
-// recorded while it sat there.
-func currentStatus(events []*pb.HistoryEvent) string {
-	for i := len(events) - 1; i >= 0; i-- {
-		if e := events[i]; e != nil && e.Status != "" {
-			return e.Status
-		}
-	}
-	return ""
 }
 
 // outcome is the one-line verdict shown under the finished table.
