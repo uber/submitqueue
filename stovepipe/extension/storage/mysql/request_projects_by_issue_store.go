@@ -53,7 +53,7 @@ func (s *requestProjectsByIssueStore) Create(ctx context.Context, requestID stri
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := s.validatePrefix(requestID); err != nil {
+	if err := validateProjectIssueRequest(s.queue, requestID); err != nil {
 		return err
 	}
 	if err := validateProjectIssueAttribution(entry); err != nil {
@@ -76,7 +76,7 @@ func (s *requestProjectsByIssueStore) List(ctx context.Context, requestID string
 	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	if err := s.validatePrefix(requestID); err != nil {
+	if err := validateProjectIssueRequest(s.queue, requestID); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -111,14 +111,14 @@ func (s *requestProjectsByIssueStore) List(ctx context.Context, requestID string
 	return ret, nil
 }
 
-func (s *requestProjectsByIssueStore) validatePrefix(requestID string) error {
+func validateProjectIssueRequest(queue, requestID string) error {
 	if err := id.Validate(requestID); err != nil {
 		return fmt.Errorf("invalid project issue attribution request ID: %w", err)
 	}
-	if s.queue == "" {
+	if queue == "" {
 		return fmt.Errorf("project issue attribution queue must not be empty")
 	}
-	if len(s.queue) > 255 {
+	if len(queue) > 255 {
 		return fmt.Errorf("project issue attribution queue exceeds 255-byte limit")
 	}
 	return nil
