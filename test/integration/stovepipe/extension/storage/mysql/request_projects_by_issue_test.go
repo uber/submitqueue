@@ -73,6 +73,24 @@ func testRequestProjectsByIssue(t *testing.T, ctx context.Context, backend *mysq
 		}
 		require.Equal(t, want, got)
 	}
+	for _, pageSize := range []int{1, 2, 3, 20} {
+		var got []entity.ProjectIssueAttribution
+		after := ""
+		for {
+			page, err := store.ListByIssue(ctx, "1", "test", "x", after, pageSize)
+			require.NoError(t, err)
+			if len(page) == 0 {
+				break
+			}
+			got = append(got, page...)
+			require.LessOrEqual(t, len(got), 3)
+			after = page[len(page)-1].Project
+		}
+		require.Equal(t, []entity.ProjectIssueAttribution{entries[4], entries[2], entries[1]}, got)
+	}
+	missing, err := store.ListByIssue(ctx, "1", "test", "missing", "", 2)
+	require.NoError(t, err)
+	require.Empty(t, missing)
 	page, err := store.List(ctx, "1", entity.ProjectIssueAttribution{TaskID: "test", UnitID: "w", Project: "service"}, 2)
 	require.NoError(t, err)
 	require.Equal(t, want[1:3], page)

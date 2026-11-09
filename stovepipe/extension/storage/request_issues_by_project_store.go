@@ -30,5 +30,6 @@ type RequestIssuesByProjectStore interface {
 	// List scans the request/project prefix in ascending bytewise task/unit order.
 	// after is exclusive; its zero value starts the range. A nonzero cursor must match project.
 	// limit must be positive. An empty page ends the range, not evidence of completed attribution.
+	// Pages are full unless the selected prefix is exhausted.
 	List(ctx context.Context, requestID, project string, after entity.ProjectIssueAttribution, limit int) ([]entity.ProjectIssueAttribution, error)
 }

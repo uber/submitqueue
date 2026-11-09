@@ -69,3 +69,18 @@ func (mr *MockRequestProjectsByIssueStoreMockRecorder) List(ctx, requestID, afte
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockRequestProjectsByIssueStore)(nil).List), ctx, requestID, after, limit)
 }
+
+// ListByIssue mocks base method.
+func (m *MockRequestProjectsByIssueStore) ListByIssue(ctx context.Context, requestID, taskID, unitID, afterProject string, limit int) ([]entity.ProjectIssueAttribution, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListByIssue", ctx, requestID, taskID, unitID, afterProject, limit)
+	ret0, _ := ret[0].([]entity.ProjectIssueAttribution)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListByIssue indicates an expected call of ListByIssue.
+func (mr *MockRequestProjectsByIssueStoreMockRecorder) ListByIssue(ctx, requestID, taskID, unitID, afterProject, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByIssue", reflect.TypeOf((*MockRequestProjectsByIssueStore)(nil).ListByIssue), ctx, requestID, taskID, unitID, afterProject, limit)
+}
