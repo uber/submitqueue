@@ -16,6 +16,7 @@ go_library(
         "open_issue.go",
         "project_fact_by_degree.go",
         "project_issue_attribution.go",
+        "project_issues.go",
         "project_status.go",
         "queue.go",
         "queue_config.go",
