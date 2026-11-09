@@ -261,6 +261,20 @@ func (mr *MockStorageMockRecorder) GetRequestLogStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestLogStore", reflect.TypeOf((*MockStorage)(nil).GetRequestLogStore))
 }
 
+// GetRequestProjectsByIssueStore mocks base method.
+func (m *MockStorage) GetRequestProjectsByIssueStore() storage.RequestProjectsByIssueStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRequestProjectsByIssueStore")
+	ret0, _ := ret[0].(storage.RequestProjectsByIssueStore)
+	return ret0
+}
+
+// GetRequestProjectsByIssueStore indicates an expected call of GetRequestProjectsByIssueStore.
+func (mr *MockStorageMockRecorder) GetRequestProjectsByIssueStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestProjectsByIssueStore", reflect.TypeOf((*MockStorage)(nil).GetRequestProjectsByIssueStore))
+}
+
 // GetRequestStore mocks base method.
 func (m *MockStorage) GetRequestStore() storage.RequestStore {
 	m.ctrl.T.Helper()

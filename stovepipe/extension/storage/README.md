@@ -26,6 +26,14 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 
 `ProjectFactByDegreeStore` is the ordered lookup mapping for named project facts. Its immutable `(queue, URI, degree DESC, project ASC)` primary key stores the original degree and orders by descending degree and ascending bytewise project ID, so listing is a bounded key-range read. It holds no duplicate validation payload; readers hydrate facts by their original keys and verify the mapping. The record controller ensures mappings from persisted winning facts before recording project completion, including retries after partial writes. Create the table before deploying writers. The table starts empty: only results processed by index-aware writers receive mappings, with no historical population or read-time fallback.
 
+## Request projects by issue
+
+`RequestProjectsByIssueStore` retains source rows keyed by `(queue, request_id, task_id, unit_id, project)`. Each row records one affected project for a unit-level issue; task, unit, and project must be nonempty. Rows are immutable and duplicate creates return `ErrAlreadyExists`.
+
+Attribution is assumed stable for a request. Retries recreate the same pairs and treat duplicate creates as success. All rows must be written before retaining the request's `project_issues_recorded` occurrence, whose metadata identifies the build. The occurrence establishes completion even when there are no associations. Without it, retained rows are incomplete.
+
+Listing fixes the queue/request prefix and returns bounded pages in ascending bytewise task/unit/project order. The cursor excludes its key. An empty page ends that range; it does not establish that attribution completed. The MySQL key uses the issue stores' task/unit capacities and a 1020-byte project name, matching the byte capacity of existing project names. Create the source table before deploying writers. This store does not maintain current project-issue lookups.
+
 ## Build issue observations
 
 `BuildIssueStore` accumulates observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.

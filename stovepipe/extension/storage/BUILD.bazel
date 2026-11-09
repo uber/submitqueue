@@ -16,6 +16,7 @@ go_library(
         "queue_summary_store.go",
         "request_acceptance_store.go",
         "request_log_store.go",
+        "request_projects_by_issue_store.go",
         "request_store.go",
         "request_summary_store.go",
         "request_uri_store.go",
