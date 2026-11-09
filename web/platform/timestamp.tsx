@@ -50,7 +50,7 @@ const TimestampButton = styled("button", ({ $theme }) => ({
   display: "inline", border: 0, borderRadius: "2px", padding: 0, backgroundColor: "transparent",
   color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit",
   textAlign: "inherit", cursor: "pointer",
-  whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", textDecoration: "underline dotted",
+  whiteSpace: "normal", fontVariantNumeric: "tabular-nums", textDecoration: "underline dotted",
   textUnderlineOffset: "3px",
   ":hover": { color: $theme.colors.linkText },
   ":focus-visible": { outline: `2px solid ${$theme.colors.borderSelected}`, outlineOffset: "3px" },
