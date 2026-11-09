@@ -119,4 +119,6 @@ type Storage interface {
 	GetValidationFactStore() ValidationFactStore
 
 	GetProjectFactByDegreeStore() ProjectFactByDegreeStore
+
+	GetRequestProjectsByIssueStore() RequestProjectsByIssueStore
 }
