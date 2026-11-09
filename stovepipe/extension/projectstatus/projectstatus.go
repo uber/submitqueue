@@ -41,12 +41,9 @@ type Result struct {
 }
 
 // Resolver resolves named project status results from one terminal validation.
-// terminalBuildID identifies the build that established the request's terminal
-// state, or is empty when no build established it. Implementations may use any
-// repository-specific analysis they need to obtain those results.
 // Returning no results is valid.
 type Resolver interface {
-	Resolve(ctx context.Context, request entity.Request, terminalBuildID string) ([]Result, error)
+	Resolve(ctx context.Context, request entity.Request) ([]Result, error)
 }
 
 // ResolverConfig carries the queue identity handed to a ResolverFactory.
