@@ -21,6 +21,7 @@ import (
 
 	"github.com/uber/submitqueue/stovepipe/core/queuelog"
 	"github.com/uber/submitqueue/stovepipe/core/queuestate"
+	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -38,6 +39,7 @@ type StovepipeServer struct {
 	projectStatusController  controller.ProjectStatusController
 	listController           controller.ListController
 	openIssuesController     controller.ListOpenIssuesController
+	requestIssuesController  controller.GetIssuesByRequestIDController
 	queueStatusController    controller.GetQueueStatusController
 }
 
@@ -50,6 +52,7 @@ func NewStovepipeServer(
 	listController controller.ListController,
 	queueStatusController controller.GetQueueStatusController,
 	openIssuesController controller.ListOpenIssuesController,
+	requestIssuesController controller.GetIssuesByRequestIDController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
@@ -58,6 +61,7 @@ func NewStovepipeServer(
 		projectStatusController:  projectStatusController,
 		listController:           listController,
 		openIssuesController:     openIssuesController,
+		requestIssuesController:  requestIssuesController,
 		queueStatusController:    queueStatusController,
 	}
 }
@@ -160,4 +164,22 @@ func (s *StovepipeServer) ListOpenIssues(ctx context.Context, req *pb.ListOpenIs
 		}
 	}
 	return mapper.ListOpenIssuesResultToProto(result), nil
+}
+
+// GetIssuesByRequestID returns accepted results and their recording status.
+func (s *StovepipeServer) GetIssuesByRequestID(ctx context.Context, req *pb.GetIssuesByRequestIDRequest) (*pb.GetIssuesByRequestIDResponse, error) {
+	result, err := s.requestIssuesController.GetIssuesByRequestID(ctx, mapper.ProtoToGetIssuesByRequestIDRequest(req))
+	if err != nil {
+		switch {
+		case controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case errors.Is(err, storage.ErrNotFound):
+			return nil, status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil, status.FromContextError(err).Err()
+		default:
+			return nil, err
+		}
+	}
+	return mapper.GetIssuesByRequestIDResultToProto(result), nil
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
@@ -68,6 +69,12 @@ func (s *StovepipeE2ESuite) TestIssueTracking_FinalizesAfterAnalysis() {
 	issues, err := store.GetIssueStateStore().List(s.ctx, storage.IssueStateRange{Limit: 1})
 	require.NoError(t, err)
 	require.Empty(t, issues)
+	pollUntil(convergencePollInterval, func() bool {
+		result, err := s.client.GetIssuesByRequestID(s.ctx, &pb.GetIssuesByRequestIDRequest{Queue: issueTrackingQueue, RequestId: requestID})
+		require.NoError(t, err)
+		require.Empty(t, result.GetIssues())
+		return result.GetStatus() == "complete"
+	})
 }
 
 func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsIncompleteAnalysis() {
@@ -123,6 +130,10 @@ func (s *StovepipeE2ESuite) TestIssueTracking_DLQAbandonsIncompleteAnalysis() {
 	require.NoError(t, err)
 	require.Equal(t, build, retainedBuild)
 	require.Equal(t, int32(1), s.inFlightCount(queue))
+	result, err := s.client.GetIssuesByRequestID(s.ctx, &pb.GetIssuesByRequestIDRequest{Queue: queue, RequestId: request.ID})
+	require.NoError(t, err)
+	require.Equal(t, "incomplete", result.GetStatus())
+	require.Empty(t, result.GetIssues())
 
 	// The DLQ watermark survives message garbage collection and proves recovery acknowledged.
 	pollUntil(convergencePollInterval, func() bool {
