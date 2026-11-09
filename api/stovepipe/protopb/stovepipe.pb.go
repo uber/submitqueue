@@ -2540,6 +2540,306 @@ func (x *GetIssuesByRequestIDResponse) GetNextPageToken() string {
 	return ""
 }
 
+// ProjectIssueAttribution is one historical issue/project association within a request.
+type ProjectIssueAttribution struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Validation task containing the failed unit.
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// Failed unit; attribution is available only for unit-level issues.
+	UnitId string `protobuf:"bytes,2,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
+	// Affected project within this request's validation scope.
+	Project       string `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProjectIssueAttribution) Reset() {
+	*x = ProjectIssueAttribution{}
+	mi := &file_stovepipe_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProjectIssueAttribution) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProjectIssueAttribution) ProtoMessage() {}
+
+func (x *ProjectIssueAttribution) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProjectIssueAttribution.ProtoReflect.Descriptor instead.
+func (*ProjectIssueAttribution) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *ProjectIssueAttribution) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ProjectIssueAttribution) GetUnitId() string {
+	if x != nil {
+		return x.UnitId
+	}
+	return ""
+}
+
+func (x *ProjectIssueAttribution) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+type ListRequestProjectsByIssueRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required configured queue.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Canonical decimal request ID within the queue.
+	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Required task containing the issue.
+	TaskId string `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// Required failed unit within the task.
+	UnitId string `protobuf:"bytes,4,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
+	// Maximum pairs per page. Zero selects 50; otherwise 1 through 200.
+	PageSize int32 `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation bound to the queue, request, and issue.
+	PageToken     string `protobuf:"bytes,6,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequestProjectsByIssueRequest) Reset() {
+	*x = ListRequestProjectsByIssueRequest{}
+	mi := &file_stovepipe_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequestProjectsByIssueRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequestProjectsByIssueRequest) ProtoMessage() {}
+
+func (x *ListRequestProjectsByIssueRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequestProjectsByIssueRequest.ProtoReflect.Descriptor instead.
+func (*ListRequestProjectsByIssueRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ListRequestProjectsByIssueRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequestProjectsByIssueRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ListRequestProjectsByIssueRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ListRequestProjectsByIssueRequest) GetUnitId() string {
+	if x != nil {
+		return x.UnitId
+	}
+	return ""
+}
+
+func (x *ListRequestProjectsByIssueRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequestProjectsByIssueRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+type ListRequestIssuesByProjectRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required configured queue.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Canonical decimal request ID within the queue.
+	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Required affected project.
+	Project string `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
+	// Maximum pairs per page. Zero selects 50; otherwise 1 through 200.
+	PageSize int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation bound to the queue, request, and project.
+	PageToken     string `protobuf:"bytes,5,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequestIssuesByProjectRequest) Reset() {
+	*x = ListRequestIssuesByProjectRequest{}
+	mi := &file_stovepipe_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequestIssuesByProjectRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequestIssuesByProjectRequest) ProtoMessage() {}
+
+func (x *ListRequestIssuesByProjectRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequestIssuesByProjectRequest.ProtoReflect.Descriptor instead.
+func (*ListRequestIssuesByProjectRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *ListRequestIssuesByProjectRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequestIssuesByProjectRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ListRequestIssuesByProjectRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ListRequestIssuesByProjectRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequestIssuesByProjectRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+type ListRequestProjectIssuesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Immutable pairs ordered by project for an issue lookup or task/unit for a project lookup.
+	// Empty until attribution_complete is true.
+	Attributions []*ProjectIssueAttribution `protobuf:"bytes,1,rep,name=attributions,proto3" json:"attributions,omitempty"`
+	// True only after every request association is durable in both lookup directions.
+	// False is not evidence that the selected issue or project has no associations.
+	AttributionComplete bool `protobuf:"varint,2,opt,name=attribution_complete,json=attributionComplete,proto3" json:"attribution_complete,omitempty"`
+	// Continues after the last returned pair; empty ends the selected range.
+	NextPageToken string `protobuf:"bytes,3,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequestProjectIssuesResponse) Reset() {
+	*x = ListRequestProjectIssuesResponse{}
+	mi := &file_stovepipe_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequestProjectIssuesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequestProjectIssuesResponse) ProtoMessage() {}
+
+func (x *ListRequestProjectIssuesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequestProjectIssuesResponse.ProtoReflect.Descriptor instead.
+func (*ListRequestProjectIssuesResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *ListRequestProjectIssuesResponse) GetAttributions() []*ProjectIssueAttribution {
+	if x != nil {
+		return x.Attributions
+	}
+	return nil
+}
+
+func (x *ListRequestProjectIssuesResponse) GetAttributionComplete() bool {
+	if x != nil {
+		return x.AttributionComplete
+	}
+	return false
+}
+
+func (x *ListRequestProjectIssuesResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -2729,11 +3029,36 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x1cGetIssuesByRequestIDResponse\x12G\n" +
 	"\x06issues\x18\x01 \x03(\v2/.uber.submitqueue.stovepipe.RequestIssueSummaryR\x06issues\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12&\n" +
+	"\x0fnext_page_token\x18\x03 \x01(\tR\rnextPageToken\"e\n" +
+	"\x17ProjectIssueAttribution\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x17\n" +
+	"\aunit_id\x18\x02 \x01(\tR\x06unitId\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\"\xc6\x01\n" +
+	"!ListRequestProjectsByIssueRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\x17\n" +
+	"\aunit_id\x18\x04 \x01(\tR\x06unitId\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x06 \x01(\tR\tpageToken\"\xae\x01\n" +
+	"!ListRequestIssuesByProjectRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x05 \x01(\tR\tpageToken\"\xd6\x01\n" +
+	" ListRequestProjectIssuesResponse\x12W\n" +
+	"\fattributions\x18\x01 \x03(\v23.uber.submitqueue.stovepipe.ProjectIssueAttributionR\fattributions\x121\n" +
+	"\x14attribution_complete\x18\x02 \x01(\bR\x13attributionComplete\x12&\n" +
 	"\x0fnext_page_token\x18\x03 \x01(\tR\rnextPageToken*l\n" +
 	"\x0fQueueEnablement\x12\x1c\n" +
 	"\x18QUEUE_ENABLEMENT_UNKNOWN\x10\x00\x12\x1c\n" +
 	"\x18QUEUE_ENABLEMENT_ENABLED\x10\x01\x12\x1d\n" +
-	"\x19QUEUE_ENABLEMENT_DISABLED\x10\x022\xf0\t\n" +
+	"\x19QUEUE_ENABLEMENT_DISABLED\x10\x022\xac\f\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
 	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
@@ -2744,7 +3069,9 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\x04List\x12'.uber.submitqueue.stovepipe.ListRequest\x1a(.uber.submitqueue.stovepipe.ListResponse\"\x00\x12y\n" +
 	"\x0eGetQueueStatus\x121.uber.submitqueue.stovepipe.GetQueueStatusRequest\x1a2.uber.submitqueue.stovepipe.GetQueueStatusResponse\"\x00\x12y\n" +
 	"\x0eListOpenIssues\x121.uber.submitqueue.stovepipe.ListOpenIssuesRequest\x1a2.uber.submitqueue.stovepipe.ListOpenIssuesResponse\"\x00\x12\x8b\x01\n" +
-	"\x14GetIssuesByRequestID\x127.uber.submitqueue.stovepipe.GetIssuesByRequestIDRequest\x1a8.uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse\"\x00Be\n" +
+	"\x14GetIssuesByRequestID\x127.uber.submitqueue.stovepipe.GetIssuesByRequestIDRequest\x1a8.uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse\"\x00\x12\x9b\x01\n" +
+	"\x1aListRequestProjectsByIssue\x12=.uber.submitqueue.stovepipe.ListRequestProjectsByIssueRequest\x1a<.uber.submitqueue.stovepipe.ListRequestProjectIssuesResponse\"\x00\x12\x9b\x01\n" +
+	"\x1aListRequestIssuesByProject\x12=.uber.submitqueue.stovepipe.ListRequestIssuesByProjectRequest\x1a<.uber.submitqueue.stovepipe.ListRequestProjectIssuesResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -2760,41 +3087,45 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 }
 
 var file_stovepipe_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_stovepipe_proto_goTypes = []any{
-	(QueueEnablement)(0),                   // 0: uber.submitqueue.stovepipe.QueueEnablement
-	(*PingRequest)(nil),                    // 1: uber.submitqueue.stovepipe.PingRequest
-	(*PingResponse)(nil),                   // 2: uber.submitqueue.stovepipe.PingResponse
-	(*IngestRequest)(nil),                  // 3: uber.submitqueue.stovepipe.IngestRequest
-	(*IngestResponse)(nil),                 // 4: uber.submitqueue.stovepipe.IngestResponse
-	(*GetRequestHistoryByIDRequest)(nil),   // 5: uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	(*GetRequestHistoryByURIRequest)(nil),  // 6: uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	(*HistoryEvent)(nil),                   // 7: uber.submitqueue.stovepipe.HistoryEvent
-	(*HistoryEventData)(nil),               // 8: uber.submitqueue.stovepipe.HistoryEventData
-	(*HistoryRequestStateData)(nil),        // 9: uber.submitqueue.stovepipe.HistoryRequestStateData
-	(*HistoryBuildData)(nil),               // 10: uber.submitqueue.stovepipe.HistoryBuildData
-	(*HistoryValidationFactData)(nil),      // 11: uber.submitqueue.stovepipe.HistoryValidationFactData
-	(*HistoryProjectFactsData)(nil),        // 12: uber.submitqueue.stovepipe.HistoryProjectFactsData
-	(*RequestHistory)(nil),                 // 13: uber.submitqueue.stovepipe.RequestHistory
-	(*GetRequestHistoryByIDResponse)(nil),  // 14: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	(*GetRequestHistoryByURIResponse)(nil), // 15: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	(*GetProjectStatusByIDRequest)(nil),    // 16: uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
-	(*GetProjectStatusByURIRequest)(nil),   // 17: uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	(*ProjectValidation)(nil),              // 18: uber.submitqueue.stovepipe.ProjectValidation
-	(*GetProjectStatusByIDResponse)(nil),   // 19: uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
-	(*GetProjectStatusByURIResponse)(nil),  // 20: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
-	(*RequestSummary)(nil),                 // 21: uber.submitqueue.stovepipe.RequestSummary
-	(*ListRequest)(nil),                    // 22: uber.submitqueue.stovepipe.ListRequest
-	(*ListResponse)(nil),                   // 23: uber.submitqueue.stovepipe.ListResponse
-	(*GetQueueStatusRequest)(nil),          // 24: uber.submitqueue.stovepipe.GetQueueStatusRequest
-	(*QueueEnablementStatus)(nil),          // 25: uber.submitqueue.stovepipe.QueueEnablementStatus
-	(*GetQueueStatusResponse)(nil),         // 26: uber.submitqueue.stovepipe.GetQueueStatusResponse
-	(*IssueSummary)(nil),                   // 27: uber.submitqueue.stovepipe.IssueSummary
-	(*ListOpenIssuesRequest)(nil),          // 28: uber.submitqueue.stovepipe.ListOpenIssuesRequest
-	(*ListOpenIssuesResponse)(nil),         // 29: uber.submitqueue.stovepipe.ListOpenIssuesResponse
-	(*RequestIssueSummary)(nil),            // 30: uber.submitqueue.stovepipe.RequestIssueSummary
-	(*GetIssuesByRequestIDRequest)(nil),    // 31: uber.submitqueue.stovepipe.GetIssuesByRequestIDRequest
-	(*GetIssuesByRequestIDResponse)(nil),   // 32: uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse
+	(QueueEnablement)(0),                      // 0: uber.submitqueue.stovepipe.QueueEnablement
+	(*PingRequest)(nil),                       // 1: uber.submitqueue.stovepipe.PingRequest
+	(*PingResponse)(nil),                      // 2: uber.submitqueue.stovepipe.PingResponse
+	(*IngestRequest)(nil),                     // 3: uber.submitqueue.stovepipe.IngestRequest
+	(*IngestResponse)(nil),                    // 4: uber.submitqueue.stovepipe.IngestResponse
+	(*GetRequestHistoryByIDRequest)(nil),      // 5: uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	(*GetRequestHistoryByURIRequest)(nil),     // 6: uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	(*HistoryEvent)(nil),                      // 7: uber.submitqueue.stovepipe.HistoryEvent
+	(*HistoryEventData)(nil),                  // 8: uber.submitqueue.stovepipe.HistoryEventData
+	(*HistoryRequestStateData)(nil),           // 9: uber.submitqueue.stovepipe.HistoryRequestStateData
+	(*HistoryBuildData)(nil),                  // 10: uber.submitqueue.stovepipe.HistoryBuildData
+	(*HistoryValidationFactData)(nil),         // 11: uber.submitqueue.stovepipe.HistoryValidationFactData
+	(*HistoryProjectFactsData)(nil),           // 12: uber.submitqueue.stovepipe.HistoryProjectFactsData
+	(*RequestHistory)(nil),                    // 13: uber.submitqueue.stovepipe.RequestHistory
+	(*GetRequestHistoryByIDResponse)(nil),     // 14: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	(*GetRequestHistoryByURIResponse)(nil),    // 15: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	(*GetProjectStatusByIDRequest)(nil),       // 16: uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
+	(*GetProjectStatusByURIRequest)(nil),      // 17: uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	(*ProjectValidation)(nil),                 // 18: uber.submitqueue.stovepipe.ProjectValidation
+	(*GetProjectStatusByIDResponse)(nil),      // 19: uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
+	(*GetProjectStatusByURIResponse)(nil),     // 20: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	(*RequestSummary)(nil),                    // 21: uber.submitqueue.stovepipe.RequestSummary
+	(*ListRequest)(nil),                       // 22: uber.submitqueue.stovepipe.ListRequest
+	(*ListResponse)(nil),                      // 23: uber.submitqueue.stovepipe.ListResponse
+	(*GetQueueStatusRequest)(nil),             // 24: uber.submitqueue.stovepipe.GetQueueStatusRequest
+	(*QueueEnablementStatus)(nil),             // 25: uber.submitqueue.stovepipe.QueueEnablementStatus
+	(*GetQueueStatusResponse)(nil),            // 26: uber.submitqueue.stovepipe.GetQueueStatusResponse
+	(*IssueSummary)(nil),                      // 27: uber.submitqueue.stovepipe.IssueSummary
+	(*ListOpenIssuesRequest)(nil),             // 28: uber.submitqueue.stovepipe.ListOpenIssuesRequest
+	(*ListOpenIssuesResponse)(nil),            // 29: uber.submitqueue.stovepipe.ListOpenIssuesResponse
+	(*RequestIssueSummary)(nil),               // 30: uber.submitqueue.stovepipe.RequestIssueSummary
+	(*GetIssuesByRequestIDRequest)(nil),       // 31: uber.submitqueue.stovepipe.GetIssuesByRequestIDRequest
+	(*GetIssuesByRequestIDResponse)(nil),      // 32: uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse
+	(*ProjectIssueAttribution)(nil),           // 33: uber.submitqueue.stovepipe.ProjectIssueAttribution
+	(*ListRequestProjectsByIssueRequest)(nil), // 34: uber.submitqueue.stovepipe.ListRequestProjectsByIssueRequest
+	(*ListRequestIssuesByProjectRequest)(nil), // 35: uber.submitqueue.stovepipe.ListRequestIssuesByProjectRequest
+	(*ListRequestProjectIssuesResponse)(nil),  // 36: uber.submitqueue.stovepipe.ListRequestProjectIssuesResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
 	0,  // 0: uber.submitqueue.stovepipe.IngestRequest.enablement:type_name -> uber.submitqueue.stovepipe.QueueEnablement
@@ -2818,31 +3149,36 @@ var file_stovepipe_proto_depIdxs = []int32{
 	25, // 18: uber.submitqueue.stovepipe.GetQueueStatusResponse.enablement:type_name -> uber.submitqueue.stovepipe.QueueEnablementStatus
 	27, // 19: uber.submitqueue.stovepipe.ListOpenIssuesResponse.issues:type_name -> uber.submitqueue.stovepipe.IssueSummary
 	30, // 20: uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse.issues:type_name -> uber.submitqueue.stovepipe.RequestIssueSummary
-	1,  // 21: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	3,  // 22: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	5,  // 23: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
-	6,  // 24: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
-	16, // 25: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
-	17, // 26: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
-	22, // 27: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
-	24, // 28: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:input_type -> uber.submitqueue.stovepipe.GetQueueStatusRequest
-	28, // 29: uber.submitqueue.stovepipe.Stovepipe.ListOpenIssues:input_type -> uber.submitqueue.stovepipe.ListOpenIssuesRequest
-	31, // 30: uber.submitqueue.stovepipe.Stovepipe.GetIssuesByRequestID:input_type -> uber.submitqueue.stovepipe.GetIssuesByRequestIDRequest
-	2,  // 31: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	4,  // 32: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	14, // 33: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
-	15, // 34: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
-	19, // 35: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
-	20, // 36: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
-	23, // 37: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
-	26, // 38: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:output_type -> uber.submitqueue.stovepipe.GetQueueStatusResponse
-	29, // 39: uber.submitqueue.stovepipe.Stovepipe.ListOpenIssues:output_type -> uber.submitqueue.stovepipe.ListOpenIssuesResponse
-	32, // 40: uber.submitqueue.stovepipe.Stovepipe.GetIssuesByRequestID:output_type -> uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse
-	31, // [31:41] is the sub-list for method output_type
-	21, // [21:31] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	33, // 21: uber.submitqueue.stovepipe.ListRequestProjectIssuesResponse.attributions:type_name -> uber.submitqueue.stovepipe.ProjectIssueAttribution
+	1,  // 22: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	3,  // 23: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	5,  // 24: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	6,  // 25: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	16, // 26: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDRequest
+	17, // 27: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	22, // 28: uber.submitqueue.stovepipe.Stovepipe.List:input_type -> uber.submitqueue.stovepipe.ListRequest
+	24, // 29: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:input_type -> uber.submitqueue.stovepipe.GetQueueStatusRequest
+	28, // 30: uber.submitqueue.stovepipe.Stovepipe.ListOpenIssues:input_type -> uber.submitqueue.stovepipe.ListOpenIssuesRequest
+	31, // 31: uber.submitqueue.stovepipe.Stovepipe.GetIssuesByRequestID:input_type -> uber.submitqueue.stovepipe.GetIssuesByRequestIDRequest
+	34, // 32: uber.submitqueue.stovepipe.Stovepipe.ListRequestProjectsByIssue:input_type -> uber.submitqueue.stovepipe.ListRequestProjectsByIssueRequest
+	35, // 33: uber.submitqueue.stovepipe.Stovepipe.ListRequestIssuesByProject:input_type -> uber.submitqueue.stovepipe.ListRequestIssuesByProjectRequest
+	2,  // 34: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	4,  // 35: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	14, // 36: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	15, // 37: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	19, // 38: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByID:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByIDResponse
+	20, // 39: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	23, // 40: uber.submitqueue.stovepipe.Stovepipe.List:output_type -> uber.submitqueue.stovepipe.ListResponse
+	26, // 41: uber.submitqueue.stovepipe.Stovepipe.GetQueueStatus:output_type -> uber.submitqueue.stovepipe.GetQueueStatusResponse
+	29, // 42: uber.submitqueue.stovepipe.Stovepipe.ListOpenIssues:output_type -> uber.submitqueue.stovepipe.ListOpenIssuesResponse
+	32, // 43: uber.submitqueue.stovepipe.Stovepipe.GetIssuesByRequestID:output_type -> uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse
+	36, // 44: uber.submitqueue.stovepipe.Stovepipe.ListRequestProjectsByIssue:output_type -> uber.submitqueue.stovepipe.ListRequestProjectIssuesResponse
+	36, // 45: uber.submitqueue.stovepipe.Stovepipe.ListRequestIssuesByProject:output_type -> uber.submitqueue.stovepipe.ListRequestProjectIssuesResponse
+	34, // [34:46] is the sub-list for method output_type
+	22, // [22:34] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
@@ -2881,7 +3217,7 @@ func file_stovepipe_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   32,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

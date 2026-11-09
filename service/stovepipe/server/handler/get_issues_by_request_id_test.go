@@ -43,7 +43,7 @@ func TestGetIssuesByRequestID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := controllermock.NewMockGetIssuesByRequestIDController(gomock.NewController(t))
 			c.EXPECT().GetIssuesByRequestID(gomock.Any(), entity.GetIssuesByRequestIDRequest{Queue: "queue", RequestID: "12", PageSize: 10, PageToken: "token"}).Return(entity.GetIssuesByRequestIDResult{Status: entity.RequestIssuesStatusIncomplete, NextPageToken: "next"}, tt.err)
-			server := NewStovepipeServer(nil, nil, nil, nil, nil, nil, nil, c)
+			server := NewStovepipeServer(nil, nil, nil, nil, nil, nil, nil, c, nil)
 			response, err := server.GetIssuesByRequestID(context.Background(), &pb.GetIssuesByRequestIDRequest{Queue: "queue", RequestId: "12", PageSize: 10, PageToken: "token"})
 			require.Equal(t, tt.code, status.Code(err))
 			if tt.err == nil {

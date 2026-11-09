@@ -40,6 +40,7 @@ type StovepipeServer struct {
 	listController           controller.ListController
 	openIssuesController     controller.ListOpenIssuesController
 	requestIssuesController  controller.GetIssuesByRequestIDController
+	projectIssuesController  controller.ProjectIssuesController
 	queueStatusController    controller.GetQueueStatusController
 }
 
@@ -53,6 +54,7 @@ func NewStovepipeServer(
 	queueStatusController controller.GetQueueStatusController,
 	openIssuesController controller.ListOpenIssuesController,
 	requestIssuesController controller.GetIssuesByRequestIDController,
+	projectIssuesController controller.ProjectIssuesController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
@@ -62,6 +64,7 @@ func NewStovepipeServer(
 		listController:           listController,
 		openIssuesController:     openIssuesController,
 		requestIssuesController:  requestIssuesController,
+		projectIssuesController:  projectIssuesController,
 		queueStatusController:    queueStatusController,
 	}
 }
@@ -182,4 +185,33 @@ func (s *StovepipeServer) GetIssuesByRequestID(ctx context.Context, req *pb.GetI
 		}
 	}
 	return mapper.GetIssuesByRequestIDResultToProto(result), nil
+}
+
+func (s *StovepipeServer) ListRequestProjectsByIssue(ctx context.Context, req *pb.ListRequestProjectsByIssueRequest) (*pb.ListRequestProjectIssuesResponse, error) {
+	result, err := s.projectIssuesController.ListRequestProjectsByIssue(ctx, mapper.ProtoToListRequestProjectsByIssueRequest(req))
+	if err != nil {
+		return nil, projectIssuesError(err)
+	}
+	return mapper.ListRequestProjectIssuesResultToProto(result), nil
+}
+
+func (s *StovepipeServer) ListRequestIssuesByProject(ctx context.Context, req *pb.ListRequestIssuesByProjectRequest) (*pb.ListRequestProjectIssuesResponse, error) {
+	result, err := s.projectIssuesController.ListRequestIssuesByProject(ctx, mapper.ProtoToListRequestIssuesByProjectRequest(req))
+	if err != nil {
+		return nil, projectIssuesError(err)
+	}
+	return mapper.ListRequestProjectIssuesResultToProto(result), nil
+}
+
+func projectIssuesError(err error) error {
+	switch {
+	case controller.IsInvalidRequest(err):
+		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, storage.ErrNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return status.FromContextError(err).Err()
+	default:
+		return err
+	}
 }
