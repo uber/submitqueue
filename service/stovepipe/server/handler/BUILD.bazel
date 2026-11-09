@@ -23,6 +23,7 @@ go_test(
         "get_issues_by_request_id_test.go",
         "list_open_issues_test.go",
         "list_test.go",
+        "project_issues_test.go",
         "queue_status_test.go",
         "server_test.go",
     ],

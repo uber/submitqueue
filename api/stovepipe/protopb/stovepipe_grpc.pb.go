@@ -34,16 +34,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Stovepipe_Ping_FullMethodName                   = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
-	Stovepipe_Ingest_FullMethodName                 = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
-	Stovepipe_GetRequestHistoryByID_FullMethodName  = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID"
-	Stovepipe_GetRequestHistoryByURI_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI"
-	Stovepipe_GetProjectStatusByID_FullMethodName   = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByID"
-	Stovepipe_GetProjectStatusByURI_FullMethodName  = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByURI"
-	Stovepipe_List_FullMethodName                   = "/uber.submitqueue.stovepipe.Stovepipe/List"
-	Stovepipe_GetQueueStatus_FullMethodName         = "/uber.submitqueue.stovepipe.Stovepipe/GetQueueStatus"
-	Stovepipe_ListOpenIssues_FullMethodName         = "/uber.submitqueue.stovepipe.Stovepipe/ListOpenIssues"
-	Stovepipe_GetIssuesByRequestID_FullMethodName   = "/uber.submitqueue.stovepipe.Stovepipe/GetIssuesByRequestID"
+	Stovepipe_Ping_FullMethodName                       = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
+	Stovepipe_Ingest_FullMethodName                     = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
+	Stovepipe_GetRequestHistoryByID_FullMethodName      = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID"
+	Stovepipe_GetRequestHistoryByURI_FullMethodName     = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI"
+	Stovepipe_GetProjectStatusByID_FullMethodName       = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByID"
+	Stovepipe_GetProjectStatusByURI_FullMethodName      = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByURI"
+	Stovepipe_List_FullMethodName                       = "/uber.submitqueue.stovepipe.Stovepipe/List"
+	Stovepipe_GetQueueStatus_FullMethodName             = "/uber.submitqueue.stovepipe.Stovepipe/GetQueueStatus"
+	Stovepipe_ListOpenIssues_FullMethodName             = "/uber.submitqueue.stovepipe.Stovepipe/ListOpenIssues"
+	Stovepipe_GetIssuesByRequestID_FullMethodName       = "/uber.submitqueue.stovepipe.Stovepipe/GetIssuesByRequestID"
+	Stovepipe_ListRequestProjectsByIssue_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestProjectsByIssue"
+	Stovepipe_ListRequestIssuesByProject_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestIssuesByProject"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -73,6 +75,10 @@ type StovepipeClient interface {
 	ListOpenIssues(ctx context.Context, in *ListOpenIssuesRequest, opts ...grpc.CallOption) (*ListOpenIssuesResponse, error)
 	// GetIssuesByRequestID returns accepted issue results for one request.
 	GetIssuesByRequestID(ctx context.Context, in *GetIssuesByRequestIDRequest, opts ...grpc.CallOption) (*GetIssuesByRequestIDResponse, error)
+	// ListRequestProjectsByIssue returns the projects affected by one request's issue.
+	ListRequestProjectsByIssue(ctx context.Context, in *ListRequestProjectsByIssueRequest, opts ...grpc.CallOption) (*ListRequestProjectIssuesResponse, error)
+	// ListRequestIssuesByProject returns the issues affecting one request's project.
+	ListRequestIssuesByProject(ctx context.Context, in *ListRequestIssuesByProjectRequest, opts ...grpc.CallOption) (*ListRequestProjectIssuesResponse, error)
 }
 
 type stovepipeClient struct {
@@ -183,6 +189,26 @@ func (c *stovepipeClient) GetIssuesByRequestID(ctx context.Context, in *GetIssue
 	return out, nil
 }
 
+func (c *stovepipeClient) ListRequestProjectsByIssue(ctx context.Context, in *ListRequestProjectsByIssueRequest, opts ...grpc.CallOption) (*ListRequestProjectIssuesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRequestProjectIssuesResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_ListRequestProjectsByIssue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stovepipeClient) ListRequestIssuesByProject(ctx context.Context, in *ListRequestIssuesByProjectRequest, opts ...grpc.CallOption) (*ListRequestProjectIssuesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRequestProjectIssuesResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_ListRequestIssuesByProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -210,6 +236,10 @@ type StovepipeServer interface {
 	ListOpenIssues(context.Context, *ListOpenIssuesRequest) (*ListOpenIssuesResponse, error)
 	// GetIssuesByRequestID returns accepted issue results for one request.
 	GetIssuesByRequestID(context.Context, *GetIssuesByRequestIDRequest) (*GetIssuesByRequestIDResponse, error)
+	// ListRequestProjectsByIssue returns the projects affected by one request's issue.
+	ListRequestProjectsByIssue(context.Context, *ListRequestProjectsByIssueRequest) (*ListRequestProjectIssuesResponse, error)
+	// ListRequestIssuesByProject returns the issues affecting one request's project.
+	ListRequestIssuesByProject(context.Context, *ListRequestIssuesByProjectRequest) (*ListRequestProjectIssuesResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -249,6 +279,12 @@ func (UnimplementedStovepipeServer) ListOpenIssues(context.Context, *ListOpenIss
 }
 func (UnimplementedStovepipeServer) GetIssuesByRequestID(context.Context, *GetIssuesByRequestIDRequest) (*GetIssuesByRequestIDResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetIssuesByRequestID not implemented")
+}
+func (UnimplementedStovepipeServer) ListRequestProjectsByIssue(context.Context, *ListRequestProjectsByIssueRequest) (*ListRequestProjectIssuesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRequestProjectsByIssue not implemented")
+}
+func (UnimplementedStovepipeServer) ListRequestIssuesByProject(context.Context, *ListRequestIssuesByProjectRequest) (*ListRequestProjectIssuesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRequestIssuesByProject not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -451,6 +487,42 @@ func _Stovepipe_GetIssuesByRequestID_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_ListRequestProjectsByIssue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRequestProjectsByIssueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).ListRequestProjectsByIssue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_ListRequestProjectsByIssue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).ListRequestProjectsByIssue(ctx, req.(*ListRequestProjectsByIssueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Stovepipe_ListRequestIssuesByProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRequestIssuesByProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).ListRequestIssuesByProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_ListRequestIssuesByProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).ListRequestIssuesByProject(ctx, req.(*ListRequestIssuesByProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -497,6 +569,14 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIssuesByRequestID",
 			Handler:    _Stovepipe_GetIssuesByRequestID_Handler,
+		},
+		{
+			MethodName: "ListRequestProjectsByIssue",
+			Handler:    _Stovepipe_ListRequestProjectsByIssue_Handler,
+		},
+		{
+			MethodName: "ListRequestIssuesByProject",
+			Handler:    _Stovepipe_ListRequestIssuesByProject_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -412,6 +412,55 @@ message GetIssuesByRequestIDResponse {
     string next_page_token = 3;
 }
 
+// ProjectIssueAttribution is one historical issue/project association within a request.
+message ProjectIssueAttribution {
+    // Validation task containing the failed unit.
+    string task_id = 1;
+    // Failed unit; attribution is available only for unit-level issues.
+    string unit_id = 2;
+    // Affected project within this request's validation scope.
+    string project = 3;
+}
+
+message ListRequestProjectsByIssueRequest {
+    // Required configured queue.
+    string queue = 1;
+    // Canonical decimal request ID within the queue.
+    string request_id = 2;
+    // Required task containing the issue.
+    string task_id = 3;
+    // Required failed unit within the task.
+    string unit_id = 4;
+    // Maximum pairs per page. Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 5;
+    // Opaque continuation bound to the queue, request, and issue.
+    string page_token = 6;
+}
+
+message ListRequestIssuesByProjectRequest {
+    // Required configured queue.
+    string queue = 1;
+    // Canonical decimal request ID within the queue.
+    string request_id = 2;
+    // Required affected project.
+    string project = 3;
+    // Maximum pairs per page. Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 4;
+    // Opaque continuation bound to the queue, request, and project.
+    string page_token = 5;
+}
+
+message ListRequestProjectIssuesResponse {
+    // Immutable pairs ordered by project for an issue lookup or task/unit for a project lookup.
+    // Empty until attribution_complete is true.
+    repeated ProjectIssueAttribution attributions = 1;
+    // True only after every request association is durable in both lookup directions.
+    // False is not evidence that the selected issue or project has no associations.
+    bool attribution_complete = 2;
+    // Continues after the last returned pair; empty ends the selected range.
+    string next_page_token = 3;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -435,4 +484,8 @@ service Stovepipe {
     rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
     // GetIssuesByRequestID returns accepted issue results for one request.
     rpc GetIssuesByRequestID(GetIssuesByRequestIDRequest) returns (GetIssuesByRequestIDResponse) {}
+    // ListRequestProjectsByIssue returns the projects affected by one request's issue.
+    rpc ListRequestProjectsByIssue(ListRequestProjectsByIssueRequest) returns (ListRequestProjectIssuesResponse) {}
+    // ListRequestIssuesByProject returns the issues affecting one request's project.
+    rpc ListRequestIssuesByProject(ListRequestIssuesByProjectRequest) returns (ListRequestProjectIssuesResponse) {}
 }

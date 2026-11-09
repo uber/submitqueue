@@ -305,10 +305,11 @@ func run() error {
 	queueStatusController := controller.NewGetQueueStatusController(scope, storageFty, sourceControl)
 	openIssuesController := controller.NewListOpenIssuesController(logger.Sugar(), scope, storageFty, tenants)
 	requestIssuesController := controller.NewGetIssuesByRequestIDController(logger.Sugar(), scope, storageFty, tenants)
+	projectIssuesController := controller.NewProjectIssuesController(logger.Sugar(), scope, storageFty, tenants)
 	srv := handler.NewStovepipeServer(
 		pingController, ingestController, requestHistoryController, projectStatusController,
 		listController, queueStatusController, openIssuesController,
-		requestIssuesController,
+		requestIssuesController, projectIssuesController,
 	)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
