@@ -38,6 +38,12 @@ const listRequestProjectsByIssueAfterCursorQuery = `
 			OR (task_id = ? AND unit_id = ? AND project > ?))
 	ORDER BY task_id ASC, unit_id ASC, project ASC LIMIT ?`
 
+const listProjectsForRequestIssueQuery = `
+	SELECT task_id, unit_id, project
+	FROM request_projects_by_issue
+	WHERE queue = ? AND request_id = ? AND task_id = ? AND unit_id = ? AND project > ?
+	ORDER BY project ASC LIMIT ?`
+
 type requestProjectsByIssueStore struct {
 	db    *sql.DB
 	scope tally.Scope
@@ -92,12 +98,39 @@ func (s *requestProjectsByIssueStore) List(ctx context.Context, requestID string
 		args = append(args, after.TaskID, after.TaskID, after.UnitID, after.TaskID, after.UnitID, after.Project)
 	}
 	args = append(args, limit)
+	return s.list(ctx, query, args...)
+}
+
+func (s *requestProjectsByIssueStore) ListByIssue(ctx context.Context, requestID, taskID, unitID, afterProject string, limit int) (ret []entity.ProjectIssueAttribution, retErr error) {
+	op := metrics.Begin(s.scope, "list_by_issue", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	if err := validateProjectIssueRequest(s.queue, requestID); err != nil {
+		return nil, err
+	}
+	if taskID == "" || len(taskID) > 255 {
+		return nil, fmt.Errorf("project issue attribution requires a task ID of at most 255 bytes")
+	}
+	if unitID == "" || len(unitID) > 1024 {
+		return nil, fmt.Errorf("project issue attribution requires a unit ID of at most 1024 bytes")
+	}
+	if len(afterProject) > 1020 {
+		return nil, fmt.Errorf("project issue attribution cursor exceeds 1020-byte project limit")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("project issue attribution limit must be positive")
+	}
+	return s.list(ctx, listProjectsForRequestIssueQuery, s.queue, requestID, taskID, unitID, afterProject, limit)
+}
+
+func (s *requestProjectsByIssueStore) list(ctx context.Context, query string, args ...any) ([]entity.ProjectIssueAttribution, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list project issue attributions: %w", err)
 	}
 	defer rows.Close()
 
+	var ret []entity.ProjectIssueAttribution
 	for rows.Next() {
 		var entry entity.ProjectIssueAttribution
 		if err := rows.Scan(&entry.TaskID, &entry.UnitID, &entry.Project); err != nil {

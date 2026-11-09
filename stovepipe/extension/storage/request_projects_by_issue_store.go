@@ -30,4 +30,9 @@ type RequestProjectsByIssueStore interface {
 	// after is exclusive; its zero value starts the range. limit must be positive.
 	// An empty page ends the range, not evidence that attribution completed.
 	List(ctx context.Context, requestID string, after entity.ProjectIssueAttribution, limit int) ([]entity.ProjectIssueAttribution, error)
+
+	// ListByIssue scans the request/task/unit prefix in ascending bytewise project order.
+	// afterProject is exclusive; empty starts the range. limit must be positive.
+	// Pages are full unless the selected prefix is exhausted.
+	ListByIssue(ctx context.Context, requestID, taskID, unitID, afterProject string, limit int) ([]entity.ProjectIssueAttribution, error)
 }
