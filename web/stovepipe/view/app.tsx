@@ -1,6 +1,6 @@
 "use client";
 
-import { Timestamp, TimeZoneProvider, TimeZoneToggle } from "@submitqueue/web-platform";
+import { Timestamp, TimeZoneProvider } from "@submitqueue/web-platform";
 import { styled } from "baseui";
 import { Block } from "baseui/block";
 import { Tag } from "baseui/tag";
@@ -61,7 +61,7 @@ function Page({ model }: { model: StovepipePageModel }) {
           <Tag closeable={false} kind="neutral" size="small">SP</Tag><LabelMedium as="span">Stovepipe</LabelMedium>
         </Block>
         <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
-          <TimeZoneToggle /><RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
+          <RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
       </Block>
       <Block as="main" paddingTop="scale400" paddingBottom={model.kind === "request" ? "scale200" : "scale600"}>

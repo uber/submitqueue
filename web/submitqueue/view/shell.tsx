@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { TimeZoneProvider, TimeZoneToggle, useWebNavigation } from "@submitqueue/web-platform";
+import { TimeZoneProvider, useWebNavigation } from "@submitqueue/web-platform";
 import { styled, withStyle } from "baseui";
 import { Block } from "baseui/block";
 import { LabelXSmall } from "baseui/typography";
@@ -77,7 +77,6 @@ export function WebShell({
       </BrandLink>
       <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
         {environmentLabel ? <LabelXSmall as="span" color="contentSecondary">{environmentLabel}</LabelXSmall> : null}
-        <TimeZoneToggle />
         {controls}
       </Block>
     </Header>

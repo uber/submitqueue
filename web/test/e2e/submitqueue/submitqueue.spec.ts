@@ -352,35 +352,47 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
 
 test.describe("time zone selection", () => {
   test.use({ timezoneId: "America/New_York" });
-  test("switches queue, request history and change timestamps from the shared header", async ({ page }) => {
+  test("switches queue, request history and change timestamps from the shared popover", async ({ page }) => {
     const expectTimeZone = async (zone: string) => {
       await expect.poll(() => page.locator("time[datetime]").evaluateAll((times, timeZone) => {
         const formatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "long", timeZone });
         return times.length > 0 && times.every(time => time.textContent === formatter.format(new Date(time.getAttribute("datetime")!)));
       }, zone)).toBe(true);
     };
-    const timeZones = page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true });
+    const timeZones = page.getByRole("dialog", { name: "Timestamp", exact: true });
+    const openTimeZones = () => page.getByRole("button", { name: /timestamp options$/ }).first().click();
+    const closeTimeZones = () => timeZones.getByRole("button", { name: "Close timestamp options" }).click();
     await page.goto(`/queue/${queue}`);
-    await expect(timeZones.getByRole("option", { name: "Browser", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true })).toHaveCount(0);
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "Local", exact: true })).toBeChecked();
     await expectTimeZone("America/New_York");
-    await timeZones.getByRole("option", { name: "UTC", exact: true }).click();
+    await timeZones.getByRole("radio", { name: "UTC", exact: true }).check();
     await expectTimeZone("UTC");
+    await closeTimeZones();
     await page.locator(".sq-request-list__item td:first-child a").first().click();
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
+    await closeTimeZones();
     await expect(page.getByText("Received", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: /^History/ }).click();
     await expect(page.getByRole("list", { name: "Request history", exact: true })).toBeVisible();
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
+    await closeTimeZones();
     const changePath = `/queue/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
     for (const path of [changePath, `${changePath}/7777777777777777777777777777777777777777`]) {
       await page.goto(path);
       await expect(page.getByRole("table", { name: "Change submissions" })).toBeVisible();
-      await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+      await openTimeZones();
+      await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
       await expectTimeZone("UTC");
+      await closeTimeZones();
     }
-    await timeZones.getByRole("option", { name: "Browser", exact: true }).click();
+    await openTimeZones();
+    await timeZones.getByRole("radio", { name: "Local", exact: true }).check();
     await expectTimeZone("America/New_York");
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   });
