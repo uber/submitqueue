@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "get_issues_by_request_id_mock.go",
         "list_open_issues_mock.go",
+        "project_issues_mock.go",
         "project_status_mock.go",
         "request_history_mock.go",
     ],
