@@ -17,14 +17,14 @@
 // wire contract in one place, so a controller names an event rather than
 // assembling one.
 //
-// Every payload carries identity only — the queue and the request id — and a
-// hook resolves what it needs from storage. A richer payload would be a
-// snapshot taken at publish time and read later, so it could describe state
-// that has since moved on; identity cannot go stale. The cost is a store read
-// per hook. See doc/rfc/stovepipe/steps/record.md.
+// Payloads carry identity only: the queue and request or issue transition.
+// A hook can resolve additional context from storage without depending on a
+// snapshot taken at publication time. See doc/rfc/stovepipe/steps/record.md.
 package hookevent
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"time"
 
 	basehook "github.com/uber/submitqueue/api/base/hook"
@@ -40,6 +40,8 @@ const Source = "stovepipe"
 type Type string
 
 const (
+	// TypeIssueOpened announces a durable opening, including a reopening after closure.
+	TypeIssueOpened Type = "issue.opened"
 	// TypeValidationRepositoryStarted announces that whole-repository validation
 	// of the request named in the payload has begun. It carries no verdict; the
 	// outcome arrives later as one of the types below.
@@ -52,10 +54,27 @@ const (
 	TypeValidationRepositoryCancelled Type = "validation.repository.cancelled"
 )
 
-// unversioned is the version reported on these events. Neither describes a
-// versioned write, so nothing separates one occurrence of a type from the next
-// beyond the request it names.
+// unversioned events are identified by their immutable request or transition.
 const unversioned int32 = 0
+
+// NewIssueOpened identifies one immutable opening. Replays retain its ID and timestamp.
+func NewIssueOpened(queue string, log entity.IssueLog) *basehook.HookEvent {
+	identity := fmt.Sprintf("%d:%s%d:%s%d:%s%d:%s", len(queue), queue, len(log.TaskID), log.TaskID,
+		len(log.UnitID), log.UnitID, len(log.BuildID), log.BuildID)
+	subject := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
+	return &basehook.HookEvent{
+		Id:          basehook.NewEventID(Source, string(TypeIssueOpened), subject, unversioned),
+		Source:      Source,
+		Type:        string(TypeIssueOpened),
+		TimestampMs: log.TimestampMs,
+		Payload: &structpb.Struct{Fields: map[string]*structpb.Value{
+			"queue":            structpb.NewStringValue(queue),
+			"task_id":          structpb.NewStringValue(log.TaskID),
+			"unit_id":          structpb.NewStringValue(log.UnitID),
+			"opening_build_id": structpb.NewStringValue(log.BuildID),
+		}},
+	}
+}
 
 // NewValidationRepositoryStarted builds the event announcing that validation of
 // request's commit has begun.

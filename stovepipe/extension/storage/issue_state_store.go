@@ -45,7 +45,8 @@ type IssueStateStore interface {
 	Create(context.Context, entity.IssueState) error
 	// Get returns ErrNotFound only when the task/unit has never been recorded.
 	Get(ctx context.Context, taskID, unitID string) (entity.IssueState, error)
-	// Update replaces the record only at oldVersion; callers supply newVersion.
+	// Update replaces the record, including metadata, only at oldVersion; callers supply newVersion.
+	// Callers preserve other extensions' metadata and copy maps before changing them.
 	Update(ctx context.Context, issue entity.IssueState, oldVersion, newVersion int32) error
 	// List returns at most Limit records, including closed issues, in bytewise key order.
 	// Callers filter by status and continue after the last scanned key, not the last open issue.
