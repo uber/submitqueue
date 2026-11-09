@@ -14,4 +14,4 @@ A completed assessment returns all results in one call, with one entry per disti
 
 Attribution is all-or-nothing: any task-wide failure, incomplete validation evidence, or dependency failure returns an error for the entire validation. Callers must discard results returned alongside an error.
 
-Implementations must support concurrent calls, leave inputs unchanged, and not consume validation evidence.
+Implementations must support concurrent calls, leave inputs unchanged, and not consume validation evidence. Recording can repeat attribution before completion is retained, so retries for the same request must return the same associations.

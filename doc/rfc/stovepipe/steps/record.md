@@ -1,6 +1,6 @@
 # Record stage
 
-`record` turns a terminal build outcome into a durable validation fact.
+`record` turns a terminal build outcome into durable validation facts and per-request issue/project associations.
 
 - Phase 1 records whole-repository greenness and optional project facts. On green it promotes the commit onto the Queue's promotion ref if the Request still holds the last-green bookmark, then announces the outcome as a hook event. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
 - Phase 2 records greenness per project instead of per repository. Sketched here, to be expanded before implementation.
@@ -9,7 +9,7 @@ Notifying downstream systems rides the cross-domain hook framework rather than a
 
 See [workflow.md](../workflow.md) for the whole pipeline, [build.md](build.md) for how builds are created, and [buildsignal.md](buildsignal.md) for the terminal-only handoff into this stage.
 
-`record` owns the validation facts and the promotion ref. `buildsignal` advances the last-green build baseline before handing off to this stage. `record` does not decide build scope, poll a build, release the Queue's build slot, interpret a target graph, or map targets to projects. Those belong to `process`, `buildsignal`, and `analyze`.
+`record` owns validation facts, issue/project attribution recording, and the promotion ref. `buildsignal` advances the last-green build baseline before handing off to this stage. Repository-specific project discovery and dependency traversal belong to the project-status and issue-attribution extensions, not the controller.
 
 ## Phase 1 algorithm
 
@@ -39,8 +39,11 @@ For a delivery carrying a `Record` payload:
    - superseded -> ack, no fact. Unreachable in practice.
    - accepted / processing / anything else -> return a non-retryable invariant error.
 
-6. Resolve optional project results using R and its TerminalBuildID, and validate
-   the entire result set before writing facts. A resolver error returns raw.
+6. Record issue/project attribution after terminal issue analysis completes
+   (see "Issue/project attribution"). While analysis is pending, hold the delivery
+   for 30 seconds without consuming its retry budget.
+   Then resolve optional project results using R and its TerminalBuildID, and
+   validate the entire result set before writing facts. Extension errors return raw.
 
 7. Map R.State and the project results to a whole-repository degree and create the
    ValidationFact keyed by (R.URI, empty project) in the queue-bound fact store.
@@ -74,6 +77,16 @@ For a delivery carrying a `Record` payload:
 Every decision after step 7 uses the persisted fact, not the outcome read from this delivery's Request. The first immutable fact controls the ref and the hook event.
 
 Project-status processing delays fact creation and promotion, while the build baseline is already available from `buildsignal`. All fact writes and history complete before promotion and the recorded notification. The fact writes, bookmark advancement, and ref promotion remain separate operations.
+
+## Issue/project attribution
+
+The record stage calls the queue's issue attributer with the request. The attributer loads the confirmed issues from its terminal build and determines their affected projects. Recording waits for that build's `build_analysis_completed` occurrence, because the request becomes terminal before final issue analysis necessarily finishes. Completion for a different build does not release the wait. Abandoned analysis returns an error instead of waiting indefinitely; the existing record DLQ path handles recovery.
+
+Each returned issue/project pair goes through the attribution materializer, which retains `request_projects_by_issue` before creating `request_issues_by_project`. Only after every pair is durable in both directions does recording retain `project_issues_recorded`, identified by the terminal build and carrying its build ID. An empty successful result also records completion, without association rows. An extension error discards all returned results.
+
+Replays skip attribution when completion is already retained. Before completion, retries may recompute attribution and replay any already-written pairs; attributers must return stable results for the same request. A failed pair or completion write returns an error and cannot mark the request's attribution complete. These are historical per-request associations; closing an issue later does not remove them.
+
+Cancelled and superseded requests do not run attribution. A failed request without a recorded CI outcome has no terminal build to attribute and skips this step. Record DLQ recovery does not compute attribution or claim it completed; any incomplete association rows remain incomplete, with `record_abandoned` identifying the stopped recording attempt.
 
 ## Validation facts
 

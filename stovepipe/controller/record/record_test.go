@@ -35,6 +35,9 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/projectissues"
+	projectissuesmock "github.com/uber/submitqueue/stovepipe/extension/projectissues/mock"
+	projectissuesnoop "github.com/uber/submitqueue/stovepipe/extension/projectissues/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
 	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
@@ -71,15 +74,16 @@ var testChangeTime = time.Unix(1_700_000_000, 0).UTC()
 // recordMocks bundles the mocks a record controller test case wires
 // expectations on.
 type recordMocks struct {
-	reqStore      *storagemock.MockRequestStore
-	queueStore    *storagemock.MockQueueStore
-	factStore     *storagemock.MockValidationFactStore
-	indexStore    *storagemock.MockProjectFactByDegreeStore
-	store         *storagemock.MockStorage
-	materializer  *requestlogmock.MockMaterializer
-	sourceControl *sourcecontrolmock.MockSourceControl
-	hooks         *hookRecorder
-	metricsScope  tally.TestScope
+	reqStore       *storagemock.MockRequestStore
+	queueStore     *storagemock.MockQueueStore
+	factStore      *storagemock.MockValidationFactStore
+	indexStore     *storagemock.MockProjectFactByDegreeStore
+	store          *storagemock.MockStorage
+	materializer   *requestlogmock.MockMaterializer
+	sourceControl  *sourcecontrolmock.MockSourceControl
+	hooks          *hookRecorder
+	metricsScope   tally.TestScope
+	requestHistory map[string]entity.RequestLog
 }
 
 // hookRecorder stands in for the hook topic, decoding whatever the controller
@@ -146,28 +150,41 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 
 	scope := tally.NewTestScope("", nil)
 	m := recordMocks{
-		reqStore:      storagemock.NewMockRequestStore(ctrl),
-		queueStore:    storagemock.NewMockQueueStore(ctrl),
-		factStore:     storagemock.NewMockValidationFactStore(ctrl),
-		indexStore:    storagemock.NewMockProjectFactByDegreeStore(ctrl),
-		store:         storagemock.NewMockStorage(ctrl),
-		materializer:  requestlogmock.NewMockMaterializer(ctrl),
-		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
-		hooks:         &hookRecorder{},
-		metricsScope:  scope,
+		reqStore:       storagemock.NewMockRequestStore(ctrl),
+		queueStore:     storagemock.NewMockQueueStore(ctrl),
+		factStore:      storagemock.NewMockValidationFactStore(ctrl),
+		indexStore:     storagemock.NewMockProjectFactByDegreeStore(ctrl),
+		store:          storagemock.NewMockStorage(ctrl),
+		materializer:   requestlogmock.NewMockMaterializer(ctrl),
+		sourceControl:  sourcecontrolmock.NewMockSourceControl(ctrl),
+		hooks:          &hookRecorder{},
+		metricsScope:   scope,
+		requestHistory: make(map[string]entity.RequestLog),
 	}
 
+	completion := requestlog.NewRequestEventLog(requestWithState(entity.RequestStateFailed), entity.RequestEventProjectIssuesRecorded, "bk-1", nil)
+	m.requestHistory[completion.ID] = completion
+	history := storagemock.NewMockRequestLogStore(ctrl)
+	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	history.EXPECT().Get(gomock.Any(), testID, gomock.Any()).DoAndReturn(func(_ context.Context, _ string, logID string) (entity.RequestLog, error) {
+		log, ok := m.requestHistory[logID]
+		if !ok {
+			return entity.RequestLog{}, storage.ErrNotFound
+		}
+		return log, nil
+	}).AnyTimes()
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	m.store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
 	m.store.EXPECT().GetProjectFactByDegreeStore().Return(m.indexStore).AnyTimes()
 	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-			assert.Contains(t, []entity.RequestEvent{entity.RequestEventValidationFactRecorded, entity.RequestEventProjectFactsRecorded}, log.Event)
+			assert.Contains(t, []entity.RequestEvent{entity.RequestEventValidationFactRecorded, entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectIssuesRecorded}, log.Event)
 			assert.Empty(t, log.State)
 			assert.Zero(t, log.RequestVersion)
 			assert.Empty(t, log.OutcomeReason)
 			assert.NotEmpty(t, log.Metadata)
+			m.requestHistory[log.ID] = log
 			return nil
 		},
 	).AnyTimes()
@@ -202,6 +219,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		staticStorageFactory{store: m.store},
 		m.materializer,
 		projectstatusnoop.New(),
+		projectissuesnoop.New(),
 		staticSourceControlFactory{sourceControl: m.sourceControl},
 		registry,
 		topicKey,
@@ -1502,6 +1520,252 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 	}).Return(nil)
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Len(t, m.hooks.events, 1)
+}
+
+func prepareProjectIssueRecording(m recordMocks, request entity.Request) entity.RequestLog {
+	completion := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID, nil)
+	delete(m.requestHistory, completion.ID)
+	analysis := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, request.TerminalBuildID, nil)
+	m.requestHistory[analysis.ID] = analysis
+	return completion
+}
+
+func TestProcessWaitsForTerminalIssueAnalysis(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := requestWithState(entity.RequestStateFailed)
+	clear(m.requestHistory)
+	otherBuild := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, "other-build", nil)
+	m.requestHistory[otherBuild.ID] = otherBuild
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	d := delivery(t, ctrl, recordPayload(t, testID))
+	d.EXPECT().Hold(_analysisWaitDelayMs)
+
+	require.NoError(t, c.Process(queueContext(), d))
+	assert.Empty(t, m.hooks.events)
+}
+
+func TestProcessRecordsProjectIssues(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		attributions []projectissues.Attribution
+		pairs        []entity.ProjectIssueAttribution
+	}{
+		{name: "no issues"},
+		{name: "issue affects no projects", attributions: []projectissues.Attribution{{TaskID: "test", UnitID: "//app:test"}}},
+		{
+			name: "multiple issues and projects",
+			attributions: []projectissues.Attribution{
+				{TaskID: "test", UnitID: "//app:test", Projects: []string{"app", "dependent"}},
+				{TaskID: "lint", UnitID: "//lib:lint", Projects: []string{"dependent"}},
+			},
+			pairs: []entity.ProjectIssueAttribution{
+				{TaskID: "test", UnitID: "//app:test", Project: "app"},
+				{TaskID: "test", UnitID: "//app:test", Project: "dependent"},
+				{TaskID: "lint", UnitID: "//lib:lint", Project: "dependent"},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			request.BuildID = "superseded-build"
+			completion := prepareProjectIssueRecording(m, request)
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+			factory := projectissuesmock.NewMockAttributerFactory(ctrl)
+			attributer := projectissuesmock.NewMockAttributer(ctrl)
+			c.projectIssuesAttributerFactory = factory
+			factory.EXPECT().For(projectissues.AttributerConfig{QueueName: request.Queue}).Return(attributer, nil)
+			attributer.EXPECT().Attribute(gomock.Any(), request).Return(tt.attributions, nil)
+			source := storagemock.NewMockRequestProjectsByIssueStore(ctrl)
+			projection := storagemock.NewMockRequestIssuesByProjectStore(ctrl)
+			m.store.EXPECT().GetRequestProjectsByIssueStore().Return(source).AnyTimes()
+			m.store.EXPECT().GetRequestIssuesByProjectStore().Return(projection).AnyTimes()
+			var calls []any
+			for _, entry := range tt.pairs {
+				calls = append(calls,
+					source.EXPECT().Create(gomock.Any(), request.ID, entry).Return(nil),
+					projection.EXPECT().Create(gomock.Any(), request.ID, entry).DoAndReturn(
+						func(context.Context, string, entity.ProjectIssueAttribution) error {
+							assert.NotContains(t, m.requestHistory, completion.ID)
+							return nil
+						}),
+				)
+			}
+			gomock.InOrder(calls...)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
+
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.Contains(t, m.requestHistory, completion.ID)
+			recorded := m.requestHistory[completion.ID]
+			assert.Equal(t, entity.RequestEventProjectIssuesRecorded, recorded.Event)
+			assert.Equal(t, request.Queue, recorded.Queue)
+			assert.Equal(t, request.ID, recorded.RequestID)
+			assert.Equal(t, map[string]string{requestlog.MetadataKeyBuildID: request.TerminalBuildID}, recorded.Metadata)
+			assert.Len(t, m.hooks.events, 1)
+			complete, err := c.recordProjectIssues(queueContext(), m.store, request)
+			require.NoError(t, err)
+			assert.True(t, complete)
+		})
+	}
+}
+
+func TestRecordProjectIssuesRetriesIncompleteWrites(t *testing.T) {
+	for _, failProjection := range []bool{true, false} {
+		name := "completion failure"
+		if failProjection {
+			name = "projection failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			completion := prepareProjectIssueRecording(m, request)
+			factory := projectissuesmock.NewMockAttributerFactory(ctrl)
+			attributer := projectissuesmock.NewMockAttributer(ctrl)
+			c.projectIssuesAttributerFactory = factory
+			factory.EXPECT().For(projectissues.AttributerConfig{QueueName: request.Queue}).Return(attributer, nil).Times(2)
+			attributer.EXPECT().Attribute(gomock.Any(), request).Return(
+				[]projectissues.Attribution{{TaskID: "test", UnitID: "//app:test", Projects: []string{"app"}}}, nil,
+			).Times(2)
+			entry := entity.ProjectIssueAttribution{TaskID: "test", UnitID: "//app:test", Project: "app"}
+			source := storagemock.NewMockRequestProjectsByIssueStore(ctrl)
+			projection := storagemock.NewMockRequestIssuesByProjectStore(ctrl)
+			m.store.EXPECT().GetRequestProjectsByIssueStore().Return(source).AnyTimes()
+			m.store.EXPECT().GetRequestIssuesByProjectStore().Return(projection).AnyTimes()
+			var projectionErr, retryProjectionErr error
+			if failProjection {
+				projectionErr = assert.AnError
+			} else {
+				retryProjectionErr = storage.ErrAlreadyExists
+				logs := requestlogmock.NewMockMaterializer(ctrl)
+				c.materializer = logs
+				gomock.InOrder(
+					logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(assert.AnError),
+					logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+							m.requestHistory[log.ID] = log
+							return nil
+						}),
+				)
+			}
+			gomock.InOrder(
+				source.EXPECT().Create(gomock.Any(), request.ID, entry).Return(nil),
+				projection.EXPECT().Create(gomock.Any(), request.ID, entry).Return(projectionErr),
+				source.EXPECT().Create(gomock.Any(), request.ID, entry).Return(storage.ErrAlreadyExists),
+				projection.EXPECT().Create(gomock.Any(), request.ID, entry).Return(retryProjectionErr),
+			)
+
+			complete, err := c.recordProjectIssues(queueContext(), m.store, request)
+			require.ErrorIs(t, err, assert.AnError)
+			assert.False(t, complete)
+			assert.NotContains(t, m.requestHistory, completion.ID)
+			complete, err = c.recordProjectIssues(queueContext(), m.store, request)
+			require.NoError(t, err)
+			assert.True(t, complete)
+			assert.Contains(t, m.requestHistory, completion.ID)
+		})
+	}
+}
+
+func TestRecordProjectIssuesRejectsUnusableResults(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		factoryErr   error
+		attributeErr error
+		attributions []projectissues.Attribution
+	}{
+		{name: "factory failure", factoryErr: assert.AnError},
+		{name: "partial results with error", attributeErr: assert.AnError,
+			attributions: []projectissues.Attribution{{TaskID: "test", UnitID: "//app:test", Projects: []string{"app"}}}},
+		{name: "empty task", attributions: []projectissues.Attribution{{UnitID: "//app:test"}}},
+		{name: "task wide issue", attributions: []projectissues.Attribution{{TaskID: "test"}}},
+		{name: "empty project", attributions: []projectissues.Attribution{{TaskID: "test", UnitID: "//app:test", Projects: []string{""}}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			completion := prepareProjectIssueRecording(m, request)
+			factory := projectissuesmock.NewMockAttributerFactory(ctrl)
+			attributer := projectissuesmock.NewMockAttributer(ctrl)
+			c.projectIssuesAttributerFactory = factory
+			factory.EXPECT().For(projectissues.AttributerConfig{QueueName: request.Queue}).Return(attributer, tt.factoryErr)
+			if tt.factoryErr == nil {
+				attributer.EXPECT().Attribute(gomock.Any(), request).Return(tt.attributions, tt.attributeErr)
+			}
+
+			complete, err := c.recordProjectIssues(queueContext(), m.store, request)
+			require.Error(t, err)
+			assert.False(t, complete)
+			assert.NotContains(t, m.requestHistory, completion.ID)
+		})
+	}
+}
+
+func TestRecordProjectIssuesAnalysisAbandoned(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := requestWithState(entity.RequestStateFailed)
+	clear(m.requestHistory)
+	abandoned := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, request.TerminalBuildID, nil)
+	m.requestHistory[abandoned.ID] = abandoned
+
+	complete, err := c.recordProjectIssues(queueContext(), m.store, request)
+	require.Error(t, err)
+	assert.False(t, complete)
+}
+
+func TestRecordProjectIssuesWithoutBuildOutcome(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+	store := storagemock.NewMockStorage(ctrl)
+	request := requestWithState(entity.RequestStateFailed)
+	request.TerminalBuildID = ""
+
+	complete, err := c.recordProjectIssues(queueContext(), store, request)
+	require.NoError(t, err)
+	assert.True(t, complete)
+}
+
+func TestRecordProjectIssuesHistoryFailures(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventProjectIssuesRecorded,
+		entity.RequestEventBuildAnalysisCompleted,
+		entity.RequestEventBuildAnalysisAbandoned,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, _ := newController(t, ctrl)
+			store := storagemock.NewMockStorage(ctrl)
+			history := storagemock.NewMockRequestLogStore(ctrl)
+			store.EXPECT().GetRequestLogStore().Return(history)
+			request := requestWithState(entity.RequestStateFailed)
+			var calls []any
+			for _, step := range []entity.RequestEvent{
+				entity.RequestEventProjectIssuesRecorded,
+				entity.RequestEventBuildAnalysisCompleted,
+				entity.RequestEventBuildAnalysisAbandoned,
+			} {
+				log := requestlog.NewRequestEventLog(request, step, request.TerminalBuildID, nil)
+				err := storage.ErrNotFound
+				if step == event {
+					err = assert.AnError
+				}
+				calls = append(calls, history.EXPECT().Get(gomock.Any(), request.ID, log.ID).Return(entity.RequestLog{}, err))
+				if step == event {
+					break
+				}
+			}
+			gomock.InOrder(calls...)
+
+			complete, err := c.recordProjectIssues(queueContext(), store, request)
+			require.ErrorIs(t, err, assert.AnError)
+			assert.False(t, complete)
+		})
+	}
 }
 
 func TestPersistProjectFactsCountsPersistedOutcomes(t *testing.T) {

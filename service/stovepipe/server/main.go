@@ -63,6 +63,7 @@ import (
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	fixernoop "github.com/uber/submitqueue/stovepipe/extension/fixer/noop"
+	projectissuesnoop "github.com/uber/submitqueue/stovepipe/extension/projectissues/noop"
 	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -435,7 +436,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, materializer, projectstatusnoop.New(), sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(logger, scope, store, materializer, projectstatusnoop.New(), projectissuesnoop.New(), sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}

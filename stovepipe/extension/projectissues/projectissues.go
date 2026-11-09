@@ -36,9 +36,9 @@ type Attribution struct {
 
 // Attributer attributes confirmed build issues within the request's validation scope.
 // Return an error for incomplete attribution, including any task-wide failure.
-// Returning no results is valid.
+// Returning no results is valid; discard any results returned with an error.
+// Results must be stable across retries for the same request.
 // Calls must be concurrency-safe and leave inputs unchanged.
-// Results returned with an error must not be used.
 type Attributer interface {
 	Attribute(ctx context.Context, request entity.Request) ([]Attribution, error)
 }

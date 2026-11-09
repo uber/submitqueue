@@ -43,8 +43,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	projectissuescore "github.com/uber/submitqueue/stovepipe/core/projectissues"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/projectissues"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -55,21 +57,26 @@ import (
 // when that fact is green and holds the queue's last-green bookmark promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	logger                       *zap.SugaredLogger
-	metricsScope                 tally.Scope
-	materializer                 requestlog.Materializer
-	registry                     consumer.TopicRegistry
-	stores                       storage.Factory
-	projectStatusResolverFactory projectstatus.ResolverFactory
-	sourceControl                sourcecontrol.Factory
-	topicKey                     consumer.TopicKey
-	consumerGroup                string
+	logger                         *zap.SugaredLogger
+	metricsScope                   tally.Scope
+	materializer                   requestlog.Materializer
+	registry                       consumer.TopicRegistry
+	stores                         storage.Factory
+	projectStatusResolverFactory   projectstatus.ResolverFactory
+	projectIssuesAttributerFactory projectissues.AttributerFactory
+	projectIssuesMaterializer      projectissuescore.Materializer
+	sourceControl                  sourcecontrol.Factory
+	topicKey                       consumer.TopicKey
+	consumerGroup                  string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-const _opName = "record"
+const (
+	_opName                    = "record"
+	_analysisWaitDelayMs int64 = 30000
+)
 
 // wholeRepositoryProject is the project component of a fact covering the whole
 // repository rather than one project within it.
@@ -82,6 +89,7 @@ func NewController(
 	stores storage.Factory,
 	materializer requestlog.Materializer,
 	projectStatusResolverFactory projectstatus.ResolverFactory,
+	projectIssuesAttributerFactory projectissues.AttributerFactory,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -89,15 +97,17 @@ func NewController(
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		logger:                       logger.Named(name),
-		metricsScope:                 scope.SubScope(name),
-		materializer:                 materializer,
-		registry:                     registry,
-		stores:                       stores,
-		projectStatusResolverFactory: projectStatusResolverFactory,
-		sourceControl:                sourceControl,
-		topicKey:                     topicKey,
-		consumerGroup:                consumerGroup,
+		logger:                         logger.Named(name),
+		metricsScope:                   scope.SubScope(name),
+		materializer:                   materializer,
+		registry:                       registry,
+		stores:                         stores,
+		projectStatusResolverFactory:   projectStatusResolverFactory,
+		projectIssuesAttributerFactory: projectIssuesAttributerFactory,
+		projectIssuesMaterializer:      projectissuescore.NewMaterializer(scope),
+		sourceControl:                  sourceControl,
+		topicKey:                       topicKey,
+		consumerGroup:                  consumerGroup,
 	}
 }
 
@@ -143,6 +153,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
+		complete, err := c.recordProjectIssues(ctx, store, request)
+		if err != nil {
+			return err
+		}
+		if !complete {
+			delivery.Hold(_analysisWaitDelayMs)
+			return nil
+		}
 		results, err := c.resolveProjectResults(ctx, request)
 		if err != nil {
 			return err
@@ -181,6 +199,70 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
+}
+
+func (c *Controller) recordProjectIssues(ctx context.Context, store storage.Storage, request entity.Request) (complete bool, retErr error) {
+	op := metrics.Begin(c.metricsScope, "record_project_issues", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
+	defer func() { op.Complete(retErr) }()
+
+	if request.TerminalBuildID == "" {
+		return true, nil
+	}
+	history := store.GetRequestLogStore()
+	completion := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID,
+		map[string]string{requestlog.MetadataKeyBuildID: request.TerminalBuildID})
+	_, err := history.Get(ctx, request.ID, completion.ID)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return false, fmt.Errorf("read project issue completion: %w", err)
+	}
+
+	// The terminal request can be visible before analysis has saved its final issues.
+	analysis := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, request.TerminalBuildID, nil)
+	_, err = history.Get(ctx, request.ID, analysis.ID)
+	if errors.Is(err, storage.ErrNotFound) {
+		abandoned := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, request.TerminalBuildID, nil)
+		_, err = history.Get(ctx, request.ID, abandoned.ID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("read abandoned build analysis: %w", err)
+		}
+		return false, fmt.Errorf("cannot attribute issues for build %q: build analysis was abandoned", request.TerminalBuildID)
+	}
+	if err != nil {
+		return false, fmt.Errorf("read completed build analysis: %w", err)
+	}
+
+	attributer, err := c.projectIssuesAttributerFactory.For(projectissues.AttributerConfig{QueueName: request.Queue})
+	if err != nil {
+		return false, fmt.Errorf("resolve project issue attributer for queue %q: %w", request.Queue, err)
+	}
+	attributions, err := attributer.Attribute(ctx, request)
+	if err != nil {
+		return false, fmt.Errorf("attribute issues for request %q: %w", request.ID, err)
+	}
+	for _, attribution := range attributions {
+		if attribution.TaskID == "" {
+			return false, fmt.Errorf("project issue attribution has an empty task ID")
+		}
+		if attribution.UnitID == "" {
+			return false, fmt.Errorf("project issue attribution requires a unit-level issue")
+		}
+		for _, project := range attribution.Projects {
+			entry := entity.ProjectIssueAttribution{TaskID: attribution.TaskID, UnitID: attribution.UnitID, Project: project}
+			if err := c.projectIssuesMaterializer.PersistAttribution(ctx, store, request.ID, entry); err != nil {
+				return false, err
+			}
+		}
+	}
+	if err := c.materializer.PersistLog(ctx, store, completion); err != nil {
+		return false, fmt.Errorf("record project issue completion: %w", err)
+	}
+	return true, nil
 }
 
 func (c *Controller) resolveProjectResults(ctx context.Context, request entity.Request) (results []projectstatus.Result, retErr error) {
