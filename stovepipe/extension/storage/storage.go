@@ -118,4 +118,6 @@ type Storage interface {
 	GetProjectFactByDegreeStore() ProjectFactByDegreeStore
 
 	GetRequestProjectsByIssueStore() RequestProjectsByIssueStore
+
+	GetRequestIssuesByProjectStore() RequestIssuesByProjectStore
 }

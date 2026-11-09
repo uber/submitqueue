@@ -34,6 +34,12 @@ Attribution is assumed stable for a request. Retries recreate the same pairs and
 
 Listing fixes the queue/request prefix and returns bounded pages in ascending bytewise task/unit/project order. The cursor excludes its key. An empty page ends that range; it does not establish that attribution completed. The MySQL key uses the issue stores' task/unit capacities and a 1020-byte project name, matching the byte capacity of existing project names. Create the source table before deploying writers. This store does not maintain current project-issue lookups.
 
+## Request issues by project
+
+`RequestIssuesByProjectStore` is a derived lookup keyed by `(queue, request_id, project, task_id, unit_id)`. It reuses the attribution row's issue/project identity with project-first ordering within the request. Entries describe the failure associations recorded for that validation; they do not change when an issue later closes.
+
+Create returns `ErrAlreadyExists` for a repeated entry. Listing fixes the queue/request/project prefix and returns bounded pages in ascending bytewise task/unit order. The zero cursor starts the range; other cursors must match the project and exclude their task/unit key. An empty page ends the range, not evidence that attribution recording is complete. There are no update or delete operations.
+
 ## Build issue observations
 
 `BuildIssueStore` accumulates observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.

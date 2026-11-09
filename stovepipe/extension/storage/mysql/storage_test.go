@@ -206,6 +206,14 @@ func TestStorageForQueueMetrics(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name: "request_issues_by_project_store",
+			op:   "list",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetRequestIssuesByProjectStore().List(context.Background(), "1", "service", entity.ProjectIssueAttribution{}, 1)
+				return err
+			},
+		},
 	}
 
 	for _, tt := range tests {

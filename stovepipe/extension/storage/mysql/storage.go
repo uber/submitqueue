@@ -64,6 +64,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		validationFactStore:         NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
 		projectFactByDegreeStore:    NewProjectFactByDegreeStore(s.db, queueScope.SubScope("project_fact_by_degree_store"), queueName),
 		requestProjectsByIssueStore: NewRequestProjectsByIssueStore(s.db, queueScope.SubScope("request_projects_by_issue_store"), queueName),
+		requestIssuesByProjectStore: NewRequestIssuesByProjectStore(s.db, queueScope.SubScope("request_issues_by_project_store"), queueName),
 	}, nil
 }
 
@@ -92,6 +93,7 @@ type mysqlStorage struct {
 	validationFactStore         storage.ValidationFactStore
 	projectFactByDegreeStore    storage.ProjectFactByDegreeStore
 	requestProjectsByIssueStore storage.RequestProjectsByIssueStore
+	requestIssuesByProjectStore storage.RequestIssuesByProjectStore
 }
 
 // Verify mysqlStorage implements the queue-scoped aggregate at compile time.
@@ -143,6 +145,10 @@ func (f *mysqlStorage) GetProjectFactByDegreeStore() storage.ProjectFactByDegree
 
 func (f *mysqlStorage) GetRequestProjectsByIssueStore() storage.RequestProjectsByIssueStore {
 	return f.requestProjectsByIssueStore
+}
+
+func (f *mysqlStorage) GetRequestIssuesByProjectStore() storage.RequestIssuesByProjectStore {
+	return f.requestIssuesByProjectStore
 }
 
 func (f *mysqlStorage) GetQueueSummaryStore() storage.QueueSummaryStore { return f.queueSummaryStore }
