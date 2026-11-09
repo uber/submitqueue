@@ -191,7 +191,7 @@ func (c *Controller) resolveProjectResults(ctx context.Context, request entity.R
 	if err != nil {
 		return nil, fmt.Errorf("resolve project status resolver for queue %q: %w", request.Queue, err)
 	}
-	results, err = resolver.Resolve(ctx, request, request.TerminalBuildID)
+	results, err = resolver.Resolve(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("resolve project status results for request %q: %w", request.ID, err)
 	}

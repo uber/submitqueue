@@ -301,7 +301,7 @@ func TestProcess_WaitsForProjectResolutionBeforeRecordingOrPromotion(t *testing.
 	resolver := projectstatusmock.NewMockResolver(ctrl)
 	c.projectStatusResolverFactory = factory
 	factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
-	resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(nil, assert.AnError)
+	resolver.EXPECT().Resolve(gomock.Any(), request).Return(nil, assert.AnError)
 	require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))), assert.AnError)
 	assert.Empty(t, m.hooks.events)
 	assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", "error")
@@ -335,7 +335,7 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
 		Return(projectStatusResolver, nil)
 	projectStatusResolver.EXPECT().Resolve(
-		gomock.Any(), requestWithState(entity.RequestStateFailed), "bk-1",
+		gomock.Any(), requestWithState(entity.RequestStateFailed),
 	).Return([]projectstatus.Result{
 		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeBroken},
 		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeGreen},
@@ -395,21 +395,34 @@ func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
 	assert.Equal(t, "1", logs[1].Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
 }
 
-func TestRecordProjectFacts_PassesEmptyTerminalBuild(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, _ := newController(t, ctrl)
-	request := requestWithState(entity.RequestStateFailed)
-	request.TerminalBuildID = ""
-	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
-	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
-	c.projectStatusResolverFactory = projectStatusResolverFactory
-	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
-		Return(projectStatusResolver, nil)
-	projectStatusResolver.EXPECT().Resolve(gomock.Any(), request, "").Return(nil, nil)
+func TestResolveProjectResults_PassesRequestBuildContext(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		buildID         string
+		terminalBuildID string
+	}{
+		{name: "terminal outcome", buildID: "triggered-build", terminalBuildID: "terminal-build"},
+		{name: "no terminal outcome", buildID: "triggered-build"},
+		{name: "no build"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, _ := newController(t, ctrl)
+			request := requestWithState(entity.RequestStateFailed)
+			request.BuildID = tt.buildID
+			request.TerminalBuildID = tt.terminalBuildID
+			factory := projectstatusmock.NewMockResolverFactory(ctrl)
+			resolver := projectstatusmock.NewMockResolver(ctrl)
+			c.projectStatusResolverFactory = factory
+			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
+			resolver.EXPECT().Resolve(gomock.Any(), request).Return(nil, nil)
 
-	results, err := c.resolveProjectResults(queueContext(), request)
-	assert.Empty(t, results)
-	require.NoError(t, err)
+			results, err := c.resolveProjectResults(queueContext(), request)
+
+			require.NoError(t, err)
+			assert.Empty(t, results)
+		})
+	}
 }
 
 func TestResolveProjectResultsMetrics(t *testing.T) {
@@ -446,7 +459,7 @@ func TestResolveProjectResultsMetrics(t *testing.T) {
 			c.projectStatusResolverFactory = factory
 			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, tt.factoryErr)
 			if tt.factoryErr == nil {
-				resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(tt.results, tt.resolveErr)
+				resolver.EXPECT().Resolve(gomock.Any(), request).Return(tt.results, tt.resolveErr)
 			}
 
 			got, err := c.resolveProjectResults(queueContext(), request)
@@ -596,7 +609,7 @@ func TestProcessRecordsEmptyProjectCompletion(t *testing.T) {
 			resolver := projectstatusmock.NewMockResolver(ctrl)
 			c.projectStatusResolverFactory = factory
 			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
-			resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(tt.results, tt.resolveErr)
+			resolver.EXPECT().Resolve(gomock.Any(), request).Return(tt.results, tt.resolveErr)
 			materializer := requestlogmock.NewMockMaterializer(ctrl)
 			c.materializer = materializer
 			if tt.resolveErr == nil {
@@ -640,7 +653,7 @@ func TestProcess_RejectsInvalidProjectStatusResultsBeforeWritingFacts(t *testing
 	c.projectStatusResolverFactory = projectStatusResolverFactory
 	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
 		Return(projectStatusResolver, nil)
-	projectStatusResolver.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return([]projectstatus.Result{
+	projectStatusResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return([]projectstatus.Result{
 		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeBroken},
 		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: math.NaN()},
 	}, nil)
@@ -1428,8 +1441,8 @@ func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
 			c.projectStatusResolverFactory = factory
 			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
 			resolved := false
-			resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).DoAndReturn(
-				func(context.Context, entity.Request, string) ([]projectstatus.Result, error) {
+			resolver.EXPECT().Resolve(gomock.Any(), request).DoAndReturn(
+				func(context.Context, entity.Request) ([]projectstatus.Result, error) {
 					resolved = true
 					return tt.results, nil
 				})
@@ -1477,7 +1490,7 @@ func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) 
 	resolver := projectstatusmock.NewMockResolver(ctrl)
 	c.projectStatusResolverFactory = factory
 	factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil).Times(2)
-	resolver.EXPECT().Resolve(gomock.Any(), request, request.TerminalBuildID).Return(
+	resolver.EXPECT().Resolve(gomock.Any(), request).Return(
 		[]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a"}, Degree: entity.DegreeBroken}}, nil).Times(2)
 	var stored entity.ValidationFact
 	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {

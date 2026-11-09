@@ -42,6 +42,6 @@ func (ResolverFactory) For(projectstatus.ResolverConfig) (projectstatus.Resolver
 
 type resolver struct{}
 
-func (resolver) Resolve(context.Context, entity.Request, string) ([]projectstatus.Result, error) {
+func (resolver) Resolve(context.Context, entity.Request) ([]projectstatus.Result, error) {
 	return nil, nil
 }
