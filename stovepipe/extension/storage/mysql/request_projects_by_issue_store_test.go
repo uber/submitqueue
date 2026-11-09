@@ -162,3 +162,70 @@ func TestRequestProjectsByIssueStoreRejectsInvalidInput(t *testing.T) {
 	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestRequestProjectsByIssueStoreListByIssue(t *testing.T) {
+	entry := entity.ProjectIssueAttribution{TaskID: "test", UnitID: "unit", Project: "app"}
+	for _, after := range []string{"", "before"} {
+		for _, tt := range []struct {
+			name    string
+			rows    *sqlmock.Rows
+			err     error
+			want    []entity.ProjectIssueAttribution
+			wantErr bool
+		}{
+			{name: "found", rows: sqlmock.NewRows([]string{"task_id", "unit_id", "project"}).AddRow(entry.TaskID, entry.UnitID, entry.Project), want: []entity.ProjectIssueAttribution{entry}},
+			{name: "empty", rows: sqlmock.NewRows([]string{"task_id", "unit_id", "project"})},
+			{name: "query error", err: errors.New("query failed"), wantErr: true},
+			{name: "scan error", rows: sqlmock.NewRows([]string{"task_id", "unit_id", "project"}).AddRow(nil, entry.UnitID, entry.Project), wantErr: true},
+			{name: "iteration error", rows: sqlmock.NewRows([]string{"task_id", "unit_id", "project"}).AddRow(entry.TaskID, entry.UnitID, entry.Project).RowError(0, errors.New("read failed")), wantErr: true},
+		} {
+			t.Run(tt.name+"/"+after, func(t *testing.T) {
+				db, mock, err := sqlmock.New()
+				require.NoError(t, err)
+				defer db.Close()
+				query := mock.ExpectQuery(regexp.QuoteMeta(listProjectsForRequestIssueQuery)).WithArgs("queue", "7", "test", "unit", after, 2)
+				if tt.err != nil {
+					query.WillReturnError(tt.err)
+				} else {
+					query.WillReturnRows(tt.rows).RowsWillBeClosed()
+				}
+				got, err := NewRequestProjectsByIssueStore(db, testMetrics(), "queue").ListByIssue(context.Background(), "7", "test", "unit", after, 2)
+				if tt.wantErr {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, tt.want, got)
+				}
+				if tt.err != nil {
+					require.ErrorIs(t, err, tt.err)
+				}
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+		}
+	}
+}
+
+func TestRequestProjectsByIssueStoreListByIssueInvalidInput(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	for _, tt := range []struct {
+		queue, request, task, unit, after string
+		limit                             int
+	}{
+		{"", "7", "test", "unit", "", 1},
+		{strings.Repeat("q", 256), "7", "test", "unit", "", 1},
+		{"queue", "07", "test", "unit", "", 1},
+		{"queue", "7", "", "unit", "", 1},
+		{"queue", "7", strings.Repeat("t", 256), "unit", "", 1},
+		{"queue", "7", "test", "", "", 1},
+		{"queue", "7", "test", strings.Repeat("u", 1025), "", 1},
+		{"queue", "7", "test", "unit", strings.Repeat("p", 1021), 1},
+		{"queue", "7", "test", "unit", "", 0},
+		{"queue", "7", "test", "unit", "", -1},
+	} {
+		_, err := NewRequestProjectsByIssueStore(db, testMetrics(), tt.queue).ListByIssue(context.Background(), tt.request, tt.task, tt.unit, tt.after, tt.limit)
+		require.Error(t, err)
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
