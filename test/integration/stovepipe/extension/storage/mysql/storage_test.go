@@ -135,6 +135,10 @@ func TestMySQLStorage(t *testing.T) {
 		testIssueTrackingStore(t, ctx, factory)
 	})
 
+	t.Run("RequestIssueSummaryStore", func(t *testing.T) {
+		testRequestIssueSummaryStore(t, ctx, factory)
+	})
+
 	t.Run("IssueLogStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testIssueLogStore(t, ctx, factory)
