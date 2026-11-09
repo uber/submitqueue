@@ -95,6 +95,16 @@ func TestMySQLStorage(t *testing.T) {
 		testBuildIssueStore(t, ctx, db, factory)
 	})
 
+	t.Run("RequestProjectsByIssue", func(t *testing.T) {
+		resetStorage(t, db)
+		testRequestProjectsByIssue(t, ctx, backend)
+	})
+
+	t.Run("RequestProjectsByIssueKeyLimits", func(t *testing.T) {
+		resetStorage(t, db)
+		testRequestProjectsByIssueKeyLimits(t, ctx, backend)
+	})
+
 	t.Run("BuildIssueList", func(t *testing.T) {
 		resetStorage(t, db)
 		testBuildIssueList(t, ctx, factory)
@@ -227,6 +237,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE queue",
 		"TRUNCATE TABLE validation_fact",
 		"TRUNCATE TABLE project_fact_by_degree",
+		"TRUNCATE TABLE request_projects_by_issue",
 	} {
 		_, err := db.ExecContext(context.Background(), statement)
 		require.NoError(t, err)

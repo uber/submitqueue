@@ -19,6 +19,7 @@ go_test(
         "request_acceptance_test.go",
         "request_issue_summary_materializer_test.go",
         "request_issue_summary_test.go",
+        "request_projects_by_issue_test.go",
         "storage_test.go",
     ],
     data = [

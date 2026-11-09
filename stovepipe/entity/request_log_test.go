@@ -117,6 +117,16 @@ func TestRequestLogValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "project issues recorded",
+			mutate: func(entry RequestLog) RequestLog {
+				entry.State = RequestStateUnknown
+				entry.Event = RequestEventProjectIssuesRecorded
+				entry.RequestVersion = 0
+				entry.Metadata = map[string]string{"build_id": "42"}
+				return entry
+			},
+		},
+		{
 			name: "build event",
 			mutate: func(entry RequestLog) RequestLog {
 				entry.State = RequestStateUnknown
