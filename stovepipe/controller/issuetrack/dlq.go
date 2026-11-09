@@ -229,6 +229,9 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 		if err := persistIssueHistory(ctx, c.materializer, store, current); err != nil {
 			return entity.IssueTrackingState{}, err
 		}
+		if err := persistReportedIssue(ctx, c.materializer, store, progress, current); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
 	}
 
 	if err := c.recordAbandonment(ctx, store, queue, progress); err != nil {

@@ -88,7 +88,8 @@ func TestFinalizationOpensKeepsAndClosesIssues(t *testing.T) {
 	require.Equal(t, int32(8), f.states[issueKey{"b", "unit"}].Version)
 	require.Equal(t, "build", f.states[issueKey{"c", "unit"}].FirstSeenBuildID)
 	require.Equal(t, int32(8), f.states[issueKey{"closed", ""}].Version)
-	require.Len(t, f.logs, 2)
+	require.Len(t, f.logs, 3)
+	require.Contains(t, f.logs, logKey{issueKey{"b", "unit"}, "build", entity.IssueEventReported})
 	require.Contains(t, f.logs, logKey{issueKey{"a", ""}, "build", entity.IssueEventClosed})
 	require.Contains(t, f.logs, logKey{issueKey{"c", "unit"}, "build", entity.IssueEventOpened})
 }
@@ -535,7 +536,10 @@ func TestTaskWideFlagSurvivesNoOpOpeningBatchAndRetry(t *testing.T) {
 	require.True(t, f.progress.Finalize)
 	require.True(t, f.progress.HasTaskWideIssues)
 	require.Equal(t, "unit/099", f.progress.CursorUnitID)
-	require.Empty(t, f.logs)
+	require.Len(t, f.logs, 100)
+	for _, log := range f.logs {
+		require.Equal(t, entity.IssueEventReported, log.Event)
+	}
 	f.failures["build-issues/list"] = 1
 	require.ErrorIs(t, f.deliver(msg, false), assert.AnError)
 	require.True(t, f.progress.HasTaskWideIssues)

@@ -208,6 +208,12 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				Finalize:       finalize,
 				Version:        progress.Version + 1,
 			}
+			if progress.RequestID != request.ID {
+				log := requestlog.NewRequestEventLog(request, entity.RequestEventIssueTrackingStarted, "", nil)
+				if err := c.requestMaterializer.PersistLog(ctx, store, log); err != nil {
+					return fmt.Errorf("record start of request issue results: %w", err)
+				}
+			}
 			if progress.Version == 0 {
 				err = tracking.Create(ctx, next)
 			} else {
@@ -411,9 +417,11 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID == progress.BuildID && current.Status == desired {
 		if key == (issueKey{progress.CursorTaskID, progress.CursorUnitID}) {
-			return next, persistIssueHistory(ctx, c.materializer, store, current)
+			if err := persistIssueHistory(ctx, c.materializer, store, current); err != nil {
+				return entity.IssueTrackingState{}, err
+			}
 		}
-		return next, nil
+		return next, persistReportedIssue(ctx, c.materializer, store, progress, current)
 	}
 
 	// Read the issue before this CAS, including when resuming a cursor. A
@@ -460,9 +468,11 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	}
 
 	if missing || current.Status != desired {
-		return next, persistIssueHistory(ctx, c.materializer, store, target)
+		if err := persistIssueHistory(ctx, c.materializer, store, target); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
 	}
-	return next, nil
+	return next, persistReportedIssue(ctx, c.materializer, store, progress, target)
 }
 
 func saveProgress(ctx context.Context, store storage.IssueTrackingStore, next entity.IssueTrackingState) (entity.IssueTrackingState, error) {
