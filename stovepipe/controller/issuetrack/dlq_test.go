@@ -95,7 +95,7 @@ func TestRecoveryKeepsAcceptedIssueChanges(t *testing.T) {
 			for key, state := range f.states {
 				untouched[key] = state
 			}
-			delete(f.initialLogs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, status})
+			delete(f.initialLogs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, entity.IssueEvent(status)})
 			f.failures["issue/list"], f.failures["build-issues/list"], f.failures["build-issues/get"] = 1, 1, 1
 
 			require.NoError(t, f.recover(msg, false))
@@ -106,7 +106,7 @@ func TestRecoveryKeepsAcceptedIssueChanges(t *testing.T) {
 				}
 				require.Equal(t, expected, f.states[key])
 			}
-			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, status})
+			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, original.LastChangedBuildID, entity.IssueEvent(status)})
 			require.Len(t, f.events, 1)
 			require.Equal(t, 1, f.failures["issue/list"])
 			require.Equal(t, 1, f.failures["build-issues/list"])
@@ -193,7 +193,7 @@ func TestRecoveryDoesNotReopenAnExistingClosedCursor(t *testing.T) {
 	require.NoError(t, f.recover(msg, false))
 	require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
 	require.Equal(t, "older", f.states[issueKey{"task", "unit"}].FirstSeenBuildID)
-	require.NotContains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen})
+	require.NotContains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened})
 }
 
 func TestRecoveryRetriesOnlyRecoveryWork(t *testing.T) {
@@ -241,7 +241,7 @@ func TestRecoveryRetainsAnOpeningAcrossRetries(t *testing.T) {
 
 			require.NoError(t, f.recover(msg, false))
 			issue := f.states[issueKey{"task", "unit"}]
-			log := f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen}]
+			log := f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened}]
 			summary := f.summaries[issueKey{"task", "unit"}]
 			require.Equal(t, issue.FirstSeenBuildID, f.openIssues[issueKey{"task", "unit"}].FirstSeenBuildID)
 			require.Equal(t, entity.IssueStatusOpen, summary.Status)

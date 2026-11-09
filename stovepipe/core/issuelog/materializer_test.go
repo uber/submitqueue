@@ -30,7 +30,7 @@ import (
 
 type logKey struct {
 	task, unit, build string
-	status            entity.IssueStatus
+	event             entity.IssueEvent
 }
 
 type materializerFixture struct {
@@ -63,18 +63,18 @@ func newMaterializerFixture(t *testing.T) *materializerFixture {
 		if err := f.failures["log/create"]; err != nil {
 			return err
 		}
-		key := logKey{log.TaskID, log.UnitID, log.BuildID, log.Status}
+		key := logKey{log.TaskID, log.UnitID, log.BuildID, log.Event}
 		if _, ok := f.logs[key]; ok {
 			return storage.ErrAlreadyExists
 		}
 		f.logs[key] = log
 		return nil
 	}).AnyTimes()
-	logs.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit, build string, status entity.IssueStatus) (entity.IssueLog, error) {
+	logs.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit, build string, event entity.IssueEvent) (entity.IssueLog, error) {
 		if err := f.failures["log/get"]; err != nil {
 			return entity.IssueLog{}, err
 		}
-		log, ok := f.logs[logKey{task, unit, build, status}]
+		log, ok := f.logs[logKey{task, unit, build, event}]
 		if !ok {
 			return entity.IssueLog{}, storage.ErrNotFound
 		}
@@ -111,7 +111,7 @@ func newMaterializerFixture(t *testing.T) *materializerFixture {
 		if f.summary.Version != 0 {
 			return storage.ErrAlreadyExists
 		}
-		require.Equal(t, summary.ChangedAtMs, f.logs[logKey{summary.TaskID, summary.UnitID, summary.BuildID, summary.Status}].TimestampMs)
+		require.Equal(t, summary.ChangedAtMs, f.logs[logKey{summary.TaskID, summary.UnitID, summary.BuildID, entity.IssueEvent(summary.Status)}].TimestampMs)
 		f.summary = summary
 		return nil
 	}).AnyTimes()
@@ -191,7 +191,7 @@ func newMaterializerFixture(t *testing.T) *materializerFixture {
 }
 
 func testIssueLog(build string, status entity.IssueStatus) entity.IssueLog {
-	return entity.IssueLog{TaskID: "validation", UnitID: "unit", BuildID: build, Status: status, TimestampMs: 1000}
+	return entity.IssueLog{TaskID: "validation", UnitID: "unit", BuildID: build, Event: entity.IssueEvent(status), TimestampMs: 1000}
 }
 
 func TestMaterializerOpenCloseReopenAndReplay(t *testing.T) {
@@ -319,7 +319,7 @@ func TestMaterializerRejectsInvalidTransitions(t *testing.T) {
 			opening := log.BuildID
 			switch scenario {
 			case "invalid status":
-				log.Status = entity.IssueStatusUnknown
+				log.Event = ""
 			case "missing opening":
 				opening = ""
 			case "wrong opening":
@@ -516,4 +516,34 @@ func TestOpenIssueRetryHonorsCanceledContext(t *testing.T) {
 	f.beforeOpenIssueWrite = cancel
 
 	require.ErrorIs(t, f.m.PersistLog(ctx, f.stores, log, log.BuildID), context.Canceled)
+}
+
+func TestReportedIssueDoesNotChangeLifecycle(t *testing.T) {
+	f := newMaterializerFixture(t)
+	opened := testIssueLog("build/z", entity.IssueStatusOpen)
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+	before, opening := f.summary, f.openIssue
+	report := entity.IssueLog{TaskID: "validation", UnitID: "unit", BuildID: "build/a", Event: entity.IssueEventReported}
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
+	require.Equal(t, before, f.summary)
+	require.Equal(t, opening, f.openIssue)
+	retained := f.logs[logKey{"validation", "unit", "build/a", entity.IssueEventReported}]
+	require.Equal(t, opened.BuildID, retained.FirstSeenBuildID)
+	require.Positive(t, retained.TimestampMs)
+	report.TimestampMs = retained.TimestampMs + 100
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
+	require.Equal(t, retained, f.logs[logKey{"validation", "unit", "build/a", entity.IssueEventReported}])
+}
+
+func TestReportedIssueCannotReopenClosedIssue(t *testing.T) {
+	f := newMaterializerFixture(t)
+	opened := testIssueLog("build/z", entity.IssueStatusOpen)
+	closed := testIssueLog("build/m", entity.IssueStatusClosed)
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, closed, opened.BuildID))
+	before := f.summary
+	report := entity.IssueLog{TaskID: "validation", UnitID: "unit", BuildID: "build/a", Event: entity.IssueEventReported}
+	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
+	require.Equal(t, before, f.summary)
+	require.Empty(t, f.openIssue)
 }
