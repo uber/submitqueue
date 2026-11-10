@@ -42,7 +42,7 @@ func (f *fixture) recover(ctx context.Context, msg entityqueue.Message) error {
 func TestDLQRetainsPartialResults(t *testing.T) {
 	for _, operation := range []string{
 		"resolve", "attribute", "reverse/create", "fact/create", "index/create",
-		"log/project_facts_recorded", "log/project_issues_recorded",
+		"log/project_facts_recorded", "log/project_issues_recorded", "log/project_analysis_completed",
 	} {
 		t.Run(operation, func(t *testing.T) {
 			f := newFixture(t)
@@ -66,7 +66,7 @@ func TestDLQRetainsPartialResults(t *testing.T) {
 			require.Equal(t, reverse, f.reverse)
 			require.Equal(t, resolverCalls, f.resolverCalls)
 			require.Equal(t, attributerCalls, f.attributerCalls)
-			require.Len(t, f.records, 1)
+			require.Empty(t, f.records)
 
 			logCount := len(f.logs)
 			require.NoError(t, f.recover(context.Background(), msg))
@@ -78,11 +78,8 @@ func TestDLQRetainsPartialResults(t *testing.T) {
 			require.Equal(t, reverse, f.reverse)
 			require.Equal(t, resolverCalls, f.resolverCalls)
 			require.Equal(t, attributerCalls, f.attributerCalls)
-			require.Len(t, f.records, 3)
-			for _, record := range f.records {
-				require.Equal(t, f.records[0].ID, record.ID)
-				require.Equal(t, f.records[0].Payload, record.Payload)
-			}
+			require.Empty(t, f.records)
+			require.Empty(t, f.publishAttempts)
 		})
 	}
 }
@@ -103,8 +100,8 @@ func TestDLQPreservesCompletedAnalysis(t *testing.T) {
 	require.Equal(t, reverse, f.reverse)
 	require.Equal(t, 1, f.resolverCalls)
 	require.Equal(t, 1, f.attributerCalls)
-	require.Len(t, f.records, 2)
-	require.Equal(t, f.publishAttempts[0].ID, f.records[0].ID)
+	require.Empty(t, f.records)
+	require.Len(t, f.publishAttempts, 1)
 }
 
 func TestDLQRetriesRecoveryFailures(t *testing.T) {
@@ -115,7 +112,6 @@ func TestDLQRetriesRecoveryFailures(t *testing.T) {
 		{operation: "request/get", err: context.Canceled},
 		{operation: "completion/get", err: assert.AnError},
 		{operation: "log/project_analysis_abandoned", err: assert.AnError},
-		{operation: "record/publish", err: assert.AnError},
 	} {
 		t.Run(tt.operation, func(t *testing.T) {
 			f := newFixture(t)
@@ -125,13 +121,10 @@ func TestDLQRetriesRecoveryFailures(t *testing.T) {
 			require.Empty(t, f.records)
 			require.Zero(t, f.resolverCalls)
 			require.Zero(t, f.attributerCalls)
-			if tt.operation == "record/publish" {
-				require.Contains(t, f.logs, requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil).ID)
-			}
 
 			require.NoError(t, f.recover(context.Background(), msg))
 			require.Contains(t, f.logs, requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil).ID)
-			require.Len(t, f.records, 1)
+			require.Empty(t, f.records)
 			require.Empty(t, f.facts)
 			require.Empty(t, f.source)
 			require.NotContains(t, f.logs, f.completion().ID)
@@ -141,16 +134,15 @@ func TestDLQRetriesRecoveryFailures(t *testing.T) {
 
 func TestDLQHandlesTerminalOutcomes(t *testing.T) {
 	for _, tt := range []struct {
-		name        string
-		state       entity.RequestState
-		build       string
-		abandoned   bool
-		recordCount int
+		name      string
+		state     entity.RequestState
+		build     string
+		abandoned bool
 	}{
-		{name: "failed", state: entity.RequestStateFailed, build: "build/7", abandoned: true, recordCount: 1},
-		{name: "succeeded", state: entity.RequestStateSucceeded, build: "build/7", abandoned: true, recordCount: 1},
-		{name: "failed without a build outcome", state: entity.RequestStateFailed, abandoned: true, recordCount: 1},
-		{name: "cancelled", state: entity.RequestStateCancelled, recordCount: 1},
+		{name: "failed", state: entity.RequestStateFailed, build: "build/7", abandoned: true},
+		{name: "succeeded", state: entity.RequestStateSucceeded, build: "build/7", abandoned: true},
+		{name: "failed without a build outcome", state: entity.RequestStateFailed, abandoned: true},
+		{name: "cancelled", state: entity.RequestStateCancelled},
 		{name: "superseded", state: entity.RequestStateSuperseded},
 		{name: "nonterminal", state: entity.RequestStateProcessing},
 	} {
@@ -160,12 +152,12 @@ func TestDLQHandlesTerminalOutcomes(t *testing.T) {
 			f.logs = map[string]entity.RequestLog{}
 			msg := f.message(t)
 			require.NoError(t, f.recover(context.Background(), msg))
-			require.Len(t, f.records, tt.recordCount)
+			require.Empty(t, f.records)
 			if tt.abandoned {
 				projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
 				require.Equal(t, projectAnalysisAbandonedLog, f.logs[projectAnalysisAbandonedLog.ID])
 				require.NoError(t, f.deliver(context.Background(), msg))
-				require.Len(t, f.records, tt.recordCount+1)
+				require.Empty(t, f.records)
 			} else {
 				require.Empty(t, f.logs)
 			}

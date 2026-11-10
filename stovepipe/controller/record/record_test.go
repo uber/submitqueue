@@ -17,7 +17,6 @@ package record
 import (
 	"context"
 	"errors"
-	"math"
 	"testing"
 	"time"
 
@@ -35,9 +34,6 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
-	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
-	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -74,7 +70,9 @@ type recordMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	queueStore    *storagemock.MockQueueStore
 	factStore     *storagemock.MockValidationFactStore
-	indexStore    *storagemock.MockProjectFactByDegreeStore
+	summary       *entity.RequestSummary
+	summaries     *storagemock.MockRequestSummaryStore
+	summaryErr    *error
 	store         *storagemock.MockStorage
 	materializer  *requestlogmock.MockMaterializer
 	sourceControl *sourcecontrolmock.MockSourceControl
@@ -149,7 +147,9 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		factStore:     storagemock.NewMockValidationFactStore(ctrl),
-		indexStore:    storagemock.NewMockProjectFactByDegreeStore(ctrl),
+		summary:       &entity.RequestSummary{RequestID: testID, Queue: testQueue, URI: testURI, ProjectResultsCompletedAtMs: 1000},
+		summaries:     storagemock.NewMockRequestSummaryStore(ctrl),
+		summaryErr:    new(error),
 		store:         storagemock.NewMockStorage(ctrl),
 		materializer:  requestlogmock.NewMockMaterializer(ctrl),
 		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
@@ -160,10 +160,11 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	m.store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
-	m.store.EXPECT().GetProjectFactByDegreeStore().Return(m.indexStore).AnyTimes()
+	m.store.EXPECT().GetRequestSummaryStore().Return(m.summaries).AnyTimes()
+	m.summaries.EXPECT().Get(gomock.Any(), testID).DoAndReturn(func(context.Context, string) (entity.RequestSummary, error) { return *m.summary, *m.summaryErr }).AnyTimes()
 	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-			assert.Contains(t, []entity.RequestEvent{entity.RequestEventValidationFactRecorded, entity.RequestEventProjectFactsRecorded}, log.Event)
+			assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
 			assert.Empty(t, log.State)
 			assert.Zero(t, log.RequestVersion)
 			assert.Empty(t, log.OutcomeReason)
@@ -201,7 +202,6 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		scope,
 		staticStorageFactory{store: m.store},
 		m.materializer,
-		projectstatusnoop.New(),
 		staticSourceControlFactory{sourceControl: m.sourceControl},
 		registry,
 		topicKey,
@@ -292,22 +292,6 @@ func TestProcess_PromotesFinalizedGreenAtCurrentBaseline(t *testing.T) {
 	assert.Len(t, m.hooks.events, 1)
 }
 
-func TestProcess_WaitsForProjectResolutionBeforeRecordingOrPromotion(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, m := newController(t, ctrl)
-	request := requestWithState(entity.RequestStateSucceeded)
-	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
-	factory := projectstatusmock.NewMockResolverFactory(ctrl)
-	resolver := projectstatusmock.NewMockResolver(ctrl)
-	c.projectStatusResolverFactory = factory
-	factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
-	resolver.EXPECT().Resolve(gomock.Any(), request).Return(nil, assert.AnError)
-	require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))), assert.AnError)
-	assert.Empty(t, m.hooks.events)
-	assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", "error")
-	assert.NotContains(t, m.metricsScope.Snapshot().Counters(), "record_controller.persist_project_facts.start+queue="+testQueue)
-}
-
 func TestProcess_RejectsLegacyBookmark(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
@@ -322,346 +306,6 @@ func TestProcess_RejectsLegacyBookmark(t *testing.T) {
 	err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
 	require.Error(t, err)
 	assert.Empty(t, m.hooks.events)
-}
-
-func TestProcess_RecordsNamedProjectStatusResults(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, m := newController(t, ctrl)
-	eventMaterializer := requestlogmock.NewMockMaterializer(ctrl)
-	c.materializer = eventMaterializer
-	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
-	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
-	c.projectStatusResolverFactory = projectStatusResolverFactory
-	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
-		Return(projectStatusResolver, nil)
-	projectStatusResolver.EXPECT().Resolve(
-		gomock.Any(), requestWithState(entity.RequestStateFailed),
-	).Return([]projectstatus.Result{
-		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeBroken},
-		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeGreen},
-	}, nil)
-	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
-
-	var facts []entity.ValidationFact
-	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
-			facts = append(facts, fact)
-			return nil
-		}).
-		Times(3)
-
-	var indexes []entity.ProjectFactByDegree
-	m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, entry entity.ProjectFactByDegree) error {
-			indexes = append(indexes, entry)
-			return nil
-		}).Times(2)
-
-	var logs []entity.RequestLog
-	eventMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-			logs = append(logs, log)
-			return nil
-		}).
-		Times(2)
-
-	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
-	require.Len(t, facts, 3)
-	require.Len(t, indexes, 2)
-	for i, fact := range facts[1:] {
-		entry, err := entity.NewProjectFactByDegree(fact)
-		require.NoError(t, err)
-		assert.Equal(t, entry, indexes[i])
-	}
-	assert.Equal(t, []string{"", "project-a", "project-b"}, []string{facts[0].Project, facts[1].Project, facts[2].Project})
-	for _, fact := range facts {
-		assert.Equal(t, testURI, fact.URI)
-		assert.Equal(t, testID, fact.RequestID)
-		if fact.Project == "" {
-			assert.Equal(t, entity.DegreePartial, fact.Degree)
-		} else if fact.Project == "project-b" {
-			assert.Equal(t, entity.DegreeGreen, fact.Degree)
-		} else {
-			assert.Equal(t, entity.DegreeBroken, fact.Degree)
-		}
-		assert.Positive(t, fact.CreatedAt)
-	}
-	require.Len(t, logs, 2)
-	assert.Equal(t, entity.RequestEventValidationFactRecorded, logs[0].Event)
-	assert.Equal(t, entity.RequestEventProjectFactsRecorded, logs[1].Event)
-	assert.Equal(t, "2", logs[1].Metadata[requestlog.MetadataKeyProjectFactCount])
-	assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", "success")
-	assertRecordOperationMetrics(t, m.metricsScope, "persist_project_facts", "success")
-	assert.Equal(t, "1", logs[1].Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
-}
-
-func TestResolveProjectResults_PassesRequestBuildContext(t *testing.T) {
-	for _, tt := range []struct {
-		name            string
-		buildID         string
-		terminalBuildID string
-	}{
-		{name: "terminal outcome", buildID: "triggered-build", terminalBuildID: "terminal-build"},
-		{name: "no terminal outcome", buildID: "triggered-build"},
-		{name: "no build"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, _ := newController(t, ctrl)
-			request := requestWithState(entity.RequestStateFailed)
-			request.BuildID = tt.buildID
-			request.TerminalBuildID = tt.terminalBuildID
-			factory := projectstatusmock.NewMockResolverFactory(ctrl)
-			resolver := projectstatusmock.NewMockResolver(ctrl)
-			c.projectStatusResolverFactory = factory
-			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
-			resolver.EXPECT().Resolve(gomock.Any(), request).Return(nil, nil)
-
-			results, err := c.resolveProjectResults(queueContext(), request)
-
-			require.NoError(t, err)
-			assert.Empty(t, results)
-		})
-	}
-}
-
-func TestResolveProjectResultsMetrics(t *testing.T) {
-	validResults := []projectstatus.Result{
-		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeGreen},
-		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeBroken},
-	}
-	for _, tt := range []struct {
-		name       string
-		results    []projectstatus.Result
-		factoryErr error
-		resolveErr error
-		invalid    bool
-		wantResult string
-	}{
-		{name: "projects", results: validResults, wantResult: "success"},
-		{name: "nil results", wantResult: "success"},
-		{name: "empty results", results: []projectstatus.Result{}, wantResult: "success"},
-		{name: "factory error", factoryErr: assert.AnError, wantResult: "error"},
-		{name: "factory cancellation", factoryErr: context.Canceled, wantResult: "cancel"},
-		{name: "resolver error with partial results", results: validResults, resolveErr: assert.AnError, wantResult: "error"},
-		{name: "resolver cancellation", resolveErr: context.Canceled, wantResult: "cancel"},
-		{name: "resolver deadline", resolveErr: context.DeadlineExceeded, wantResult: "error"},
-		{name: "invalid project", results: []projectstatus.Result{{Degree: entity.DegreeGreen}}, invalid: true, wantResult: "error"},
-		{name: "invalid degree", results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: math.NaN()}}, invalid: true, wantResult: "error"},
-		{name: "duplicate projects", results: []projectstatus.Result{validResults[0], validResults[0]}, invalid: true, wantResult: "error"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
-			request := failedRequest()
-			factory := projectstatusmock.NewMockResolverFactory(ctrl)
-			resolver := projectstatusmock.NewMockResolver(ctrl)
-			c.projectStatusResolverFactory = factory
-			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, tt.factoryErr)
-			if tt.factoryErr == nil {
-				resolver.EXPECT().Resolve(gomock.Any(), request).Return(tt.results, tt.resolveErr)
-			}
-
-			got, err := c.resolveProjectResults(queueContext(), request)
-
-			switch {
-			case tt.factoryErr != nil:
-				require.ErrorIs(t, err, tt.factoryErr)
-			case tt.resolveErr != nil:
-				require.ErrorIs(t, err, tt.resolveErr)
-			case tt.invalid:
-				require.Error(t, err)
-			default:
-				require.NoError(t, err)
-				assert.Equal(t, tt.results, got)
-			}
-			assertRecordOperationMetrics(t, m.metricsScope, "resolve_project_results", tt.wantResult)
-			histograms := m.metricsScope.Snapshot().Histograms()
-			const projectsKey = "record_controller.resolve_project_results.projects+queue=" + testQueue
-			if err != nil {
-				assert.NotContains(t, histograms, projectsKey)
-				return
-			}
-			projects, ok := histograms[projectsKey]
-			require.True(t, ok)
-			assert.EqualValues(t, 1, projects.Values()[float64(len(tt.results))])
-			var samples int64
-			for _, count := range projects.Values() {
-				samples += count
-			}
-			assert.EqualValues(t, 1, samples)
-		})
-	}
-}
-
-func TestPersistProjectFactsMetrics(t *testing.T) {
-	for _, tt := range []struct {
-		name          string
-		empty         bool
-		existing      bool
-		factErr       error
-		indexErr      error
-		completionErr error
-		wantResult    string
-	}{
-		{name: "projects", wantResult: "success"},
-		{name: "empty results", empty: true, wantResult: "success"},
-		{name: "existing facts and indexes", existing: true, wantResult: "success"},
-		{name: "fact write error", factErr: assert.AnError, wantResult: "error"},
-		{name: "fact write cancellation", factErr: context.Canceled, wantResult: "cancel"},
-		{name: "index write error", indexErr: assert.AnError, wantResult: "error"},
-		{name: "index write cancellation", indexErr: context.Canceled, wantResult: "cancel"},
-		{name: "completion error", completionErr: assert.AnError, wantResult: "error"},
-		{name: "completion cancellation", completionErr: context.Canceled, wantResult: "cancel"},
-		{name: "empty completion error", empty: true, completionErr: assert.AnError, wantResult: "error"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
-			request := failedRequest()
-			var results []projectstatus.Result
-			if !tt.empty {
-				results = []projectstatus.Result{
-					{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeGreen},
-					{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: entity.DegreeBroken},
-				}
-			}
-			materializer := requestlogmock.NewMockMaterializer(ctrl)
-			c.materializer = materializer
-			for _, result := range results {
-				fact := entity.ValidationFact{URI: request.URI, Project: result.ProjectInfo.Name, Degree: result.Degree, RequestID: request.ID, CreatedAt: testChangeTime.UnixMilli()}
-				createErr := tt.factErr
-				if tt.existing {
-					createErr = storage.ErrAlreadyExists
-				}
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(createErr)
-				if tt.factErr != nil {
-					break
-				}
-				indexErr := tt.indexErr
-				if tt.existing {
-					m.factStore.EXPECT().Get(gomock.Any(), request.URI, result.ProjectInfo.Name).Return(fact, nil)
-					indexErr = storage.ErrAlreadyExists
-				}
-				entry, err := entity.NewProjectFactByDegree(fact)
-				require.NoError(t, err)
-				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(indexErr)
-				if tt.indexErr != nil {
-					break
-				}
-			}
-			if tt.factErr == nil && tt.indexErr == nil {
-				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
-					func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-						assert.Equal(t, entity.RequestEventProjectFactsRecorded, log.Event)
-						return tt.completionErr
-					})
-			}
-
-			err := c.persistProjectFacts(queueContext(), m.store, request, results)
-
-			switch {
-			case tt.factErr != nil:
-				require.ErrorIs(t, err, tt.factErr)
-			case tt.indexErr != nil:
-				require.ErrorIs(t, err, tt.indexErr)
-			case tt.completionErr != nil:
-				require.ErrorIs(t, err, tt.completionErr)
-			default:
-				require.NoError(t, err)
-			}
-			assertRecordOperationMetrics(t, m.metricsScope, "persist_project_facts", tt.wantResult)
-		})
-	}
-}
-
-func assertRecordOperationMetrics(t *testing.T, scope tally.TestScope, operation, result string) {
-	t.Helper()
-	snapshot := scope.Snapshot()
-	start, ok := snapshot.Counters()["record_controller."+operation+".start+queue="+testQueue]
-	require.True(t, ok)
-	assert.EqualValues(t, 1, start.Value())
-	finish, ok := snapshot.Histograms()["record_controller."+operation+".finish+queue="+testQueue+",result="+result]
-	require.True(t, ok)
-	assert.EqualValues(t, 1, totalSamples(finish.Durations()))
-}
-
-func TestProcessRecordsEmptyProjectCompletion(t *testing.T) {
-	resolveErr := errors.New("project resolution unavailable")
-	writeErr := errors.New("completion write unavailable")
-	for _, tt := range []struct {
-		name       string
-		results    []projectstatus.Result
-		resolveErr error
-		writeErr   error
-	}{
-		{name: "nil results"},
-		{name: "empty results", results: []projectstatus.Result{}},
-		{name: "resolution failed", resolveErr: resolveErr},
-		{name: "completion write failed", writeErr: writeErr},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
-			request := requestWithState(entity.RequestStateFailed)
-			m.reqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-			factory := projectstatusmock.NewMockResolverFactory(ctrl)
-			resolver := projectstatusmock.NewMockResolver(ctrl)
-			c.projectStatusResolverFactory = factory
-			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
-			resolver.EXPECT().Resolve(gomock.Any(), request).Return(tt.results, tt.resolveErr)
-			materializer := requestlogmock.NewMockMaterializer(ctrl)
-			c.materializer = materializer
-			if tt.resolveErr == nil {
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				gomock.InOrder(
-					materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
-						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-							assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
-							return nil
-						}),
-					materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
-						func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-							assert.Equal(t, "event/project_facts_recorded/all", log.ID)
-							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyProjectFactCount])
-							assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
-							return tt.writeErr
-						}),
-				)
-			}
-			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, request.ID)))
-			switch {
-			case tt.resolveErr != nil:
-				require.ErrorIs(t, err, tt.resolveErr)
-				assert.Empty(t, m.hooks.events)
-			case tt.writeErr != nil:
-				require.ErrorIs(t, err, tt.writeErr)
-				assert.Empty(t, m.hooks.events)
-			default:
-				require.NoError(t, err)
-				assert.Len(t, m.hooks.events, 1)
-			}
-		})
-	}
-}
-
-func TestProcess_RejectsInvalidProjectStatusResultsBeforeWritingFacts(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, m := newController(t, ctrl)
-	projectStatusResolverFactory := projectstatusmock.NewMockResolverFactory(ctrl)
-	projectStatusResolver := projectstatusmock.NewMockResolver(ctrl)
-	c.projectStatusResolverFactory = projectStatusResolverFactory
-	projectStatusResolverFactory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).
-		Return(projectStatusResolver, nil)
-	projectStatusResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return([]projectstatus.Result{
-		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-a"}, Degree: entity.DegreeBroken},
-		{ProjectInfo: projectstatus.ProjectInfo{Name: "project-b"}, Degree: math.NaN()},
-	}, nil)
-	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
-
-	err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "invalid degree")
 }
 
 func TestProcess_TimestampReportingFailureDoesNotFailRecord(t *testing.T) {
@@ -778,7 +422,6 @@ func TestProcess_RecordsFactEventBeforeDerivedWork(t *testing.T) {
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
-	eventMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
@@ -1373,184 +1016,41 @@ func TestProcess_QueueMismatchFails(t *testing.T) {
 	require.Error(t, c.Process(queueContext(), d))
 }
 
-func TestPersistProjectFactsRepairsIndexOnRetry(t *testing.T) {
-	for _, retryErr := range []error{nil, storage.ErrAlreadyExists} {
-		name := "index repaired"
-		if retryErr != nil {
-			name = "index already repaired"
-		}
-		t.Run(name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
-			request := requestWithState(entity.RequestStateFailed)
-			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: 0.25, RequestID: request.ID, CreatedAt: 10}
-			entry, err := entity.NewProjectFactByDegree(stored)
-			require.NoError(t, err)
-			writeErr := errors.New("index write unavailable")
-			materializer := requestlogmock.NewMockMaterializer(ctrl)
-			c.materializer = materializer
-
-			gomock.InOrder(
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil),
-				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(writeErr),
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists),
-				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil),
-				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(retryErr),
-				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-					assert.Equal(t, entity.RequestEventProjectFactsRecorded, log.Event)
-					return nil
-				}),
-			)
-			require.ErrorIs(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.25}}), writeErr)
-			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.75}}))
-			snapshot := m.metricsScope.Snapshot()
-			assert.EqualValues(t, 2, snapshot.Counters()["record_controller.persist_project_facts.start+queue="+testQueue].Value())
-			for _, result := range []string{"success", "error"} {
-				finish, ok := snapshot.Histograms()["record_controller.persist_project_facts.finish+queue="+testQueue+",result="+result]
-				require.True(t, ok)
-				assert.EqualValues(t, 1, totalSamples(finish.Durations()))
-			}
-		})
-	}
-}
-
-func TestProcessRecordsDegreeAfterResolvingProjects(t *testing.T) {
+func TestProcessRecordsPersistedProjectCount(t *testing.T) {
 	for _, tt := range []struct {
-		name    string
-		state   entity.RequestState
-		results []projectstatus.Result
-		degree  float64
+		name   string
+		state  entity.RequestState
+		count  int32
+		degree float64
 	}{
-		{name: "successful repository", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen},
-		{name: "failed repository without project results", state: entity.RequestStateFailed, degree: entity.DegreeBroken},
-		{name: "failed repository with project results", state: entity.RequestStateFailed, degree: entity.DegreePartial,
-			results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a", ProjectType: "service"}, Degree: entity.DegreeGreen}, {ProjectInfo: projectstatus.ProjectInfo{Name: "b", ProjectType: "batch"}, Degree: 0.25}}},
-		{name: "successful repository with project results", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen,
-			results: []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a", ProjectType: "service"}, Degree: entity.DegreeGreen}}},
+		{name: "successful", state: entity.RequestStateSucceeded, degree: entity.DegreeGreen},
+		{name: "failed without results", state: entity.RequestStateFailed, degree: entity.DegreeBroken},
+		{name: "failed with results", state: entity.RequestStateFailed, count: 2, degree: entity.DegreePartial},
+		{name: "successful with results", state: entity.RequestStateSucceeded, count: 2, degree: entity.DegreeGreen},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			c, m := newController(t, ctrl)
-			logs := requestlogmock.NewMockMaterializer(ctrl)
-			logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).AnyTimes()
-			c.materializer = logs
-			request := requestWithState(tt.state)
-			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
-			factory := projectstatusmock.NewMockResolverFactory(ctrl)
-			resolver := projectstatusmock.NewMockResolver(ctrl)
-			c.projectStatusResolverFactory = factory
-			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil)
-			resolved := false
-			resolver.EXPECT().Resolve(gomock.Any(), request).DoAndReturn(
-				func(context.Context, entity.Request) ([]projectstatus.Result, error) {
-					resolved = true
-					return tt.results, nil
-				})
-			facts := map[string]entity.ValidationFact{}
-			m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
-				func(_ context.Context, fact entity.ValidationFact) error {
-					assert.True(t, resolved)
-					facts[fact.Project] = fact
-					return nil
-				}).Times(len(tt.results) + 1)
-			for _, result := range tt.results {
-				m.indexStore.EXPECT().Create(gomock.Any(), entity.ProjectFactByDegree{
-					URI: testURI, Degree: result.Degree, Project: result.ProjectInfo.Name,
-				}).Return(nil)
-			}
+			m.summary.ProjectCount = tt.count
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(tt.state), nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
 			if tt.degree == entity.DegreeGreen {
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
-				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)
-				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).DoAndReturn(func(context.Context, string) error {
-					assert.Len(t, facts, len(tt.results)+1)
-					assert.Empty(t, m.hooks.events)
-					return nil
-				})
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("other", "8", 1), nil)
 			}
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
-			assert.Equal(t, tt.degree, facts[""].Degree)
-			for _, result := range tt.results {
-				assert.Equal(t, result.Degree, facts[result.ProjectInfo.Name].Degree)
-				assert.Equal(t, result.ProjectInfo.ProjectType, facts[result.ProjectInfo.Name].ProjectType)
-			}
-			assert.Len(t, m.hooks.events, 1)
+			require.Equal(t, tt.degree, fact.Degree)
+			require.Empty(t, fact.Project)
+			require.Len(t, m.hooks.events, 1)
 		})
 	}
 }
 
-func TestProcessRetriesProjectPersistenceWithImmutablePartialFact(t *testing.T) {
+func TestProcessReturnsProjectSummaryReadFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
-	logs := requestlogmock.NewMockMaterializer(ctrl)
-	logs.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil).AnyTimes()
-	c.materializer = logs
-	request := requestWithState(entity.RequestStateFailed)
-	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil).Times(2)
-	factory := projectstatusmock.NewMockResolverFactory(ctrl)
-	resolver := projectstatusmock.NewMockResolver(ctrl)
-	c.projectStatusResolverFactory = factory
-	factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: testQueue}).Return(resolver, nil).Times(2)
-	resolver.EXPECT().Resolve(gomock.Any(), request).Return(
-		[]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "a"}, Degree: entity.DegreeBroken}}, nil).Times(2)
-	var stored entity.ValidationFact
-	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
-		assert.Empty(t, fact.Project)
-		stored = fact
-		return nil
-	})
-	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(assert.AnError)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil)
+	*m.summaryErr = assert.AnError
 	require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))), assert.AnError)
-	assert.Equal(t, entity.DegreePartial, stored.Degree)
-	assert.Empty(t, m.hooks.events)
-
-	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
-	m.factStore.EXPECT().Get(gomock.Any(), testURI, "").Return(stored, nil)
-	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
-		assert.Equal(t, "a", fact.Project)
-		assert.Equal(t, entity.DegreeBroken, fact.Degree)
-		return nil
-	})
-	m.indexStore.EXPECT().Create(gomock.Any(), entity.ProjectFactByDegree{
-		URI: testURI, Degree: entity.DegreeBroken, Project: "a",
-	}).Return(nil)
-	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
-	assert.Len(t, m.hooks.events, 1)
-}
-
-func TestPersistProjectFactsCountsPersistedOutcomes(t *testing.T) {
-	for _, tt := range []struct {
-		name                         string
-		storedDegree, resolvedDegree float64
-		broken                       string
-	}{
-		{name: "new green", storedDegree: entity.DegreeGreen, resolvedDegree: entity.DegreeGreen, broken: "0"},
-		{name: "new partially broken", storedDegree: 0.25, resolvedDegree: 0.25, broken: "1"},
-		{name: "new fully broken", storedDegree: entity.DegreeBroken, resolvedDegree: entity.DegreeBroken, broken: "1"},
-		{name: "adopts existing green", storedDegree: entity.DegreeGreen, resolvedDegree: entity.DegreeBroken, broken: "0"},
-		{name: "adopts existing broken", storedDegree: entity.DegreeBroken, resolvedDegree: entity.DegreeGreen, broken: "1"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
-			request := requestWithState(entity.RequestStateFailed)
-			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: tt.storedDegree, RequestID: request.ID, CreatedAt: 10}
-			if tt.storedDegree != tt.resolvedDegree {
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
-				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil)
-			} else {
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-			}
-			m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-			materializer := requestlogmock.NewMockMaterializer(ctrl)
-			c.materializer = materializer
-			materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-				assert.Equal(t, map[string]string{
-					requestlog.MetadataKeyProjectFactCount:       "1",
-					requestlog.MetadataKeyBrokenProjectFactCount: tt.broken,
-				}, log.Metadata)
-				return nil
-			})
-			require.NoError(t, c.persistProjectFacts(queueContext(), m.store, request, []projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: tt.resolvedDegree}}))
-		})
-	}
+	require.Empty(t, m.hooks.events)
 }

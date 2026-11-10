@@ -523,15 +523,15 @@ func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 		count        string
 		projectCount int32
 	}{
-		{name: "completed projects", event: entity.RequestEventProjectFactsRecorded, count: "3", projectCount: 3},
-		{name: "completed empty set", event: entity.RequestEventProjectFactsRecorded, count: "0"},
-		{name: "duplicate completion", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs, count: "3", projectCount: 3},
+		{name: "facts recorded while attribution pending", event: entity.RequestEventProjectFactsRecorded, count: "3", projectCount: 3},
+		{name: "empty facts while attribution pending", event: entity.RequestEventProjectFactsRecorded, count: "0"},
+		{name: "facts replayed after completion", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs, count: "3", projectCount: 3},
 		{name: "recording after abandonment", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs - 1, count: "3", projectCount: 3},
 		{name: "delayed recording after abandonment", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs + 1, count: "3", projectCount: 3},
-		{name: "abandoned recording", event: entity.RequestEventRecordAbandoned},
-		{name: "duplicate abandonment", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs},
-		{name: "abandonment after recording", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs - 1},
-		{name: "delayed abandonment after recording", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs + 1},
+		{name: "project analysis completed", event: entity.RequestEventProjectAnalysisCompleted},
+		{name: "project analysis completion replayed", event: entity.RequestEventProjectAnalysisCompleted, completedAt: testNowMs - 1},
+		{name: "project analysis abandoned", event: entity.RequestEventProjectAnalysisAbandoned},
+		{name: "project analysis abandonment replayed", event: entity.RequestEventProjectAnalysisAbandoned, completedAt: testNowMs - 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
@@ -552,7 +552,7 @@ func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 			current.ProjectCount = 5
 			current.BrokenProjectCount = 2
 			want := current
-			if want.ProjectResultsCompletedAtMs == 0 {
+			if tt.event != entity.RequestEventProjectFactsRecorded && want.ProjectResultsCompletedAtMs == 0 {
 				want.ProjectResultsCompletedAtMs = log.TimestampMs
 			}
 			if tt.event == entity.RequestEventProjectFactsRecorded {
@@ -571,7 +571,7 @@ func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 }
 
 func TestMaterializerRepairsCompletionAfterProjectionFailure(t *testing.T) {
-	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectAnalysisCompleted, entity.RequestEventProjectAnalysisAbandoned} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
@@ -582,10 +582,11 @@ func TestMaterializerRepairsCompletionAfterProjectionFailure(t *testing.T) {
 			current.RequestVersion = 3
 			current.StateTimestampMs = testNowMs - 1000
 			updated := current
-			updated.ProjectResultsCompletedAtMs = retained.TimestampMs
 			if event == entity.RequestEventProjectFactsRecorded {
 				updated.ProjectCount = 3
 				updated.BrokenProjectCount = 1
+			} else {
+				updated.ProjectResultsCompletedAtMs = retained.TimestampMs
 			}
 			writeErr := errors.New("summary unavailable")
 			gomock.InOrder(
@@ -610,7 +611,7 @@ func TestMaterializerRepairsCompletionAfterProjectionFailure(t *testing.T) {
 }
 
 func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
-	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectAnalysisCompleted, entity.RequestEventProjectAnalysisAbandoned} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
@@ -619,10 +620,11 @@ func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
 			current.State = entity.RequestStateProcessing
 			current.RequestVersion = 2
 			updated := current
-			updated.ProjectResultsCompletedAtMs = log.TimestampMs
 			if event == entity.RequestEventProjectFactsRecorded {
 				updated.ProjectCount = 3
 				updated.BrokenProjectCount = 1
+			} else {
+				updated.ProjectResultsCompletedAtMs = log.TimestampMs
 			}
 			winner := current
 			winner.State = entity.RequestStateFailed
@@ -631,10 +633,11 @@ func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
 			winner.OutcomeReason = entity.RequestOutcomeReasonBuildFailed
 			winner.Version++
 			updatedWinner := winner
-			updatedWinner.ProjectResultsCompletedAtMs = log.TimestampMs
 			if event == entity.RequestEventProjectFactsRecorded {
 				updatedWinner.ProjectCount = 3
 				updatedWinner.BrokenProjectCount = 1
+			} else {
+				updatedWinner.ProjectResultsCompletedAtMs = log.TimestampMs
 			}
 			gomock.InOrder(
 				logs.EXPECT().Create(gomock.Any(), log).Return(nil),
@@ -649,7 +652,7 @@ func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
 }
 
 func TestMaterializerCompletionRequiresExistingSummary(t *testing.T) {
-	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectAnalysisCompleted, entity.RequestEventProjectAnalysisAbandoned} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", nil)
@@ -691,13 +694,73 @@ func TestProjectRequestSummaryProjectCounts(t *testing.T) {
 			}
 			require.NoError(t, err)
 			want := current
-			want.ProjectResultsCompletedAtMs = testNowMs
 			want.ProjectCount = tt.count
 			want.BrokenProjectCount = tt.broken
 			require.Equal(t, want, got)
 			replayed, err := projectRequestSummary(got, log)
 			require.NoError(t, err)
 			require.Equal(t, got, replayed)
+		})
+	}
+}
+
+func TestNonCompletionEventsLeaveProjectSummaryUnchanged(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventProjectIssuesRecorded,
+		entity.RequestEventRecordAbandoned,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, _, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", nil)
+			log.TimestampMs = testNowMs
+			logs.EXPECT().Create(gomock.Any(), log).Return(nil)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+
+			current := seededRequestSummary()
+			got, err := projectRequestSummary(current, log)
+			require.NoError(t, err)
+			require.Equal(t, current, got)
+		})
+	}
+}
+
+func TestProjectRequestSummaryCompletesAfterProjectFacts(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventProjectAnalysisCompleted,
+		entity.RequestEventProjectAnalysisAbandoned,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			request := entity.Request{ID: testRequestID, Queue: testQueue}
+			projectFactsRecordedLog := NewRequestEventLog(request, entity.RequestEventProjectFactsRecorded, "all", map[string]string{
+				MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1",
+			})
+			projectFactsRecordedLog.TimestampMs = testNowMs
+			summary, err := projectRequestSummary(seededRequestSummary(), projectFactsRecordedLog)
+			require.NoError(t, err)
+			require.Equal(t, int32(3), summary.ProjectCount)
+			require.Equal(t, int32(1), summary.BrokenProjectCount)
+			require.Zero(t, summary.ProjectResultsCompletedAtMs)
+
+			projectIssuesRecordedLog := NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, "test", nil)
+			projectIssuesRecordedLog.TimestampMs = testNowMs + 500
+			attributed, err := projectRequestSummary(summary, projectIssuesRecordedLog)
+			require.NoError(t, err)
+			require.Equal(t, summary, attributed)
+
+			completionLog := NewRequestEventLog(request, event, "test", nil)
+			completionLog.TimestampMs = testNowMs + 1000
+			completed, err := projectRequestSummary(summary, completionLog)
+			require.NoError(t, err)
+			want := summary
+			want.ProjectResultsCompletedAtMs = completionLog.TimestampMs
+			require.Equal(t, want, completed)
+
+			replayed, err := projectRequestSummary(completed, projectFactsRecordedLog)
+			require.NoError(t, err)
+			require.Equal(t, completed, replayed)
+			replayed, err = projectRequestSummary(completed, completionLog)
+			require.NoError(t, err)
+			require.Equal(t, completed, replayed)
 		})
 	}
 }

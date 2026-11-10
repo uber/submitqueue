@@ -37,7 +37,6 @@ type DLQController struct {
 	scope                  tally.Scope
 	stores                 storage.Factory
 	requestLogMaterializer requestlog.Materializer
-	registry               consumer.TopicRegistry
 	topicKey               consumer.TopicKey
 	consumerGroup          string
 }
@@ -47,7 +46,6 @@ func NewDLQController(
 	scope tally.Scope,
 	stores storage.Factory,
 	requestLogMaterializer requestlog.Materializer,
-	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *DLQController {
@@ -57,13 +55,12 @@ func NewDLQController(
 		scope:                  scope.SubScope(name),
 		stores:                 stores,
 		requestLogMaterializer: requestLogMaterializer,
-		registry:               registry,
 		topicKey:               topicKey,
 		consumerGroup:          consumerGroup,
 	}
 }
 
-// Process acknowledges unusable messages and retries failures retaining history or publishing.
+// Process acknowledges unusable messages and retries failures retaining history or repairing summaries.
 func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.scope, "process", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
@@ -109,7 +106,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
 	case entity.RequestStateCancelled:
-		return publishRecord(ctx, c.registry, request)
+		return nil
 	case entity.RequestStateSuperseded:
 		return nil
 	default:
@@ -119,10 +116,10 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	}
 
 	if request.TerminalBuildID != "" {
-		projectIssuesRecordedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID, nil)
-		_, err := store.GetRequestLogStore().Get(ctx, request.ID, projectIssuesRecordedLog.ID)
+		projectAnalysisCompletedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectAnalysisCompleted, request.TerminalBuildID, nil)
+		retained, err := store.GetRequestLogStore().Get(ctx, request.ID, projectAnalysisCompletedLog.ID)
 		if err == nil {
-			return publishRecord(ctx, c.registry, request)
+			return c.requestLogMaterializer.PersistLog(ctx, store, retained)
 		}
 		if !errors.Is(err, storage.ErrNotFound) {
 			return fmt.Errorf("read completed project analysis during recovery: %w", err)
@@ -139,7 +136,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	}
 	c.logger.Errorw("project analysis abandoned; retaining partial results", fields...)
 	metrics.NamedCounter(c.scope, "process", "analysis_abandoned", 1, metrics.TagsFromContext(ctx)...)
-	return publishRecord(ctx, c.registry, request)
+	return nil
 }
 
 func (c *DLQController) Name() string                { return string(c.topicKey) }

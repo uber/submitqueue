@@ -127,6 +127,15 @@ func TestRequestLogValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "project analysis completed",
+			mutate: func(entry RequestLog) RequestLog {
+				entry.State = RequestStateUnknown
+				entry.Event = RequestEventProjectAnalysisCompleted
+				entry.RequestVersion = 0
+				return entry
+			},
+		},
+		{
 			name: "project analysis abandoned",
 			mutate: func(entry RequestLog) RequestLog {
 				entry.State = RequestStateUnknown

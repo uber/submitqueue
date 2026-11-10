@@ -16,8 +16,8 @@
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
 // releases the queue's build slot, projects the outcome onto the request,
-// advances the successful-build bookmark, and publishes directly to record plus
-// terminal analysis. See
+// advances the successful-build bookmark, and queues terminal analysis.
+// Cancelled requests bypass project analysis and publish directly to record. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
 
@@ -58,7 +58,7 @@ var (
 // Controller consumes BuildSignal messages, polls the build-runner toward a
 // terminal status, persists the result, and either holds the delivery until
 // the next poll or releases the queue's build slot, projects the outcome onto
-// the request, and publishes the request id to record. Implements
+// the request, and queues terminal analysis. Implements
 // consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -100,8 +100,8 @@ func NewController(
 // Process reloads the build referenced by the delivery, polls its runner for
 // the latest status, persists a real transition, and either holds the delivery
 // until the next poll or, once terminal, releases the queue's build slot,
-// projects the outcome onto the request, and publishes the request id to
-// record. Returns nil to ack (success) or an error to nack (retry) / reject
+// projects the outcome onto the request, and queues terminal analysis.
+// Returns nil to ack (success) or an error to nack (retry) / reject
 // (DLQ).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
@@ -143,9 +143,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// A request only reaches the poll loop after process admitted it, so it is
 	// `processing` — or it already carries this build's outcome, on a redelivery
-	// after the outcome was stamped but before record was published. Both cases
-	// proceed: the redelivery re-publishes to record rather than dropping the
-	// signal, and every write below is a no-op the second time.
+	// after the outcome was stamped but before the downstream handoff. Both cases
+	// proceed: the redelivery retries the handoff rather than dropping the signal,
+	// and every write below is a no-op the second time.
 	//
 	// Anything else is terminal without a build outcome, which today means only
 	// `superseded` — and process supersedes solely from `accepted` (see
@@ -188,9 +188,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
 			return err
 		}
-		recordErr := c.publishRecord(ctx, request.ID, request.Queue)
-		if recordErr != nil {
-			recordErr = fmt.Errorf("failed to publish record for request %s: %w", request.ID, recordErr)
+		var recordErr error
+		if request.State == entity.RequestStateCancelled {
+			recordErr = c.publishRecord(ctx, request.ID, request.Queue)
 		}
 
 		analysisErr := c.publishBuildAnalysis(ctx, build.ID, request.Queue)
