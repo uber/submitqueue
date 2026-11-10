@@ -51,6 +51,9 @@ const (
 	// TopicKeyFix carries build IDs for repair submission, partitioned by build ID.
 	TopicKeyFix TopicKey = "fix"
 
+	// TopicKeyProjectAnalysis carries terminal requests for project analysis, partitioned by request ID.
+	TopicKeyProjectAnalysis TopicKey = "projectanalysis"
+
 	// TopicKeyRecord carries a request whose build reached a terminal status from
 	// buildsignal to the record stage. The buildsignal controller publishes a
 	// Record (the request id) here once, and only once, a build reaches a
