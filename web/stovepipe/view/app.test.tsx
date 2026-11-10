@@ -63,6 +63,19 @@ const model: StovepipePageModel = {
     },
   },
 };
+it("keeps the shared brand and refresh control in the app header", () => {
+  render(<WebNavigationProvider value={{ refresh: async () => undefined }}>
+    <StovepipeApp model={model} />
+  </WebNavigationProvider>);
+  const header = screen.getByRole("banner");
+  expect(within(header).getByRole("link", { name: "Stovepipe queue" })).toHaveAttribute("href", model.queueHref);
+  const logo = within(header).getByRole("link", { name: "Stovepipe queue" }).querySelector("svg");
+  expect(logo?.parentElement).toHaveAttribute("aria-hidden", "true");
+  expect(within(header).queryByText("SP")).toBeNull();
+  expect(within(header).getByText("Stovepipe")).toBeVisible();
+  expect(within(header).getByRole("button", { name: "Enable auto-refresh" })).toBeVisible();
+});
+
 it("displays request summary data", () => {
   render(<StovepipeApp model={model} />);
   const status = screen.getByRole("region", { name: "Request status" });

@@ -120,16 +120,26 @@ export function AutoRefresh({
           onClick={() => setEnabled(current => !current)}
           overrides={{ BaseButton: { style: ({ $theme, $isSelected, $isFocusVisible }: {
             $theme: Theme; $isSelected?: boolean; $isFocusVisible?: boolean;
-          }) => ({
-            backgroundColor: $isSelected ? $theme.colors.backgroundAccentLight : "transparent",
-            color: $isSelected ? $theme.colors.contentAccent : $theme.colors.contentSecondary,
-            boxShadow: $isFocusVisible ? `inset 0 0 0 2px ${$theme.colors.borderAccent}` : "none",
-            ":hover": {
-              backgroundColor: $isSelected ? $theme.colors.backgroundAccentLight : $theme.colors.backgroundSecondary,
-              color: $isSelected ? $theme.colors.contentAccent : $theme.colors.contentPrimary,
-            },
-            "@media (pointer: coarse)": { width: "44px", height: "44px" },
-          }) } }}>
+          }) => {
+            const focusRing = `inset 0 0 0 2px ${$theme.colors.borderAccent}`;
+            const ring = $isFocusVisible ? focusRing
+              : $isSelected ? "none" : `inset 0 0 0 1px ${$theme.colors.contentTertiary}`;
+            return {
+              backgroundColor: $isSelected ? $theme.colors.contentPrimary : "transparent",
+              color: $isSelected ? $theme.colors.backgroundPrimary : $theme.colors.contentSecondary,
+              boxShadow: ring,
+              ":hover": {
+                backgroundColor: $isSelected ? $theme.colors.contentPrimary : $theme.colors.backgroundSecondary,
+                color: $isSelected ? $theme.colors.backgroundPrimary : $theme.colors.contentPrimary,
+              },
+              ":focus-visible": { boxShadow: focusRing },
+              "@media (hover: hover)": {
+                ":hover": { boxShadow: ring },
+                ":hover:focus-visible": { boxShadow: focusRing },
+              },
+              "@media (pointer: coarse)": { width: "44px", height: "44px" },
+            };
+          } } }}>
           <RefreshIcon $spinning={refreshing} width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

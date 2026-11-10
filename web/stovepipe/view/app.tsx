@@ -1,10 +1,9 @@
 "use client";
 
-import { Timestamp, TimeZoneProvider } from "@submitqueue/web-platform";
+import { AppBrand, AppHeader, Timestamp, TimeZoneProvider } from "@submitqueue/web-platform";
 import { styled } from "baseui";
 import { Block } from "baseui/block";
-import { Tag } from "baseui/tag";
-import { HeadingLarge, HeadingMedium, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/typography";
+import { HeadingLarge, HeadingMedium, HeadingSmall, ParagraphSmall } from "baseui/typography";
 import { RefreshControls } from "./refresh.js";
 import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
@@ -26,6 +25,17 @@ const ViewNavigation = styled("nav", ({ $theme }) => ({
   flexWrap: "wrap",
   columnGap: $theme.sizing.scale700,
   borderBottom: `1px solid ${$theme.colors.borderOpaque}`,
+}));
+
+const StovepipeLogo = styled("svg", ({ $theme }) => ({
+  width: "28px",
+  height: "28px",
+  padding: "2px",
+  boxSizing: "border-box",
+  borderRadius: "50%",
+  border: `1px solid ${$theme.colors.contentPrimary}`,
+  backgroundColor: $theme.colors.contentPrimary,
+  color: $theme.colors.backgroundPrimary,
 }));
 
 const requestViewTabs = [
@@ -55,15 +65,19 @@ function Page({ model }: { model: StovepipePageModel }) {
     <Block className={model.kind === "request" ? "sq-app sq-stovepipe-request" : "sq-app"} backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
       minHeight="100vh" height={model.kind === "request" ? "100dvh" : "auto"} display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows={model.kind === "request" ? "auto minmax(min-content, 1fr) auto" : "auto 1fr auto"}
       paddingLeft="scale600" paddingRight="scale600">
-      <Block as="header" display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale600"
-        paddingTop="scale300" paddingBottom="scale300">
-        <Block as={Link} display="inline-flex" alignItems="center" gridGap="scale300" href={model.queueHref}>
-          <Tag closeable={false} kind="neutral" size="small">SP</Tag><LabelMedium as="span">Stovepipe</LabelMedium>
-        </Block>
+      <AppHeader>
+        <AppBrand href={model.queueHref} homeLabel="Stovepipe queue" mark={
+          <StovepipeLogo viewBox="-4 -4 40 40" fill="none" focusable="false">
+            <path d="M23 1v5H12a5 5 0 0 0 0 10h8a5 5 0 0 1 0 10H9v5"
+              stroke="currentColor" strokeWidth="5" strokeLinejoin="round" />
+            <ellipse cx="23" cy="1" rx="3.5" ry="1.5" fill="currentColor" />
+            <ellipse cx="9" cy="31" rx="3.5" ry="1.5" fill="currentColor" />
+          </StovepipeLogo>
+        }>Stovepipe</AppBrand>
         <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
           <RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
-      </Block>
+      </AppHeader>
       <Block as="main" paddingTop="scale400" paddingBottom={model.kind === "request" ? "scale200" : "scale600"}>
         <Block as="nav" aria-label="Queues" display="flex" alignItems="center" flexWrap gridGap="scale500" marginBottom="scale400">
           {model.queues.map((queue) => (
