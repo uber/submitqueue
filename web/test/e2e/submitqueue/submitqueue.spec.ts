@@ -322,8 +322,8 @@ test("paginates change history through more than 500 queue requests", async ({ p
 
 test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
   await page.goto(`/queue/${queue}`);
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await expect(automatic).not.toBeChecked();
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   const now = new Date();
   await page.clock.install({ time: now });
   // The installed clock keeps running, so pausing at the install time races it.
@@ -334,18 +334,18 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
   page.on("request", request => { if (isRefresh(request)) refreshRequests++; });
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(0);
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await automatic.click();
   await page.clock.runFor(9_999);
   expect(refreshRequests).toBe(0);
   for (let cycle = 0; cycle < 2; cycle++) {
     const response = page.waitForResponse(response => isRefresh(response.request()));
     await page.clock.runFor(cycle === 0 ? 1 : 10_000);
     expect((await response).ok()).toBe(true);
-    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
-    await expect(automatic).toBeChecked();
+    await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
   }
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
-  await expect(automatic).not.toBeChecked();
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(2);
 });

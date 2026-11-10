@@ -1,10 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Theme } from "baseui";
+import { styled, type Theme } from "baseui";
 import { Block } from "baseui/block";
-import { Checkbox } from "baseui/checkbox";
-import { LabelXSmall } from "baseui/typography";
+import { Button, KIND, SHAPE, SIZE } from "baseui/button";
+import { StatefulTooltip } from "baseui/tooltip";
+
+const RefreshIcon = styled<"svg", { $spinning: boolean }>("svg", ({ $spinning }) => ({
+  animationName: $spinning ? { from: { transform: "rotate(0deg)" }, to: { transform: "rotate(360deg)" } } : "none",
+  animationDuration: "1s", animationIterationCount: "infinite", animationTimingFunction: "linear",
+  "@media (prefers-reduced-motion: reduce)": { animationName: "none" },
+}));
 
 export interface AutoRefreshProps {
   terminal?: boolean;
@@ -102,19 +108,43 @@ export function AutoRefresh({
 
   if (!available) return null;
 
+  const action = terminal ? "Auto-refresh stopped" : enabled ? "Disable auto-refresh" : "Enable auto-refresh";
+  const failed = transientFailureCount > 0 || localFailures.current > 0;
+  const quiet = !terminal && !paused && !failed;
   return (
-    <Block display="flex" alignItems="center" flexWrap gridGap="scale500" data-paused={paused || terminal}>
-      <Checkbox checked={enabled} disabled={terminal} onChange={event => setEnabled(event.currentTarget.checked)}
-        overrides={{
-          Root: { style: { alignItems: "center" } },
-          Label: { style: ({ $theme }: { $theme: Theme }) => $theme.typography.LabelSmall },
-        }}>
-        Auto refresh every {intervalMs / 1_000}s
-      </Checkbox>
-      {enabled && <LabelXSmall as="span" color="contentSecondary" aria-live="polite">
+    <Block display="flex" alignItems="center" flexWrap gridGap="scale300" data-paused={paused || terminal}>
+      <StatefulTooltip content={action} placement="bottomRight" onMouseEnterDelay={150} onMouseLeaveDelay={0}>
+        <Button type="button" kind={KIND.tertiary} shape={SHAPE.circle} size={SIZE.mini}
+          isSelected={enabled && !terminal} disabled={terminal}
+          aria-label={action} aria-pressed={enabled && !terminal} aria-busy={refreshing}
+          onClick={() => setEnabled(current => !current)}
+          overrides={{ BaseButton: { style: ({ $theme, $isSelected, $isFocusVisible }: {
+            $theme: Theme; $isSelected?: boolean; $isFocusVisible?: boolean;
+          }) => ({
+            backgroundColor: $isSelected ? $theme.colors.backgroundAccentLight : "transparent",
+            color: $isSelected ? $theme.colors.contentAccent : $theme.colors.contentSecondary,
+            boxShadow: $isFocusVisible ? `inset 0 0 0 2px ${$theme.colors.borderAccent}` : "none",
+            ":hover": {
+              backgroundColor: $isSelected ? $theme.colors.backgroundAccentLight : $theme.colors.backgroundSecondary,
+              color: $isSelected ? $theme.colors.contentAccent : $theme.colors.contentPrimary,
+            },
+            "@media (pointer: coarse)": { width: "44px", height: "44px" },
+          }) } }}>
+          <RefreshIcon $spinning={refreshing} width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5" />
+          </RefreshIcon>
+        </Button>
+      </StatefulTooltip>
+      {enabled && <Block as="span" font="ParagraphXSmall" color="contentSecondary" role="status"
+        $style={quiet ? {
+          position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px",
+          overflow: "hidden", clipPath: "inset(50%)", whiteSpace: "nowrap",
+        } : {}}>
         {terminal ? "Automatic refresh stopped" : paused ? "Automatic refresh paused" : refreshing ? "Refreshing…" :
-          transientFailureCount > 0 || localFailures.current > 0 ? "Updates unavailable · retrying" : "Live"}
-      </LabelXSmall>}
+          failed ? "Updates unavailable · retrying" : "Live"}
+      </Block>}
     </Block>
   );
 }

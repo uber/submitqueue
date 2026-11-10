@@ -35,13 +35,13 @@ it("refreshes only after polling is enabled, then stops when disabled", async ()
   );
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(refresh).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   await act(async () => vi.advanceTimersByTime(9_999));
   expect(refresh).not.toHaveBeenCalled();
   await act(async () => vi.advanceTimersByTime(1));
   expect(refresh).toHaveBeenCalledWith(null);
   expect(refresh).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(refresh).toHaveBeenCalledTimes(1);
 });
@@ -56,10 +56,10 @@ it("reports a failed refresh and recovers on the next ten-second poll", async ()
       <RefreshControls />
     </WebNavigationProvider>,
   );
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   await act(async () => vi.advanceTimersByTime(10_000));
   expect(screen.getByRole("alert")).toHaveTextContent("Refresh failed");
-  expect(screen.getByRole("checkbox")).toBeChecked();
+  expect(screen.getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "true");
   await act(async () => vi.advanceTimersByTime(10_000));
   expect(refresh).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();
@@ -72,7 +72,7 @@ it("removes scheduled polls when the page unmounts", async () => {
       <RefreshControls />
     </WebNavigationProvider>,
   );
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   unmount();
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(refresh).not.toHaveBeenCalled();
@@ -82,7 +82,7 @@ it("returns cursor-based issue pages to their first page on refresh", async () =
   render(<WebNavigationProvider value={{ refresh }}>
     <RefreshControls href="/queue?view=issues" />
   </WebNavigationProvider>);
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   await act(async () => vi.advanceTimersByTime(10_000));
   expect(refresh).toHaveBeenCalledWith("/queue?view=issues");
 });

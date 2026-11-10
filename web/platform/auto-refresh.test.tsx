@@ -12,10 +12,49 @@ describe("AutoRefresh", () => {
 
   afterEach(() => vi.useRealTimers());
 
+  it("exposes a compact toggle with an action label and a persistent selected state", () => {
+    render(<AutoRefresh refresh={async () => undefined} />);
+    const toggle = screen.getByRole("button", { name: "Enable auto-refresh" });
+    expect(toggle).not.toHaveAttribute("title");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAccessibleName("Disable auto-refresh");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAccessibleName("Enable auto-refresh");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("shows the action tooltip after a short hover and updates it when toggled", async () => {
+    render(<AutoRefresh refresh={async () => undefined} />);
+    const toggle = screen.getByRole("button", { name: "Enable auto-refresh" });
+    fireEvent.mouseEnter(toggle);
+    await act(async () => vi.advanceTimersByTime(149));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Enable auto-refresh");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Disable auto-refresh");
+    fireEvent.mouseLeave(toggle);
+    await act(async () => vi.advanceTimersByTime(100));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("shows the tooltip on keyboard focus", async () => {
+    render(<AutoRefresh refresh={async () => undefined} />);
+    const toggle = screen.getByRole("button", { name: "Enable auto-refresh" });
+    fireEvent.keyDown(document, { key: "Tab", keyCode: 9 });
+    act(() => toggle.focus());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Enable auto-refresh");
+    act(() => toggle.blur());
+    await act(async () => vi.advanceTimersByTime(100));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
   it("uses the interval plus jitter and continues polling", async () => {
     const refresh = vi.fn(async () => undefined);
     render(<AutoRefresh intervalMs={2_000} jitterMs={500} random={() => 0.5} refresh={refresh} />);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(2_249));
     expect(refresh).not.toHaveBeenCalled();
@@ -29,12 +68,14 @@ describe("AutoRefresh", () => {
     let finish: (() => void) | undefined;
     const refresh = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
     render(<AutoRefresh intervalMs={100} jitterMs={0} refresh={refresh} />);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(100));
+    expect(screen.getByRole("button")).toHaveAttribute("aria-busy", "true");
     await act(async () => vi.advanceTimersByTime(500));
     expect(refresh).toHaveBeenCalledTimes(1);
     await act(async () => finish?.());
+    expect(screen.getByRole("button")).toHaveAttribute("aria-busy", "false");
   });
 
   it("backs off transient failures up to the configured cap", async () => {
@@ -49,7 +90,7 @@ describe("AutoRefresh", () => {
         transientFailureCount={4}
       />,
     );
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(29_999));
     expect(refresh).not.toHaveBeenCalled();
@@ -69,7 +110,7 @@ describe("AutoRefresh", () => {
         transientFailureCount={1}
       />,
     );
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(200));
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -86,7 +127,7 @@ describe("AutoRefresh", () => {
   it("backs off after a rejected refresh and recovers once a refresh succeeds", async () => {
     const refresh = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error("network")).mockResolvedValue(undefined);
     render(<AutoRefresh intervalMs={100} jitterMs={0} random={() => 0} refresh={refresh} />);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(100));
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -104,7 +145,7 @@ describe("AutoRefresh", () => {
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
     const refresh = vi.fn(async () => undefined);
     render(<AutoRefresh intervalMs={100} jitterMs={0} refresh={refresh} />);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     expect(screen.getByText("Automatic refresh paused")).toBeTruthy();
     await act(async () => vi.advanceTimersByTime(1_000));
@@ -119,7 +160,7 @@ describe("AutoRefresh", () => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     const refresh = vi.fn(async () => undefined);
     render(<AutoRefresh intervalMs={100} jitterMs={0} refresh={refresh} />);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(1_000));
     expect(refresh).not.toHaveBeenCalled();
@@ -132,14 +173,14 @@ describe("AutoRefresh", () => {
   it("stops automatic polling for terminal detail views", async () => {
     const refresh = vi.fn(async () => undefined);
     const { rerender } = render(<AutoRefresh intervalMs={100} jitterMs={0} refresh={refresh} />);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
     await act(async () => vi.advanceTimersByTime(100));
     expect(refresh).toHaveBeenCalledTimes(1);
     rerender(<AutoRefresh intervalMs={100} jitterMs={0} refresh={refresh} terminal />);
 
     await act(async () => vi.advanceTimersByTime(1_000));
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("checkbox")).toBeDisabled();
+    expect(screen.getByRole("button")).toBeDisabled();
   });
 
   it("does not poll a terminal list failure", async () => {
@@ -153,7 +194,7 @@ describe("AutoRefresh", () => {
         transientFailureCount={1}
       />,
     );
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button"));
 
     await act(async () => vi.advanceTimersByTime(1_000));
     expect(refresh).not.toHaveBeenCalled();
