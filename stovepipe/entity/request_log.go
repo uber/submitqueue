@@ -32,6 +32,8 @@ const (
 	RequestEventProjectFactsRecorded RequestEvent = "project_facts_recorded"
 	// RequestEventProjectIssuesRecorded records completed project-issue attribution for a request.
 	RequestEventProjectIssuesRecorded RequestEvent = "project_issues_recorded"
+	// RequestEventProjectAnalysisAbandoned records unfinished project analysis after primary processing stopped.
+	RequestEventProjectAnalysisAbandoned RequestEvent = "project_analysis_abandoned"
 	// RequestEventRecordAbandoned records that record-stage work stopped after exhausting retries.
 	RequestEventRecordAbandoned RequestEvent = "record_abandoned"
 	// RequestEventBuildAnalysisAbandoned records incomplete build analysis, not a validation outcome.
@@ -155,7 +157,8 @@ func (e RequestLog) validateEvent() error {
 		return fmt.Errorf("event log must not contain request-state context")
 	}
 	switch e.Event {
-	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded, RequestEventProjectIssuesRecorded,
+	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded,
+		RequestEventProjectFactsRecorded, RequestEventProjectIssuesRecorded, RequestEventProjectAnalysisAbandoned,
 		RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventBuildAnalysisCompleted,
 		RequestEventIssueTrackingStarted, RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,
 		RequestEventFixSubmitted, RequestEventFixSubmissionSkipped, RequestEventFixSubmissionAbandoned:

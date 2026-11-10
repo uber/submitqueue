@@ -47,6 +47,7 @@ const testQueue = "validation/main"
 
 type fixture struct {
 	controller      *Controller
+	dlq             *DLQController
 	ctrl            *gomock.Controller
 	request         entity.Request
 	projectStatuses []projectstatus.Result
@@ -104,9 +105,12 @@ func newFixture(t *testing.T) *fixture {
 		return f.request, f.fail("request/get")
 	}).AnyTimes()
 	history.EXPECT().Get(gomock.Any(), "7", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, id string) (entity.RequestLog, error) {
+		projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
 		operation := "analysis/get"
 		if id == f.completion().ID {
 			operation = "completion/get"
+		} else if id == projectAnalysisAbandonedLog.ID {
+			operation = "abandonment/get"
 		}
 		if err := f.fail(operation); err != nil {
 			return entity.RequestLog{}, err
@@ -143,8 +147,10 @@ func newFixture(t *testing.T) *fixture {
 	reverse.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.reverse, "reverse/create")).AnyTimes()
 	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-		require.Len(t, f.facts, len(f.projectStatuses))
-		require.Len(t, f.indexes, len(f.projectStatuses))
+		if log.Event != entity.RequestEventProjectAnalysisAbandoned {
+			require.Len(t, f.facts, len(f.projectStatuses))
+			require.Len(t, f.indexes, len(f.projectStatuses))
+		}
 		if log.Event == entity.RequestEventProjectIssuesRecorded {
 			require.Equal(t, f.source, f.reverse)
 			factsLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
@@ -185,7 +191,10 @@ func newFixture(t *testing.T) *fixture {
 	publisher := queuemock.NewMockPublisher(ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 		if f.request.State != entity.RequestStateCancelled {
-			require.Contains(t, f.logs, f.completion().ID)
+			projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
+			_, complete := f.logs[f.completion().ID]
+			_, abandoned := f.logs[projectAnalysisAbandonedLog.ID]
+			require.True(t, complete || abandoned)
 		}
 		f.publishAttempts = append(f.publishAttempts, msg)
 		if err := f.fail("record/publish"); err != nil {
@@ -199,6 +208,7 @@ func newFixture(t *testing.T) *fixture {
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue}})
 	require.NoError(t, err)
 	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
+	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, registry, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
 	return f
 }
 
@@ -301,7 +311,7 @@ func TestProcessRecordsProjectStatuses(t *testing.T) {
 
 func TestProcessRetriesPartialWork(t *testing.T) {
 	for _, operation := range []string{
-		"storage/for", "request/get", "completion/get", "analysis/get", "resolver/for", "resolve", "attributer/for", "attribute",
+		"storage/for", "request/get", "abandonment/get", "completion/get", "analysis/get", "resolver/for", "resolve", "attributer/for", "attribute",
 		"source/create", "reverse/create", "fact/create", "index/create", "log/project_facts_recorded", "log/project_issues_recorded", "record/publish",
 	} {
 		t.Run(operation, func(t *testing.T) {
