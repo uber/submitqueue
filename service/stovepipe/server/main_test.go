@@ -70,7 +70,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
 	require.NoError(t, err)
 
-	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry)
+	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry, noopRepairExecutorFactory{})
 	require.NoError(t, err)
 
 	return registry, primary.controllers, deadLetter.controllers
@@ -136,7 +136,7 @@ func TestFixRegistration(t *testing.T) {
 	assert.Contains(t, topicKeys(deadLetter), dlq.TopicKey(stovepipemq.TopicKeyFix))
 }
 
-func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
+func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	const queueName = "validation/main"
 	const buildID = "build/1"
 	ctrl := gomock.NewController(t)
@@ -181,14 +181,23 @@ func TestRegisteredFixControllerRecordsNoopRepairOncePerBuild(t *testing.T) {
 		TaskID: observation.TaskID, UnitID: observation.UnitID, Status: entity.IssueStatusOpen,
 		FirstSeenBuildID: buildID, LastProcessedBuildID: buildID, LastChangedBuildID: buildID,
 		ChangedAtMs: 1000, Version: 1,
-	}, nil)
-	observations.EXPECT().Update(gomock.Any(), buildID, gomock.Any(), int32(1), int32(2)).DoAndReturn(
-		func(_ context.Context, _ string, updated entity.BuildIssue, _, newVersion int32) error {
-			require.Equal(t, "noop/"+buildID, updated.FixID)
-			observation = updated
-			observation.Version = newVersion
-			return nil
-		})
+	}, nil).AnyTimes()
+	repairs := storagemock.NewMockIssueRepairStore(ctrl)
+	store.EXPECT().GetIssueRepairStore().Return(repairs).AnyTimes()
+	var repair entity.IssueRepair
+	repairs.EXPECT().Get(gomock.Any(), gomock.Any(), "noop").DoAndReturn(func(context.Context, entity.OpenIssue, string) (entity.IssueRepair, error) {
+		if repair.Version == 0 {
+			return entity.IssueRepair{}, storage.ErrNotFound
+		}
+		return repair, nil
+	}).Times(3)
+	repairs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, value entity.IssueRepair) error { repair = value; return nil })
+	repairs.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, value entity.IssueRepair, _, newVersion int32) error {
+		require.Empty(t, repair.FixID)
+		repair = value
+		repair.Version = newVersion
+		return nil
+	})
 
 	registry, err := newTopicRegistry(nil, "subscriber")
 	require.NoError(t, err)

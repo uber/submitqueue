@@ -17,6 +17,7 @@ package fix
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/errs"
@@ -44,31 +45,27 @@ func loadRequestForBuild(ctx context.Context, store storage.Storage, queue, buil
 	return request, nil
 }
 
-func persistFixSubmittedLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, buildID string, observation entity.BuildIssue) error {
-	// The queue-scoped executor's opaque fix ID identifies the accepted attempt.
-	// Restoring this from the durable association must precede any replay skip.
-	// Opaque fix IDs can fill the storage column; the event prefix must still fit its own key.
-	identity := sha256.Sum256([]byte(observation.FixID))
-	log := requestlog.NewRequestEventLog(request, entity.RequestEventFixSubmitted, fmt.Sprintf("%x", identity),
-		map[string]string{
-			requestlog.MetadataKeyBuildID: buildID,
-			requestlog.MetadataKeyTaskID:  observation.TaskID,
-			requestlog.MetadataKeyUnitID:  observation.UnitID,
-			requestlog.MetadataKeyFixID:   observation.FixID,
-		})
-	if err := materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("retain submitted repair %q for build %q: %w", observation.FixID, buildID, err)
+func persistRepairSubmissionLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, result entity.IssueRepair) error {
+	event := entity.RequestEventFixSubmitted
+	if result.SkipReason != "" {
+		event = entity.RequestEventFixSubmissionSkipped
 	}
-	return nil
+	return persistRepairEventLog(ctx, materializer, store, request, result, event, result.SkipReason)
 }
 
-func persistFixSubmissionDecision(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, buildID string, event entity.RequestEvent, reason string) error {
-	log := requestlog.NewRequestEventLog(request, event, buildID, map[string]string{
-		requestlog.MetadataKeyBuildID: buildID,
-		requestlog.MetadataKeyReason:  reason,
-	})
-	if err := materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("retain repair decision for build %q: %w", buildID, err)
+func persistRepairEventLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, result entity.IssueRepair, event entity.RequestEvent, reason string) error {
+	identity, err := json.Marshal([]string{result.Issue.FirstSeenBuildID, result.Issue.TaskID, result.Issue.UnitID, result.ExecutorID})
+	if err != nil {
+		return err
 	}
-	return nil
+	digest := sha256.Sum256(identity)
+	log := requestlog.NewRequestEventLog(request, event, fmt.Sprintf("%x", digest), map[string]string{
+		requestlog.MetadataKeyBuildID:    result.Issue.FirstSeenBuildID,
+		requestlog.MetadataKeyTaskID:     result.Issue.TaskID,
+		requestlog.MetadataKeyUnitID:     result.Issue.UnitID,
+		requestlog.MetadataKeyFixID:      result.FixID,
+		requestlog.MetadataKeyReason:     reason,
+		requestlog.MetadataKeyExecutorID: result.ExecutorID,
+	})
+	return materializer.PersistLog(ctx, store, log)
 }
