@@ -22,7 +22,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
@@ -65,72 +65,42 @@ func NewController(
 func (c *Controller) processBuild(ctx context.Context, queueName, buildID string) error {
 	store, err := c.stores.For(storage.Config{QueueName: queueName})
 	if err != nil {
-		return fmt.Errorf("failed to resolve repair storage: %w", err)
-	}
-	observation, found, err := findIssueToFix(ctx, store.GetBuildIssueStore(), store.GetIssueStateStore(), buildID)
-	if err != nil {
-		return fmt.Errorf("failed to select an issue for build %q: %w", buildID, err)
+		return fmt.Errorf("resolve repair storage: %w", err)
 	}
 	request, err := loadRequestForBuild(ctx, store, queueName, buildID)
 	if err != nil {
 		return err
 	}
-	if observation.FixID != "" {
-		return persistFixSubmittedLog(ctx, c.materializer, store, request, buildID, observation)
-	}
-	if !found {
-		return persistFixSubmissionDecision(ctx, c.materializer, store, request, buildID,
-			entity.RequestEventFixSubmissionSkipped, "no_eligible_issue")
-	}
-
-	executor, err := c.executors.For(fixer.Config{QueueName: queueName})
+	registrations, err := c.executors.For(fixer.Config{QueueName: queueName})
 	if err != nil {
-		return fmt.Errorf("failed to resolve repair executor: %w", err)
+		return fmt.Errorf("resolve repair executors: %w", err)
 	}
-
-	op := metrics.Begin(c.metricsScope, "submit", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
-	issue := entity.OpenIssue{TaskID: observation.TaskID, UnitID: observation.UnitID, FirstSeenBuildID: buildID}
-	fixID, err := executor.Submit(ctx, issue)
-	if err == nil && fixID == "" {
-		err = fmt.Errorf("repair executor returned an empty fix ID")
+	if err := validateRegistrations(registrations); err != nil {
+		return err
 	}
-	op.Complete(err)
+	observations, issues, err := collectIssues(ctx, store, buildID)
 	if err != nil {
-		c.logger.Errorw("repair submission failed",
-			"queue", queueName, "build_id", buildID,
-			"task_id", issue.TaskID, "unit_id", issue.UnitID,
-			"fix_id", fixID, "error", err)
-		if fixID == "" {
-			return fmt.Errorf("failed to submit repair for build %q: %w", buildID, err)
-		}
-	} else {
-		c.logger.Infow("repair submitted",
-			"queue", queueName, "build_id", buildID,
-			"task_id", issue.TaskID, "unit_id", issue.UnitID, "fix_id", fixID)
+		return err
 	}
+	var failures []error
+	for _, registration := range registrations {
+		if err := c.submitIssues(ctx, store, request, buildID, registration, observations, issues); err != nil {
+			c.logger.Errorw("repair executor failed", "queue", queueName, "build_id", buildID, "executor_id", registration.ID, "error", err)
+			failures = append(failures, fmt.Errorf("executor %q: %w", registration.ID, err))
+		}
+	}
+	return errs.Group(failures...)
+}
 
-	// Submission precedes persistence; a crash or write failure can allow duplicates.
-	updated := observation
-	updated.FixID = fixID
-	observations := store.GetBuildIssueStore()
-	if err := observations.Update(ctx, buildID, updated, observation.Version, observation.Version+1); err != nil {
-		if !errors.Is(err, storage.ErrVersionMismatch) {
-			return fmt.Errorf("failed to associate repair with build issue: %w", err)
+func validateRegistrations(registrations []fixer.Registration) error {
+	seen := map[string]bool{}
+	for _, registration := range registrations {
+		if registration.ID == "" || len(registration.ID) > 128 || registration.Executor == nil || seen[registration.ID] {
+			return fmt.Errorf("repair executors require unique nonempty IDs (at most 128 bytes) and implementations")
 		}
-		current, readErr := observations.Get(ctx, buildID, observation.TaskID, observation.UnitID)
-		if readErr != nil {
-			return fmt.Errorf("failed to reload build issue after concurrent update: %w", readErr)
-		}
-		if current.FixID == "" {
-			return err
-		}
-		c.logger.Warnw("preserving previously recorded repair association",
-			"queue", queueName, "build_id", buildID,
-			"task_id", issue.TaskID, "unit_id", issue.UnitID,
-			"fix_id", current.FixID, "submitted_fix_id", fixID)
-		updated.FixID = current.FixID
+		seen[registration.ID] = true
 	}
-	return persistFixSubmittedLog(ctx, c.materializer, store, request, buildID, updated)
+	return nil
 }
 
 func (c *Controller) Name() string { return "fix" }
@@ -139,34 +109,29 @@ func (c *Controller) TopicKey() consumer.TopicKey { return c.topicKey }
 
 func (c *Controller) ConsumerGroup() string { return c.consumerGroup }
 
-func findIssueToFix(ctx context.Context, observations storage.BuildIssueStore, issues storage.IssueStateStore, buildID string) (entity.BuildIssue, bool, error) {
+func collectIssues(ctx context.Context, store storage.Storage, buildID string) ([]entity.BuildIssue, []entity.OpenIssue, error) {
 	bounds := storage.BuildIssueRange{Limit: buildIssuePageSize}
-	var candidate entity.BuildIssue
-	found := false
+	var observations []entity.BuildIssue
+	var eligible []entity.OpenIssue
 	for {
-		page, err := observations.List(ctx, buildID, bounds)
+		page, err := store.GetBuildIssueStore().List(ctx, buildID, bounds)
 		if err != nil {
-			return entity.BuildIssue{}, false, err
+			return nil, nil, err
 		}
 		if len(page) == 0 {
-			return candidate, found, nil
+			return observations, eligible, nil
 		}
 		for _, record := range page {
-			if record.FixID != "" {
-				return record, false, nil
-			}
-			if found {
-				continue
-			}
-			issue, err := issues.Get(ctx, record.TaskID, record.UnitID)
+			observations = append(observations, record)
+			issue, err := store.GetIssueStateStore().Get(ctx, record.TaskID, record.UnitID)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
 			if err != nil {
-				return entity.BuildIssue{}, false, err
+				return nil, nil, err
 			}
 			if issue.Status == entity.IssueStatusOpen && issue.FirstSeenBuildID == buildID {
-				candidate, found = record, true
+				eligible = append(eligible, entity.OpenIssue{TaskID: record.TaskID, UnitID: record.UnitID, FirstSeenBuildID: buildID})
 			}
 		}
 		last := page[len(page)-1]
