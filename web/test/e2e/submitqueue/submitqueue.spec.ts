@@ -370,7 +370,11 @@ test.describe("time zone selection", () => {
     await timeZones.getByRole("radio", { name: "UTC", exact: true }).check();
     await expectTimeZone("UTC");
     await closeTimeZones();
-    await page.locator(".sq-request-list__item td:first-child a").first().click();
+    const requestLink = page.locator(".sq-request-list__item td:first-child a").first();
+    const requestId = await requestLink.innerText();
+    await requestLink.click();
+    await expect(page).toHaveURL(`${webURL}/queue/${queue}/request/${requestId}`);
+    await expect(page.getByRole("heading", { name: requestId, exact: true })).toBeVisible();
     await openTimeZones();
     await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
