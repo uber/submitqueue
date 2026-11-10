@@ -80,7 +80,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &FixRequest{}, &Record{}} {
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &FixRequest{}, &ProjectAnalysis{}, &Record{}} {
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -95,6 +95,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 		TopicKeyBuildAnalysis,
 		TopicKeyIssueTrack,
 		TopicKeyFix,
+		TopicKeyProjectAnalysis,
 		TopicKeyRecord,
 	}
 
@@ -106,6 +107,18 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	for key := range bound {
 		assert.Truef(t, valid[key], "topic_keys option names unknown key %q", key)
 	}
+}
+
+func TestProjectAnalysisRoundTrip(t *testing.T) {
+	request := &ProjectAnalysis{Id: "42", QueueName: "validation/main"}
+	data, err := Marshal(request)
+	require.NoError(t, err)
+
+	got := &ProjectAnalysis{}
+	require.NoError(t, Unmarshal(data, got))
+
+	assert.True(t, proto.Equal(request, got))
+	assert.JSONEq(t, `{"id":"42","queue_name":"validation/main"}`, string(data))
 }
 
 func TestBuildAnalysisRoundTrip(t *testing.T) {

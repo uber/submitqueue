@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["projectanalysis.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/controller/projectanalysis",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/consumer:go_default_library",
+        "//stovepipe/core/projectissues:go_default_library",
+        "//stovepipe/core/requestlog:go_default_library",
+        "//stovepipe/extension/projectissues:go_default_library",
+        "//stovepipe/extension/projectstatus:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
