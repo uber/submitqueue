@@ -87,6 +87,11 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   // waiting to hydrate is itself reported as a hydration failure.
   const { act } = React;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  function textColor(element) {
+    const color = dom.window.getComputedStyle(element).color;
+    // JSDOM leaves explicit inheritance unresolved on styled buttons.
+    return color === "inherit" && element.parentElement ? textColor(element.parentElement) : color;
+  }
   for (const { route, page, theme, html, stylesheets } of pages) {
     const styles = stylesheets.map(({ css, attrs }) => {
       const style = document.createElement("style");
@@ -108,11 +113,13 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     document.body.append(expected);
     assert.equal(dom.window.getComputedStyle(container.querySelector(".sq-app")).backgroundColor,
       dom.window.getComputedStyle(expected).backgroundColor, "the page must inherit its host's background");
-    expected.style.color = theme.colors.contentPrimary;
-    const selectedTimeZone = container.querySelector('[role="option"][aria-selected="true"]');
-    assert.ok(selectedTimeZone);
-    assert.equal(dom.window.getComputedStyle(selectedTimeZone).color,
-      dom.window.getComputedStyle(expected).color, "the selected time zone must inherit its host's text color");
+    const timestamps = container.querySelectorAll('button[aria-haspopup="dialog"]');
+    assert.equal(timestamps.length, container.querySelectorAll("time[datetime]").length);
+    for (const timestamp of timestamps) {
+      assert.equal(textColor(timestamp), textColor(timestamp.parentElement),
+        "the timestamp must inherit its surrounding text color");
+    }
+    assert.equal(container.querySelector('[role="listbox"][aria-label="Time zone"]'), null);
     expected.remove();
     if (route === "/repo%2Fmain/request/1") {
       assert.match(container.textContent, /example-project/u);
