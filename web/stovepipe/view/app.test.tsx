@@ -108,7 +108,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
   const { rerender } = render(<WebNavigationProvider value={navigation}>
     <StovepipeApp model={issuesModel} />
   </WebNavigationProvider>);
-  fireEvent.click(screen.getByRole("checkbox", { name: "Auto refresh every 10s" }));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   rerender(<WebNavigationProvider value={navigation}>
     <StovepipeApp model={{
       ...issuesModel, key: issuesModel.latestHref, showLatestLink: false,
@@ -117,7 +117,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
   </WebNavigationProvider>);
   expect(screen.getByText("Task-wide failure")).toBeVisible();
   expect(screen.getByRole("alert")).toHaveTextContent("Unable to load open issues");
-  expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).toBeChecked();
+  expect(screen.getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "true");
   rerender(<WebNavigationProvider value={navigation}>
     <StovepipeApp model={{
       ...issuesModel, queue: "other", key: "/other?view=issues", latestHref: "/other?view=issues",
@@ -125,7 +125,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
     }} />
   </WebNavigationProvider>);
   expect(screen.queryByText("Task-wide failure")).toBeNull();
-  expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "false");
 });
 it("links queue entries by request ID even when the change URI is missing", () => {
   if (!model.history.ok) throw new Error("No summary");

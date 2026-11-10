@@ -15,7 +15,7 @@ test.describe("server-rendered styling", () => {
   test("styles the queue before hydration", async ({ page }) => {
     await page.goto("/web%2Fpagination");
     await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
-    await expect(page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
+    await expect(page.getByRole("banner").getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
     await expect(page.getByRole("status")).toContainText("More requests available");
   });
@@ -134,17 +134,18 @@ test("keeps auto-refresh enabled when an issue cursor refresh returns to the fir
   await expect(region.getByRole("status")).toContainText("3 issues loaded");
   const now = new Date();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  // Pause ahead of installation so the running clock cannot overtake the target.
+  await page.clock.pauseAt(new Date(now.getTime() + 60_000));
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await automatic.click();
   const response = page.waitForResponse(response =>
     response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === "/web%2Fpagination");
   await page.clock.runFor(10_000);
   expect((await response).ok()).toBe(true);
   await expect(region.getByRole("status")).toContainText("50 issues loaded");
-  await expect(automatic).toBeChecked();
+  await expect(automatic).toHaveAttribute("aria-pressed", "true");
   expect(new URL(page.url()).searchParams.has("page")).toBe(false);
-  await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+  await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
 });
 test("keeps loaded issue pages across polls until the viewer selects refreshed results", async ({ page }) => {
   await page.goto("/web%2Fpagination?view=issues");
@@ -153,24 +154,25 @@ test("keeps loaded issue pages across polls until the viewer selects refreshed r
   await expect(region.getByRole("status")).toContainText("53 issues loaded");
   const now = new Date();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  // Pause ahead of installation so the running clock cannot overtake the target.
+  await page.clock.pauseAt(new Date(now.getTime() + 60_000));
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await automatic.click();
   for (let cycle = 0; cycle < 2; cycle++) {
     const response = page.waitForResponse(response =>
       response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === "/web%2Fpagination");
     await page.clock.runFor(10_000);
     expect((await response).ok()).toBe(true);
-    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+    await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
     await expect(region.getByRole("status")).toContainText("53 issues loaded");
     await expect(region.getByRole("heading", { name: "expensive", exact: true })).toBeVisible();
-    await expect(automatic).toBeChecked();
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
   }
   await region.getByRole("button", { name: "Show latest issues", exact: true }).click();
   await expect(region.getByRole("status")).toContainText("50 issues loaded");
   await expect(region.getByRole("heading", { name: "expensive", exact: true })).toHaveCount(0);
   await expect(region.getByRole("button", { name: "Show latest issues", exact: true })).toHaveCount(0);
-  await expect(automatic).toBeChecked();
+  await expect(automatic).toHaveAttribute("aria-pressed", "true");
 });
 test("keeps queue tables inside a narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -281,8 +283,8 @@ test("challenges anonymous continuation requests", async () => {
 });
 test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
   await page.goto("/web%2Fpagination");
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await expect(automatic).not.toBeChecked();
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   const now = new Date();
   await page.clock.install({ time: now });
   // The installed clock keeps running, so pausing at the install time races it.
@@ -293,18 +295,18 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
   page.on("request", request => { if (isRefresh(request)) refreshRequests++; });
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(0);
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await automatic.click();
   await page.clock.runFor(9_999);
   expect(refreshRequests).toBe(0);
   for (let cycle = 0; cycle < 2; cycle++) {
     const response = page.waitForResponse(response => isRefresh(response.request()));
     await page.clock.runFor(cycle === 0 ? 1 : 10_000);
     expect((await response).ok()).toBe(true);
-    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
-    await expect(automatic).toBeChecked();
+    await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
   }
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
-  await expect(automatic).not.toBeChecked();
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(2);
 });
