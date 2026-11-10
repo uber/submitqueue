@@ -524,6 +524,10 @@ func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 		{name: "duplicate completion", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs, count: "3", projectCount: 3},
 		{name: "recording after abandonment", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs - 1, count: "3", projectCount: 3},
 		{name: "delayed recording after abandonment", event: entity.RequestEventProjectFactsRecorded, completedAt: testNowMs + 1, count: "3", projectCount: 3},
+		{name: "attribution completed", event: entity.RequestEventProjectIssuesRecorded},
+		{name: "attribution completed after facts", event: entity.RequestEventProjectIssuesRecorded, completedAt: testNowMs - 1},
+		{name: "project analysis abandoned", event: entity.RequestEventProjectAnalysisAbandoned},
+		{name: "project analysis abandoned after facts", event: entity.RequestEventProjectAnalysisAbandoned, completedAt: testNowMs - 1},
 		{name: "abandoned recording", event: entity.RequestEventRecordAbandoned},
 		{name: "duplicate abandonment", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs},
 		{name: "abandonment after recording", event: entity.RequestEventRecordAbandoned, completedAt: testNowMs - 1},
@@ -567,7 +571,7 @@ func TestMaterializerProjectsProjectCompletion(t *testing.T) {
 }
 
 func TestMaterializerRepairsCompletionAfterProjectionFailure(t *testing.T) {
-	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectIssuesRecorded, entity.RequestEventProjectAnalysisAbandoned, entity.RequestEventRecordAbandoned} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
@@ -606,7 +610,7 @@ func TestMaterializerRepairsCompletionAfterProjectionFailure(t *testing.T) {
 }
 
 func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
-	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectIssuesRecorded, entity.RequestEventProjectAnalysisAbandoned, entity.RequestEventRecordAbandoned} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", map[string]string{MetadataKeyProjectFactCount: "3", MetadataKeyBrokenProjectFactCount: "1"})
@@ -645,7 +649,7 @@ func TestMaterializerRetriesCompletionAfterStateProjectionWins(t *testing.T) {
 }
 
 func TestMaterializerCompletionRequiresExistingSummary(t *testing.T) {
-	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventRecordAbandoned} {
+	for _, event := range []entity.RequestEvent{entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectIssuesRecorded, entity.RequestEventProjectAnalysisAbandoned, entity.RequestEventRecordAbandoned} {
 		t.Run(string(event), func(t *testing.T) {
 			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
 			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "test", nil)

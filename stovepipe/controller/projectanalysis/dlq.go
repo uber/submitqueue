@@ -120,8 +120,11 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 
 	if request.TerminalBuildID != "" {
 		projectIssuesRecordedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID, nil)
-		_, err := store.GetRequestLogStore().Get(ctx, request.ID, projectIssuesRecordedLog.ID)
+		retained, err := store.GetRequestLogStore().Get(ctx, request.ID, projectIssuesRecordedLog.ID)
 		if err == nil {
+			if err := c.requestLogMaterializer.PersistLog(ctx, store, retained); err != nil {
+				return err
+			}
 			return publishRecord(ctx, c.registry, request)
 		}
 		if !errors.Is(err, storage.ErrNotFound) {

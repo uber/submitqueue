@@ -478,6 +478,46 @@ func TestProcessRejectsInvalidIdentity(t *testing.T) {
 	}
 }
 
+func TestCompletedAnalysisRepairsProjectionBeforeHandoff(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		name := "normal delivery"
+		if recovery {
+			name = "dead-letter recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			msg := f.message(t)
+			f.failures["record/publish"] = assert.AnError
+			require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+			f.failures["log/project_issues_recorded"] = assert.AnError
+			deliver := f.deliver
+			if recovery {
+				deliver = f.recover
+			}
+			require.ErrorIs(t, deliver(context.Background(), msg), assert.AnError)
+			require.Empty(t, f.records)
+			require.Equal(t, 1, f.resolverCalls)
+			require.Equal(t, 1, f.attributerCalls)
+			require.NoError(t, deliver(context.Background(), msg))
+			require.Len(t, f.records, 1)
+		})
+	}
+}
+
+func TestAbandonedAnalysisRepairsProjectionBeforeHandoff(t *testing.T) {
+	f := newFixture(t)
+	msg := f.message(t)
+	f.failures["record/publish"] = assert.AnError
+	require.ErrorIs(t, f.recover(context.Background(), msg), assert.AnError)
+	f.failures["log/project_analysis_abandoned"] = assert.AnError
+	require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+	require.Empty(t, f.records)
+	require.Zero(t, f.resolverCalls)
+	require.Zero(t, f.attributerCalls)
+	require.NoError(t, f.deliver(context.Background(), msg))
+	require.Len(t, f.records, 1)
+}
+
 const projectStatusTestQueue = "monorepo/main"
 
 var projectStatusTestChangeTime = time.Unix(1_700_000_000, 0).UTC()

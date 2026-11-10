@@ -117,7 +117,7 @@ func projectRequestSummaryFacts(summary entity.RequestSummary, log entity.Reques
 			log.RequestID, summary.RequestID, log.Queue, summary.Queue,
 		)
 	}
-	if log.Event == entity.RequestEventProjectFactsRecorded || log.Event == entity.RequestEventRecordAbandoned {
+	if completesProjectResults(log.Event) {
 		if log.TimestampMs <= 0 {
 			return entity.RequestSummary{}, fmt.Errorf("request summary completion time must be positive request_id=%q", log.RequestID)
 		}
@@ -199,4 +199,14 @@ func requestSummaryFromRequestAndLog(request entity.Request, log entity.RequestL
 		summary.BaseURI = baseURI
 	}
 	return summary
+}
+
+func completesProjectResults(event entity.RequestEvent) bool {
+	switch event {
+	case entity.RequestEventProjectFactsRecorded, entity.RequestEventProjectIssuesRecorded,
+		entity.RequestEventProjectAnalysisAbandoned, entity.RequestEventRecordAbandoned:
+		return true
+	default:
+		return false
+	}
 }

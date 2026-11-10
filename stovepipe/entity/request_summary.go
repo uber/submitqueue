@@ -32,7 +32,8 @@ type RequestSummary struct {
 	StateTimestampMs int64
 	// AcceptedAtMs is the original acceptance timestamp in Unix milliseconds; zero means unknown and a positive value is immutable.
 	AcceptedAtMs int64
-	// ProjectResultsCompletedAtMs is the completion timestamp in Unix milliseconds; zero means unknown and a positive value is immutable.
+	// ProjectResultsCompletedAtMs is when project-result processing finished or was abandoned, in Unix milliseconds.
+	// Zero means unknown and a positive value is immutable.
 	ProjectResultsCompletedAtMs int64
 	// ProjectCount is the number of recorded project results; zero means none recorded.
 	ProjectCount int32

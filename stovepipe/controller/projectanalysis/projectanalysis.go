@@ -119,8 +119,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 	history := store.GetRequestLogStore()
 	projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
-	_, err = history.Get(ctx, request.ID, projectAnalysisAbandonedLog.ID)
+	retained, err := history.Get(ctx, request.ID, projectAnalysisAbandonedLog.ID)
 	if err == nil {
+		if err := c.requestLogMaterializer.PersistLog(ctx, store, retained); err != nil {
+			return err
+		}
 		return publishRecord(ctx, c.registry, request)
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
@@ -131,8 +134,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	projectIssuesRecordedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID, nil)
-	_, err = history.Get(ctx, request.ID, projectIssuesRecordedLog.ID)
+	retained, err = history.Get(ctx, request.ID, projectIssuesRecordedLog.ID)
 	if err == nil {
+		if err := c.requestLogMaterializer.PersistLog(ctx, store, retained); err != nil {
+			return err
+		}
 		return publishRecord(ctx, c.registry, request)
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
