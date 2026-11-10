@@ -11,6 +11,7 @@ import { RequestDetails, History } from "./pages.js";
 import { QueueRequests } from "./queue.js";
 import { OpenIssues } from "./issues.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
+import { StovepipeLogo } from "./stovepipe-logo.js";
 
 const ViewLink = styled<typeof Link, { $active: boolean }>(Link, ({ $theme, $active }) => ({
   display: "inline-block",
@@ -25,17 +26,6 @@ const ViewNavigation = styled("nav", ({ $theme }) => ({
   flexWrap: "wrap",
   columnGap: $theme.sizing.scale700,
   borderBottom: `1px solid ${$theme.colors.borderOpaque}`,
-}));
-
-const StovepipeLogo = styled("svg", ({ $theme }) => ({
-  width: "28px",
-  height: "28px",
-  padding: "2px",
-  boxSizing: "border-box",
-  borderRadius: "50%",
-  border: `1px solid ${$theme.colors.contentPrimary}`,
-  backgroundColor: $theme.colors.contentPrimary,
-  color: $theme.colors.backgroundPrimary,
 }));
 
 const requestViewTabs = [
@@ -66,14 +56,7 @@ function Page({ model }: { model: StovepipePageModel }) {
       minHeight="100vh" height={model.kind === "request" ? "100dvh" : "auto"} display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows={model.kind === "request" ? "auto minmax(min-content, 1fr) auto" : "auto 1fr auto"}
       paddingLeft="scale600" paddingRight="scale600">
       <AppHeader>
-        <AppBrand href={model.queueHref} homeLabel="Stovepipe queue" mark={
-          <StovepipeLogo viewBox="-4 -4 40 40" fill="none" focusable="false">
-            <path d="M23 1v5H12a5 5 0 0 0 0 10h8a5 5 0 0 1 0 10H9v5"
-              stroke="currentColor" strokeWidth="5" strokeLinejoin="round" />
-            <ellipse cx="23" cy="1" rx="3.5" ry="1.5" fill="currentColor" />
-            <ellipse cx="9" cy="31" rx="3.5" ry="1.5" fill="currentColor" />
-          </StovepipeLogo>
-        }>Stovepipe</AppBrand>
+        <AppBrand href={model.queueHref} homeLabel="Stovepipe queue" mark={<StovepipeLogo />}>Stovepipe</AppBrand>
         <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
           <RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
