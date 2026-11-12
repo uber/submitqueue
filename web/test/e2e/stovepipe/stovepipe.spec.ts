@@ -40,10 +40,17 @@ test.describe("server-rendered styling", () => {
     await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
-    for (const label of ["Build and Test Issues", "Fix Attempts"]) {
-      await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: label, exact: true }).click();
-      await expect(page.getByRole("region", { name: label, exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
-    }
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Build and Test Issues", exact: true }).click();
+    const issues = page.getByRole("region", { name: "Build and Test Issues", exact: true });
+    await expect(issues.getByRole("status")).toHaveText("Issue recording complete");
+    await expect(issues.locator("tbody tr")).toHaveCount(50);
+    await expect(issues.getByRole("table", { name: "New Issues" })).toContainText("Task-wide failure");
+    await page.getByRole("link", { name: "Next issues →" }).click();
+    await expect(issues.locator("tbody tr")).toHaveCount(1);
+    await page.getByRole("link", { name: "First issues" }).click();
+    await expect(issues.locator("tbody tr")).toHaveCount(50);
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Fix Attempts", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Fix Attempts", exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
   });
   test("keeps continuation links usable without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination");
@@ -609,7 +616,11 @@ test("retains project paging across views and resets the cursor when page size c
     await views.getByRole("link", { name: label, exact: true }).click();
     const section = page.getByRole("region", { name: label, exact: true });
     await expect(section).toBeVisible();
-    if (label !== "History") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
+    if (label === "Build and Test Issues") {
+      await expect(section.getByRole("status")).toHaveText("Issue recording complete");
+      await expect(section.getByRole("table", { name: "New Issues" })).toBeVisible();
+    }
+    if (label === "Fix Attempts") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
   }
   await views.getByRole("link", { name: "Project Results", exact: true }).click();
   await expect(rows).toHaveCount(25);

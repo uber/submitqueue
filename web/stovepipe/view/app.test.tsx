@@ -14,6 +14,7 @@ const model: StovepipePageModel = {
   latestHref: "/repo%2Fmain",
   showLatestLink: false,
   loadedAtMs: 1000,
+  requestIssues: null,
   projectStatus: {
     ok: true,
     data: {
@@ -351,7 +352,16 @@ it.each([
   expect(within(navigation).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   const section = screen.getByRole("region", { name: label });
   expect(section).toBeVisible();
-  if (view === "issues" || view === "fix-attempts") {
-    expect(within(section).getByText("Coming soon")).toBeVisible();
-  }
+  if (view === "fix-attempts") expect(within(section).getByText("Coming soon")).toBeVisible();
+});
+
+it("renders request issues and retains them on a same-page refresh failure", () => {
+  const issuesPage: StovepipePageModel = { ...model, key: model.key + "view=issues", requestIssues: { ok: true, data: {
+    status: "incomplete", issues: [], firstHref: null, nextHref: null,
+  } } };
+  const { rerender } = render(<StovepipeApp model={issuesPage} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Issue recording was abandoned");
+  rerender(<StovepipeApp model={{ ...issuesPage, requestIssues: { ok: false, error: "Issues unavailable" } }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Issues unavailable");
+  expect(screen.getByRole("status")).toHaveTextContent("Issue recording was abandoned");
 });

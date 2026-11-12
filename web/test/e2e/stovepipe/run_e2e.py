@@ -85,6 +85,18 @@ def _pagination_fixture_sql() -> str:
         statements.append(
             f"INSERT INTO open_issue VALUES ('web/pagination','{task}','{unit}','web/build/51');"
         )
+    for event in ("issue_tracking_started", "issues_reconciled"):
+        statements.append(
+            f"INSERT INTO request_log VALUES ('web/pagination','51','{event}',3000,'','{event}',1,'','{{}}');"
+        )
+    for i in range(51):
+        kind = ("new", "existing", "closed")[i % 3]
+        unit = "" if i == 0 else f"//packages/test-{i:02d}:go_default_test"
+        statements.append(
+            "INSERT INTO request_issue_summary "
+            "(queue,request_id,task_id,unit_id,kind,build_id,first_seen_build_id,version) "
+            f"VALUES ('web/pagination','51','buildtest','{unit}','{kind}','web/build/51','web/build/50',1);"
+        )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):
         closed = i < closed_issue_count

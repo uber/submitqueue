@@ -9,7 +9,7 @@ import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestDetails, History } from "./pages.js";
 import { QueueRequests } from "./queue.js";
-import { OpenIssues } from "./issues.js";
+import { OpenIssues, RequestIssues } from "./issues.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
 import { StovepipeLogo } from "./stovepipe-logo.js";
 
@@ -123,6 +123,9 @@ function Page({ model }: { model: StovepipePageModel }) {
                       <section key={tab.id} className="sq-stovepipe-request-view" aria-label={tab.label} hidden={!tab.selected}>
                         {(tab.id !== "projects" || !projects) && <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>}
                         {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
+                          : tab.id === "issues" ? model.requestIssues && <Section cacheKey={model.key} result={model.requestIssues}>
+                            {issues => issues && <RequestIssues model={issues} />}
+                          </Section>
                           : tab.id === "history" ? history && <History events={history.events} />
                             : <ParagraphSmall color="contentSecondary">Coming soon</ParagraphSmall>}
                       </section>
