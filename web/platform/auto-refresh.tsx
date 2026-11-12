@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { styled, type Theme } from "baseui";
 import { Block } from "baseui/block";
-import { Button, KIND, SHAPE, SIZE } from "baseui/button";
+import { Button, KIND, MIN_HIT_AREA, SHAPE, SIZE } from "baseui/button";
 import { StatefulTooltip } from "baseui/tooltip";
 
 const RefreshIcon = styled<"svg", { $spinning: boolean }>("svg", ({ $spinning }) => ({
@@ -114,21 +114,17 @@ export function AutoRefresh({
   return (
     <Block display="flex" alignItems="center" flexWrap gridGap="scale300" data-paused={paused || terminal}>
       <StatefulTooltip content={action} placement="bottomRight" onMouseEnterDelay={150} onMouseLeaveDelay={0}>
-        <Button type="button" kind={KIND.tertiary} shape={SHAPE.circle} size={SIZE.mini}
+        <Button type="button" kind={KIND.secondary} shape={SHAPE.circle} size={SIZE.mini} minHitArea={MIN_HIT_AREA.tap}
           isSelected={enabled && !terminal} disabled={terminal}
           aria-label={action} aria-pressed={enabled && !terminal} aria-busy={refreshing}
           onClick={() => setEnabled(current => !current)}
           overrides={{ BaseButton: { style: ({ $theme, $isSelected, $isFocusVisible }: {
             $theme: Theme; $isSelected?: boolean; $isFocusVisible?: boolean;
           }) => ({
-            backgroundColor: $isSelected ? $theme.colors.backgroundAccentLight : "transparent",
-            color: $isSelected ? $theme.colors.contentAccent : $theme.colors.contentSecondary,
-            boxShadow: $isFocusVisible ? `inset 0 0 0 2px ${$theme.colors.borderAccent}` : "none",
-            ":hover": {
-              backgroundColor: $isSelected ? $theme.colors.backgroundAccentLight : $theme.colors.backgroundSecondary,
-              color: $isSelected ? $theme.colors.contentAccent : $theme.colors.contentPrimary,
-            },
-            "@media (pointer: coarse)": { width: "44px", height: "44px" },
+            ...(!$isSelected && { backgroundColor: "transparent", color: $theme.colors.contentSecondary }),
+            outline: $isFocusVisible ? `2px solid ${$theme.colors.borderAccent}`
+              : $isSelected ? "none" : `1px solid ${$theme.colors.contentTertiary}`,
+            outlineOffset: "-1px",
           }) } }}>
           <RefreshIcon $spinning={refreshing} width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
