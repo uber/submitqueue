@@ -19,6 +19,8 @@ package entity
 type IngestRequest struct {
 	// Queue is the name of the queue whose head commit should be ingested.
 	Queue string
+	// ForceFull requires full validation of the resolved head and rejects requests past accepted.
+	ForceFull bool
 	// HasEnablement distinguishes an explicit decision from ordinary ingestion.
 	HasEnablement bool
 	// Enablement is the optional explicit enabled or disabled setting.

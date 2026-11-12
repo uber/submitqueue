@@ -25,7 +25,7 @@ import (
 // ProtoToIngestRequest maps the wire IngestRequest to the entity.IngestRequest
 // the controller operates on.
 func ProtoToIngestRequest(req *pb.IngestRequest) entity.IngestRequest {
-	result := entity.IngestRequest{Queue: req.GetQueue()}
+	result := entity.IngestRequest{Queue: req.GetQueue(), ForceFull: req.GetForceFull()}
 	if req.GetEnablement() != pb.QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN {
 		result.HasEnablement = true
 		switch req.GetEnablement() {
