@@ -117,12 +117,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	default:
 		return fmt.Errorf("project analysis requires a terminal request")
 	}
+	history := store.GetRequestLogStore()
+	projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
+	_, err = history.Get(ctx, request.ID, projectAnalysisAbandonedLog.ID)
+	if err == nil {
+		return publishRecord(ctx, c.registry, request)
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("read project analysis abandonment: %w", err)
+	}
 	if request.TerminalBuildID == "" {
 		return fmt.Errorf("project analysis requires the request's terminal build")
 	}
 
 	projectIssuesRecordedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID, nil)
-	history := store.GetRequestLogStore()
 	_, err = history.Get(ctx, request.ID, projectIssuesRecordedLog.ID)
 	if err == nil {
 		return publishRecord(ctx, c.registry, request)
