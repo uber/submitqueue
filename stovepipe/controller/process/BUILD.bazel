@@ -28,7 +28,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["process_test.go"],
+    srcs = [
+        "full_test.go",
+        "process_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "//api/base/hook:go_default_library",

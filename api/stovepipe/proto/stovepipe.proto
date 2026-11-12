@@ -48,6 +48,10 @@ message IngestRequest {
     // Optional ENABLED or DISABLED coverage decision, independent of pause or processing.
     // Omission or UNKNOWN preserves durable enablement.
     QueueEnablement enablement = 2;
+    // Require a full build for the request resolved by this ingest call.
+    // Returns an invalid-argument error if that request has already left accepted.
+    // Accepted full requests remain eligible when newer heads arrive.
+    bool force_full = 3;
 }
 
 // IngestResponse is the response for the Ingest method.
