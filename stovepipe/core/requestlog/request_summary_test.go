@@ -178,23 +178,27 @@ func TestMaterializerMissingSummaryFailures(t *testing.T) {
 }
 
 func TestMaterializerProjectsOnlyNewerRequestState(t *testing.T) {
-	materializer, stores, logs, summaries, _ := newTestMaterializer(t)
-	request := entity.Request{
-		ID: testRequestID, Queue: testQueue, URI: testRequestURI, BaseURI: testBaseURI,
-		BuildStrategy: entity.BuildStrategyIncrementalSinceGreen, State: entity.RequestStateProcessing, Version: 2,
-	}
-	log := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
-	logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-	summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(entity.RequestSummary{
-		RequestID: testRequestID, Queue: testQueue, URI: testRequestURI,
-		State: entity.RequestStateAccepted, RequestVersion: 1, StateTimestampMs: testNowMs - 1, Version: 4,
-	}, nil)
-	summaries.EXPECT().Update(gomock.Any(), entity.RequestSummary{
-		RequestID: testRequestID, Queue: testQueue, URI: testRequestURI, BaseURI: testBaseURI,
-		State: entity.RequestStateProcessing, RequestVersion: 2, StateTimestampMs: testNowMs, Version: 4,
-	}, int32(4), int32(5)).Return(nil)
+	for name, requestVersion := range map[string]int32{"consecutive": 2, "metadata updates between states": 5} {
+		t.Run(name, func(t *testing.T) {
+			materializer, stores, logs, summaries, _ := newTestMaterializer(t)
+			request := entity.Request{
+				ID: testRequestID, Queue: testQueue, URI: testRequestURI, BaseURI: testBaseURI,
+				BuildStrategy: entity.BuildStrategyIncrementalSinceGreen, State: entity.RequestStateProcessing, Version: requestVersion,
+			}
+			log := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+			logs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			summaries.EXPECT().Get(gomock.Any(), testRequestID).Return(entity.RequestSummary{
+				RequestID: testRequestID, Queue: testQueue, URI: testRequestURI,
+				State: entity.RequestStateAccepted, RequestVersion: 1, StateTimestampMs: testNowMs - 1, Version: 4,
+			}, nil)
+			summaries.EXPECT().Update(gomock.Any(), entity.RequestSummary{
+				RequestID: testRequestID, Queue: testQueue, URI: testRequestURI, BaseURI: testBaseURI,
+				State: entity.RequestStateProcessing, RequestVersion: requestVersion, StateTimestampMs: testNowMs, Version: 4,
+			}, int32(4), int32(5)).Return(nil)
 
-	require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+		})
+	}
 }
 
 func TestMaterializerRetriesRequestSummaryVersionMismatch(t *testing.T) {
