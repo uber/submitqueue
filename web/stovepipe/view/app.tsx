@@ -124,7 +124,7 @@ function Page({ model }: { model: StovepipePageModel }) {
                         {(tab.id !== "projects" || !projects) && <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>}
                         {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
                           : tab.id === "issues" ? model.requestIssues && <Section cacheKey={model.key} result={model.requestIssues}>
-                            {issues => issues && <RequestIssues model={issues} />}
+                            {issues => issues && <RequestIssues model={issues} projects={model.issueProjects} />}
                           </Section>
                           : tab.id === "history" ? history && <History events={history.events} />
                             : <ParagraphSmall color="contentSecondary">Coming soon</ParagraphSmall>}

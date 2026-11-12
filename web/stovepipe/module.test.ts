@@ -22,6 +22,7 @@ const summary: RequestSummary = {
 };
 function createPageTestContext(options: Pick<StovepipeWebOptions, "resolveBuildUrl"> = {}) {
   const service: StovepipeService = {
+    listRequestProjectsByIssue: vi.fn().mockResolvedValue({ attributions: [], attributionComplete: true, nextPageToken: "" }),
     getIssuesByRequestID: vi.fn().mockResolvedValue({ issues: [], status: "complete", nextPageToken: "" }),
     listOpenIssues: vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" }),
     list: vi
@@ -562,4 +563,36 @@ it("keeps request history and project results when the request issues read fails
     history: { ok: true }, projectStatus: { ok: true },
     requestIssues: { ok: false, error: expect.not.stringContaining("backend details") },
   } });
+});
+
+it("reads projects only for a selected unit issue and preserves both pagination cursors", async () => {
+  const { app, service, paths } = createPageTestContext();
+  const path = paths.request("repo/main", summary.requestId);
+  await app.handle({ path, search: new URLSearchParams({ view: "issues" }) });
+  await app.handle({ path, search: new URLSearchParams({ view: "issues", issueTask: "test", issueUnit: "" }) });
+  expect(service.listRequestProjectsByIssue).not.toHaveBeenCalled();
+  vi.mocked(service.listRequestProjectsByIssue).mockResolvedValue({
+    attributionComplete: true, nextPageToken: "next+/=",
+    attributions: [{ taskId: "build/test", unitId: "//pkg:a?x#y", project: "project/one" }],
+  });
+  const signal = new AbortController().signal;
+  const result = await app.handle({ path, signal, search: new URLSearchParams({
+    view: "issues", issues: "issue+/=", issueTask: "build/test", issueUnit: "//pkg:a?x#y", affectedProjects: "projects+/=",
+  }) });
+  expect(service.listRequestProjectsByIssue).toHaveBeenCalledWith({ queue: "repo/main", requestId: summary.requestId,
+    taskId: "build/test", unitId: "//pkg:a?x#y", pageSize: 50, pageToken: "projects+/=" }, { signal });
+  expect(result).toMatchObject({ kind: "render", model: { issueProjects: { closeHref: paths.requestIssues("repo/main", summary.requestId, "issue+/="), result: { ok: true, data: {
+    complete: true, projects: ["project/one"],
+    firstHref: paths.issueProjects("repo/main", summary.requestId, "build/test", "//pkg:a?x#y", "issue+/="),
+    nextHref: paths.issueProjects("repo/main", summary.requestId, "build/test", "//pkg:a?x#y", "issue+/=", "next+/="),
+  } } } } });
+});
+
+it("rejects attribution for another issue without hiding the request issues", async () => {
+  const { app, service, paths } = createPageTestContext();
+  vi.mocked(service.listRequestProjectsByIssue).mockResolvedValue({
+    attributionComplete: true, nextPageToken: "", attributions: [{ taskId: "wrong", unitId: "unit", project: "p" }],
+  });
+  const result = await app.handle({ path: paths.request("repo/main", summary.requestId), search: new URLSearchParams({ view: "issues", issueTask: "test", issueUnit: "unit" }) });
+  expect(result).toMatchObject({ kind: "render", model: { requestIssues: { ok: true }, issueProjects: { result: { ok: false } } } });
 });

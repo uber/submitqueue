@@ -53,13 +53,35 @@ export interface OpenIssuesModel {
 }
 export interface RequestIssuesModel {
   /** Accepted issue updates on this page, not the queue's open-issue set. */
-  issues: { taskId: string; unitId: string; kind: string; buildId: string; firstSeenBuildId: string }[];
+  issues: { taskId: string; unitId: string; kind: string; buildId: string; firstSeenBuildId: string; projectsHref: string | null }[];
   /** Backend reconciliation status; completion does not imply a green build. */
   status: string;
   /** First issue page for this request; null when already on it. */
   firstHref: string | null;
   /** Opaque continuation URL; null on the final page. */
   nextHref: string | null;
+}
+export interface IssueProjectsModel {
+  /** Projects affected by the selected issue on this page. */
+  projects: string[];
+  /** False means attribution is not available, not that no projects are affected. */
+  complete: boolean;
+  /** Return to this issue's first project page; null on that page. */
+  firstHref: string | null;
+  /** Opaque continuation URL; null on the final page. */
+  nextHref: string | null;
+}
+export interface IssueProjectsSelection {
+  /** Selected validation task. */
+  taskId: string;
+  /** Selected failed unit. */
+  unitId: string;
+  /** Issue and continuation identity used to scope retained results. */
+  key: string;
+  /** Collapse the selected issue's project list even when its read fails. */
+  closeHref: string;
+  /** Independent association read, so failures leave issue results visible. */
+  result: ReadResult<IssueProjectsModel>;
 }
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
@@ -133,5 +155,6 @@ export type StovepipePageModel = PageBase &
         history: ReadResult<RequestHistoryModel>;
         projectStatus: ReadResult<ProjectStatusModel>;
         requestIssues: ReadResult<RequestIssuesModel> | null;
+        issueProjects: IssueProjectsSelection | null;
       }
   );

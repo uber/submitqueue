@@ -189,10 +189,10 @@ it("does not loop when a continuation repeats", async () => {
 
 it("groups request updates into new, existing and resolved without hiding unknown kinds", () => {
   render(<RequestIssues model={{ status: "complete", firstHref: null, nextHref: "/next", issues: [
-    { taskId: "buildtest", unitId: "//pkg:new", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7" },
-    { taskId: "buildtest", unitId: "//pkg:existing", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/1" },
-    { taskId: "entrypoint", unitId: "", kind: "closed", buildId: "build/7", firstSeenBuildId: "build/2" },
-    { taskId: "future", unitId: "//pkg:unknown", kind: "future", buildId: "", firstSeenBuildId: "" },
+    { taskId: "buildtest", unitId: "//pkg:new", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects" },
+    { taskId: "buildtest", unitId: "//pkg:existing", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/1", projectsHref: "/projects" },
+    { taskId: "entrypoint", unitId: "", kind: "closed", buildId: "build/7", firstSeenBuildId: "build/2", projectsHref: null },
+    { taskId: "future", unitId: "//pkg:unknown", kind: "future", buildId: "", firstSeenBuildId: "", projectsHref: null },
   ] }} />);
   expect(screen.getByRole("table", { name: "New Issues" })).toHaveTextContent("//pkg:new");
   expect(screen.getByRole("table", { name: "Existing Issues" })).toHaveTextContent("//pkg:existing");
@@ -212,4 +212,30 @@ it.each([
   expect(screen.getByRole("status")).toHaveTextContent(message);
   expect(screen.getByText("No new issues on this page.")).toBeVisible();
   expect(screen.getByRole("link", { name: "First issues" })).toHaveAttribute("href", "/first");
+});
+
+it.each([false, true])("distinguishes incomplete attribution from an empty completed project list (%s)", complete => {
+  render(<RequestIssues model={{ status: "complete", firstHref: null, nextHref: null, issues: [
+    { taskId: "test", unitId: "unit", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects" },
+  ] }} projects={{ taskId: "test", unitId: "unit", key: "selection", closeHref: "/issues", result: { ok: true, data: {
+    projects: [], complete, firstHref: null, nextHref: null,
+  } } }} />);
+  expect(screen.getByText(complete ? "No affected projects recorded for this issue." : "Project attribution is not available yet or did not complete.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Hide projects" })).toHaveAttribute("href", "/issues");
+});
+
+it("shows paginated affected projects and keeps the collapse action on failure", () => {
+  const model = { status: "complete", firstHref: null, nextHref: null, issues: [
+    { taskId: "test", unitId: "unit", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects" },
+  ] };
+  const selection = { taskId: "test", unitId: "unit", key: "selection", closeHref: "/issues" };
+  const { rerender } = render(<RequestIssues model={model} projects={{ ...selection, result: { ok: true, data: {
+    projects: ["project-1"], complete: true, firstHref: "/first", nextHref: "/next",
+  } } }} />);
+  expect(screen.getByRole("listitem")).toHaveTextContent("project-1");
+  expect(screen.getByRole("link", { name: "More affected projects →" })).toHaveAttribute("href", "/next");
+  rerender(<RequestIssues model={model} projects={{ ...selection, key: "next-page", result: { ok: false, error: "Projects unavailable" } }} />);
+  expect(screen.queryByText("project-1")).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent("Projects unavailable");
+  expect(screen.getByRole("link", { name: "Hide projects" })).toHaveAttribute("href", "/issues");
 });

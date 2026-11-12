@@ -46,3 +46,7 @@ The header offers optional ten-second auto-refresh, off by default. The circular
 Queue refreshes update the status of matching displayed requests while preserving their positions and loaded older pages. New arrivals appear behind a Show latest requests action that starts a fresh list. A full browser reload also starts a fresh list; older-page URLs retain their explicit cursor.
 
 Open-issue refreshes read the first page. Before any continuation is loaded, a successful refresh replaces the displayed issues. After loading more, polling preserves the displayed traversal and offers Show latest issues to replace it with the latest successful first-page result. The issues page and retained data are scoped to the queue and view, not the cursor, so refreshing a continuation URL preserves both the display on failure and the auto-refresh setting. Failed continuations preserve loaded issues and allow retrying the same cursor. Loading more is not a snapshot; issues can change between reads.
+
+## Affected projects
+
+New and existing unit-level request issues offer Show projects. The association read runs only when an issue is selected; expanding an issue does not fetch associations for every row. Project continuation links preserve the request issue cursor and work without JavaScript. Hide projects returns to that issue page. Attribution that is unavailable or incomplete is not rendered as an empty successful result. Task-wide failures and resolved updates do not offer attribution lookups.
