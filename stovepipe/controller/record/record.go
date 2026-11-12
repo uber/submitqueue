@@ -44,6 +44,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/core/validationfact"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -211,7 +212,7 @@ func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Stor
 
 	brokenCount := 0
 	for _, result := range results {
-		fact, _, err := recordValidationFact(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
+		fact, _, err := validationfact.Persist(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
 			URI:         request.URI,
 			Project:     result.ProjectInfo.Name,
 			ProjectType: result.ProjectInfo.ProjectType,

@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -29,6 +28,7 @@ import (
 	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/core/validationfact"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -43,53 +43,13 @@ func recordFact(
 	request entity.Request,
 	results []projectstatus.Result,
 ) (entity.ValidationFact, bool, error) {
-	return recordValidationFact(ctx, logger, scope, store.GetValidationFactStore(), entity.ValidationFact{
+	return validationfact.Persist(ctx, logger, scope, store.GetValidationFactStore(), entity.ValidationFact{
 		URI:       request.URI,
 		Project:   wholeRepositoryProject,
 		Degree:    degreeFor(request.State, results),
 		RequestID: request.ID,
 		CreatedAt: time.Now().UnixMilli(),
 	})
-}
-
-func recordValidationFact(
-	ctx context.Context,
-	logger *zap.SugaredLogger,
-	scope tally.Scope,
-	factStore storage.ValidationFactStore,
-	fact entity.ValidationFact,
-) (entity.ValidationFact, bool, error) {
-	err := factStore.Create(ctx, fact)
-	switch {
-	case err == nil:
-		metrics.NamedCounter(scope, _opName, "fact_created", 1, metrics.TagsFromContext(ctx)...)
-		logger.Infow("recorded validation fact",
-			"request_id", fact.RequestID,
-			"uri", fact.URI,
-			"project", fact.Project,
-			"degree", fact.Degree,
-		)
-		return fact, true, nil
-
-	case errors.Is(err, storage.ErrAlreadyExists):
-		stored, getErr := factStore.Get(ctx, fact.URI, fact.Project)
-		if getErr != nil {
-			metrics.NamedCounter(scope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s and project %q: %w", fact.URI, fact.Project, getErr)
-		}
-		if stored.RequestID != fact.RequestID {
-			// Ingest deduplication forbids different requests owning the same immutable fact.
-			metrics.NamedCounter(scope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
-			return entity.ValidationFact{}, false, fmt.Errorf(
-				"fact for uri %s and project %q is owned by request %s, not %s", fact.URI, fact.Project, stored.RequestID, fact.RequestID)
-		}
-		metrics.NamedCounter(scope, _opName, "fact_exists", 1, metrics.TagsFromContext(ctx)...)
-		return stored, false, nil
-
-	default:
-		metrics.NamedCounter(scope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s and project %q: %w", fact.URI, fact.Project, err)
-	}
 }
 
 func persistValidationFactRecordedLog(
