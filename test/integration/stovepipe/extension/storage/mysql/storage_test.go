@@ -17,9 +17,13 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
@@ -76,6 +80,7 @@ func TestMySQLStorage(t *testing.T) {
 		suite.Run(t, &MySQLRequestStoreSuite{
 			ctx:      ctx,
 			backend:  backend,
+			db:       db,
 			store:    bound.GetRequestStore(),
 			uriStore: bound.GetRequestURIStore(),
 		})
@@ -302,6 +307,7 @@ type MySQLRequestStoreSuite struct {
 	suite.Suite
 	ctx      context.Context
 	backend  *mysqlstorage.Storage
+	db       *sql.DB
 	store    storage.RequestStore
 	uriStore storage.RequestURIStore
 }
@@ -475,4 +481,71 @@ type mysqlFactory struct {
 // For returns the queue-scoped store aggregate bound to the queue named in config.
 func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
 	return f.backend.For(config.QueueName)
+}
+
+func (s *MySQLRequestStoreSuite) TestMetadataUsesRequestVersion() {
+	req := entity.Request{Queue: "monorepo/main", ID: "metadata", State: entity.RequestStateAccepted, Version: 1,
+		Metadata: map[string]json.RawMessage{"other": json.RawMessage(`{ "z": 1, "keep": true }`)}}
+	require.NoError(s.T(), s.store.Create(s.ctx, req))
+	initial, err := s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	initial.Metadata["notification"] = json.RawMessage(`{"thread":"123.456"}`)
+	require.NoError(s.T(), s.store.Update(s.ctx, initial, initial.Version, initial.Version+1))
+	require.Equal(s.T(), int32(1), initial.Version)
+
+	stale := req
+	stale.State = entity.RequestStateProcessing
+	require.ErrorIs(s.T(), s.store.Update(s.ctx, stale, 1, 2), storage.ErrVersionMismatch)
+	current, err := s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int32(2), current.Version)
+	require.Equal(s.T(), entity.RequestStateAccepted, current.State)
+	current.State = entity.RequestStateProcessing
+	require.NoError(s.T(), s.store.Update(s.ctx, current, current.Version, current.Version+1))
+
+	got, err := s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int32(3), got.Version)
+	require.Equal(s.T(), entity.RequestStateProcessing, got.State)
+	require.JSONEq(s.T(), `{"thread":"123.456"}`, string(got.Metadata["notification"]))
+	require.JSONEq(s.T(), `{"keep":true,"z":1}`, string(got.Metadata["other"]))
+	require.ErrorIs(s.T(), s.store.Update(s.ctx, initial, 1, 2), storage.ErrVersionMismatch)
+
+	otherQueue, err := s.backend.For("different/queue")
+	require.NoError(s.T(), err)
+	got.Queue = "different/queue"
+	require.ErrorIs(s.T(), otherQueue.GetRequestStore().Update(s.ctx, got, 3, 4), storage.ErrVersionMismatch)
+}
+
+func (s *MySQLRequestStoreSuite) TestMetadataLegacyNullAndConcurrentClaims() {
+	req := entity.Request{Queue: "monorepo/main", ID: "metadata-legacy", State: entity.RequestStateAccepted, Version: 1}
+	require.NoError(s.T(), s.store.Create(s.ctx, req))
+	_, err := s.db.ExecContext(s.ctx, "UPDATE request SET metadata = NULL WHERE queue = ? AND id = ?", req.Queue, req.ID)
+	require.NoError(s.T(), err)
+	current, err := s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), current.Metadata)
+	var winners atomic.Int32
+	var workers sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			claim := current
+			claim.Metadata = map[string]json.RawMessage{"claim": json.RawMessage(`true`)}
+			err := s.store.Update(s.ctx, claim, current.Version, current.Version+1)
+			if err == nil {
+				winners.Add(1)
+			} else {
+				assert.ErrorIs(s.T(), err, storage.ErrVersionMismatch)
+			}
+		}()
+	}
+	workers.Wait()
+	require.Equal(s.T(), int32(1), winners.Load())
+	got, err := s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), req.Version+1, got.Version)
+	require.Equal(s.T(), req.State, got.State)
+	require.JSONEq(s.T(), `true`, string(got.Metadata["claim"]))
 }

@@ -14,6 +14,8 @@
 
 package entity
 
+import "encoding/json"
+
 // RequestState defines the internal state of a Stovepipe validation request as it moves
 // through the pipeline. States are internal and used to implement a state machine; a
 // customer-facing status type may be layered on top later, as in SubmitQueue.
@@ -123,4 +125,6 @@ type Request struct {
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`
+	// Metadata contains namespaced extension state retained across lifecycle transitions.
+	Metadata map[string]json.RawMessage `json:"metadata,omitempty"`
 }
