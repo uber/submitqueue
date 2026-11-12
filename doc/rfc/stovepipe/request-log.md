@@ -248,7 +248,7 @@ No controller infers an outcome reason from `RequestStateFailed` alone or record
 
 ### Repair trigger requirement
 
-Every writer retains a retry trigger until the request-log write succeeds. A queue stage retries its delivery, or its DLQ reconciler repairs the log and republishes the original handoff. A log or publish failure after a source transition never forces a different outcome.
+Every writer retains a retry trigger until the request-log write succeeds. A primary queue stage retries its delivery under its primary policy. A DLQ reconciler retains terminal/history outputs or explicit abandonment within its stage-specific limits; it does not resume the original workflow. The record DLQ may publish the failed Request's terminal repository-fact hook described above, but DLQ retry does not restart builds, detection, remaining issue-tracking ranges, or fix submission. A log or publish failure after a source transition never forces a different outcome.
 
 Stages without a suitable DLQ reconciler add one or use a subscription policy that cannot discard the only repair trigger. Ingest relies on caller retry of the same `(queue, URI)` to complete an accepted Request whose log or process publication failed.
 

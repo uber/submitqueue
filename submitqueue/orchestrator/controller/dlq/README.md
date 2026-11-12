@@ -1,51 +1,46 @@
 # DLQ Reconciliation Controllers
 
-This package contains the controllers that drain each primary pipeline topic's `{topic}_dlq` companion and reconcile the affected request or batch into a terminal failed state. They are wired alongside the primary controllers in `service/submitqueue/orchestrator/server/main.go`.
+This package reconciles dead-lettered SubmitQueue work. The [orchestrator stage table](../../pipeline.go) defines the primary/DLQ bindings; the host constructs them through the shared pipeline framework.
 
 ## Design principles
 
-**The DLQ is the final destination.** A message in `{topic}_dlq` has already failed the primary controller's retry budget (`Retry.MaxAttempts` for a retryable error) or surfaced as non-retryable on the first attempt. There is no further dead-letter beyond this point — every DLQ subscription is configured with `DLQ.Enabled = false`, so a DLQ controller's outcome is either "reconciled" or "the message keeps coming back". A genuinely unprocessable DLQ message (e.g. a malformed payload that no controller can ever decode) must be removed by an operator from the queue manually.
+**Terminal reconciliation, not workflow recovery.** Idempotent primary controllers own normal processing under their primary retry policy. A DLQ handler must not resume a partially completed normal workflow or repeat its business action. Repairing state, membership, and status/log outputs needed to express a justified terminal outcome is reconciliation.
 
-**The implementation is deliberately the simplest and most reliable thing that can work.** Each controller does the same three steps: decode the payload to recover the affected `RequestID` or `BatchID`, fetch the entity, transition it to its terminal failed state with the same optimistic-locking CAS the primary pipeline uses. No business logic, no branching on the original error, no per-stage cleanup. Adding behaviour here trades off the one property the DLQ has to provide — convergence.
+The default is to decode the affected identity, load its state, and reconcile unfinished work to `RequestStateError` or `BatchStateFailed`, preserving existing terminal winners and valid downstream ownership. An optimistic-locking CAS prevents lost concurrent writes; it does not prove that the failed stage still owns the outcome.
 
-**Reconcile only; do not attempt to recover.** A DLQ controller never tries to re-run the failed stage, retry the original action against an external dependency, or repair a partially-completed transition. The original controller already failed; the DLQ controller's only job is to make sure the request and batch state stop saying "in progress" and start saying "failed", so the gateway reports an honest answer and downstream tooling can move on. Recovery, when it is appropriate, is a separate concern handled by an operator or a future reconciliation job — not by this code path.
+Do not bind a normal orchestration controller to a DLQ, create a missing request in Started, or publish validate/build/merge work to resume the dead-lettered request. Idempotency, a missing row, or possession of the full original payload does not authorize that recovery. Likewise, final retries must not trigger or poll a failed build, rerun a merge, invoke a fixer, or automatically retry a dropped hook side effect.
 
-## Convergence guarantee
+## Final retry policy
 
-DLQ consumers are wired with `errs.AlwaysRetryableProcessor`, unlimited attempts (`Retry.MaxAttempts = 0`), and `DLQ.Enabled = false` on the DLQ subscription itself. Any non-nil error returned from a DLQ controller — including a plain unclassified infra error — is therefore forced retryable and redelivered rather than silently dropped. This is the convergence guarantee the package relies on.
+Dead letters have exhausted the primary retry budget or returned a non-retryable error. Final consumers use `errs.AlwaysRetryableProcessor`, unlimited attempts (`Retry.MaxAttempts = 0`), and `DLQ.Enabled = false`. Every non-nil error returned by a DLQ controller, including a version mismatch or publish failure, is redelivered until reconciliation succeeds or an operator intervenes. Unlimited retries protect reconciliation and permitted outputs, not another business retry budget.
 
-The recognised error condition is handled explicitly in `dlq.go`:
+Disposition remains handler-specific: the generic request/batch reconcilers acknowledge missing entities; buildsignal also acknowledges a missing build or empty batch ID. Decode errors returned by these handlers remain retryable and may need operator removal. Payload/tenant mismatches are acknowledged, while invalid envelope tenant metadata is rejected before controller error processing. The shared hook handler reports and acknowledges even undecodable events. Final retry policy therefore does not promise retention of every poison message or recreation of every missing entity.
 
-- `storage.ErrNotFound` → logged at warn and treated as success. The request or batch never persisted; there is nothing to reconcile.
+## Terminal outputs and ownership
 
-Everything else — including `storage.ErrVersionMismatch` on the CAS — is returned without controller-level classification and redelivered until it either succeeds or hits the attempt cap. `ErrVersionMismatch` is already retryable at its declaration, while the always-retryable processor makes every other non-nil reconciliation error retryable too.
+- An already-Error request skips the state CAS but republishes its terminal status log. A different terminal request outcome is left unchanged. This repairs status delivery, not the original diagnostic content or timestamp.
+- An already-Failed batch repairs terminal membership and repeats Error fan-out to its member requests. Succeeded and Cancelled batches are left unchanged by the generic batch reconciler; it does not rerun Conclude.
+- The generic request reconciler leaves a request owned by a live batch to that batch's completion path. A Creating batch counts as owner only when the request is Batched; an association alone can outlive an unsuccessful claim.
+- Without such an owner, a Cancelling request is reconciled to Error: dead-lettering cannot confirm that cancellation completed.
 
-## Request log entries are published to Gateway
+Request logs are published to `log`; the gateway alone materializes them into its request log and public projections. A publish failure returns an error so redelivery can retry terminal status delivery. Replaying an existing event into gateway-owned read models is projection repair, not restarting SubmitQueue orchestration, and is not an orchestrator pipeline stage.
 
-When a DLQ controller transitions a request to `RequestStateError`, it publishes the terminal request log to the `log` topic. Gateway consumes that topic and remains the sole writer of the request log and public projections. A publish failure leaves the DLQ delivery unacknowledged so redelivery retries the same idempotent log event.
+## Bindings and named limits
 
-## Controller mapping
+The [stage table](../../pipeline.go) is the source of truth rather than a second topology table here:
 
-Two controller shapes cover the eleven primary pipeline topics:
+- `start`, `cancel`, `validate`, and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
+- `dependency-analysis`, `build`, `submitqueue-land`, and `conclude` use generic batch reconciliation.
+- `buildsignal` carries a build-ID payload, not a full Build. Its handler loads the build to find the batch and leaves build status untouched. The two Runway signal handlers read a request or batch correlation ID from `MergeResult`.
+- **Speculation queue-isolation nudge:** after failing attributed culprit work (or the labelled payload fallback), a delivery that transitioned a batch may nudge `speculate` with another live batch. The primary re-derives current queue state; the failed batch is not reopened. This narrow protection for other work does not authorize replay of the dead-lettered command or guarantee a nudge after every partial reconciliation failure.
+- **Hook report-and-stop:** the shared hook DLQ logs the raw event, counts it as dropped, and acknowledges it. A person decides whether to republish; the DLQ does not invoke hooks.
 
-| Controller | Topics | Decoded ID | Terminal state |
-|---|---|---|---|
-| `NewDLQRequestController` | `start`, `validate`, `batch`, `cancel`, `log` | `RequestID` | `RequestStateError` |
-| `NewDLQBatchController` | `speculate`, `build`, `land`, `conclude` | `BatchID` | `BatchStateFailed` + fan-out to member requests as `RequestStateError` |
+[Runway](../../../../doc/rfc/runway/workflow.md) resolves its own inbound dead letters by publishing a terminal FAILED result, not retrying merge execution. Stovepipe's [record](../../../../doc/rfc/stovepipe/steps/record.md), [build analysis](../../../../stovepipe/controller/buildanalysis/README.md), [issue tracking](../../../../stovepipe/controller/issuetrack/README.md), and [fix](../../../../stovepipe/controller/fix/README.md) handlers have their own bounded fact/history, abandonment, and cursor-fencing obligations. Those domain-specific rules are not permission to resume SubmitQueue work.
 
-`buildsignal` carries a `Build` payload and has its own small dedicated controller. The split exists because the DLQ message payload shape mirrors the primary topic's payload shape (the queue framework preserves bytes verbatim under the `_dlq` topic name), so the decoder is what changes per topic — not the reconciliation step. The package-level `RequestIDDecoder` interface plus `DecodeLandRequestID` / `DecodeCancelRequestID` / `DecodeRequestID` cover the three payload shapes used by request-scoped topics.
-
-## Idempotency and concurrent activity
-
-Reconciliation is safe to run more than once for the same message:
-
-- A request already in `RequestStateError` skips the state-transition CAS but republishes its terminal log so redelivery repairs an earlier publish failure. Requests in a different terminal state are left unchanged.
-- A batch already in `BatchStateFailed` still fans out to member requests, because a previous attempt may have transitioned the batch but crashed before completing the fan-out. Batches in a different terminal state are left unchanged.
-- Per-request fan-out is itself idempotent via `failRequest`.
-- A request in `RequestStateCancelling` is reconciled to `RequestStateError`, not left in place: DLQ means the pipeline failed to converge, so we cannot confirm the cancel completed cleanly. Writing Error is the honest signal.
+A new exception requires explicit owning-maintainer approval before implementation; adding exception prose or copying another domain's handler is not approval. State which durable terminal fact or abandonment authorizes each output and inspect its downstream effects: publishing to a normal stage can restart business work even if the DLQ handler itself calls no provider.
 
 ## See also
 
-- `core/errs/README.md` — the error-processing framework, including `AlwaysRetryableProcessor` and the choice of processor for primary vs. DLQ consumers.
-- `core/consumer/README.md` — how the consumer applies the processor to controller errors and decides ack/nack/reject.
-- `doc/rfc/submitqueue/workflow.md` — the per-stage primary pipeline that the DLQ companions mirror.
+- [Error processing](../../../../platform/errs/README.md) — processor choice for primary and DLQ consumers.
+- [Consumer framework](../../../../platform/consumer/README.md) — controller errors and ack/nack/reject.
+- [SubmitQueue workflow](../../../../doc/rfc/submitqueue/workflow.md) — the primary pipeline and service ownership.
