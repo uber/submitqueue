@@ -6,6 +6,7 @@ exports_files(
         "fix.proto",
         "issuetrack.proto",
         "process.proto",
+        "projectanalysis.proto",
         "record.proto",
     ],
     visibility = ["//tool/proto:__pkg__"],
