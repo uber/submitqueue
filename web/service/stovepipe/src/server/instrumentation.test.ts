@@ -10,7 +10,8 @@ function createHostFixture() {
   const getProjectStatusByID = vi.fn().mockRejectedValue(new Error("private failure"));
   const getIssuesByRequestID = vi.fn().mockRejectedValue(new Error("private failure"));
   const listRequestProjectsByIssue = vi.fn().mockRejectedValue(new Error("private failure"));
-  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listOpenIssues, getRequestHistoryByID, getProjectStatusByID, getIssuesByRequestID, listRequestProjectsByIssue } });
+  const listRequestIssuesByProject = vi.fn().mockRejectedValue(new Error("private failure"));
+  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listOpenIssues, getRequestHistoryByID, getProjectStatusByID, getIssuesByRequestID, listRequestProjectsByIssue, listRequestIssuesByProject } });
   const record = vi.fn();
   const add = vi.fn();
   const span = { setAttribute: vi.fn(), setStatus: vi.fn(), recordException: vi.fn(), end: vi.fn() };

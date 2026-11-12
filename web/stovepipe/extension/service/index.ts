@@ -75,6 +75,10 @@ export interface ProjectIssuePage {
 
 /** Hosts supply a transport client; the library has no generated-binding dependency. */
 export interface StovepipeService {
+  listRequestIssuesByProject(
+    request: { queue: string; requestId: string; project: string; pageSize: number; pageToken: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<ProjectIssuePage>;
   listRequestProjectsByIssue(
     request: { queue: string; requestId: string; taskId: string; unitId: string; pageSize: number; pageToken: string },
     options?: { signal?: AbortSignal },

@@ -50,3 +50,29 @@ it.each([
   await act(async () => vi.runOnlyPendingTimersAsync());
   expect(screen.getByRole("tooltip")).toHaveTextContent(explanation);
 });
+
+it.each([false, true])("does not confuse missing attribution with a completed empty issue list (%s)", complete => {
+  render(<ProjectResults pageKey="request/7" model={{ ...model, projects: [
+    { project: "p", projectType: "service", breakageDegree: 1, issuesHref: "/issues" },
+  ] }} issues={{ project: "p", key: "p", closeHref: "/projects", result: { ok: true, data: {
+    complete, issues: [], firstHref: null, nextHref: null,
+  } } }} />);
+  expect(screen.getByText(complete ? "No issues attributed to this project in this request." : "Project attribution is not available yet or did not complete.")).toBeVisible();
+  expect(screen.getByText("Breakage")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Hide issues" })).toHaveAttribute("href", "/projects");
+});
+
+it("shows associated task/unit identities and keeps recorded results when a page fails", () => {
+  const projectModel = { ...model, projects: [{ project: "p", projectType: "", breakageDegree: 0.25, issuesHref: "/issues" }] };
+  const selection = { project: "p", key: "p/first", closeHref: "/projects" };
+  const { rerender } = render(<ProjectResults model={projectModel} pageKey="request/7" issues={{ ...selection, result: { ok: true, data: {
+    complete: true, issues: [{ taskId: "test", unitId: "//pkg:failed" }], firstHref: null, nextHref: "/next",
+  } } }} />);
+  expect(screen.getByRole("table", { name: "Issues affecting p" })).toHaveTextContent("//pkg:failed");
+  expect(screen.getByRole("link", { name: "More project issues →" })).toHaveAttribute("href", "/next");
+  rerender(<ProjectResults model={projectModel} pageKey="request/7" issues={{ ...selection, key: "p/next", result: { ok: false, error: "Issues unavailable" } }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Issues unavailable");
+  expect(screen.queryByText("//pkg:failed")).toBeNull();
+  expect(screen.getByText("Partial Breakage")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Hide issues" })).toBeVisible();
+});

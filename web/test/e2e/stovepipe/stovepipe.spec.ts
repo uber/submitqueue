@@ -38,6 +38,10 @@ test.describe("server-rendered styling", () => {
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
+    const project = page.getByRole("table", { name: "Recorded project results" }).getByRole("row").filter({ has: page.getByRole("cell", { name: "project-01", exact: true }) }).first();
+    await project.getByRole("link", { name: "Show issues" }).click();
+    await expect(page.getByRole("table", { name: "Issues affecting project-01" }).locator("tbody tr")).toHaveCount(50);
+    await project.getByRole("link", { name: "Hide issues" }).click();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Build and Test Issues", exact: true }).click();
@@ -85,6 +89,25 @@ test("expands request issue projects with paginated links and browser history", 
   await expect(projects.getByRole("listitem")).toHaveCount(50);
   await row.getByRole("link", { name: "Hide projects" }).click();
   await expect(projects).toHaveCount(0);
+});
+
+test("expands a project's request-scoped issues and pages them independently", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51?projectPageSize=25");
+  const results = page.getByRole("table", { name: "Recorded project results", exact: true });
+  const row = results.getByRole("row").filter({ has: page.getByRole("cell", { name: "project-01", exact: true }) }).first();
+  await row.getByRole("link", { name: "Show issues" }).click();
+  const attribution = page.getByRole("region", { name: "Issue attribution for project-01" });
+  const issues = attribution.getByRole("table", { name: "Issues affecting project-01" });
+  await expect(issues.locator("tbody tr")).toHaveCount(50);
+  await expect(issues).toContainText("//packages/test-01:go_default_test");
+  await attribution.getByRole("link", { name: "More project issues →" }).click();
+  await expect(issues.locator("tbody tr")).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
+  await page.goBack();
+  await expect(issues.locator("tbody tr")).toHaveCount(50);
+  await row.getByRole("link", { name: "Hide issues" }).click();
+  await expect(attribution).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
 });
 
 test("loads and retries issue pages, merges task groups, and refreshes from the beginning", async ({ page }) => {

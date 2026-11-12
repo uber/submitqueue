@@ -40,7 +40,12 @@ function requestViews(routeKey: string) {
   const search = new URLSearchParams(query.join("?"));
   const selected = requestViewTabs.find(tab => tab.id === search.get("view"))?.id ?? "projects";
   search.delete("view");
-  const projectsHref = path + (search.size ? `?${search}` : "");
+  const projectPage = new URLSearchParams();
+  for (const key of ["projects", "projectPageSize"]) {
+    const value = search.get(key);
+    if (value) projectPage.set(key, value);
+  }
+  const projectsHref = path + (projectPage.size ? `?${projectPage}` : "");
   const tabs = requestViewTabs.map(tab => {
     const params = new URLSearchParams(search);
     if (tab.id !== "projects") params.set("view", tab.id);
@@ -122,7 +127,7 @@ function Page({ model }: { model: StovepipePageModel }) {
                     {views.tabs.map(tab => (
                       <section key={tab.id} className="sq-stovepipe-request-view" aria-label={tab.label} hidden={!tab.selected}>
                         {(tab.id !== "projects" || !projects) && <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>}
-                        {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
+                        {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} issues={model.projectIssues} />
                           : tab.id === "issues" ? model.requestIssues && <Section cacheKey={model.key} result={model.requestIssues}>
                             {issues => issues && <RequestIssues model={issues} projects={model.issueProjects} />}
                           </Section>
