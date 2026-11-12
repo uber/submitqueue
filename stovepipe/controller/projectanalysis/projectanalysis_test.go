@@ -156,6 +156,10 @@ func newFixture(t *testing.T) *fixture {
 			factsLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
 			require.Contains(t, f.logs, factsLog.ID)
 		}
+		if log.Event == entity.RequestEventProjectAnalysisCompleted {
+			projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+			require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
+		}
 		if err := f.fail("log/" + string(log.Event)); err != nil {
 			return err
 		}
@@ -193,8 +197,8 @@ func newFixture(t *testing.T) *fixture {
 		if f.request.State != entity.RequestStateCancelled {
 			projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
 			_, complete := f.logs[f.completion().ID]
-			_, abandoned := f.logs[projectAnalysisAbandonedLog.ID]
-			require.True(t, complete || abandoned)
+			require.True(t, complete)
+			require.NotContains(t, f.logs, projectAnalysisAbandonedLog.ID)
 		}
 		f.publishAttempts = append(f.publishAttempts, msg)
 		if err := f.fail("record/publish"); err != nil {
@@ -208,12 +212,12 @@ func newFixture(t *testing.T) *fixture {
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue}})
 	require.NoError(t, err)
 	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
-	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, registry, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
+	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
 	return f
 }
 
 func (f *fixture) completion() entity.RequestLog {
-	return requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+	return requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisCompleted, f.request.TerminalBuildID, nil)
 }
 
 func (f *fixture) fail(operation string) error {
@@ -312,7 +316,7 @@ func TestProcessRecordsProjectStatuses(t *testing.T) {
 func TestProcessRetriesPartialWork(t *testing.T) {
 	for _, operation := range []string{
 		"storage/for", "request/get", "abandonment/get", "completion/get", "analysis/get", "resolver/for", "resolve", "attributer/for", "attribute",
-		"source/create", "reverse/create", "fact/create", "index/create", "log/project_facts_recorded", "log/project_issues_recorded", "record/publish",
+		"source/create", "reverse/create", "fact/create", "index/create", "log/project_facts_recorded", "log/project_issues_recorded", "log/project_analysis_completed", "record/publish",
 	} {
 		t.Run(operation, func(t *testing.T) {
 			f := newFixture(t)
@@ -331,6 +335,9 @@ func TestProcessRetriesPartialWork(t *testing.T) {
 				require.Zero(t, f.attributerCalls)
 				require.Empty(t, f.source)
 				require.Empty(t, f.reverse)
+			case "log/project_analysis_completed":
+				projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+				require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
 			case "attributer/for", "attribute", "source/create", "reverse/create":
 				require.Len(t, f.facts, 2)
 				require.Len(t, f.indexes, 2)
@@ -476,6 +483,51 @@ func TestProcessRejectsInvalidIdentity(t *testing.T) {
 			require.Empty(t, f.records)
 		})
 	}
+}
+
+func TestCompletedAnalysisRepairsProjection(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		name := "normal delivery"
+		if recovery {
+			name = "dead-letter recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			msg := f.message(t)
+			f.failures["record/publish"] = assert.AnError
+			require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+			f.failures["log/project_analysis_completed"] = assert.AnError
+			deliver := f.deliver
+			if recovery {
+				deliver = f.recover
+			}
+			require.ErrorIs(t, deliver(context.Background(), msg), assert.AnError)
+			require.Empty(t, f.records)
+			require.Equal(t, 1, f.resolverCalls)
+			require.Equal(t, 1, f.attributerCalls)
+			require.NoError(t, deliver(context.Background(), msg))
+			if recovery {
+				require.Empty(t, f.records)
+				require.Len(t, f.publishAttempts, 1)
+			} else {
+				require.Len(t, f.records, 1)
+			}
+		})
+	}
+}
+
+func TestAbandonedAnalysisRepairsProjectionWithoutResuming(t *testing.T) {
+	f := newFixture(t)
+	msg := f.message(t)
+	require.NoError(t, f.recover(context.Background(), msg))
+	f.failures["log/project_analysis_abandoned"] = assert.AnError
+	require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+	require.Empty(t, f.records)
+	require.Zero(t, f.resolverCalls)
+	require.Zero(t, f.attributerCalls)
+	require.NoError(t, f.deliver(context.Background(), msg))
+	require.Empty(t, f.records)
+	require.Empty(t, f.publishAttempts)
 }
 
 const projectStatusTestQueue = "monorepo/main"

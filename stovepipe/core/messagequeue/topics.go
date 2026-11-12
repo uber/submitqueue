@@ -54,10 +54,7 @@ const (
 	// TopicKeyProjectAnalysis queues requests for project-status resolution and issue attribution.
 	TopicKeyProjectAnalysis TopicKey = "projectanalysis"
 
-	// TopicKeyRecord carries a request whose build reached a terminal status from
-	// buildsignal to the record stage. The buildsignal controller publishes a
-	// Record (the request id) here once, and only once, a build reaches a
-	// terminal status; non-terminal polls never publish here. Partitioned by
-	// request id.
+	// TopicKeyRecord carries requests after project analysis, or directly after cancellation.
+	// Partitioned by request ID.
 	TopicKeyRecord TopicKey = "record"
 )

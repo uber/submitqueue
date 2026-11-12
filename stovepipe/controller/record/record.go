@@ -13,10 +13,10 @@
 // limitations under the License.
 
 // Package record holds the record-stage queue controller. It consumes Record
-// messages (a request id) published by buildsignal once a build reaches a
-// terminal status, and turns that outcome into durable validation state.
+// messages (a request id) published after project analysis or cancellation,
+// and turns that outcome into durable repository validation state.
 //
-// The durable state is a ValidationFact per validated commit and project. Build
+// The durable state is a repository ValidationFact per validated commit. Build
 // completion owns the queue's last-green bookmark, which process reads to choose
 // an incremental build baseline. A green commit is also promoted after its facts
 // are persisted, moving the queue's promotion ref so downstream systems can pull
@@ -30,10 +30,7 @@ package record
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/uber-go/tally"
@@ -44,9 +41,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
-	"github.com/uber/submitqueue/stovepipe/core/validationfact"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -56,15 +51,14 @@ import (
 // when that fact is green and holds the queue's last-green bookmark promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	logger                       *zap.SugaredLogger
-	metricsScope                 tally.Scope
-	materializer                 requestlog.Materializer
-	registry                     consumer.TopicRegistry
-	stores                       storage.Factory
-	projectStatusResolverFactory projectstatus.ResolverFactory
-	sourceControl                sourcecontrol.Factory
-	topicKey                     consumer.TopicKey
-	consumerGroup                string
+	logger        *zap.SugaredLogger
+	metricsScope  tally.Scope
+	materializer  requestlog.Materializer
+	registry      consumer.TopicRegistry
+	stores        storage.Factory
+	sourceControl sourcecontrol.Factory
+	topicKey      consumer.TopicKey
+	consumerGroup string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -82,7 +76,6 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
-	projectStatusResolverFactory projectstatus.ResolverFactory,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -90,15 +83,14 @@ func NewController(
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		logger:                       logger.Named(name),
-		metricsScope:                 scope.SubScope(name),
-		materializer:                 materializer,
-		registry:                     registry,
-		stores:                       stores,
-		projectStatusResolverFactory: projectStatusResolverFactory,
-		sourceControl:                sourceControl,
-		topicKey:                     topicKey,
-		consumerGroup:                consumerGroup,
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
+		materializer:  materializer,
+		registry:      registry,
+		stores:        stores,
+		sourceControl: sourceControl,
+		topicKey:      topicKey,
+		consumerGroup: consumerGroup,
 	}
 }
 
@@ -144,18 +136,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
-		results, err := c.resolveProjectResults(ctx, request)
+		summary, err := store.GetRequestSummaryStore().Get(ctx, request.ID)
 		if err != nil {
 			return err
 		}
-		fact, created, err := recordFact(ctx, c.logger, c.metricsScope, store, request, results)
+		fact, created, err := recordFact(ctx, c.logger, c.metricsScope, store, request, summary.ProjectCount)
 		if err != nil {
 			return err
 		}
 		if err := persistValidationFactRecordedLog(ctx, c.materializer, store, request, fact); err != nil {
-			return err
-		}
-		if err := c.persistProjectFacts(ctx, store, request, results); err != nil {
 			return err
 		}
 		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
@@ -182,99 +171,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
-}
-
-func (c *Controller) resolveProjectResults(ctx context.Context, request entity.Request) (results []projectstatus.Result, retErr error) {
-	op := metrics.Begin(c.metricsScope, "resolve_project_results", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
-	defer func() { op.Complete(retErr) }()
-
-	resolver, err := c.projectStatusResolverFactory.For(projectstatus.ResolverConfig{QueueName: request.Queue})
-	if err != nil {
-		return nil, fmt.Errorf("resolve project status resolver for queue %q: %w", request.Queue, err)
-	}
-	results, err = resolver.Resolve(ctx, request)
-	if err != nil {
-		return nil, fmt.Errorf("resolve project status results for request %q: %w", request.ID, err)
-	}
-
-	if err := validateProjectStatusResults(request, results); err != nil {
-		return nil, err
-	}
-	metrics.NamedHistogram(c.metricsScope, "resolve_project_results", "projects", metrics.CountBuckets,
-		metrics.TagsFromContext(ctx)...,
-	).RecordValue(float64(len(results)))
-	return results, nil
-}
-
-func (c *Controller) persistProjectFacts(ctx context.Context, store storage.Storage, request entity.Request, results []projectstatus.Result) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "persist_project_facts", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
-	defer func() { op.Complete(retErr) }()
-
-	brokenCount := 0
-	for _, result := range results {
-		fact, _, err := validationfact.Persist(ctx, c.logger, c.metricsScope, store.GetValidationFactStore(), entity.ValidationFact{
-			URI:         request.URI,
-			Project:     result.ProjectInfo.Name,
-			ProjectType: result.ProjectInfo.ProjectType,
-			Degree:      result.Degree,
-			RequestID:   request.ID,
-			CreatedAt:   time.Now().UnixMilli(),
-		})
-		if err != nil {
-			return err
-		}
-		if !fact.IsGreen() {
-			brokenCount++
-		}
-
-		entry, err := entity.NewProjectFactByDegree(fact)
-		if err != nil {
-			return err
-		}
-
-		if err := store.GetProjectFactByDegreeStore().Create(ctx, entry); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-			return fmt.Errorf("failed to index project fact for request %q and project %q: %w", request.ID, fact.Project, err)
-		}
-	}
-	return c.persistProjectFactsRecordedLog(ctx, store, request, len(results), brokenCount)
-}
-
-func validateProjectStatusResults(request entity.Request, results []projectstatus.Result) error {
-	seen := make(map[string]struct{}, len(results))
-	for _, result := range results {
-		if result.ProjectInfo.Name == "" {
-			return fmt.Errorf("project status result for request %q has an empty project", request.ID)
-		}
-		if _, ok := seen[result.ProjectInfo.Name]; ok {
-			return fmt.Errorf("project status result for request %q contains duplicate project %q", request.ID, result.ProjectInfo.Name)
-		}
-		seen[result.ProjectInfo.Name] = struct{}{}
-		if math.IsNaN(result.Degree) || result.Degree < entity.DegreeGreen || result.Degree > entity.DegreeBroken {
-			return fmt.Errorf("project status result for request %q and project %q has invalid degree %v", request.ID, result.ProjectInfo.Name, result.Degree)
-		}
-	}
-	return nil
-}
-
-func (c *Controller) persistProjectFactsRecordedLog(
-	ctx context.Context,
-	store storage.Storage,
-	request entity.Request,
-	count, brokenCount int,
-) error {
-	log := requestlog.NewRequestEventLog(
-		request,
-		entity.RequestEventProjectFactsRecorded,
-		"all",
-		map[string]string{
-			requestlog.MetadataKeyProjectFactCount:       strconv.Itoa(count),
-			requestlog.MetadataKeyBrokenProjectFactCount: strconv.Itoa(brokenCount),
-		},
-	)
-	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
-		return fmt.Errorf("failed to record project facts for request %s: %w", request.ID, err)
-	}
-	return nil
 }
 
 // applyFactToDerivedCaches follows the persisted fact: a green fact promotes the
@@ -389,11 +285,11 @@ func (c *Controller) failureDetectionUnobserved(ctx context.Context, request ent
 
 // degreeFor maps a request's build outcome onto a whole-repository degree.
 // A failed build with project results has a partial degree.
-func degreeFor(state entity.RequestState, results []projectstatus.Result) float64 {
+func degreeFor(state entity.RequestState, projectCount int32) float64 {
 	if state == entity.RequestStateSucceeded {
 		return entity.DegreeGreen
 	}
-	if len(results) > 0 {
+	if projectCount > 0 {
 		return entity.DegreePartial
 	}
 	return entity.DegreeBroken

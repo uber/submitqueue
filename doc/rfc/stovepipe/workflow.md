@@ -4,11 +4,11 @@ Stovepipe answers one question for the rest of the company: **at which commit is
 
 The pipeline is a queue-driven chain of small, single-purpose controllers, in the same style as SubmitQueue (SQ). Each controller consumes one topic, advances one entity, and publishes to the next topic. Most hops carry only an **ID** and the controller reloads the entity from storage; the entry hop carries the caller's input because there is no row to load yet. What runs today is:
 
-> **poll for a new head → ingest → process the build strategy → build → buildsignal → record whole-repo greenness (and any project results the resolver returns) → hook.**
+> **poll for a new head → ingest → process the build strategy → build → buildsignal → terminal build analysis → project analysis → record whole-repo greenness → hook.**
 
-The [build issue observation](steps/buildanalysis.md) branch runs alongside this chain. It accumulates issues while builds run and attempts final analysis after build completion. Record does not wait for analysis to succeed. The reference host wires a no-op detector; deployments supply a real detector factory.
+The [build issue observation](steps/buildanalysis.md) branch runs alongside this chain. It accumulates issues while builds run and performs final analysis after build completion. Repository recording follows successful project analysis. DLQ recovery retains failure or abandonment history without resuming the normal workflow. The reference host wires a no-op detector; deployments supply a real detector factory.
 
-There is no `analyze` controller and no `analyze` topic. A later project-analysis stage that would map a target graph onto another `build` pass is design only, described under [Designed, not built](#designed-not-built-project-analysis). `record` resolves project results inline on the same delivery that writes the repository fact.
+`projectanalysis` resolves project status and issue attribution after final build issues are durable. It does not start another build; project-scoped revalidation remains a [future design](#future-project-scoped-revalidation).
 
 ## What Stovepipe is agnostic about
 
@@ -45,7 +45,7 @@ Greenness is recorded as a **health degree** where **`0` means green** and **hig
 
 ### Project — greenness at a finer grain
 
-A **project** is a caller-defined slice of the repository. Whole-repo greenness answers "is the branch green at this URI"; project greenness answers the question deployments actually need — **"is *this project* green at this URI"**, and its dual, "what is the latest URI at which this project is green". The running pipeline does not derive projects from a target graph. On a succeeded or failed request, `record` gives the request's terminal build id to `projectstatus.Resolver` and writes one validation fact per result it returns. The example server wires the noop resolver, which returns no results. How a resolver chooses projects is implementer-specific. The separate analyze stage that would map a target graph to project-scoped builds is not built; see [Designed, not built](#designed-not-built-project-analysis).
+A **project** is a caller-defined slice of the repository. Whole-repo greenness answers "is the branch green at this URI"; project greenness answers the question deployments actually need — **"is *this project* green at this URI"**, and its dual, "what is the latest URI at which this project is green". The running pipeline does not derive projects from a target graph. On a succeeded or failed request, `projectanalysis` passes the request to `projectstatus.Resolver` and records one validation fact per result it returns. The example server wires the noop resolver, which returns no results. How a resolver chooses projects is implementer-specific. The separate analyze stage that would map a target graph to project-scoped builds is not built; see [Future project-scoped revalidation](#future-project-scoped-revalidation).
 
 ### Promotion ref — the last green commit, by name
 
@@ -66,7 +66,7 @@ Hooks are the notification boundary. When validation of a commit begins, when a 
 
 ## Workflow
 
-What runs is one pass per Request. It establishes whole-repository greenness, and on a succeeded or failed outcome `record` also gives the Request's terminal build id to `projectstatus.Resolver` before writing whatever project facts it returns. That call is inline on the record delivery. It does not publish to another stage, and it does not start another build.
+Each request has one build. Terminal build analysis finishes collecting issues before project analysis records project facts and issue attribution. Repository recording then consumes the persisted project count; it does not call the resolver or start another build. Build creation also starts background issue detection; the diagram shows the terminal handoff used for project results.
 
 ```
  external poller ──(Queue name)──► ┌──────────────────────────────┐
@@ -102,11 +102,24 @@ What runs is one pass per Request. It establishes whole-repository greenness, an
                                    │ status; release the slot;    │
                                    │ save outcome; advance green  │
                                    └───────────────┬──────────────┘
+                                                   │ BuildID
+                                                   ▼
+                                   ┌──────────────────────────────┐
+                                   │ buildanalysis                │
+                                   │ Persist final build issues   │
+                                   └───────────────┬──────────────┘
+                                                   │ RequestID
+                                                   ▼
+                                   ┌──────────────────────────────┐
+                                   │ projectanalysis              │
+                                   │ Record project results and   │
+                                   │ issue/project associations   │
+                                   └───────────────┬──────────────┘
                                                    │ RequestID
                                                    ▼
                                    ┌──────────────────────────────┐   Hooks
                                    │ record                       │┄┄┄┄┄►  "URI green,
-                                   │ Resolve project results;     │      not green, or
+                                   │ Use recorded project count;  │      not green, or
                                    │ record facts; on green move  │      cancelled"
                                    │ the promotion ref;           │
                                    │ announce recorded outcome    │
@@ -117,12 +130,16 @@ What runs is one pass per Request. It establishes whole-repository greenness, an
 1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward. It can also record an optional [enablement decision](queue-state.md) at that head.
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, publishes a **hook event** announcing that validation of the commit has begun, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
-4. **buildsignal** — polls until terminal, records the status, releases the build slot, persists the winning Request outcome, and advances a successful-build baseline before publishing the RequestID to `record`. Slot release and baseline advancement are separate updates, so the next admission may still select the previous baseline.
-5. **record** — resolves project results, then records repository degree `0` for success, `0.5` for failure with project results, or `1` for failure without results. Project facts preserve their resolved degrees. Once facts and history are durable, a green fact holding the current baseline promotes in Git; the recorded hook follows. A cancelled Request writes no fact and publishes `validation.repository.cancelled`.
+4. **buildsignal** — polls until terminal, records the status, releases the build slot, persists the winning Request outcome, and advances a successful-build baseline before requesting terminal build analysis. Cancelled requests bypass project analysis and go directly to `record`. Slot release and baseline advancement are separate updates, so the next admission may still select the previous baseline.
+5. **buildanalysis** — persists final build issues and completion history before queuing project analysis.
+6. **projectanalysis** — resolves project status and issue attribution, persists their results, and queues repository recording. Recovery retains incomplete analysis and still hands off.
+7. **record** — uses the persisted project count and records repository degree `0` for success, `0.5` for failure with project results, or `1` for failure without results. Project facts preserve their resolved degrees. Once facts and history are durable, a green fact holding the current baseline promotes in Git; the recorded hook follows. A cancelled Request writes no fact and publishes `validation.repository.cancelled`.
 
-### Designed, not built: project analysis
+### Future project-scoped revalidation
 
-An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` has no analyze topic, and `stovepipe/controller` has no analyze package. The design, still only a design, is a stage that would take a build's target graph, map broken or at-risk targets to projects, and publish project-scoped builds back through `build` → `buildsignal` → `record`. That second pass, a per-project hook event, and intermediate greenness degrees are not what the controllers do. Open questions for that design stay at the bottom of this doc.
+The current project-analysis stage reports results from the existing build. A
+separate design could dispatch new project-scoped builds for broken or at-risk
+targets. That second pass and per-project hook events are not implemented.
 
 ## Per-controller summary
 
@@ -132,7 +149,9 @@ An `analyze` stage is not part of the pipeline. `stovepipe/core/messagequeue` ha
 | **process** | RequestID | build, hook topic | Build strategy, concurrency gate, backlog coalescing; announce validation start on admit → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
 | **buildsignal** | BuildID | record, buildanalysis | Poll until terminal, release capacity, persist the outcome, advance a successful baseline, and publish downstream work |
-| **record** | RequestID | hook topic | Resolve projects, record repository and project facts, promote a green baseline holder, and publish the repository hook |
+| **buildanalysis** | BuildID | projectanalysis | Persist final build issues before handing off |
+| **projectanalysis** | RequestID | record | Record project facts and issue attribution, or retain abandonment |
+| **record** | RequestID | hook topic | Use persisted project results, record the repository fact, promote a green baseline holder, and publish the repository hook |
 | **hook** | HookEvent | — | Invoke the hooks the resolver returns. The example server resolves every event to noop |
 
 ## Step RFCs

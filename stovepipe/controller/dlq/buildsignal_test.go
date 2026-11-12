@@ -15,6 +15,7 @@
 package dlq
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,8 @@ type buildSignalDLQMocks struct {
 	store        *storagemock.MockStorage
 	materializer *requestlogmock.MockMaterializer
 	metricsScope tally.TestScope
+	history      *storagemock.MockRequestLogStore
+	retainedLogs map[string]entity.RequestLog
 }
 
 func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, buildSignalDLQMocks) {
@@ -58,6 +61,16 @@ func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.C
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	m.store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
+
+	m.history = storagemock.NewMockRequestLogStore(ctrl)
+	m.retainedLogs = map[string]entity.RequestLog{}
+	m.store.EXPECT().GetRequestLogStore().Return(m.history).AnyTimes()
+	m.history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _ string, id string) (entity.RequestLog, error) {
+		if log, ok := m.retainedLogs[id]; ok {
+			return log, nil
+		}
+		return entity.RequestLog{}, storage.ErrNotFound
+	}).AnyTimes()
 
 	c := NewDLQBuildSignalController(
 		zap.NewNop().Sugar(),
@@ -124,7 +137,9 @@ func TestBuildSignalProcess(t *testing.T) {
 			name: "already terminal request is a no-op",
 			setup: func(m buildSignalDLQMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+				request := requestWithState(entity.RequestStateSucceeded)
+				request.TerminalBuildID = testBuildID
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
 			},
 		},
 		{
@@ -213,4 +228,17 @@ func TestBuildSignalTopicKey(t *testing.T) {
 	assert.Equal(t, consumer.TopicKey("buildsignal_dlq"), c.TopicKey())
 	assert.Equal(t, "buildsignal_dlq", c.Name())
 	assert.Equal(t, "stovepipe-buildsignal-dlq", c.ConsumerGroup())
+}
+
+func TestBuildSignalRecoveryPreservesAnotherFailureReason(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newBuildSignalController(t, ctrl)
+	request := requestWithState(entity.RequestStateFailed)
+	retained := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonProcessingFailed)
+	retained.TimestampMs = 1
+	m.retainedLogs[retained.ID] = retained
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, retained).Return(nil)
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID), "")))
 }

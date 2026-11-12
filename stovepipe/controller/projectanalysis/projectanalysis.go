@@ -119,9 +119,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 	history := store.GetRequestLogStore()
 	projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
-	_, err = history.Get(ctx, request.ID, projectAnalysisAbandonedLog.ID)
+	retained, err := history.Get(ctx, request.ID, projectAnalysisAbandonedLog.ID)
 	if err == nil {
-		return publishRecord(ctx, c.registry, request)
+		return c.requestLogMaterializer.PersistLog(ctx, store, retained)
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
 		return fmt.Errorf("read project analysis abandonment: %w", err)
@@ -130,9 +130,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("project analysis requires the request's terminal build")
 	}
 
-	projectIssuesRecordedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectIssuesRecorded, request.TerminalBuildID, nil)
-	_, err = history.Get(ctx, request.ID, projectIssuesRecordedLog.ID)
+	projectAnalysisCompletedLog := requestlog.NewRequestEventLog(request, entity.RequestEventProjectAnalysisCompleted, request.TerminalBuildID, nil)
+	retained, err = history.Get(ctx, request.ID, projectAnalysisCompletedLog.ID)
 	if err == nil {
+		if err := c.requestLogMaterializer.PersistLog(ctx, store, retained); err != nil {
+			return err
+		}
 		return publishRecord(ctx, c.registry, request)
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
@@ -148,6 +151,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 	if err := c.recordIssueAttribution(ctx, store, request); err != nil {
 		return err
+	}
+	if err := c.requestLogMaterializer.PersistLog(ctx, store, projectAnalysisCompletedLog); err != nil {
+		return fmt.Errorf("record project analysis completion: %w", err)
 	}
 	return publishRecord(ctx, c.registry, request)
 }

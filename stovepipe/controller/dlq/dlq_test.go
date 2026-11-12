@@ -75,6 +75,10 @@ func newController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, 
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
+	history := storagemock.NewMockRequestLogStore(ctrl)
+	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.RequestLog{}, storage.ErrNotFound).AnyTimes()
+
 	c := NewDLQRequestController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
 	return c, m
 }
