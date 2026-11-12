@@ -4,9 +4,9 @@ This package reconciles dead-lettered SubmitQueue work. The [orchestrator stage 
 
 ## Design principles
 
-**Terminal reconciliation, not workflow recovery.** Idempotent primary controllers own normal processing under their primary retry policy. A DLQ handler must not resume a partially completed normal workflow or repeat its business action. Repairing state, membership, and status/log outputs needed to express a justified terminal outcome is reconciliation.
+**Terminal reconciliation, not workflow recovery.** Idempotent primary controllers own normal processing under their primary retry policy. By default, a DLQ handler must not resume a partially completed normal workflow or repeat its business action. Repairing state, membership, and status/log outputs needed to express a justified terminal outcome is reconciliation.
 
-The default is to decode the affected identity, load its state, and reconcile unfinished work to `RequestStateError` or `BatchStateFailed`, preserving existing terminal winners and valid downstream ownership. An optimistic-locking CAS prevents lost concurrent writes; it does not prove that the failed stage still owns the outcome.
+**The implementation is deliberately the simplest and most reliable thing that can work.** The default is to decode the affected identity, load its state, and reconcile unfinished work to `RequestStateError` or `BatchStateFailed`, preserving existing terminal winners and valid downstream ownership. An optimistic-locking CAS prevents lost concurrent writes; it does not prove that the failed stage still owns the outcome.
 
 Do not bind a normal orchestration controller to a DLQ, create a missing request in Started, or publish validate/build/merge work to resume the dead-lettered request. Idempotency, a missing row, or possession of the full original payload does not authorize that recovery. Likewise, final retries must not trigger or poll a failed build, rerun a merge, invoke a fixer, or automatically retry a dropped hook side effect.
 
@@ -37,7 +37,7 @@ The [stage table](../../pipeline.go) is the source of truth rather than a second
 
 [Runway](../../../../doc/rfc/runway/workflow.md) resolves its own inbound dead letters by publishing a terminal FAILED result, not retrying merge execution. Stovepipe's [record](../../../../doc/rfc/stovepipe/steps/record.md), [build analysis](../../../../stovepipe/controller/buildanalysis/README.md), [issue tracking](../../../../stovepipe/controller/issuetrack/README.md), and [fix](../../../../stovepipe/controller/fix/README.md) handlers have their own bounded fact/history, abandonment, and cursor-fencing obligations. Those domain-specific rules are not permission to resume SubmitQueue work.
 
-A new exception requires explicit owning-maintainer approval before implementation; adding exception prose or copying another domain's handler is not approval. State which durable terminal fact or abandonment authorizes each output and inspect its downstream effects: publishing to a normal stage can restart business work even if the DLQ handler itself calls no provider.
+Agents must not choose recovery exceptions on their own; implement a new exception only when explicitly requested by the user or approved by the owning maintainer. State which durable terminal fact or abandonment authorizes each output and inspect its downstream effects: publishing to a normal stage can restart business work even if the DLQ handler itself calls no provider.
 
 ## See also
 
