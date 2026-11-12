@@ -95,3 +95,7 @@ The issue-tracking table must include the notification, cursor, `finalize`, and 
 ### Applied transition facts
 
 `IssueState.LastProcessedBuildID` identifies the most recent build applied to an issue, including unchanged results. `LastChangedBuildID` and `ChangedAtMs` identify the actual opening or closing and supply its history identity and timestamp. They do not advance when only the processed build changes. `FirstSeenBuildID` remains the opening identity across closure and changes on reopening. These references must remain readable while used for source ordering. The current-issue cursor and the row's processed source provide the storage needed for retry-safe application without retaining a future write payload.
+
+## Notification delivery
+
+Notification delivery uses immutable `notification_claimed`, `notification_sent`, and `notification_rejected` request-log events. Their metadata carries provider-specific correlation, destination, and message identifiers. A stable claim ID makes `Create` an exclusive send claim; a separate sent occurrence retains the confirmed result for direct `Get` lookup. Only an explicit provider rejection permits another attempt. Unknown outcomes retain their claim for reconciliation. These events do not change request lifecycle projections, and arbitrary event names remain invalid.

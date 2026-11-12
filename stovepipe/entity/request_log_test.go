@@ -36,6 +36,22 @@ func TestRequestLogValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "accepted state"},
+		{name: "notification claimed", mutate: func(entry RequestLog) RequestLog {
+			entry.State, entry.RequestVersion = RequestStateUnknown, 0
+			entry.Event = RequestEventNotificationClaimed
+			return entry
+		}},
+		{name: "notification sent", mutate: func(entry RequestLog) RequestLog {
+			entry.State, entry.RequestVersion = RequestStateUnknown, 0
+			entry.Event = RequestEventNotificationSent
+			entry.Metadata = map[string]string{"provider": "chat", "channel_id": "channel", "message_id": "123.456"}
+			return entry
+		}},
+		{name: "notification rejected", mutate: func(entry RequestLog) RequestLog {
+			entry.State, entry.RequestVersion = RequestStateUnknown, 0
+			entry.Event = RequestEventNotificationRejected
+			return entry
+		}},
 		{
 			name: "superseded state",
 			mutate: func(entry RequestLog) RequestLog {

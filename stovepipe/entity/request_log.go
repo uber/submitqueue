@@ -22,6 +22,12 @@ type RequestEvent string
 const (
 	// RequestEventUnknown is the unset event value.
 	RequestEventUnknown RequestEvent = ""
+	// RequestEventNotificationClaimed records exclusive ownership of a notification delivery attempt.
+	RequestEventNotificationClaimed RequestEvent = "notification_claimed"
+	// RequestEventNotificationSent records confirmed acceptance by a notification provider.
+	RequestEventNotificationSent RequestEvent = "notification_sent"
+	// RequestEventNotificationRejected records a delivery attempt the provider explicitly did not accept.
+	RequestEventNotificationRejected RequestEvent = "notification_rejected"
 	// RequestEventBuildTriggered records that a build was durably accepted.
 	RequestEventBuildTriggered RequestEvent = "build_triggered"
 	// RequestEventBuildFinished records that a build first reached a terminal status.
@@ -151,6 +157,7 @@ func (e RequestLog) validateEvent() error {
 		return fmt.Errorf("event log must not contain request-state context")
 	}
 	switch e.Event {
+	case RequestEventNotificationClaimed, RequestEventNotificationSent, RequestEventNotificationRejected:
 	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded,
 		RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventBuildAnalysisCompleted,
 		RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,

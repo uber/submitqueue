@@ -89,6 +89,33 @@ func requestLogRowWithMetadata(entry entity.RequestLog, metadata any) *sqlmock.R
 	)
 }
 
+func TestRequestLogNotificationEvents(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventNotificationClaimed, entity.RequestEventNotificationSent, entity.RequestEventNotificationRejected,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			db, mock, store := setupRequestLogStoreTest(t)
+			defer db.Close()
+			entry := entity.RequestLog{
+				ID: "notification/channel/delivery", Queue: testLogQueue, RequestID: testLogRequestID,
+				TimestampMs: 1735689600000, Event: event,
+				Metadata: map[string]string{"provider": "chat", "channel_id": "channel", "message_ts": "123.456"},
+			}
+			mock.ExpectExec("INSERT INTO request_log").
+				WithArgs(entry.Queue, entry.RequestID, entry.ID, entry.TimestampMs, entry.State, entry.Event,
+					entry.RequestVersion, entry.OutcomeReason, requestLogMetadataJSON(t, entry)).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery("SELECT").WithArgs(entry.Queue, entry.RequestID, entry.ID).
+				WillReturnRows(requestLogRow(t, entry))
+			require.NoError(t, store.Create(context.Background(), entry))
+			retained, err := store.Get(context.Background(), entry.RequestID, entry.ID)
+			require.NoError(t, err)
+			require.Equal(t, entry, retained)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestRequestLogStoreCreate(t *testing.T) {
 	entry := acceptedRequestLog()
 	metadataJSON, err := json.Marshal(entry.Metadata)

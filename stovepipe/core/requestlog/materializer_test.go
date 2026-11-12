@@ -57,6 +57,22 @@ func newTestMaterializer(t *testing.T) (*materializer, *storagemock.MockStorage,
 	}, stores, store, summaries, requests
 }
 
+func TestNotificationEventsDoNotChangeRequestProjections(t *testing.T) {
+	for _, event := range []entity.RequestEvent{
+		entity.RequestEventNotificationClaimed, entity.RequestEventNotificationSent, entity.RequestEventNotificationRejected,
+	} {
+		t.Run(string(event), func(t *testing.T) {
+			materializer, stores, logs, _, _ := newTestMaterializer(t)
+			log := NewRequestEventLog(entity.Request{ID: testRequestID, Queue: testQueue}, event, "notification/1",
+				map[string]string{"provider": "chat", "message_id": "123.456"})
+			retained := log
+			retained.TimestampMs = testNowMs
+			logs.EXPECT().Create(gomock.Any(), retained).Return(nil)
+			require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+		})
+	}
+}
+
 func seededRequestSummary() entity.RequestSummary {
 	return entity.RequestSummary{
 		RequestID: testRequestID,
