@@ -27,13 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles log queue messages.
-// It consumes request log entries and persists them to storage.
-// Implements consumer.Controller interface for integration with the consumer.
-//
-// The request log is written exclusively by the gateway: other services
-// (e.g. the orchestrator) only publish log entries to the log topic, and this
-// controller is the single consumer that persists them to storage.
+// Controller materializes gateway-owned request logs from primary or recovery deliveries.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -54,8 +48,8 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("log_controller"),
-		metricsScope:  scope.SubScope("log_controller"),
+		logger:        logger.Named("log_controller").With("topic_key", topicKey, "consumer_group", consumerGroup),
+		metricsScope:  scope.SubScope("log_controller").Tagged(map[string]string{"topic_key": topicKey.String(), "consumer_group": consumerGroup}),
 		materializer:  materializer,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -73,10 +67,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	logEntry, err := sqmq.UnmarshalRequestLog(msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
-		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize request log: %w", err)
 	}
 	if err := entityqueue.ValidatePayloadQueue(msg, logEntry.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "identity_errors", 1)
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
@@ -87,13 +81,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"attempt", delivery.Attempt(),
 	)
 
-	// Persist the audit log and materialized views as one retryable application operation.
 	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to persist request log: %w", err)
 	}
 
-	return nil // Success - message will be acked
+	return nil
 }
 
 // Name returns the controller name for logging and metrics.
