@@ -5,7 +5,7 @@ import type { Queue, StovepipePageModel } from "./entity/index.js";
 import { parseProjectPageSize, StovepipePaths } from "./core/paths.js";
 import { readSection } from "./controller/page.js";
 import { loadQueueRequests } from "./controller/queue.js";
-import { loadOpenIssues, loadRequestIssues } from "./controller/issues.js";
+import { loadOpenIssues, loadRequestIssues, loadIssueProjects } from "./controller/issues.js";
 import { loadRequestHistory, type BuildUrlResolver } from "./controller/request.js";
 import { loadProjectStatus } from "./controller/projects.js";
 
@@ -91,7 +91,17 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
           );
           return { kind: "render", model: { ...common, kind: "queue", requests } };
         }
-        const [history, projectStatus, requestIssues] = await Promise.all([
+        const requestIssuesView = request.search.get("view") === "issues";
+        const issuesPage = request.search.get("issues") ?? "";
+        const issueTask = request.search.get("issueTask") ?? "";
+        const issueUnit = request.search.get("issueUnit") ?? "";
+        const projectsPage = request.search.get("affectedProjects") ?? "";
+        const selectedIssue = requestIssuesView && issueTask && issueUnit ? {
+          taskId: issueTask, unitId: issueUnit,
+          key: JSON.stringify([issueTask, issueUnit, projectsPage]),
+          closeHref: paths.requestIssues(queue.name, requestId, issuesPage),
+        } : null;
+        const [history, projectStatus, requestIssues, issueProjectsResult] = await Promise.all([
           readSection(
             () => loadRequestHistory(service, paths, queue.name, requestId, options.resolveBuildUrl, request.signal),
             onLog,
@@ -106,15 +116,21 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
             onLog,
             "project results",
           ),
-          request.search.get("view") === "issues" ? readSection(
-            () => loadRequestIssues(service, paths, queue.name, requestId, request.search.get("issues") ?? "", request.signal),
+          requestIssuesView ? readSection(
+            () => loadRequestIssues(service, paths, queue.name, requestId, issuesPage, request.signal),
             onLog,
             "request issues",
           ) : Promise.resolve(null),
+          selectedIssue ? readSection(
+            () => loadIssueProjects(service, paths, queue.name, requestId, issueTask, issueUnit,
+              issuesPage, projectsPage, request.signal),
+            onLog, "affected projects",
+          ) : Promise.resolve(null),
         ]);
+        const issueProjects = selectedIssue && issueProjectsResult ? { ...selectedIssue, result: issueProjectsResult } : null;
         return {
           kind: "render",
-          model: { ...common, kind: "request", requestId, history, projectStatus, requestIssues },
+          model: { ...common, kind: "request", requestId, history, projectStatus, requestIssues, issueProjects },
         };
       } catch (error) {
         onLog("error", "Web page load failed", { error });

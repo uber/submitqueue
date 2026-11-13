@@ -15,6 +15,7 @@ const model: StovepipePageModel = {
   showLatestLink: false,
   loadedAtMs: 1000,
   requestIssues: null,
+  issueProjects: null,
   projectStatus: {
     ok: true,
     data: {

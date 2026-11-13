@@ -45,6 +45,10 @@ test.describe("server-rendered styling", () => {
     await expect(issues.getByRole("status")).toHaveText("Issue recording complete");
     await expect(issues.locator("tbody tr")).toHaveCount(50);
     await expect(issues.getByRole("table", { name: "New Issues" })).toContainText("Task-wide failure");
+    const existing = issues.getByRole("table", { name: "Existing Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+    await existing.getByRole("link", { name: "Show projects" }).click();
+    await expect(issues.getByRole("region", { name: "Affected projects for buildtest //packages/test-01:go_default_test" }).getByRole("listitem")).toHaveCount(50);
+    await existing.getByRole("link", { name: "Hide projects" }).click();
     await page.getByRole("link", { name: "Next issues →" }).click();
     await expect(issues.locator("tbody tr")).toHaveCount(1);
     await page.getByRole("link", { name: "First issues" }).click();
@@ -66,6 +70,21 @@ test.describe("server-rendered styling", () => {
     const table = await page.getByRole("table", { name: "Requests", exact: true }).boundingBox();
     expect(table?.width).toBeGreaterThan(1920 * 0.95);
   });
+});
+
+test("expands request issue projects with paginated links and browser history", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51?view=issues");
+  const row = page.getByRole("table", { name: "Existing Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+  await row.getByRole("link", { name: "Show projects" }).click();
+  const projects = page.getByRole("region", { name: "Affected projects for buildtest //packages/test-01:go_default_test" });
+  await expect(projects.getByRole("listitem")).toHaveCount(50);
+  await projects.getByRole("link", { name: "More affected projects →" }).click();
+  await expect(projects.getByRole("listitem")).toHaveCount(1);
+  await expect(projects).toContainText("project-51");
+  await page.goBack();
+  await expect(projects.getByRole("listitem")).toHaveCount(50);
+  await row.getByRole("link", { name: "Hide projects" }).click();
+  await expect(projects).toHaveCount(0);
 });
 
 test("loads and retries issue pages, merges task groups, and refreshes from the beginning", async ({ page }) => {

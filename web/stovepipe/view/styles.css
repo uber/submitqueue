@@ -67,7 +67,7 @@
 .sq-stovepipe-request-issues table {
   table-layout: fixed;
   width: 100%;
-  min-width: 48rem;
+  min-width: 58rem;
 }
 
 .sq-stovepipe-request-issues th:first-child {

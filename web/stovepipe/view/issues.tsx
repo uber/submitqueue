@@ -1,14 +1,14 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { appendUniqueItems, Timestamp, usePageLoader } from "@submitqueue/web-platform";
 import { Block } from "baseui/block";
 import { Button, SIZE } from "baseui/button";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { HeadingSmall, ParagraphSmall } from "baseui/typography";
-import type { OpenIssueModel, OpenIssuesModel, RequestIssuesModel } from "../entity/index.js";
-import { Link, Table } from "./components.js";
+import type { OpenIssueModel, OpenIssuesModel, RequestIssuesModel, IssueProjectsSelection } from "../entity/index.js";
+import { Link, Table, Section } from "./components.js";
 
 export type OpenIssuePageLoader = (href: string, signal: AbortSignal) => Promise<OpenIssuesModel>;
 
@@ -90,7 +90,7 @@ export function OpenIssues({ initial }: { initial: OpenIssuesModel }) {
   );
 }
 
-export function RequestIssues({ model }: { model: RequestIssuesModel }) {
+export function RequestIssues({ model, projects }: { model: RequestIssuesModel; projects?: IssueProjectsSelection | null }) {
   const status = model.status === "complete" ? "Issue recording complete"
     : model.status === "in_progress" ? "Issue recording in progress. Results may change; return to the first page after recording completes."
       : model.status === "incomplete" ? "Issue recording was abandoned. These results may be incomplete."
@@ -105,19 +105,37 @@ export function RequestIssues({ model }: { model: RequestIssuesModel }) {
     groups.push({ kind: "unknown", label: "Other Issues" });
   return <Block className="sq-stovepipe-request-issues">
     <ParagraphSmall role="status" marginTop="0">{status}</ParagraphSmall>
+    <ParagraphSmall color="contentSecondary">Project attribution is available for reported unit-level issues, not task-wide or resolved updates.</ParagraphSmall>
     {groups.map(group => {
       const issues = model.issues.filter(issue => group.kind === "unknown"
         ? !["new", "existing", "closed"].includes(issue.kind) : issue.kind === group.kind);
       return <Block as="section" key={group.kind} aria-label={group.label} marginBottom="scale500">
         <HeadingSmall as="h3" marginTop="0" marginBottom="scale300">{group.label}</HeadingSmall>
-        {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build"]}>
-          {issues.map(issue => <StyledTableBodyRow key={JSON.stringify([issue.taskId, issue.unitId])}>
-            <StyledTableBodyCell>{issue.taskId}</StyledTableBodyCell>
-            <StyledTableBodyCell>{issue.unitId ? <Block as="code" font="MonoParagraphXSmall">{issue.unitId}</Block>
-              : <Tag closeable={false} size="small" kind="neutral">Task-wide failure</Tag>}</StyledTableBodyCell>
-            <StyledTableBodyCell>{issue.firstSeenBuildId || "Unknown"}</StyledTableBodyCell>
-            <StyledTableBodyCell>{issue.buildId || "Unknown"}</StyledTableBodyCell>
-          </StyledTableBodyRow>)}
+        {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build", "Affected projects"]}>
+          {issues.map(issue => {
+            const selected = projects?.taskId === issue.taskId && projects.unitId === issue.unitId ? projects : null;
+            return <Fragment key={JSON.stringify([issue.taskId, issue.unitId])}>
+              <StyledTableBodyRow>
+                <StyledTableBodyCell>{issue.taskId}</StyledTableBodyCell>
+                <StyledTableBodyCell>{issue.unitId ? <Block as="code" font="MonoParagraphXSmall">{issue.unitId}</Block>
+                  : <Tag closeable={false} size="small" kind="neutral">Task-wide failure</Tag>}</StyledTableBodyCell>
+                <StyledTableBodyCell>{issue.firstSeenBuildId || "Unknown"}</StyledTableBodyCell>
+                <StyledTableBodyCell>{issue.buildId || "Unknown"}</StyledTableBodyCell>
+                <StyledTableBodyCell>{issue.projectsHref ? <Link href={selected ? selected.closeHref : issue.projectsHref} scroll={false} aria-expanded={Boolean(selected)}>{selected ? "Hide projects" : "Show projects"}</Link> : "Not available"}</StyledTableBodyCell>
+              </StyledTableBodyRow>
+              {selected && <StyledTableBodyRow><StyledTableBodyCell colSpan={5}>
+                <Section cacheKey={selected.key} result={selected.result}>{page => page && <section aria-label={`Affected projects for ${issue.taskId} ${issue.unitId}`}>
+                  {!page.complete ? <ParagraphSmall>Project attribution is not available yet or did not complete.</ParagraphSmall>
+                    : page.projects.length ? <ul>{page.projects.map(project => <li key={project}>{project}</li>)}</ul>
+                      : <ParagraphSmall>No affected projects recorded for this issue.</ParagraphSmall>}
+                  <Block as="nav" aria-label="Affected project pages" display="flex" flexWrap gridGap="scale400">
+                    {page.firstHref && <Link href={page.firstHref} scroll={false}>First affected projects</Link>}
+                    {page.nextHref && <Link href={page.nextHref} scroll={false}>More affected projects →</Link>}
+                  </Block>
+                </section>}</Section>
+              </StyledTableBodyCell></StyledTableBodyRow>}
+            </Fragment>;
+          })}
         </Table> : <ParagraphSmall color="contentSecondary">No {group.label.toLowerCase()} on this page.</ParagraphSmall>}
       </Block>;
     })}
