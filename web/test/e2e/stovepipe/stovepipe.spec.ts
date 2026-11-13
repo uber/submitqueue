@@ -159,12 +159,28 @@ test("shows retained history metadata, including zero values, in the details col
     const row = history.getByRole("row").filter({ has: page.getByRole("cell", { name: label, exact: true }) });
     await expect(row.getByRole("cell", { name: "Build ID: runner/build/51?attempt=2", exact: true })).toBeVisible();
   }
-  for (const text of ["Breakage degree: 0", "Breakage degree: 0.25", "Project facts: 0", "Project facts: 51"])
+  for (const text of ["Breakage degree: 0", "Breakage degree: 0.25", "Project facts: 0 Broken project facts: 0", "Project facts: 51 Broken project facts: 2"])
     await expect(history.getByRole("cell", { name: text, exact: true })).toBeVisible();
+  const analysis = history.getByRole("row").filter({ has: page.getByRole("cell", { name: "build_analysis_completed", exact: true }) });
+  await expect(analysis.filter({ hasText: "runner/build/51?attempt=2" }).getByRole("cell").last()).toHaveText("Build ID: runner/build/51?attempt=2Issues: 0");
+  await expect(analysis.filter({ hasText: "runner/build/50" }).getByRole("cell").last()).toHaveText("Build ID: runner/build/50Issues: 0");
+  const reconciled = history.getByRole("row").filter({ has: page.getByRole("cell", { name: "issues_reconciled", exact: true }) });
+  await expect(reconciled.getByRole("cell").last()).toHaveText("Build ID: runner/build/51?attempt=2Closure mode: suppressed_task_wide_issue");
+  for (const [event, unit, decision] of [
+    ["fix_submitted", "Unit ID: //pkg:test", "Fix ID: fix/51?attempt=2"],
+    ["fix_submission_skipped", "", "Reason: no_open_issue"],
+    ["fix_submission_abandoned", "Unit ID: //pkg:test", "Reason: acceptance_unknown"],
+  ]) {
+    const row = history.getByRole("row").filter({ has: page.getByRole("cell", { name: event, exact: true }) });
+    await expect(row.getByRole("cell").last()).toHaveText(`Build ID: runner/build/51?attempt=2Task ID: buildtest${unit}Executor ID: repair${decision}`);
+  }
   const accepted = history.getByRole("row").filter({ has: page.getByRole("cell", { name: "accepted", exact: true }) });
   await expect(accepted.getByRole("cell").last()).toHaveText("—");
   await page.screenshot({ path: `${process.env.TEST_UNDECLARED_OUTPUTS_DIR}/stovepipe-history-details.png` });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.goto("/web%2Fpagination/request/50?view=history");
+  const abandoned = page.getByRole("table", { name: "Request history", exact: true }).getByRole("row").filter({ has: page.getByRole("cell", { name: "issue_tracking_abandoned", exact: true }) });
+  await expect(abandoned.getByRole("cell").last()).toHaveText("Build ID: runner/build/50");
 });
 
 test("continues past an empty issue batch instead of claiming the queue has no issues", async ({ page }) => {

@@ -218,6 +218,66 @@ func TestHistoryMetadataToProto(t *testing.T) {
 			wantData: `{"buildAnalysisAbandoned":{"buildId":"build/1"}}`,
 		},
 		{
+			name:     "abandoned issue tracking",
+			event:    entity.RequestEventIssueTrackingAbandoned,
+			metadata: map[string]string{"build_id": "build/1"},
+			wantData: `{"issueTrackingAbandoned":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "completed build analysis with no issues",
+			event:    entity.RequestEventBuildAnalysisCompleted,
+			metadata: map[string]string{"build_id": "build/1", "issue_count": "0", "private": "hidden"},
+			wantData: `{"buildAnalysisCompleted":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "completed build analysis with large issue count",
+			event:    entity.RequestEventBuildAnalysisCompleted,
+			metadata: map[string]string{"build_id": "build/1", "issue_count": "9007199254740993"},
+			wantData: `{"buildAnalysisCompleted":{"buildId":"build/1","issueCount":"9007199254740993"}}`,
+		},
+		{
+			name:     "legacy completed analysis without issue count",
+			event:    entity.RequestEventBuildAnalysisCompleted,
+			metadata: map[string]string{"build_id": "build/1"},
+			wantData: `{"buildAnalysisCompleted":{"buildId":"build/1"}}`,
+		},
+		{
+			name:     "reconciled issues",
+			event:    entity.RequestEventIssuesReconciled,
+			metadata: map[string]string{"build_id": "build/1", "closure_mode": "reconciled", "private": "hidden"},
+			wantData: `{"issuesReconciled":{"buildId":"build/1","closureMode":"reconciled"}}`,
+		},
+		{
+			name:     "cancelled build suppresses closure",
+			event:    entity.RequestEventIssuesReconciled,
+			metadata: map[string]string{"build_id": "build/1", "closure_mode": "suppressed_cancelled"},
+			wantData: `{"issuesReconciled":{"buildId":"build/1","closureMode":"suppressed_cancelled"}}`,
+		},
+		{
+			name:     "task wide issue suppresses closure",
+			event:    entity.RequestEventIssuesReconciled,
+			metadata: map[string]string{"build_id": "build/1", "closure_mode": "suppressed_task_wide_issue"},
+			wantData: `{"issuesReconciled":{"buildId":"build/1","closureMode":"suppressed_task_wide_issue"}}`,
+		},
+		{
+			name:     "submitted repair retains opaque identities",
+			event:    entity.RequestEventFixSubmitted,
+			metadata: map[string]string{"build_id": "build/1", "task_id": "test", "unit_id": "//pkg:test", "executor_id": "repair", "fix_id": "fix/7?attempt=2", "reason": "", "private": "hidden"},
+			wantData: `{"fixSubmitted":{"buildId":"build/1","taskId":"test","unitId":"//pkg:test","executorId":"repair","fixId":"fix/7?attempt=2"}}`,
+		},
+		{
+			name:     "skipped task wide repair retains reason",
+			event:    entity.RequestEventFixSubmissionSkipped,
+			metadata: map[string]string{"build_id": "build/1", "task_id": "test", "unit_id": "", "executor_id": "repair", "fix_id": "", "reason": "no_open_issue"},
+			wantData: `{"fixSubmissionSkipped":{"buildId":"build/1","taskId":"test","executorId":"repair","reason":"no_open_issue"}}`,
+		},
+		{
+			name:     "abandoned repair retains unknown acceptance reason",
+			event:    entity.RequestEventFixSubmissionAbandoned,
+			metadata: map[string]string{"build_id": "build/1", "task_id": "test", "unit_id": "//pkg:test", "executor_id": "repair", "reason": "acceptance_unknown"},
+			wantData: `{"fixSubmissionAbandoned":{"buildId":"build/1","taskId":"test","unitId":"//pkg:test","executorId":"repair","reason":"acceptance_unknown"}}`,
+		},
+		{
 			name:     "green validation degree is known zero",
 			event:    entity.RequestEventValidationFactRecorded,
 			metadata: map[string]string{"fact_degree": "0"},
@@ -252,6 +312,18 @@ func TestHistoryMetadataToProto(t *testing.T) {
 			event:    entity.RequestEventProjectFactsRecorded,
 			metadata: map[string]string{"project_fact_count": "9007199254740993"},
 			wantData: `{"projectFactsRecorded":{"projectFactCount":"9007199254740993"}}`,
+		},
+		{
+			name:     "project facts include broken count",
+			event:    entity.RequestEventProjectFactsRecorded,
+			metadata: map[string]string{"project_fact_count": "51", "broken_project_fact_count": "2"},
+			wantData: `{"projectFactsRecorded":{"projectFactCount":"51","brokenProjectFactCount":"2"}}`,
+		},
+		{
+			name:     "green project facts retain known zero broken count",
+			event:    entity.RequestEventProjectFactsRecorded,
+			metadata: map[string]string{"project_fact_count": "51", "broken_project_fact_count": "0"},
+			wantData: `{"projectFactsRecorded":{"projectFactCount":"51"}}`,
 		},
 	}
 
@@ -299,6 +371,12 @@ func TestHistoryMetadataUnavailable(t *testing.T) {
 		{name: "triggered build without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildTriggered}},
 		{name: "finished build with empty ID", log: entity.RequestLog{Event: entity.RequestEventBuildFinished, Metadata: map[string]string{"build_id": ""}}},
 		{name: "abandoned analysis without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildAnalysisAbandoned}},
+		{name: "completed analysis without metadata", log: entity.RequestLog{Event: entity.RequestEventBuildAnalysisCompleted}},
+		{name: "reconciled issues without metadata", log: entity.RequestLog{Event: entity.RequestEventIssuesReconciled}},
+		{name: "abandoned issue tracking without metadata", log: entity.RequestLog{Event: entity.RequestEventIssueTrackingAbandoned}},
+		{name: "submitted fix without metadata", log: entity.RequestLog{Event: entity.RequestEventFixSubmitted}},
+		{name: "skipped fix without metadata", log: entity.RequestLog{Event: entity.RequestEventFixSubmissionSkipped}},
+		{name: "abandoned fix without metadata", log: entity.RequestLog{Event: entity.RequestEventFixSubmissionAbandoned}},
 		{name: "validation without degree", log: entity.RequestLog{Event: entity.RequestEventValidationFactRecorded}},
 		{name: "project facts without count", log: entity.RequestLog{Event: entity.RequestEventProjectFactsRecorded}},
 		{name: "metadata for another event", log: entity.RequestLog{Event: entity.RequestEventRecordAbandoned, Metadata: map[string]string{"build_id": "build/1", "fact_degree": "1", "project_fact_count": "2"}}},
@@ -320,6 +398,25 @@ func TestHistoryMetadataUnavailable(t *testing.T) {
 			assert.Nil(t, event.Data)
 			assert.Equal(t, string(tt.log.State), event.GetRequestState())
 			assert.Equal(t, string(tt.log.Event), event.GetEvent())
+		})
+	}
+}
+
+func TestHistoryMissingOrInvalidCountsDefaultToZero(t *testing.T) {
+	for _, value := range []string{"", "invalid", "-1", "1.5", "18446744073709551616"} {
+		t.Run(value, func(t *testing.T) {
+			events := HistoryEventsToProto([]entity.RequestLog{
+				{Event: entity.RequestEventProjectFactsRecorded, Metadata: map[string]string{"project_fact_count": "51", "broken_project_fact_count": value}},
+				{Event: entity.RequestEventBuildAnalysisCompleted, Metadata: map[string]string{"build_id": "build/1", "issue_count": value}},
+			})
+			facts := events[0].GetData().GetProjectFactsRecorded()
+			require.NotNil(t, facts)
+			assert.Equal(t, uint64(51), facts.ProjectFactCount)
+			assert.Zero(t, facts.BrokenProjectFactCount)
+			analysis := events[1].GetData().GetBuildAnalysisCompleted()
+			require.NotNil(t, analysis)
+			assert.Equal(t, "build/1", analysis.BuildId)
+			assert.Zero(t, analysis.IssueCount)
 		})
 	}
 }
