@@ -20,9 +20,14 @@ export interface HistoryEvent {
   outcomeReason: string;
   data?: {
     payload:
-      | { case: "requestState" | "buildTriggered" | "buildFinished" | "buildAnalysisAbandoned"; value: { buildId: string } }
+      | { case: "requestState" | "buildTriggered" | "buildFinished" | "buildAnalysisAbandoned" | "issueTrackingAbandoned"; value: { buildId: string } }
       | { case: "validationFactRecorded"; value: { factDegree: number } }
-      | { case: "projectFactsRecorded"; value: { projectFactCount: bigint } }
+      | { case: "projectFactsRecorded"; value: { projectFactCount: bigint; brokenProjectFactCount: bigint } }
+      | { case: "buildAnalysisCompleted"; value: { buildId: string; issueCount: bigint } }
+      | { case: "issuesReconciled"; value: { buildId: string; closureMode: string } }
+      | { case: "fixSubmitted" | "fixSubmissionSkipped" | "fixSubmissionAbandoned"; value: {
+          buildId: string; taskId: string; unitId: string; executorId: string; fixId: string; reason: string;
+        } }
       | { case: undefined; value?: undefined };
   } | undefined;
 }

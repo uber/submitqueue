@@ -109,6 +109,18 @@ message HistoryEventData {
         HistoryProjectFactsData project_facts_recorded = 5;
         // Context recorded when build analysis was abandoned.
         HistoryBuildData build_analysis_abandoned = 6;
+        // Context recorded when terminal build issue analysis completed.
+        HistoryBuildAnalysisData build_analysis_completed = 7;
+        // Context recorded when final issue reconciliation completed.
+        HistoryIssuesReconciledData issues_reconciled = 8;
+        // Context recorded when issue tracking was abandoned.
+        HistoryBuildData issue_tracking_abandoned = 9;
+        // Context recorded for an accepted repair attempt.
+        HistoryFixData fix_submitted = 10;
+        // Context recorded for a skipped repair submission.
+        HistoryFixData fix_submission_skipped = 11;
+        // Context recorded for an abandoned repair submission.
+        HistoryFixData fix_submission_abandoned = 12;
     }
 }
 
@@ -134,6 +146,40 @@ message HistoryValidationFactData {
 message HistoryProjectFactsData {
     // Number of project facts recorded, including zero for an empty batch.
     uint64 project_fact_count = 1;
+    // Number of non-green project facts. Defaults to zero for older events without a count.
+    uint64 broken_project_fact_count = 2;
+}
+
+// HistoryBuildAnalysisData describes completed terminal build issue analysis.
+message HistoryBuildAnalysisData {
+    // Opaque runner-assigned build identifier.
+    string build_id = 1;
+    // Issue count at the first retained completion. Defaults to zero when not retained.
+    uint64 issue_count = 2;
+}
+
+// HistoryIssuesReconciledData describes final issue reconciliation.
+message HistoryIssuesReconciledData {
+    // Opaque runner-assigned build identifier.
+    string build_id = 1;
+    // Whether absent issues were reconciled or why closure was suppressed.
+    string closure_mode = 2;
+}
+
+// HistoryFixData identifies a repair submission and its decision context.
+message HistoryFixData {
+    // Build where the issue opening was first observed.
+    string build_id = 1;
+    // Logical validation task associated with the issue.
+    string task_id = 2;
+    // Validation unit; empty for a task-wide issue.
+    string unit_id = 3;
+    // Queue-local registered repair backend.
+    string executor_id = 4;
+    // Opaque accepted repair identifier; empty without known acceptance.
+    string fix_id = 5;
+    // Explanation for a skipped or abandoned submission. Empty on acceptance.
+    string reason = 6;
 }
 
 // RequestHistory identifies one request and contains its ordered events and current summary.
