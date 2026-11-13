@@ -73,7 +73,6 @@ go_test(
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/changeprovider/fake:go_default_library",
-        "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/orchestrator/core/batch:go_default_library",
         "//submitqueue/orchestrator/extension/storage/mysql:go_default_library",
         "//test/testutil:go_default_library",
