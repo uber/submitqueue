@@ -7,9 +7,9 @@ import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { StatefulTooltip } from "baseui/tooltip";
 import { HeadingSmall, ParagraphSmall } from "baseui/typography";
-import { useTransition } from "react";
-import type { ProjectStatusModel } from "../entity/index.js";
-import { Link, Table } from "./components.js";
+import { Fragment, useTransition } from "react";
+import type { ProjectStatusModel, ProjectIssuesSelection } from "../entity/index.js";
+import { Link, Table, Section } from "./components.js";
 
 export function RecordedResult({ degree }: { degree: number | null }) {
   return (
@@ -57,7 +57,7 @@ function projectRecordingStatus(model: ProjectStatusModel): {
   }
 }
 
-export function ProjectResults({ model, pageKey }: { model: ProjectStatusModel; pageKey: string }) {
+export function ProjectResults({ model, pageKey, issues }: { model: ProjectStatusModel; pageKey: string; issues?: ProjectIssuesSelection | null }) {
   const navigation = useWebNavigation();
   const [pending, startTransition] = useTransition();
   const recordingStatus = projectRecordingStatus(model);
@@ -111,14 +111,33 @@ export function ProjectResults({ model, pageKey }: { model: ProjectStatusModel; 
           <ParagraphSmall marginTop="0" marginBottom="scale300">Repository-wide breakage recorded</ParagraphSmall>
           <ParagraphSmall margin="0" color="contentSecondary">This request is fully broken at the repository level. No individual project results were recorded.</ParagraphSmall>
         </Block>
-      ) : <Table key={pageKey} label="Recorded project results" headers={["Project", "Project type", "Recorded result"]} fill>
-        {model.projects.map((entry) => (
-          <StyledTableBodyRow key={entry.project}>
-            <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
-            <StyledTableBodyCell>{entry.projectType || "Unknown"}</StyledTableBodyCell>
-            <StyledTableBodyCell><RecordedResult degree={entry.breakageDegree} /></StyledTableBodyCell>
-          </StyledTableBodyRow>
-        ))}
+      ) : <Table key={pageKey} label="Recorded project results" headers={["Project", "Project type", "Recorded result", "Issues"]} fill>
+        {model.projects.map(entry => {
+          const selected = issues?.project === entry.project ? issues : null;
+          return <Fragment key={entry.project}>
+            <StyledTableBodyRow>
+              <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
+              <StyledTableBodyCell>{entry.projectType || "Unknown"}</StyledTableBodyCell>
+              <StyledTableBodyCell><RecordedResult degree={entry.breakageDegree} /></StyledTableBodyCell>
+              <StyledTableBodyCell><Link href={selected ? selected.closeHref : entry.issuesHref} scroll={false} aria-expanded={Boolean(selected)}>{selected ? "Hide issues" : "Show issues"}</Link></StyledTableBodyCell>
+            </StyledTableBodyRow>
+            {selected && <StyledTableBodyRow><StyledTableBodyCell colSpan={4}>
+              <Section cacheKey={selected.key} result={selected.result}>{page => page && <section aria-label={`Issue attribution for ${entry.project}`}>
+                {!page.complete ? <ParagraphSmall>Project attribution is not available yet or did not complete.</ParagraphSmall>
+                  : page.issues.length ? <Table label={`Issues affecting ${entry.project}`} headers={["Task", "Unit"]}>
+                    {page.issues.map(issue => <StyledTableBodyRow key={JSON.stringify([issue.taskId, issue.unitId])}>
+                      <StyledTableBodyCell>{issue.taskId}</StyledTableBodyCell>
+                      <StyledTableBodyCell><Block as="code" font="MonoParagraphXSmall">{issue.unitId}</Block></StyledTableBodyCell>
+                    </StyledTableBodyRow>)}
+                  </Table> : <ParagraphSmall>No issues attributed to this project in this request.</ParagraphSmall>}
+                <Block as="nav" aria-label="Project issue pages" display="flex" flexWrap gridGap="scale400" marginTop="scale300">
+                  {page.firstHref && <Link href={page.firstHref} scroll={false}>First project issues</Link>}
+                  {page.nextHref && <Link href={page.nextHref} scroll={false}>More project issues →</Link>}
+                </Block>
+              </section>}</Section>
+            </StyledTableBodyCell></StyledTableBodyRow>}
+          </Fragment>;
+        })}
       </Table>}
       {!model.projects.length && !repositoryOnlyBreakage && <ParagraphSmall>No project results recorded on this page.</ParagraphSmall>}
       {renderPagination()}

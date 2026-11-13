@@ -83,6 +83,26 @@ export interface IssueProjectsSelection {
   /** Independent association read, so failures leave issue results visible. */
   result: ReadResult<IssueProjectsModel>;
 }
+export interface ProjectIssuesModel {
+  /** Failed units attributed to the selected project on this page. */
+  issues: { taskId: string; unitId: string }[];
+  /** False means attribution is unavailable, not that the project has no issues. */
+  complete: boolean;
+  /** First association page for this project; null when already on it. */
+  firstHref: string | null;
+  /** Opaque association continuation URL; null on the final page. */
+  nextHref: string | null;
+}
+export interface ProjectIssuesSelection {
+  /** Project selected within the displayed request. */
+  project: string;
+  /** Project and continuation identity used to scope retained results. */
+  key: string;
+  /** Collapse the issue list without changing the project result page. */
+  closeHref: string;
+  /** Independent association read, so failures leave project statuses visible. */
+  result: ReadResult<ProjectIssuesModel>;
+}
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
   id: string;
@@ -117,7 +137,7 @@ export interface ProjectStatusModel {
   /** Supported page sizes and their first-page URLs for this request. */
   pageSizeChoices: { value: number; href: string }[];
   /** Recorded projects on this page; null breakage means no result. */
-  projects: { project: string; projectType: string; breakageDegree: number | null }[];
+  projects: { project: string; projectType: string; breakageDegree: number | null; issuesHref: string }[];
   /** First project page for this request; null on the first page. */
   firstHref: string | null;
   /** Opaque project continuation URL; null on the final page. */
@@ -156,5 +176,6 @@ export type StovepipePageModel = PageBase &
         projectStatus: ReadResult<ProjectStatusModel>;
         requestIssues: ReadResult<RequestIssuesModel> | null;
         issueProjects: IssueProjectsSelection | null;
+        projectIssues: ProjectIssuesSelection | null;
       }
   );

@@ -50,3 +50,5 @@ Open-issue refreshes read the first page. Before any continuation is loaded, a s
 ## Affected projects
 
 New and existing unit-level request issues offer Show projects. The association read runs only when an issue is selected; expanding an issue does not fetch associations for every row. Project continuation links preserve the request issue cursor and work without JavaScript. Hide projects returns to that issue page. Attribution that is unavailable or incomplete is not rendered as an empty successful result. Task-wide failures and resolved updates do not offer attribution lookups.
+
+Project result rows offer Show issues for the same request. Association pages preserve the project-result cursor and chosen page size. An unavailable attribution is shown separately from a completed empty list, and neither changes the recorded project status. Both lookup directions use the backend's opaque page tokens and load one page only when selected; they do not collect all associations up front.

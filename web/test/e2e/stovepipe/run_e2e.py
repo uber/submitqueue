@@ -106,6 +106,12 @@ def _pagination_fixture_sql() -> str:
                 f"INSERT INTO {table} (queue,request_id,task_id,unit_id,project) "
                 f"VALUES ('web/pagination','51','buildtest','//packages/test-01:go_default_test','project-{i:02d}');"
             )
+    for i in range(50):
+        for table in ("request_projects_by_issue", "request_issues_by_project"):
+            statements.append(
+                f"INSERT INTO {table} (queue,request_id,task_id,unit_id,project) "
+                f"VALUES ('web/pagination','51','expensive','//packages/extra-{i:02d}:test','project-01');"
+            )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):
         closed = i < closed_issue_count
