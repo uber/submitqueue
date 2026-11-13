@@ -365,7 +365,7 @@ func (c *Controller) applyOutcome(ctx context.Context, store orchstorage.Storage
 		// Cancellation carries none — the cancel path owns that reason.
 		var concludeMeta map[string]string
 		if decision == outcomeFail {
-			concludeMeta = map[string]string{topickey.MetadataKeyFailureReason: "no speculation path could pass; every candidate build failed"}
+			concludeMeta = map[string]string{topickey.MetadataKeyFailureReason: "no speculation path could pass; every viable build failed or was cancelled"}
 		}
 		// Named for the run that decided it, so a redelivery re-deriving the
 		// same outcome does not conclude the batch twice, and so it stays
