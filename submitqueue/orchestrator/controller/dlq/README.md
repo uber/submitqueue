@@ -14,9 +14,15 @@ Do not bind a normal orchestration controller to a DLQ, create a missing request
 
 Dead letters have exhausted the primary retry budget or returned a non-retryable error. Final consumers use `errs.AlwaysRetryableProcessor`, unlimited attempts (`Retry.MaxAttempts = 0`), and `DLQ.Enabled = false`. Every non-nil error returned by a DLQ controller, including a version mismatch or publish failure, is redelivered until reconciliation succeeds or an operator intervenes. Unlimited retries protect reconciliation and permitted outputs, not another business retry budget.
 
-Disposition remains handler-specific: the generic request/batch reconcilers acknowledge missing entities; buildsignal also acknowledges a missing build or empty batch ID. Decode errors returned by these handlers remain retryable and may need operator removal. Payload/tenant mismatches are acknowledged, while invalid envelope tenant metadata is rejected before controller error processing. The shared hook handler reports and acknowledges even undecodable events. Final retry policy therefore does not promise retention of every poison message or recreation of every missing entity.
+Disposition remains handler-specific: the generic request/batch reconcilers acknowledge missing entities; buildsignal also acknowledges a missing build or empty batch ID. Decode errors returned by these handlers remain retryable and may need operator removal. Generic request/batch payload/tenant mismatches are acknowledged, while invalid envelope tenant metadata is rejected before controller error processing. The shared hook handler reports and acknowledges even undecodable events. Final retry policy therefore does not promise retention of every poison message or recreation of every missing entity.
 
 When the Request is absent, Start reports the failed submission through an Error request log with version 0, because there is no saved Request version. No normal work is published. Reconciliation validates the request identity and queue; existing rows retain authoritative-identity, batch-ownership, terminal-winner, and conditional-write guards.
+
+## Conclude final policy
+
+Conclude repairs terminal queue membership before fan-out and never changes the batch state. Every non-terminal state, including Landing, returns an error, as do missing records and invalid payload identities. The same final delivery retries until member writes and log publication complete; it does not republish a fresh conclude message.
+
+Newly failed members use the original message’s `failure_reason` metadata, not a later DLQ infrastructure error. Newly landed or cancelled members carry no LastError. Already-matching terminal members repair their status logs; a different terminal winner is logged and preserved without overwriting it. Queue-wide dependent reconsideration is outside conclusion’s fan-out contract.
 
 ## Terminal outputs and ownership
 
@@ -32,7 +38,8 @@ Request logs are published to `log`; the gateway alone materializes them into it
 The [stage table](../../pipeline.go) is the source of truth rather than a second topology table here:
 
 - `start` uses dedicated request reconciliation; `cancel`, `validate`, and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
-- `build`, `submitqueue-land`, and `conclude` use generic batch reconciliation.
+- `build` and `submitqueue-land` use generic batch reconciliation.
+- `conclude` reconciles a terminal batch to its matching request outcomes and status logs.
 - `dependency-analysis` has a dedicated handler because its batch may be a duplicate whose requests another batch already carries past `Creating`; such a duplicate is left inert. An owning batch in `Creating`, `Created`, or `Failed` is failed and fanned out; any later state belongs to a downstream stage and is acknowledged untouched. See `dependencyanalysis.go`.
 - `buildsignal` carries a build-ID payload, not a full Build. Its handler loads the build to find the batch and leaves build status untouched. The two Runway signal handlers read a request or batch correlation ID from `MergeResult`.
 - **Speculation queue-isolation nudge:** after failing attributed culprit work (or the labelled payload fallback), a delivery that transitioned a batch may nudge `speculate` with another live batch. The primary re-derives current queue state; the failed batch is not reopened. This narrow protection for other work does not authorize replay of the dead-lettered command or guarantee a nudge after every partial reconciliation failure. Automatic progress on an otherwise quiet queue is intentionally not guaranteed after terminal reconciliation. Remaining live work may wait for a later normal scheduling signal in the same logical queue or explicit operator action.
