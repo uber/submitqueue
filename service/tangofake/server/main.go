@@ -53,13 +53,18 @@ func run() error {
 		return fmt.Errorf("failed to listen on %s: %w", *address, err)
 	}
 
+	workspaces, err := local.NewFactory(local.Params{Dir: *repo})
+	if err != nil {
+		return err
+	}
+
 	transport := grpc.NewTransport()
 	dispatcher := yarpc.NewDispatcher(yarpc.Config{
 		Name:     "tango",
 		Inbounds: yarpc.Inbounds{transport.NewInbound(listener)},
 	})
 	dispatcher.Register(tangopb.BuildTangoYARPCProcedures(tangofake.New(tangofake.Params{
-		Workspaces: local.NewFactory(local.Params{Dir: *repo}),
+		Workspaces: workspaces,
 	})))
 	if err := dispatcher.Start(); err != nil {
 		return fmt.Errorf("failed to start the server: %w", err)
