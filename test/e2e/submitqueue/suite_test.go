@@ -44,6 +44,7 @@ import (
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
@@ -109,6 +110,18 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	// Use docker-compose from service/submitqueue (full stack), resolved from
 	// the test runfiles. All three service images are built from a staged
 	// build context assembled entirely from declared data dependencies.
+	const queueConfigFile = "test/e2e/submitqueue/queues.yaml"
+	queueConfigs, err := yamlqueueconfig.NewStore(testutil.Runfile(queueConfigFile))
+	require.NoError(t, err)
+	queues, err := queueConfigs.List(s.ctx)
+	require.NoError(t, err)
+	tenants := make([]string, 0, len(queues))
+	for _, queue := range queues {
+		tenants = append(tenants, queue.Name)
+	}
+	// All services must subscribe to exactly the registry staged into this test's gateway.
+	t.Setenv("MQ_TENANTS", strings.Join(tenants, ","))
+
 	composeFile := testutil.Runfile("service/submitqueue/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue",
 		testutil.WithBuildContext(map[string]string{
@@ -116,13 +129,13 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 			".docker-bin/orchestrator":                           "service/submitqueue/orchestrator/server/orchestrator_linux",
 			".docker-bin/runway":                                 "service/runway/server/runway_linux",
 			"service/submitqueue/gateway/server/Dockerfile":      "service/submitqueue/gateway/server/Dockerfile",
-			"service/submitqueue/gateway/server/queues.yaml":     "service/submitqueue/gateway/server/queues.yaml",
+			"service/submitqueue/gateway/server/queues.yaml":     queueConfigFile,
 			"service/submitqueue/orchestrator/server/Dockerfile": "service/submitqueue/orchestrator/server/Dockerfile",
 			"service/runway/server/Dockerfile":                   "service/runway/server/Dockerfile",
 		}))
 
 	// Start the compose stack (Gateway + Orchestrator + 2 MySQL DBs)
-	err := s.stack.Up()
+	err = s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
 
 	s.log.Logf("Compose stack started successfully")

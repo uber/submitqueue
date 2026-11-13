@@ -1,0 +1,15 @@
+queues:
+  # Required by the example orchestrator's built-in extension profiles.
+  - name: test-queue
+  - name: file-overlap-queue
+  - name: e2e-test-queue
+  - name: e2e-cancel-queue
+  - name: e2e-chain-queue
+  # Each partial-coverage scenario needs its own batch sequence and wake-ups.
+  - name: e2e-partial-coverage-queue
+  - name: e2e-land-wakeup-queue
+  - name: e2e-redelivery-queue
+  - name: e2e-strand-queue
+  - name: e2e-conflict-error-queue
+  - name: e2e-respeculate-queue
+  - name: e2e-pause-queue

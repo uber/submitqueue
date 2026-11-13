@@ -12,10 +12,6 @@ queues:
   # serializes behind every in-flight one. That is what lets e2e build a
   # dependency chain and exercise how a dependent is woken.
   - name: e2e-chain-queue
-  # Isolate partial-coverage fixtures so the follower is always batch 2 and its
-  # build gate can close before submission, with no unrelated speculation wakes.
-  - name: e2e-partial-coverage-queue
-  - name: e2e-land-wakeup-queue
   # Also baseline-profile queues. Each owns a whole queue so its first batch is
   # predictably "<queue>/batch/1", which is what lets e2e close a build gate on
   # that batch before anything is landed.
