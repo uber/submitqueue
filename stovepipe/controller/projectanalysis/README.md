@@ -2,7 +2,7 @@
 
 Project analysis consumes request IDs after terminal build analysis has retained all final build issues. A missing terminal-analysis completion is an invalid handoff, not a reason to poll.
 
-The controller resolves project statuses and records their facts and lookup entries before attributing issues. It materializes both directions of each issue/project association. Each step retains its own event after its writes. Once both steps finish, the controller records `project_analysis_completed`, updates the request-summary completion timestamp, publishes `project.analysis.completed`, and queues repository recording. Project-fact and attribution events do not set that timestamp; attribution queries still require the successful attribution event.
+The controller materializes both directions of each issue/project association and records attribution completion before resolving project statuses and recording their facts and lookup entries. Each step retains its own event after its writes. Once both steps finish, the controller records `project_analysis_completed`, updates the request-summary completion timestamp, publishes `project.analysis.completed`, and queues repository recording. Project-fact and attribution events do not set that timestamp; attribution queries still require the successful attribution event.
 
 Retries adopt immutable facts and repair missing lookup entries. A completed request skips provider calls, repairs its summary if needed, and retries hook publication followed by the recording handoff. Empty results still record completion. Cancelled requests bypass project analysis; superseded requests require no work.
 
