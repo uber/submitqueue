@@ -54,9 +54,17 @@ func persistRepairSubmissionLog(ctx context.Context, materializer requestlog.Mat
 }
 
 func persistRepairEventLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, request entity.Request, result entity.IssueRepair, event entity.RequestEvent, reason string) error {
-	identity, err := json.Marshal([]string{result.Issue.FirstSeenBuildID, result.Issue.TaskID, result.Issue.UnitID, result.ExecutorID})
+	log, err := newRepairEventLog(request, result, event, reason)
 	if err != nil {
 		return err
+	}
+	return materializer.PersistLog(ctx, store, log)
+}
+
+func newRepairEventLog(request entity.Request, result entity.IssueRepair, event entity.RequestEvent, reason string) (entity.RequestLog, error) {
+	identity, err := json.Marshal([]string{result.Issue.FirstSeenBuildID, result.Issue.TaskID, result.Issue.UnitID, result.ExecutorID})
+	if err != nil {
+		return entity.RequestLog{}, err
 	}
 	digest := sha256.Sum256(identity)
 	log := requestlog.NewRequestEventLog(request, event, fmt.Sprintf("%x", digest), map[string]string{
@@ -67,5 +75,5 @@ func persistRepairEventLog(ctx context.Context, materializer requestlog.Material
 		requestlog.MetadataKeyReason:     reason,
 		requestlog.MetadataKeyExecutorID: result.ExecutorID,
 	})
-	return materializer.PersistLog(ctx, store, log)
+	return log, nil
 }

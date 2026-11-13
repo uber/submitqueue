@@ -23,8 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -60,6 +62,10 @@ type analysisMocks struct {
 	detectorFactory *buildissuemock.MockDetectorFactory
 	detector        *buildissuemock.MockDetector
 	scope           tally.TestScope
+	registry        consumer.TopicRegistry
+	published       *[]entityqueue.Message
+	publishFailure  *error
+	onPublish       *func(entityqueue.Message)
 }
 
 func newTestController(t *testing.T) (*Controller, analysisMocks) {
@@ -69,7 +75,7 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m := analysisMocks{
 		ctrl:            ctrl,
 		requests:        storagemock.NewMockRequestStore(ctrl),
-		request:         &entity.Request{ID: "request/1", Queue: testQueue, State: entity.RequestStateProcessing},
+		request:         &entity.Request{ID: "1", Queue: testQueue, BuildID: testBuildID, State: entity.RequestStateProcessing},
 		stores:          storagemock.NewMockFactory(ctrl),
 		store:           storagemock.NewMockStorage(ctrl),
 		builds:          storagemock.NewMockBuildStore(ctrl),
@@ -79,6 +85,22 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 		scope:           tally.NewTestScope("test", nil),
 	}
 
+	publisher := queuemock.NewMockPublisher(ctrl)
+	m.published = new([]entityqueue.Message)
+	m.publishFailure = new(error)
+	m.onPublish = new(func(entityqueue.Message))
+	publisher.EXPECT().Publish(gomock.Any(), "projectanalysis", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		if *m.onPublish != nil {
+			(*m.onPublish)(msg)
+		}
+		*m.published = append(*m.published, msg)
+		return *m.publishFailure
+	}).AnyTimes()
+	queue := queuemock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+	var err error
+	m.registry, err = consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: stovepipemq.TopicKeyProjectAnalysis, Name: "projectanalysis", Queue: queue}})
+	require.NoError(t, err)
 	m.store.EXPECT().GetBuildStore().Return(m.builds).AnyTimes()
 	m.store.EXPECT().GetRequestStore().Return(m.requests).AnyTimes()
 	m.requestRead = m.requests.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string) (entity.Request, error) { return *m.request, nil }).AnyTimes()
@@ -100,14 +122,17 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 		m.history[log.ID] = log
 		return nil
 	}).AnyTimes()
-	m.historyRead = history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
+	readHistory := func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
 		log, exists := m.history[logID]
 		if !exists || log.RequestID != requestID {
 			return entity.RequestLog{}, storage.ErrNotFound
 		}
 		return log, nil
-	}).AnyTimes()
-	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.materializer, m.detectorFactory,
+	}
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), "event/build_analysis_abandoned/"+testBuildID).DoAndReturn(readHistory).AnyTimes()
+	m.historyRead = history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(readHistory).AnyTimes()
+
+	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.materializer, m.detectorFactory, m.registry,
 		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
 
 	return c, m
@@ -135,6 +160,14 @@ func (m analysisMocks) delivery(t *testing.T) *consumermock.MockDelivery {
 func (m analysisMocks) expectPass(status entity.BuildStatus, issues []entity.BuildIssue, err error) *gomock.Call {
 	if status.IsTerminal() {
 		m.request.TerminalBuildID = testBuildID
+		switch status {
+		case entity.BuildStatusSucceeded:
+			m.request.State = entity.RequestStateSucceeded
+		case entity.BuildStatusCancelled:
+			m.request.State = entity.RequestStateCancelled
+		default:
+			m.request.State = entity.RequestStateFailed
+		}
 	}
 	resolve := m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil)
 	load := m.builds.EXPECT().Get(gomock.Any(), testBuildID).
@@ -165,7 +198,6 @@ func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
 
 				d := m.delivery(t)
 				if status.IsTerminal() {
-					m.historyRead.After(last)
 					m.historyCreate.After(last)
 				} else {
 					d.EXPECT().Hold(PollDelayMs).After(last)
@@ -518,6 +550,7 @@ func TestProcessWaitsForWinningBuildBeforeFinalizing(t *testing.T) {
 			c, m := newTestController(t)
 			detected := m.expectPass(entity.BuildStatusFailed, nil, nil)
 			m.request.TerminalBuildID = ""
+			m.request.State = entity.RequestStateProcessing
 			if outcome == "abandoned" {
 				m.request.State = entity.RequestStateFailed
 			}
@@ -541,7 +574,7 @@ func TestProcessWaitsForWinningBuildBeforeFinalizing(t *testing.T) {
 
 			require.NoError(t, c.Process(context.Background(), d))
 
-			if outcome == "recorded during detection" {
+			if outcome == "recorded during detection" || outcome == "abandoned" {
 				require.Len(t, m.history, 1)
 			} else {
 				require.Empty(t, m.history)
@@ -583,4 +616,60 @@ func TestProcessRejectsQueueMismatchOnOutcomeReload(t *testing.T) {
 	})
 
 	require.Error(t, c.Process(context.Background(), m.delivery(t)))
+}
+
+func TestProjectAnalysisHandoffRequiresDurableCompletion(t *testing.T) {
+	for _, status := range []entity.BuildStatus{entity.BuildStatusSucceeded, entity.BuildStatusFailed, entity.BuildStatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			c, m := newTestController(t)
+			issue := entity.BuildIssue{TaskID: "task", UnitID: "unit"}
+			m.expectPass(status, []entity.BuildIssue{issue}, nil)
+			saved := false
+			m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).DoAndReturn(func(context.Context, string, entity.BuildIssue) error { saved = true; return nil })
+			*m.onPublish = func(msg entityqueue.Message) {
+				require.True(t, saved)
+				log := requestlog.NewRequestEventLog(*m.request, entity.RequestEventBuildAnalysisCompleted, testBuildID, nil)
+				require.Contains(t, m.history, log.ID)
+				payload := &stovepipemq.ProjectAnalysis{}
+				require.NoError(t, stovepipemq.Unmarshal(msg.Payload, payload))
+				require.Equal(t, m.request.ID, payload.GetId())
+				require.Equal(t, m.request.ID, msg.PartitionKey)
+				require.Equal(t, testQueue, msg.Tenant)
+			}
+			require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+			if status == entity.BuildStatusCancelled {
+				require.Empty(t, *m.published)
+			} else {
+				require.Len(t, *m.published, 1)
+			}
+		})
+	}
+}
+
+func TestProjectAnalysisPublicationRetries(t *testing.T) {
+	c, m := newTestController(t)
+	*m.publishFailure = assert.AnError
+	m.expectPass(entity.BuildStatusFailed, nil, nil)
+	require.ErrorIs(t, c.Process(context.Background(), m.delivery(t)), assert.AnError)
+	require.Len(t, m.history, 1)
+	*m.publishFailure = nil
+	m.expectPass(entity.BuildStatusFailed, nil, nil)
+	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+	require.Len(t, *m.published, 2)
+	require.Equal(t, (*m.published)[0].ID, (*m.published)[1].ID)
+	require.Equal(t, (*m.published)[0].Payload, (*m.published)[1].Payload)
+}
+
+func TestAbandonedAnalysisDoesNotResumeAfterOutcome(t *testing.T) {
+	c, m := newTestController(t)
+	log := requestlog.NewRequestEventLog(*m.request, entity.RequestEventBuildAnalysisAbandoned, testBuildID, nil)
+	m.history[log.ID] = log
+	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil).Times(2)
+	m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: m.request.ID, Status: entity.BuildStatusRunning}, nil).Times(2)
+	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+	require.Empty(t, *m.published)
+	m.request.State = entity.RequestStateFailed
+	m.request.TerminalBuildID = testBuildID
+	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+	require.Empty(t, *m.published)
 }

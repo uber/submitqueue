@@ -21,7 +21,9 @@ import (
 	"math"
 
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -129,9 +131,27 @@ func (c *Controller) persistRepairHistory(ctx context.Context, store storage.Sto
 	for _, repair := range recorded {
 		if err := persistRepairSubmissionLog(ctx, c.materializer, store, request, repair); err != nil {
 			failures = append(failures, fmt.Errorf("persist repair history for task %q unit %q: %w", repair.Issue.TaskID, repair.Issue.UnitID, err))
+			continue
+		}
+		if repair.FixID != "" {
+			if err := c.publishFixSubmitted(ctx, store, request, repair); err != nil {
+				failures = append(failures, fmt.Errorf("publish repair submission for task %q unit %q: %w", repair.Issue.TaskID, repair.Issue.UnitID, err))
+			}
 		}
 	}
 	return errs.Group(failures...)
+}
+
+func (c *Controller) publishFixSubmitted(ctx context.Context, store storage.Storage, request entity.Request, repair entity.IssueRepair) error {
+	log, err := newRepairEventLog(request, repair, entity.RequestEventFixSubmitted, "")
+	if err != nil {
+		return err
+	}
+	retained, err := store.GetRequestLogStore().Get(ctx, request.ID, log.ID)
+	if err != nil {
+		return fmt.Errorf("read retained repair submission: %w", err)
+	}
+	return hook.Publish(ctx, c.registry, request.Queue, hookevent.NewFixSubmitted(retained), request.ID)
 }
 
 func persistRepairSubmission(ctx context.Context, repairs storage.IssueRepairStore, executorID string, submission fixer.Submission) (entity.IssueRepair, error) {

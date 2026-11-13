@@ -2479,7 +2479,7 @@ func TestSubscriber_LeaseTick_OwnershipSummary(t *testing.T) {
 		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
 		Return(nil)
 
-	core, logs := observer.New(zap.InfoLevel)
+	core, logs := observer.New(zap.DebugLevel)
 	scope := tally.NewTestScope("test", nil)
 	s := NewSubscriber(
 		zap.New(core).Sugar(),
@@ -2831,7 +2831,7 @@ func TestSubscriber_LeaseTick_LogsOnRenewError(t *testing.T) {
 		PurgeStaleForTenants(gomock.Any(), []string{testTenant}, "test-topic", cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs).
 		Return(nil)
 
-	core, logs := observer.New(zap.InfoLevel)
+	core, logs := observer.New(zap.DebugLevel)
 	s := NewSubscriber(
 		zap.New(core).Sugar(),
 		tally.NoopScope,

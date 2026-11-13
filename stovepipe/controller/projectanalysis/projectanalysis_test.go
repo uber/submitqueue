@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
@@ -60,6 +61,7 @@ type fixture struct {
 	failures        map[string]error
 	records         []entityqueue.Message
 	publishAttempts []entityqueue.Message
+	hookAttempts    []entityqueue.Message
 	resolverCalls   int
 	attributerCalls int
 }
@@ -109,6 +111,9 @@ func newFixture(t *testing.T) *fixture {
 		operation := "analysis/get"
 		if id == f.completion().ID {
 			operation = "completion/get"
+			if _, exists := f.logs[id]; exists {
+				operation = "retained-completion/get"
+			}
 		} else if id == projectAnalysisAbandonedLog.ID {
 			operation = "abandonment/get"
 		}
@@ -147,19 +152,28 @@ func newFixture(t *testing.T) *fixture {
 	reverse.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.reverse, "reverse/create")).AnyTimes()
 	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-		if log.Event != entity.RequestEventProjectAnalysisAbandoned {
+		if log.Event == entity.RequestEventProjectFactsRecorded || log.Event == entity.RequestEventProjectAnalysisCompleted {
 			require.Len(t, f.facts, len(f.projectStatuses))
 			require.Len(t, f.indexes, len(f.projectStatuses))
+			projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+			require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
 		}
 		if log.Event == entity.RequestEventProjectIssuesRecorded {
 			require.Equal(t, f.source, f.reverse)
-			factsLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
-			require.Contains(t, f.logs, factsLog.ID)
+			for _, attribution := range f.attributions {
+				for _, project := range attribution.Projects {
+					entry := entity.ProjectIssueAttribution{TaskID: attribution.TaskID, UnitID: attribution.UnitID, Project: project}
+					require.True(t, f.source[entry])
+				}
+			}
 		}
 		if err := f.fail("log/" + string(log.Event)); err != nil {
 			return err
 		}
 		if _, exists := f.logs[log.ID]; !exists {
+			if log.Event == entity.RequestEventProjectAnalysisCompleted && log.TimestampMs == 0 {
+				log.TimestampMs = 1234
+			}
 			f.logs[log.ID] = log
 		}
 		return nil
@@ -171,6 +185,8 @@ func newFixture(t *testing.T) *fixture {
 	}).AnyTimes()
 	resolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request entity.Request) ([]projectstatus.Result, error) {
 		require.Equal(t, f.request, request)
+		projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+		require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
 		f.resolverCalls++
 		return f.projectStatuses, f.fail("resolve")
 	}).AnyTimes()
@@ -181,20 +197,24 @@ func newFixture(t *testing.T) *fixture {
 	}).AnyTimes()
 	attributer.EXPECT().Attribute(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request entity.Request) ([]projectissues.Attribution, error) {
 		require.Equal(t, f.request, request)
-		require.Len(t, f.facts, len(f.projectStatuses))
-		require.Len(t, f.indexes, len(f.projectStatuses))
-		projectFactsRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
-		require.Contains(t, f.logs, projectFactsRecordedLog.ID)
 		f.attributerCalls++
 		return f.attributions, f.fail("attribute")
 	}).AnyTimes()
 	publisher := queuemock.NewMockPublisher(ctrl)
+	publisher.EXPECT().Publish(gomock.Any(), "hook", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		require.Contains(t, f.logs, f.completion().ID)
+		require.Equal(t, testQueue, msg.Tenant)
+		require.Equal(t, f.request.ID, msg.PartitionKey)
+		f.hookAttempts = append(f.hookAttempts, msg)
+		return f.fail("hook/publish")
+	}).AnyTimes()
 	publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 		if f.request.State != entity.RequestStateCancelled {
 			projectAnalysisAbandonedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisAbandoned, "projects", nil)
 			_, complete := f.logs[f.completion().ID]
-			_, abandoned := f.logs[projectAnalysisAbandonedLog.ID]
-			require.True(t, complete || abandoned)
+			require.True(t, complete)
+			require.NotContains(t, f.logs, projectAnalysisAbandonedLog.ID)
+			require.NotEmpty(t, f.hookAttempts)
 		}
 		f.publishAttempts = append(f.publishAttempts, msg)
 		if err := f.fail("record/publish"); err != nil {
@@ -205,15 +225,20 @@ func newFixture(t *testing.T) *fixture {
 	}).AnyTimes()
 	queue := queuemock.NewMockQueue(ctrl)
 	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
-	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue}})
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
+		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
+	})
 	require.NoError(t, err)
 	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
-	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, registry, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
+	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
 	return f
 }
 
 func (f *fixture) completion() entity.RequestLog {
-	return requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+	log := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectAnalysisCompleted, f.request.TerminalBuildID, nil)
+	log.TimestampMs = 1234
+	return log
 }
 
 func (f *fixture) fail(operation string) error {
@@ -292,6 +317,12 @@ func TestProcessRecordsProjectStatuses(t *testing.T) {
 				expectedCounts = map[string]string{requestlog.MetadataKeyProjectFactCount: "0", requestlog.MetadataKeyBrokenProjectFactCount: "0"}
 			}
 			require.Equal(t, expectedCounts, f.logs[factsLog.ID].Metadata)
+			require.Len(t, f.hookAttempts, 1)
+			event := &basehook.HookEvent{}
+			require.NoError(t, basehook.Unmarshal(f.hookAttempts[0].Payload, event))
+			require.Equal(t, "project.analysis.completed", event.GetType())
+			require.Equal(t, int64(1234), event.GetTimestampMs())
+			require.Equal(t, map[string]any{"queue": testQueue, "request_id": f.request.ID}, event.GetPayload().AsMap())
 			require.Len(t, f.records, 1)
 			record := &stovepipemq.Record{}
 			require.NoError(t, stovepipemq.Unmarshal(f.records[0].Payload, record))
@@ -312,7 +343,7 @@ func TestProcessRecordsProjectStatuses(t *testing.T) {
 func TestProcessRetriesPartialWork(t *testing.T) {
 	for _, operation := range []string{
 		"storage/for", "request/get", "abandonment/get", "completion/get", "analysis/get", "resolver/for", "resolve", "attributer/for", "attribute",
-		"source/create", "reverse/create", "fact/create", "index/create", "log/project_facts_recorded", "log/project_issues_recorded", "record/publish",
+		"source/create", "reverse/create", "fact/create", "index/create", "log/project_facts_recorded", "log/project_issues_recorded", "log/project_analysis_completed", "retained-completion/get", "hook/publish", "record/publish",
 	} {
 		t.Run(operation, func(t *testing.T) {
 			f := newFixture(t)
@@ -320,22 +351,22 @@ func TestProcessRetriesPartialWork(t *testing.T) {
 			msg := f.message(t)
 			require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
 			require.Empty(t, f.records)
-			if operation != "record/publish" {
+			if operation != "record/publish" && operation != "hook/publish" && operation != "retained-completion/get" {
+				require.Empty(t, f.hookAttempts)
 				require.NotContains(t, f.logs, f.completion().ID)
 			}
 			switch operation {
-			case "resolve":
-				require.Empty(t, f.source)
+			case "resolver/for", "resolve", "fact/create", "index/create", "log/project_facts_recorded", "log/project_analysis_completed":
+				require.Len(t, f.source, 2)
+				require.Equal(t, f.source, f.reverse)
+				projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+				require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
+			case "attributer/for", "attribute", "source/create", "reverse/create", "log/project_issues_recorded":
+				require.Zero(t, f.resolverCalls)
 				require.Empty(t, f.facts)
-			case "fact/create", "index/create", "log/project_facts_recorded":
-				require.Zero(t, f.attributerCalls)
-				require.Empty(t, f.source)
-				require.Empty(t, f.reverse)
-			case "attributer/for", "attribute", "source/create", "reverse/create":
-				require.Len(t, f.facts, 2)
-				require.Len(t, f.indexes, 2)
-				projectFactsRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
-				require.Contains(t, f.logs, projectFactsRecordedLog.ID)
+				require.Empty(t, f.indexes)
+				projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+				require.NotContains(t, f.logs, projectIssuesRecordedLog.ID)
 			}
 			retained := make(map[string]entity.ValidationFact, len(f.facts))
 			for project, fact := range f.facts {
@@ -360,7 +391,11 @@ func TestProcessRetriesPartialWork(t *testing.T) {
 				require.Equal(t, f.records[0].ID, attempt.ID)
 				require.Equal(t, f.records[0].Payload, attempt.Payload)
 			}
-			if operation == "record/publish" {
+			for _, attempt := range f.hookAttempts {
+				require.Equal(t, f.hookAttempts[0].ID, attempt.ID)
+				require.JSONEq(t, string(f.hookAttempts[0].Payload), string(attempt.Payload))
+			}
+			if operation == "record/publish" || operation == "hook/publish" || operation == "retained-completion/get" {
 				require.Equal(t, 1, f.resolverCalls)
 				require.Equal(t, 1, f.attributerCalls)
 			}
@@ -384,6 +419,7 @@ func TestProcessRequiresFinalAnalysis(t *testing.T) {
 			require.ErrorIs(t, f.deliver(context.Background(), f.message(t)), storage.ErrNotFound)
 			require.Zero(t, f.resolverCalls)
 			require.Zero(t, f.attributerCalls)
+			require.Empty(t, f.hookAttempts)
 			require.Empty(t, f.records)
 		})
 	}
@@ -391,15 +427,15 @@ func TestProcessRequiresFinalAnalysis(t *testing.T) {
 
 func TestProcessRejectsInvalidProviderOutput(t *testing.T) {
 	for _, tt := range []struct {
-		name          string
-		invalidStatus bool
-		attribution   projectissues.Attribution
-		wantFacts     int
+		name             string
+		invalidStatus    bool
+		attribution      projectissues.Attribution
+		wantAssociations int
 	}{
-		{name: "invalid status", invalidStatus: true},
-		{name: "missing task", attribution: projectissues.Attribution{UnitID: "unit", Projects: []string{"a"}}, wantFacts: 2},
-		{name: "task wide issue", attribution: projectissues.Attribution{TaskID: "task", Projects: []string{"a"}}, wantFacts: 2},
-		{name: "missing project", attribution: projectissues.Attribution{TaskID: "task", UnitID: "unit", Projects: []string{""}}, wantFacts: 2},
+		{name: "invalid status", invalidStatus: true, wantAssociations: 2},
+		{name: "missing task", attribution: projectissues.Attribution{UnitID: "unit", Projects: []string{"a"}}},
+		{name: "task wide issue", attribution: projectissues.Attribution{TaskID: "task", Projects: []string{"a"}}},
+		{name: "missing project", attribution: projectissues.Attribution{TaskID: "task", UnitID: "unit", Projects: []string{""}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -409,10 +445,13 @@ func TestProcessRejectsInvalidProviderOutput(t *testing.T) {
 				f.attributions = []projectissues.Attribution{tt.attribution}
 			}
 			require.Error(t, f.deliver(context.Background(), f.message(t)))
-			require.Len(t, f.facts, tt.wantFacts)
-			require.Len(t, f.indexes, tt.wantFacts)
-			require.Empty(t, f.source)
-			require.Empty(t, f.reverse)
+			require.Empty(t, f.facts)
+			require.Empty(t, f.indexes)
+			require.Len(t, f.source, tt.wantAssociations)
+			require.Len(t, f.reverse, tt.wantAssociations)
+			if !tt.invalidStatus {
+				require.Zero(t, f.resolverCalls)
+			}
 			require.NotContains(t, f.logs, f.completion().ID)
 			require.Empty(t, f.records)
 		})
@@ -447,6 +486,7 @@ func TestProcessHandlesNonAnalysisOutcomes(t *testing.T) {
 			require.Empty(t, f.facts)
 			require.Empty(t, f.source)
 			require.Len(t, f.records, tt.records)
+			require.Empty(t, f.hookAttempts)
 		})
 	}
 }
@@ -473,9 +513,57 @@ func TestProcessRejectsInvalidIdentity(t *testing.T) {
 			require.Error(t, f.deliver(context.Background(), msg))
 			require.Zero(t, f.resolverCalls)
 			require.Zero(t, f.attributerCalls)
+			require.Empty(t, f.hookAttempts)
 			require.Empty(t, f.records)
 		})
 	}
+}
+
+func TestCompletedAnalysisRepairsProjection(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		name := "normal delivery"
+		if recovery {
+			name = "dead-letter recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			msg := f.message(t)
+			f.failures["record/publish"] = assert.AnError
+			require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+			f.failures["log/project_analysis_completed"] = assert.AnError
+			deliver := f.deliver
+			if recovery {
+				deliver = f.recover
+			}
+			require.ErrorIs(t, deliver(context.Background(), msg), assert.AnError)
+			require.Empty(t, f.records)
+			require.Equal(t, 1, f.resolverCalls)
+			require.Equal(t, 1, f.attributerCalls)
+			require.NoError(t, deliver(context.Background(), msg))
+			if recovery {
+				require.Empty(t, f.records)
+				require.Len(t, f.publishAttempts, 1)
+				require.Len(t, f.hookAttempts, 1)
+			} else {
+				require.Len(t, f.records, 1)
+			}
+		})
+	}
+}
+
+func TestAbandonedAnalysisRepairsProjectionWithoutResuming(t *testing.T) {
+	f := newFixture(t)
+	msg := f.message(t)
+	require.NoError(t, f.recover(context.Background(), msg))
+	f.failures["log/project_analysis_abandoned"] = assert.AnError
+	require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+	require.Empty(t, f.records)
+	require.Zero(t, f.resolverCalls)
+	require.Zero(t, f.attributerCalls)
+	require.NoError(t, f.deliver(context.Background(), msg))
+	require.Empty(t, f.records)
+	require.Empty(t, f.publishAttempts)
+	require.Empty(t, f.hookAttempts)
 }
 
 const projectStatusTestQueue = "monorepo/main"

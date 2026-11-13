@@ -31,8 +31,10 @@ func (s *StovepipeE2ESuite) TestProjectIssues() {
 	t := s.T()
 	stores, err := s.appStorage.For(projectIssuesQueue)
 	require.NoError(t, err)
-	request := entity.Request{ID: "900", Queue: projectIssuesQueue, TerminalBuildID: "build/900"}
+	request := entity.Request{ID: "900", Queue: projectIssuesQueue, URI: "git://repository/main/project-issues", State: entity.RequestStateFailed, Version: 1, TerminalBuildID: "build/900"}
+	require.NoError(t, stores.GetRequestStore().Create(s.ctx, request))
 	history := requestlog.NewMaterializer(tally.NoopScope)
+	require.NoError(t, history.PersistLog(s.ctx, stores, requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildFailed)))
 	metadata := map[string]string{requestlog.MetadataKeyBuildID: request.TerminalBuildID}
 	require.NoError(t, history.PersistLog(s.ctx, stores, requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, request.TerminalBuildID, metadata)))
 	materializer := projectissuescore.NewMaterializer(tally.NoopScope)

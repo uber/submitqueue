@@ -13,7 +13,7 @@ import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/
 import { StovepipeApp } from "@submitqueue/web-stovepipe";
 import { createStovepipeWeb } from "@submitqueue/web-stovepipe/server";
 
-test("renders and hydrates packaged pages with React 18 and host themes", async () => {
+test("renders and hydrates packaged pages with React 18 and host themes", { timeout: 30_000 }, async () => {
   assert.match(React.version, /^18\./u);
 
   const web = createSubmitQueueWeb({
@@ -49,6 +49,11 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   }
 
   const stovepipe = createStovepipeWeb({ queues: [{ name: "repo/main" }], service: {
+    getIssuesByRequestID: async () => ({ issues: [
+      { taskId: "buildtest", unitId: "unit-1", kind: "new", buildId: "build/1", firstSeenBuildId: "build/1" },
+    ], status: "complete", nextPageToken: "" }),
+    listRequestProjectsByIssue: async () => ({ attributions: [{ taskId: "buildtest", unitId: "unit-1", project: "example-project" }], attributionComplete: true, nextPageToken: "" }),
+    listRequestIssuesByProject: async () => ({ attributions: [{ taskId: "buildtest", unitId: "unit-1", project: "example-project" }], attributionComplete: true, nextPageToken: "" }),
     list: async () => ({ requests: [], nextPageToken: "" }),
     getProjectStatusByID: async () => ({
       queue: "repo/main", requestId: "1", requestState: "failed", updatedAtMs: 100n,
@@ -58,7 +63,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     }),
     getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 }, events: [] }),
   } });
-  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history"]) {
+  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history", "/repo%2Fmain/request/1?view=issues", "/repo%2Fmain/request/1?view=issues&issueTask=buildtest&issueUnit=unit-1", "/repo%2Fmain/request/1?project=example-project"]) {
     const url = new URL(href, "https://submitqueue.test");
     const result = await stovepipe.handle({ path: url.pathname, search: url.searchParams });
     assert.equal(result.kind, "render");
@@ -128,7 +133,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
         .find(entry => entry.textContent.includes("example-project"));
       assert.ok(row);
       assert.deepEqual([...row.querySelectorAll("td")].map(cell => cell.textContent),
-        ["example-project", "service", "Green"]);
+        ["example-project", "service", "Green", "Show issues"]);
       assert.doesNotMatch(container.textContent, /%/u);
     }
     await act(async () => root.unmount());

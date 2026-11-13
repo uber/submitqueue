@@ -30,7 +30,6 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/core/validationfact"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -41,12 +40,12 @@ func recordFact(
 	scope tally.Scope,
 	store storage.Storage,
 	request entity.Request,
-	results []projectstatus.Result,
+	projectCount int32,
 ) (entity.ValidationFact, bool, error) {
 	return validationfact.Persist(ctx, logger, scope, store.GetValidationFactStore(), entity.ValidationFact{
 		URI:       request.URI,
 		Project:   wholeRepositoryProject,
-		Degree:    degreeFor(request.State, results),
+		Degree:    degreeFor(request.State, projectCount),
 		RequestID: request.ID,
 		CreatedAt: time.Now().UnixMilli(),
 	})

@@ -25,9 +25,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -61,6 +64,9 @@ type controllerMocks struct {
 	results        *storagemock.MockIssueRepairStore
 	repairFailure  *error
 	updateFailure  *error
+	hookAttempts   *[]entityqueue.Message
+	hookFailure    *error
+	readFailure    *error
 }
 
 func newTestController(t *testing.T) (*Controller, controllerMocks) {
@@ -119,6 +125,7 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 
 	m.history = map[string]entity.RequestLog{}
 	m.historyFailure = new(error)
+	m.readFailure = new(error)
 	m.materializer = requestlog.NewMaterializer(tally.NoopScope)
 	history := storagemock.NewMockRequestLogStore(ctrl)
 	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
@@ -133,6 +140,9 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 		return nil
 	}).AnyTimes()
 	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, requestID, logID string) (entity.RequestLog, error) {
+		if *m.readFailure != nil {
+			return entity.RequestLog{}, *m.readFailure
+		}
 		log, exists := m.history[logID]
 		if !exists || log.RequestID != requestID {
 			return entity.RequestLog{}, storage.ErrNotFound
@@ -146,8 +156,31 @@ func newTestController(t *testing.T) (*Controller, controllerMocks) {
 	m.store.EXPECT().GetRequestStore().Return(m.requests).AnyTimes()
 	m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, RequestID: "1"}, nil).AnyTimes()
 	m.requests.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{ID: "1", Queue: testQueue, State: entity.RequestStateFailed}, nil).AnyTimes()
+	m.hookAttempts = new([]entityqueue.Message)
+	m.hookFailure = new(error)
+	publisher := queuemock.NewMockPublisher(ctrl)
+	publisher.EXPECT().Publish(gomock.Any(), "hook", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		event := new(basehook.HookEvent)
+		require.NoError(t, basehook.Unmarshal(msg.Payload, event))
+		payload := event.GetPayload().AsMap()
+		issue := entity.OpenIssue{FirstSeenBuildID: payload["opening_build_id"].(string), TaskID: payload["task_id"].(string), UnitID: payload["unit_id"].(string)}
+		repair := m.repairs[issue][payload["executor_id"].(string)]
+		require.NotEmpty(t, repair.FixID)
+		log, err := newRepairEventLog(entity.Request{ID: "1", Queue: testQueue}, repair, entity.RequestEventFixSubmitted, "")
+		require.NoError(t, err)
+		require.Contains(t, m.history, log.ID)
+		require.Equal(t, m.history[log.ID].TimestampMs, event.GetTimestampMs())
+		require.Equal(t, testQueue, msg.Tenant)
+		require.Equal(t, "1", msg.PartitionKey)
+		*m.hookAttempts = append(*m.hookAttempts, msg)
+		return *m.hookFailure
+	}).AnyTimes()
+	queue := queuemock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue}})
+	require.NoError(t, err)
 	return NewController(zap.NewNop().Sugar(), tally.NoopScope, m.stores, m.materializer, m.executors,
-		consumer.TopicKey("fix"), "stovepipe-fix"), m
+		registry, consumer.TopicKey("fix"), "stovepipe-fix"), m
 }
 
 func testIssue() entity.OpenIssue {
@@ -222,6 +255,12 @@ func TestProcessBuildBatchesAcrossPagesAndReplays(t *testing.T) {
 	require.Len(t, m.repairs, 205)
 	require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
 	require.Len(t, m.history, 205)
+	require.Len(t, *m.hookAttempts, 410)
+	ids := map[string]bool{}
+	for _, msg := range (*m.hookAttempts)[:205] {
+		ids[msg.ID] = true
+	}
+	require.Len(t, ids, 205)
 }
 
 func TestIndependentExecutorsRetainPartialResults(t *testing.T) {
@@ -239,6 +278,7 @@ func TestIndependentExecutorsRetainPartialResults(t *testing.T) {
 		{Issue: second, FixID: "other-fix"},
 	}, nil)
 	require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
+	require.Len(t, *m.hookAttempts, 2)
 	m.executor.EXPECT().Submit(gomock.Any(), []entity.OpenIssue{second}).Return(accepted([]entity.OpenIssue{second}, "shared-fix"), nil)
 	require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
 	require.Len(t, m.repairs[first], 2)
@@ -270,6 +310,7 @@ func TestInvalidExecutorResultsLeaveItemsPending(t *testing.T) {
 			if kind != "duplicate" {
 				require.Empty(t, m.repairs[issue]["first"].FixID)
 				require.Empty(t, m.repairs[issue]["first"].SkipReason)
+				require.Empty(t, *m.hookAttempts)
 			}
 		})
 	}
@@ -303,9 +344,15 @@ func TestRepairHistoryRetryDoesNotResubmit(t *testing.T) {
 			m.executor.EXPECT().Submit(gomock.Any(), []entity.OpenIssue{issue}).Return([]fixer.Submission{submission}, nil)
 			*m.historyFailure = assert.AnError
 			require.Error(t, c.processBuild(context.Background(), testQueue, testBuildID))
+			require.Empty(t, *m.hookAttempts)
 			*m.historyFailure = nil
 			require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
 			require.Len(t, m.history, 1)
+			if skipped {
+				require.Empty(t, *m.hookAttempts)
+			} else {
+				require.Len(t, *m.hookAttempts, 1)
+			}
 		})
 	}
 }
@@ -343,6 +390,11 @@ func TestConcurrentDispositionIsNeverOverwritten(t *testing.T) {
 			require.Equal(t, tt.fixID, m.repairs[issue]["first"].FixID)
 			require.Equal(t, tt.skipReason, m.repairs[issue]["first"].SkipReason)
 			require.Len(t, m.history, 1)
+			if tt.fixID == "" {
+				require.Empty(t, *m.hookAttempts)
+			} else {
+				require.Len(t, *m.hookAttempts, 1)
+			}
 		})
 	}
 }
@@ -479,4 +531,78 @@ func TestExhaustedRepairVersionDoesNotOverwriteState(t *testing.T) {
 	require.False(t, errs.IsRetryable(errs.NewClassifierProcessor(genericerrs.Classifier).Process(err)))
 	require.Equal(t, pending, m.repairs[issue]["first"])
 	require.Empty(t, m.history)
+}
+
+func TestFixSubmittedRetryDoesNotResubmit(t *testing.T) {
+	c, m := newTestController(t)
+	issue := testIssue()
+	m.stores.EXPECT().For(storage.Config{QueueName: testQueue}).Return(m.store, nil).AnyTimes()
+	m.executors.EXPECT().For(fixer.Config{QueueName: testQueue}).Return([]fixer.Registration{{ID: "first", Executor: m.executor}}, nil).AnyTimes()
+	m.observations.EXPECT().List(gomock.Any(), testBuildID, storage.BuildIssueRange{Limit: buildIssuePageSize}).Return([]entity.BuildIssue{issueIdentity(issue)}, nil).AnyTimes()
+	m.observations.EXPECT().List(gomock.Any(), testBuildID, afterIssue(issueIdentity(issue))).Return(nil, nil).AnyTimes()
+	state := storedIssue(issue)
+	m.issues.EXPECT().Get(gomock.Any(), issue.TaskID, issue.UnitID).DoAndReturn(func(context.Context, string, string) (entity.IssueState, error) {
+		return state, nil
+	}).AnyTimes()
+	m.executor.EXPECT().Submit(gomock.Any(), []entity.OpenIssue{issue}).DoAndReturn(func(context.Context, []entity.OpenIssue) ([]fixer.Submission, error) {
+		// Another delivery can retain history before this one records its receipt.
+		log, err := newRepairEventLog(entity.Request{ID: "1", Queue: testQueue}, entity.IssueRepair{Issue: issue, ExecutorID: "first", FixID: "fix"}, entity.RequestEventFixSubmitted, "")
+		require.NoError(t, err)
+		log.TimestampMs = 1234
+		m.history[log.ID] = log
+		return accepted([]entity.OpenIssue{issue}, "fix"), nil
+	})
+	*m.hookFailure = context.DeadlineExceeded
+	require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), context.DeadlineExceeded)
+	require.Len(t, *m.hookAttempts, 1)
+	// Recovery can close the issue before notification publication succeeds.
+	state.Status = entity.IssueStatusClosed
+	require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), context.DeadlineExceeded)
+	*m.hookFailure = nil
+	require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
+	require.Len(t, *m.hookAttempts, 3)
+	first, replay := (*m.hookAttempts)[1], (*m.hookAttempts)[2]
+	require.Equal(t, first.ID, replay.ID)
+	require.Equal(t, (*m.hookAttempts)[0].ID, replay.ID)
+	require.Equal(t, first.Payload, replay.Payload)
+	require.Equal(t, (*m.hookAttempts)[0].Payload, replay.Payload)
+	event := new(basehook.HookEvent)
+	require.NoError(t, basehook.Unmarshal(replay.Payload, event))
+	require.Equal(t, "stovepipe", event.GetSource())
+	require.Equal(t, "fix.submitted", event.GetType())
+	require.Equal(t, int64(1234), event.GetTimestampMs())
+	require.Equal(t, map[string]any{
+		"queue": testQueue, "opening_build_id": testBuildID,
+		"task_id": issue.TaskID, "unit_id": issue.UnitID, "executor_id": "first",
+	}, event.GetPayload().AsMap())
+}
+
+func TestFixSubmittedReadFailureDoesNotResubmit(t *testing.T) {
+	c, m := newTestController(t)
+	issue := testIssue()
+	m.expectIssue(issue)
+	m.executor.EXPECT().Submit(gomock.Any(), []entity.OpenIssue{issue}).Return(accepted([]entity.OpenIssue{issue}, "fix"), nil)
+	*m.readFailure = assert.AnError
+	require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
+	require.Len(t, m.history, 1)
+	require.Empty(t, *m.hookAttempts)
+	*m.readFailure = nil
+	require.NoError(t, c.processBuild(context.Background(), testQueue, testBuildID))
+	require.Len(t, *m.hookAttempts, 1)
+}
+
+func TestFixSubmittedFailureDoesNotSuppressOtherRepairs(t *testing.T) {
+	c, m := newTestController(t)
+	first := testIssue()
+	second := first
+	second.UnitID = "unit/2"
+	items := []entity.OpenIssue{first, second}
+	m.expectIssues(items)
+	m.executors.EXPECT().For(fixer.Config{QueueName: testQueue}).Return([]fixer.Registration{{ID: "first", Executor: m.executor}}, nil)
+	m.executor.EXPECT().Submit(gomock.Any(), items).Return(accepted(items, "shared-fix"), nil)
+	*m.hookFailure = assert.AnError
+	require.ErrorIs(t, c.processBuild(context.Background(), testQueue, testBuildID), assert.AnError)
+	require.Len(t, m.history, 2)
+	require.Len(t, *m.hookAttempts, 2)
+	require.NotEqual(t, (*m.hookAttempts)[0].ID, (*m.hookAttempts)[1].ID)
 }

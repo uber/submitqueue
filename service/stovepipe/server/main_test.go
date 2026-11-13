@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -167,7 +168,7 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	history.EXPECT().Get(gomock.Any(), "1", gomock.Any()).DoAndReturn(func(_ context.Context, _, id string) (entity.RequestLog, error) {
 		require.Equal(t, retained.ID, id)
 		return retained, nil
-	})
+	}).Times(3)
 
 	observation := entity.BuildIssue{TaskID: "test", UnitID: "unit", Version: 1}
 	observations.EXPECT().List(gomock.Any(), buildID, gomock.Any()).DoAndReturn(
@@ -199,7 +200,18 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 		return nil
 	})
 
-	registry, err := newTopicRegistry(nil, "subscriber")
+	publisher := queuemock.NewMockPublisher(ctrl)
+	var hookAttempts []entityqueue.Message
+	publisher.EXPECT().Publish(gomock.Any(), "stovepipe-hook", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, message entityqueue.Message) error {
+		require.NotEmpty(t, repair.FixID)
+		require.Equal(t, entity.RequestEventFixSubmitted, retained.Event)
+		require.Equal(t, queueName, message.Tenant)
+		hookAttempts = append(hookAttempts, message)
+		return nil
+	}).Times(2)
+	queue := queuemock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+	registry, err := newTopicRegistry(queue, "subscriber")
 	require.NoError(t, err)
 	primary := &recordingConsumer{}
 	_, err = registerPrimaryControllers(primary, zaptest.NewLogger(t).Sugar(), tally.NoopScope, stores,
@@ -226,6 +238,9 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	}
 	require.Equal(t, entity.RequestEventFixSubmitted, retained.Event)
 	require.Equal(t, "noop/"+buildID, retained.Metadata[requestlog.MetadataKeyFixID])
+	require.Len(t, hookAttempts, 2)
+	require.Equal(t, hookAttempts[0].ID, hookAttempts[1].ID)
+	require.Equal(t, hookAttempts[0].Payload, hookAttempts[1].Payload)
 }
 
 func TestHookStage(t *testing.T) {

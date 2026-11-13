@@ -51,6 +51,58 @@ export interface OpenIssuesModel {
   /** Opaque continuation URL; null when no further row was observed. */
   nextHref: string | null;
 }
+export interface RequestIssuesModel {
+  /** Accepted issue updates on this page, not the queue's open-issue set. */
+  issues: { taskId: string; unitId: string; kind: string; buildId: string; firstSeenBuildId: string; projectsHref: string | null }[];
+  /** Backend reconciliation status; completion does not imply a green build. */
+  status: string;
+  /** First issue page for this request; null when already on it. */
+  firstHref: string | null;
+  /** Opaque continuation URL; null on the final page. */
+  nextHref: string | null;
+}
+export interface IssueProjectsModel {
+  /** Projects affected by the selected issue on this page. */
+  projects: string[];
+  /** False means attribution is not available, not that no projects are affected. */
+  complete: boolean;
+  /** Return to this issue's first project page; null on that page. */
+  firstHref: string | null;
+  /** Opaque continuation URL; null on the final page. */
+  nextHref: string | null;
+}
+export interface IssueProjectsSelection {
+  /** Selected validation task. */
+  taskId: string;
+  /** Selected failed unit. */
+  unitId: string;
+  /** Issue and continuation identity used to scope retained results. */
+  key: string;
+  /** Collapse the selected issue's project list even when its read fails. */
+  closeHref: string;
+  /** Independent association read, so failures leave issue results visible. */
+  result: ReadResult<IssueProjectsModel>;
+}
+export interface ProjectIssuesModel {
+  /** Failed units attributed to the selected project on this page. */
+  issues: { taskId: string; unitId: string }[];
+  /** False means attribution is unavailable, not that the project has no issues. */
+  complete: boolean;
+  /** First association page for this project; null when already on it. */
+  firstHref: string | null;
+  /** Opaque association continuation URL; null on the final page. */
+  nextHref: string | null;
+}
+export interface ProjectIssuesSelection {
+  /** Project selected within the displayed request. */
+  project: string;
+  /** Project and continuation identity used to scope retained results. */
+  key: string;
+  /** Collapse the issue list without changing the project result page. */
+  closeHref: string;
+  /** Independent association read, so failures leave project statuses visible. */
+  result: ReadResult<ProjectIssuesModel>;
+}
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
   id: string;
@@ -85,7 +137,7 @@ export interface ProjectStatusModel {
   /** Supported page sizes and their first-page URLs for this request. */
   pageSizeChoices: { value: number; href: string }[];
   /** Recorded projects on this page; null breakage means no result. */
-  projects: { project: string; projectType: string; breakageDegree: number | null }[];
+  projects: { project: string; projectType: string; breakageDegree: number | null; issuesHref: string }[];
   /** First project page for this request; null on the first page. */
   firstHref: string | null;
   /** Opaque project continuation URL; null on the final page. */
@@ -122,5 +174,8 @@ export type StovepipePageModel = PageBase &
         requestId: string;
         history: ReadResult<RequestHistoryModel>;
         projectStatus: ReadResult<ProjectStatusModel>;
+        requestIssues: ReadResult<RequestIssuesModel> | null;
+        issueProjects: IssueProjectsSelection | null;
+        projectIssues: ProjectIssuesSelection | null;
       }
   );

@@ -53,8 +53,40 @@ export interface OpenIssueSummary {
   changedAtMs: bigint;
 }
 
+export interface RequestIssueSummary {
+  taskId: string;
+  unitId: string;
+  kind: string;
+  buildId: string;
+  firstSeenBuildId: string;
+}
+
+export interface ProjectIssueAttribution {
+  taskId: string;
+  unitId: string;
+  project: string;
+}
+
+export interface ProjectIssuePage {
+  attributions: ProjectIssueAttribution[];
+  attributionComplete: boolean;
+  nextPageToken: string;
+}
+
 /** Hosts supply a transport client; the library has no generated-binding dependency. */
 export interface StovepipeService {
+  listRequestIssuesByProject(
+    request: { queue: string; requestId: string; project: string; pageSize: number; pageToken: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<ProjectIssuePage>;
+  listRequestProjectsByIssue(
+    request: { queue: string; requestId: string; taskId: string; unitId: string; pageSize: number; pageToken: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<ProjectIssuePage>;
+  getIssuesByRequestID(
+    request: { queue: string; requestId: string; pageSize: number; pageToken: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<{ issues: RequestIssueSummary[]; status: string; nextPageToken: string }>;
   listOpenIssues(
     request: { queue: string; pageSize: number; pageToken: string },
     options?: { signal?: AbortSignal },

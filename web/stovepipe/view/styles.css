@@ -24,11 +24,11 @@
   min-width: 40rem;
 }
 
-.sq-stovepipe-request-view[aria-label="Project Results"] th:nth-child(2) {
+.sq-stovepipe-request-view[aria-label="Project Results"] table[aria-label="Recorded project results"] > thead th:nth-child(2) {
   width: 12rem;
 }
 
-.sq-stovepipe-request-view[aria-label="Project Results"] th:nth-child(3) {
+.sq-stovepipe-request-view[aria-label="Project Results"] table[aria-label="Recorded project results"] > thead th:nth-child(3) {
   width: 14rem;
 }
 
@@ -62,4 +62,26 @@
 .sq-stovepipe-request td > span[data-baseweb="tag"] {
   margin-top: 0;
   margin-bottom: 0;
+}
+
+.sq-stovepipe-request-issues table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 58rem;
+}
+
+.sq-stovepipe-request-issues th:first-child {
+  width: 10rem;
+}
+
+.sq-stovepipe-request-issues th:nth-child(n + 3) {
+  width: 12rem;
+}
+
+.sq-stovepipe-request-issues td {
+  overflow-wrap: anywhere;
+}
+
+.sq-stovepipe-request-view[aria-label="Project Results"] table[aria-label="Recorded project results"] > thead th:nth-child(4) {
+  width: 8rem;
 }
