@@ -43,7 +43,6 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
 	"go.uber.org/zap"
 )
@@ -282,32 +281,37 @@ func (s *E2EIntegrationSuite) batchIDsFor(req request) []string {
 // partition key, message ID) against rows it has not collected yet, so reusing
 // the original would make this publish a silent no-op.
 func (s *E2EIntegrationSuite) redeliverBatchMessage(req request) {
+	s.publishIDMessage(req.queue, topickey.TopicKeyBatch, req.sqid)
+}
+
+func (s *E2EIntegrationSuite) publishIDMessage(queueName string, topic consumer.TopicKey, id string) string {
 	t := s.T()
+	t.Helper()
 
 	queue, err := queuemysql.NewQueue(queuemysql.Params{
 		DB:           s.queueDB,
 		Logger:       zap.NewNop(),
 		MetricsScope: tally.NoopScope,
-		Tenants:      []string{req.queue},
+		Tenants:      []string{queueName},
 	})
 	require.NoError(t, err, "failed to open the queue for a manual publish")
 	defer func() { require.NoError(t, queue.Close()) }()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: topickey.TopicKeyBatch, Name: topickey.TopicKeyBatch.String(), Queue: queue},
+		{Key: topic, Name: topic.String(), Queue: queue},
 	})
 	require.NoError(t, err)
 
-	payload, err := sqmq.MarshalID(sqmq.TopicKeyBatch, req.sqid, req.queue)
+	payload, err := sqmq.MarshalID(topic, id, queueName)
 	require.NoError(t, err)
-
-	require.NoError(t, publish.Message(entityqueue.WithQueueName(s.ctx, req.queue), registry, topickey.TopicKeyBatch, publish.MessageParams{
-		Tenant:       req.queue,
-		ID:           publish.UniqueID(req.sqid),
+	messageID := publish.UniqueID(id)
+	require.NoError(t, publish.Message(entityqueue.WithQueueName(s.ctx, queueName), registry, topic, publish.MessageParams{
+		Tenant:       queueName,
+		ID:           messageID,
 		Payload:      payload,
-		PartitionKey: req.queue,
-	}), "failed to redeliver the batch message")
-	s.log.Logf("Redelivered the batch message for %s", req.sqid)
+		PartitionKey: queueName,
+	}), "failed to publish %s message", topic)
+	return messageID
 }
 
 // batchState reads a batch's current state from the operating store.
@@ -329,37 +333,37 @@ func (s *E2EIntegrationSuite) awaitBatchState(queue, batchID string, want entity
 	})
 }
 
-// seedPassedPath writes one already-passed speculation path directly, so a
-// test can hold the other side of a dependency back deterministically.
+// seedPassedPath requires the head's builds to be gated before submission.
 func (s *E2EIntegrationSuite) seedPassedPath(queue string, path entity.SpeculationPath) {
 	t := s.T()
+	t.Helper()
+	s.awaitBatchState(queue, path.Head, entity.BatchStateSpeculating)
+	s.closeGate(queue, "orchestrator", queue, "e2e: stop speculation while seeding partial coverage")
+	defer s.openGate(queue, "orchestrator", queue)
+
+	// A parked delivery on the serial speculation partition proves earlier runs drained.
+	messageID := s.publishIDMessage(queue, topickey.TopicKeySpeculate, path.Head)
+	parked := s.awaitParked("orchestrator", topickey.TopicKeySpeculate.String(), messageID)
+	require.Equal(t, queue, parked.PartitionKey)
+
 	store, err := s.appStorage.For(queue)
 	require.NoError(t, err, "failed to resolve operating store for queue %s", queue)
 	pathSets := store.GetSpeculationPathSetStore()
-
 	set, err := pathSets.Get(s.ctx, path.Head)
-	if basestorage.IsNotFound(err) {
-		set = entity.SpeculationPathSet{Queue: queue, Head: path.Head}
-	} else {
-		require.NoError(t, err, "failed to read path set for %s", path.Head)
-	}
+	require.NoError(t, err, "failed to read path set for %s", path.Head)
 
-	set.Paths = append(set.Paths, entity.SpeculationPathEntry{
-		ID:     path.ID(),
-		Path:   path,
-		Status: entity.SpeculationPathStatusPassed,
-		// Attempt 1 is the first build of a path and matches every entry the
-		// speculate run itself writes.
-		Attempt: 1,
-		Version: 1,
-	})
-	newVersion := set.Version + 1
-	if set.Version == 0 {
-		require.NoError(t, pathSets.Create(s.ctx, set), "failed to create path set for %s", path.Head)
-	} else {
-		require.NoError(t, pathSets.Update(s.ctx, set, set.Version, newVersion),
+	for i, entry := range set.Paths {
+		if entry.ID != path.ID() {
+			continue
+		}
+		require.Equal(t, entity.SpeculationPathStatusPending, entry.Status)
+		set.Paths[i].Status = entity.SpeculationPathStatusPassed
+		set.Paths[i].Version++
+		require.NoError(t, pathSets.Update(s.ctx, set, set.Version, set.Version+1),
 			"failed to seed passed path %s for %s", path.ID(), path.Head)
+		return
 	}
+	require.FailNow(t, "speculation did not fund the path to seed", "head=%s path=%s", path.Head, path.ID())
 }
 
 // strandInCreated puts a batch back into Created, reproducing the state a batch

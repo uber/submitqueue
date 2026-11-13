@@ -12,6 +12,7 @@ go_test(
         "tango_suite_test.go",
     ],
     data = [
+        "queues.yaml",
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
         "//service/runway/server:docker_test_context",
@@ -73,7 +74,7 @@ go_test(
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/changeprovider/fake:go_default_library",
-        "//submitqueue/extension/storage:go_default_library",
+        "//submitqueue/extension/queueconfig/yaml:go_default_library",
         "//submitqueue/orchestrator/core/batch:go_default_library",
         "//submitqueue/orchestrator/extension/storage/mysql:go_default_library",
         "//test/testutil:go_default_library",
