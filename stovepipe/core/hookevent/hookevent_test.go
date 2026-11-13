@@ -99,31 +99,67 @@ func TestConstructors_IDsDifferByType(t *testing.T) {
 	assert.NotEqual(t, recorded.GetId(), cancelled.GetId())
 }
 
-func TestIssueOpenedIdentity(t *testing.T) {
-	log := entity.IssueLog{TaskID: "task", UnitID: "unit", BuildID: "build/1", Event: entity.IssueEventOpened, TimestampMs: 1234}
-	event := NewIssueOpened(testQueue, log)
-	require.NoError(t, basehook.Validate(event))
-	assert.Equal(t, int64(1234), event.GetTimestampMs())
-	assert.Equal(t, Source, event.GetSource())
-	assert.Equal(t, string(TypeIssueOpened), event.GetType())
-	assert.Equal(t, map[string]any{"queue": testQueue, "task_id": "task", "unit_id": "unit", "opening_build_id": "build/1"}, event.GetPayload().AsMap())
-	assert.Equal(t, event, NewIssueOpened(testQueue, log))
-	for _, field := range []string{"queue", "task", "unit", "build"} {
-		t.Run(field, func(t *testing.T) {
-			other, queue := log, testQueue
-			switch field {
-			case "queue":
-				queue += "/other"
-			case "task":
-				other.TaskID += "/other"
-			case "unit":
-				other.UnitID = ""
-			case "build":
-				other.BuildID = "build/2"
+func TestIssueTransitionIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		build      func(string, entity.IssueLog) *basehook.HookEvent
+		eventType  Type
+		buildField string
+	}{
+		{"opened", NewIssueOpened, TypeIssueOpened, "opening_build_id"},
+		{"closed", NewIssueClosed, TypeIssueClosed, "closing_build_id"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			log := entity.IssueLog{TaskID: "task", UnitID: "unit", BuildID: "build/1", Event: entity.IssueEventOpened, TimestampMs: 1234}
+			event := tt.build(testQueue, log)
+			require.NoError(t, basehook.Validate(event))
+			assert.Equal(t, int64(1234), event.GetTimestampMs())
+			assert.Equal(t, Source, event.GetSource())
+			assert.Equal(t, string(tt.eventType), event.GetType())
+			assert.Equal(t, map[string]any{"queue": testQueue, "task_id": "task", "unit_id": "unit", tt.buildField: "build/1"}, event.GetPayload().AsMap())
+			assert.Equal(t, event, tt.build(testQueue, log))
+			for _, field := range []string{"queue", "task", "unit", "build"} {
+				t.Run(field, func(t *testing.T) {
+					other, queue := log, testQueue
+					switch field {
+					case "queue":
+						queue += "/other"
+					case "task":
+						other.TaskID += "/other"
+					case "unit":
+						other.UnitID = ""
+					case "build":
+						other.BuildID = "build/2"
+					}
+					changed := tt.build(queue, other)
+					require.NoError(t, basehook.Validate(changed))
+					assert.NotEqual(t, event.GetId(), changed.GetId())
+				})
 			}
-			changed := NewIssueOpened(queue, other)
-			require.NoError(t, basehook.Validate(changed))
-			assert.NotEqual(t, event.GetId(), changed.GetId())
 		})
 	}
+}
+
+func TestIssueEventTypesHaveDistinctIDs(t *testing.T) {
+	log := entity.IssueLog{TaskID: "task", UnitID: "", BuildID: "build/1", TimestampMs: 1234}
+	require.NotEqual(t, NewIssueOpened(testQueue, log).GetId(), NewIssueClosed(testQueue, log).GetId())
+	require.NoError(t, basehook.Validate(NewIssueClosed(testQueue, log)))
+}
+
+func TestProjectAnalysisCompletedIdentity(t *testing.T) {
+	log := entity.RequestLog{Queue: testQueue, RequestID: testID, TimestampMs: 1234}
+	event := NewProjectAnalysisCompleted(log)
+	require.NoError(t, basehook.Validate(event))
+	assert.Equal(t, Source, event.GetSource())
+	assert.Equal(t, string(TypeProjectAnalysisCompleted), event.GetType())
+	assert.Equal(t, int64(1234), event.GetTimestampMs())
+	assert.Equal(t, map[string]any{"queue": testQueue, "request_id": testID}, event.GetPayload().AsMap())
+	assert.Equal(t, event, NewProjectAnalysisCompleted(log))
+	other := log
+	other.RequestID = "8"
+	assert.NotEqual(t, event.GetId(), NewProjectAnalysisCompleted(other).GetId())
+	other = log
+	other.Queue = "another/main"
+	assert.NotEqual(t, event.GetId(), NewProjectAnalysisCompleted(other).GetId())
+	assert.NotEqual(t, event.GetId(), NewValidationRepositoryRecorded(testRequest()).GetId())
 }

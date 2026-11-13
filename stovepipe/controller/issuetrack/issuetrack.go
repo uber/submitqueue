@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -481,12 +482,18 @@ func (c *Controller) recordIssueTransition(ctx context.Context, store storage.St
 	if err := persistIssueHistory(ctx, c.materializer, store, issue); err != nil {
 		return err
 	}
-	if issue.Status == entity.IssueStatusOpen {
-		log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Event: entity.IssueEventOpened, TimestampMs: issue.ChangedAtMs}
-		event := hookevent.NewIssueOpened(queue, log)
-		if err := hook.Publish(ctx, c.registry, queue, event, event.GetId()); err != nil {
-			return fmt.Errorf("publish issue opening: %w", err)
-		}
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, TimestampMs: issue.ChangedAtMs}
+	var event *basehook.HookEvent
+	switch issue.Status {
+	case entity.IssueStatusOpen:
+		event = hookevent.NewIssueOpened(queue, log)
+	case entity.IssueStatusClosed:
+		event = hookevent.NewIssueClosed(queue, log)
+	default:
+		return nil
+	}
+	if err := hook.Publish(ctx, c.registry, queue, event, event.GetId()); err != nil {
+		return fmt.Errorf("publish issue transition: %w", err)
 	}
 	return nil
 }

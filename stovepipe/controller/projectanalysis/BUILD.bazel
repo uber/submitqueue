@@ -12,8 +12,10 @@ go_library(
         "//platform/base/id:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/hook:go_default_library",
         "//platform/metrics:go_default_library",
         "//platform/publish:go_default_library",
+        "//stovepipe/core/hookevent:go_default_library",
         "//stovepipe/core/loader:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/projectissues:go_default_library",
@@ -36,6 +38,7 @@ go_test(
     ],
     embed = [":go_default_library"],
     deps = [
+        "//api/base/hook:go_default_library",
         "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",

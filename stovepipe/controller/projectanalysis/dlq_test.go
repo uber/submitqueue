@@ -80,6 +80,7 @@ func TestDLQRetainsPartialResults(t *testing.T) {
 			require.Equal(t, attributerCalls, f.attributerCalls)
 			require.Empty(t, f.records)
 			require.Empty(t, f.publishAttempts)
+			require.Empty(t, f.hookAttempts)
 		})
 	}
 }
@@ -102,6 +103,7 @@ func TestDLQPreservesCompletedAnalysis(t *testing.T) {
 	require.Equal(t, 1, f.attributerCalls)
 	require.Empty(t, f.records)
 	require.Len(t, f.publishAttempts, 1)
+	require.Len(t, f.hookAttempts, 1)
 }
 
 func TestDLQRetriesRecoveryFailures(t *testing.T) {

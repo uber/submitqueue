@@ -48,9 +48,21 @@ The `finalizing` phase traverses retained issue states in primary-key order. Eac
 
 No closure occurs before all accumulated build issues have been processed. A task-wide failure in a later batch therefore protects existing issues across every task, not just keys encountered afterward. A later build makes its own decision; the restriction does not carry over. Both walks consume one ordered range at a time; no merge is required.
 
-## Opening hooks
+## Issue lifecycle hooks
 
-After an opening's history and projections are durable, issue tracking publishes an `issue.opened` hook event. This includes reopenings after closure; an issue that remains open in a later build does not create a new opening. The event's payload contains `queue`, `task_id`, `unit_id` (empty for task-wide issues), and `opening_build_id`. Its timestamp is the retained transition timestamp, and its ID hashes the queue/task/unit/opening-build identity. Retrying publication reproduces that identity. Publication must succeed before advancing the cursor. Hosts bind the shared hook topic and pass the topic registry to the normal controller. DLQ recovery repairs accepted state and history without publishing hooks. If publication exhausts normal retries, the opening notification may be lost; reliable delivery beyond that boundary requires a separate durable delivery mechanism.
+After a transition's history and projections are durable, issue tracking publishes an `issue.opened` or `issue.closed` hook event. Openings include reopenings after closure; an unchanged status in a later build creates no transition event. Both payloads contain `queue`, `task_id`, and `unit_id` (empty for task-wide issues). An opening adds `opening_build_id`; a closure adds `closing_build_id`.
+
+The timestamp is the retained transition timestamp, and the ID hashes the queue/task/unit/changing-build identity under the event type. Retrying publication reproduces the event. Publication must succeed before advancing the cursor. Hosts bind the shared hook topic and pass the topic registry to the normal controller. DLQ recovery repairs accepted state and history without publishing hooks. If publication exhausts normal retries, the transition notification may be lost; reliable delivery beyond that boundary requires a separate durable delivery mechanism.
+
+Closure consumers can resolve the original opening with two direct reads, even after the issue has reopened:
+
+```go
+closed, err := logs.Get(ctx, taskID, unitID, closingBuildID, entity.IssueEventClosed)
+// Handle err before using closed.
+opened, err := logs.Get(ctx, taskID, unitID, closed.FirstSeenBuildID, entity.IssueEventOpened)
+```
+
+The opening build's request identifies any request-scoped extension metadata. Consumers that only need that request can skip the second log read and load `closed.FirstSeenBuildID` directly. Use the immutable closure log rather than the latest issue state, which may already describe a later reopening. Older log records may lack the opening reference; consumers must handle that absence.
 
 The hook framework delivers at least once. Implementations that perform external side effects must deduplicate by event ID in durable storage; queue deduplication alone cannot guarantee one external action.
 
