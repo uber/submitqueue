@@ -31,7 +31,9 @@ func TestHandleAcceptsEveryEvent(t *testing.T) {
 
 	for name, event := range events {
 		t.Run(name, func(t *testing.T) {
-			require.NoError(t, New().Handle(context.Background(), event))
+			result, err := New().Handle(context.Background(), event)
+			require.NoError(t, err)
+			require.Zero(t, result.RetryNotBeforeMs)
 		})
 	}
 }

@@ -38,7 +38,9 @@ func New() Hook {
 }
 
 // Handle implements hook.Hook. The event is discarded.
-func (Hook) Handle(context.Context, *basehook.HookEvent) error { return nil }
+func (Hook) Handle(context.Context, *basehook.HookEvent) (hook.Result, error) {
+	return hook.Result{}, nil
+}
 
 // Name implements hook.Hook.
 func (Hook) Name() string { return "noop" }

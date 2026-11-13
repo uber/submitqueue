@@ -11,9 +11,11 @@ Handles one lifecycle event. `Name` identifies it in logs, metrics, and failure 
 Four obligations, all of them consequences of running behind an at-least-once queue:
 
 - **Idempotent on the event id.** The same event may arrive more than once, including after a successful `Handle`. The id is derived from the transition, so a redelivery carries the id the first delivery did.
-- **Return nil to ignore an event.** There is no filter or subscription API. A hook that does not care about a type returns nil and costs nothing; routing can become a wiring decorator if it ever pays for itself.
+- **Return a zero result and nil to finish or ignore an event.** There is no filter or subscription API. A hook that does not care about a type returns a zero result and nil and costs nothing; routing can become a wiring decorator if it ever pays for itself.
 - **Return plain errors.** Classification is the consumer's job. An error must mean the side effect did not happen — reporting failure for work that succeeded turns at-least-once delivery into repeated duplicate effects.
 - **Never write pipeline state.** A hook's outcome is invisible to the pipeline, which is exactly what makes it unable to affect the transition that triggered it.
+
+A positive `Result.RetryNotBeforeMs` requests redelivery no earlier than that Unix millisecond timestamp. Return it with nil error to wait without spending retry budget or holding a worker. The latest deadline across hooks wins; any error takes precedence and follows normal classification. All resolved hooks run again on redelivery, including those that already succeeded. An elapsed positive deadline requests immediate redelivery.
 
 ### Hooks
 
@@ -37,7 +39,7 @@ A sink that serves several domains is one implementation wired into each domain'
 
 1. Create `platform/extension/hook/{name}/` for a hook reusable across domains, or `{domain}/extension/hook/{name}/` for one that is domain-specific.
 2. Implement `Handle` and `Name`, keying any deduplication on `event.GetId()`.
-3. Decide per event `type` what to do, and return nil for the types you ignore.
+3. Decide per event `type` what to do, and return a zero result and nil for the types you ignore.
 4. Return it from the host's `Hooks` resolver for the events it should run on.
 
 Every hook the resolver returns for an event shares one consumer and therefore one retry budget: one chronically failing integration eventually dead-letters events the others handled fine. See [`platform/hook`](../../hook) before wiring several.

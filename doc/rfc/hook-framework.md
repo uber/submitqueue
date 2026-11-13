@@ -63,9 +63,9 @@ Delivery promise:
 ### Hooks and dispatch
 
 - Extension at `platform/extension/hook/`: the `Hook` contract plus a `Hooks` resolver the host builds in wiring. No `Config` and no `Factory` — selection is the resolver's, and only wiring knows the queue topology.
-- Hook contract: at-least-once, idempotent by `id`, plain errors, never writes pipeline state; ignore an event by returning nil (no filter API).
+- Hook contract: at-least-once, idempotent by `id`, plain errors, never writes pipeline state; finish or ignore an event with a zero result and nil (no filter API). A positive `Result.RetryNotBeforeMs` defers redelivery without consuming retry budget.
 - `Hooks.For(event)` keys on the event, not a queue name: the envelope carries no queue, and which scope selects hooks (queue, source, type) differs per domain. Resolving to none is ordinary. Ships `noop` for a host that wants an explicit placeholder. A cross-domain sink is the same impl wired into each domain.
-- Controller (`platform/hook`, wired by each service): decode, validate (`id`/`source`/`type` non-empty), resolve, invoke all. Malformed events dead-letter, never silently acked; hook errors retry then dead-letter, with errs classifiers fast-pathing permanent failures.
+- Controller (`platform/hook`, wired by each service): decode, validate (`id`/`source`/`type` non-empty), resolve, invoke all. Malformed events dead-letter, never silently acked; hook errors retry then dead-letter, with errs classifiers fast-pathing permanent failures. When no hook fails, the latest requested retry deadline postpones delivery through the existing `Delivery.Hold`; elapsed positive deadlines retry immediately. All hooks run again on redelivery, and any error takes precedence over deferral.
 - Concurrent invocation: hooks touch separate systems and share nothing, so they run in parallel and an event costs its slowest hook rather than the sum. Fan-out is bounded by the resolver, so no limiter; the delivery waits for all of them, so no goroutine outlives it.
 - Each hook gets the delivery's context and bounds its own work; the controller adds no deadline, since a deadline only cancels and so binds exactly the hooks that could bound themselves. A hook that blocks anyway holds the delivery and its subject's later events until the visibility timeout redelivers — accepted, with honoring `ctx` in the contract, rather than abandoning goroutines to free the delivery and converting a hang into a silent leak.
 - Mixed outcomes: every resolved hook runs even after one fails, and the failures are attributed and returned as an `errs.Group`. `errs` weighs each member of a group, so a transient failure alongside a permanent one still retries.
@@ -125,6 +125,6 @@ A failed batch, carrying land-result facts persisted nowhere else (protojson: in
 - **Subject, queue, or error on the envelope.** Occurrence facts; they live in the payload. No major event platform carries a top-level error.
 - **Entity snapshots as payload.** Stale on redelivery; competes with the store; drags domain schemas into the shared contract.
 - **Typed per-event payloads (`oneof`).** Every new type becomes a wire-contract change.
-- **A filter/subscription API.** Returning nil costs nothing; routing can be a wiring decorator later.
+- **A filter/subscription API.** Returning a zero result and nil costs nothing; routing can be a wiring decorator later.
 - **Best-effort publishing.** Silent loss; failing the stage is safe because dedupe makes the retry idempotent.
 - **A transactional outbox.** The publish rides the triggering delivery before ack; a crash replays both. RPC-edge transitions are scoped out instead.

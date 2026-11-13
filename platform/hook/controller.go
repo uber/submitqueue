@@ -31,6 +31,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/uber-go/tally"
 	basehook "github.com/uber/submitqueue/api/base/hook"
@@ -80,11 +81,11 @@ func NewController(
 }
 
 // Process decodes the delivery's hook event, validates it, and runs every hook
-// the resolver returns for it. Returns nil to ack, or an error to nack (retry) /
-// reject (DLQ).
+// the resolver returns for it. Successful deferrals hold the delivery; otherwise
+// returns nil to ack or an error to nack (retry) / reject (DLQ).
 //
 // An ack means "no hook still has work to do with this event", not "something
-// acted on it": a hook that does not care returns nil, and an event no hook
+// acted on it": a hook that does not care returns a zero result, and an event no hook
 // resolves to is acked unhandled.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
@@ -111,12 +112,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// broken integration can hold up the others. Failures carry the name of the
 	// hook that raised them and are grouped, so the classifier weighs each one.
 	failures := make([]error, len(hooks))
+	results := make([]hookext.Result, len(hooks))
 	var wg sync.WaitGroup
 	for i, h := range hooks {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := h.Handle(ctx, event); err != nil {
+			result, err := h.Handle(ctx, event)
+			results[i] = result
+			if err != nil {
 				metrics.NamedCounter(c.metricsScope, dispatchOp, "hook_errors", 1,
 					metrics.NewTag("source", event.GetSource()),
 					metrics.NewTag("event_type", event.GetType()),
@@ -129,6 +133,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	wg.Wait()
 	if err := errs.Group(failures...); err != nil {
 		return fmt.Errorf("failed to dispatch hook event %s: %w", event.GetId(), err)
+	}
+	var retryNotBeforeMs int64
+	for _, result := range results {
+		retryNotBeforeMs = max(retryNotBeforeMs, result.RetryNotBeforeMs)
+	}
+	if retryNotBeforeMs > 0 {
+		delivery.Hold(max(0, retryNotBeforeMs-time.Now().UnixMilli()))
+		metrics.NamedCounter(c.metricsScope, dispatchOp, "deferred", 1,
+			metrics.NewTag("source", event.GetSource()),
+			metrics.NewTag("event_type", event.GetType()),
+		)
+		return nil
 	}
 
 	metrics.NamedCounter(c.metricsScope, dispatchOp, "handled", 1,

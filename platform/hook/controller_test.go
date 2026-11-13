@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,18 +39,19 @@ const (
 
 // stubHook records the events it was handed and returns a fixed error.
 type stubHook struct {
-	name string
-	err  error
-	seen []*basehook.HookEvent
+	name   string
+	result hookext.Result
+	err    error
+	seen   []*basehook.HookEvent
 }
 
 func newStubHook(name string, err error) *stubHook {
 	return &stubHook{name: name, err: err}
 }
 
-func (h *stubHook) Handle(_ context.Context, event *basehook.HookEvent) error {
+func (h *stubHook) Handle(_ context.Context, event *basehook.HookEvent) (hookext.Result, error) {
 	h.seen = append(h.seen, event)
-	return h.err
+	return h.result, h.err
 }
 
 func (h *stubHook) Name() string { return h.name }
@@ -62,10 +64,10 @@ type gateHook struct {
 	release chan struct{}
 }
 
-func (h *gateHook) Handle(context.Context, *basehook.HookEvent) error {
+func (h *gateHook) Handle(context.Context, *basehook.HookEvent) (hookext.Result, error) {
 	close(h.started)
 	<-h.release
-	return nil
+	return hookext.Result{}, nil
 }
 
 func (h *gateHook) Name() string { return h.name }
@@ -154,6 +156,64 @@ func TestControllerProcess(t *testing.T) {
 
 		require.NoError(t, newController(fixedHooks()).Process(context.Background(), hookEventDelivery(ctrl, hookPayload(t, validEvent(t)))))
 	})
+}
+
+func TestControllerDefersWithoutHidingFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		deadlines []int64
+		failures  []error
+		wantHold  bool
+	}{
+		{name: "all done", deadlines: []int64{0, 0}},
+		{name: "one deferred hook", deadlines: []int64{time.Now().Add(time.Hour).UnixMilli(), 0}, wantHold: true},
+		{name: "latest deadline wins", deadlines: []int64{time.Now().Add(time.Hour).UnixMilli(), time.Now().Add(time.Minute).UnixMilli()}, wantHold: true},
+		{name: "expired deadline retries immediately", deadlines: []int64{1}, wantHold: true},
+		{name: "same hook failure wins", deadlines: []int64{time.Now().Add(time.Hour).UnixMilli()}, failures: []error{assert.AnError}},
+		{name: "other hook failure wins", deadlines: []int64{time.Now().Add(time.Hour).UnixMilli(), 0}, failures: []error{nil, assert.AnError}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			var hooks []hookext.Hook
+			var latest int64
+			var wantError bool
+			for i, deadline := range tc.deadlines {
+				h := newStubHook("hook", nil)
+				h.result.RetryNotBeforeMs = deadline
+				if i < len(tc.failures) {
+					h.err = tc.failures[i]
+					wantError = wantError || h.err != nil
+				}
+				hooks = append(hooks, h)
+				latest = max(latest, deadline)
+			}
+			delivery := hookEventDelivery(ctrl, hookPayload(t, validEvent(t)))
+			started := time.Now().UnixMilli()
+			if tc.wantHold {
+				delivery.EXPECT().Hold(gomock.Any()).Do(func(delayMs int64) {
+					assert.GreaterOrEqual(t, delayMs, max(0, latest-time.Now().UnixMilli()))
+					assert.LessOrEqual(t, delayMs, max(0, latest-started))
+				})
+			}
+			scope := tally.NewTestScope("test", nil)
+			controller := NewController(zap.NewNop().Sugar(), scope, fixedHooks(hooks...), testTopicKey, testGroup)
+			err := controller.Process(context.Background(), delivery)
+			if wantError {
+				require.ErrorIs(t, err, assert.AnError)
+			} else {
+				require.NoError(t, err)
+			}
+			for _, h := range hooks {
+				assert.Len(t, h.(*stubHook).seen, 1)
+			}
+			if tc.wantHold {
+				for _, counter := range scope.Snapshot().Counters() {
+					assert.NotContains(t, counter.Name(), "hook_errors")
+					assert.NotContains(t, counter.Name(), "handled")
+				}
+			}
+		})
+	}
 }
 
 // One failing hook must not keep the others from seeing the event, and the

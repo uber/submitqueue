@@ -43,11 +43,12 @@ func (m *MockHook) EXPECT() *MockHookMockRecorder {
 }
 
 // Handle mocks base method.
-func (m *MockHook) Handle(ctx context.Context, event *hook.HookEvent) error {
+func (m *MockHook) Handle(ctx context.Context, event *hook.HookEvent) (hook0.Result, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Handle", ctx, event)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(hook0.Result)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Handle indicates an expected call of Handle.

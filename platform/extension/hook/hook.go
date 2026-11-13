@@ -33,33 +33,20 @@ import (
 	basehook "github.com/uber/submitqueue/api/base/hook"
 )
 
+// Result describes whether a hook has finished handling an event.
+type Result struct {
+	// RetryNotBeforeMs is the earliest retry time in Unix milliseconds; zero means done.
+	RetryNotBeforeMs int64
+}
+
 // Hook performs a side effect in response to a lifecycle event.
 type Hook interface {
-	// Handle performs the side effect for event.
-	//
-	// Delivery is at-least-once, so the same event — identical id — may arrive
-	// more than once, including after a successful Handle. Implementations must
-	// be idempotent on the event id.
-	//
-	// Returning nil means "done with this event", which is also how a hook
-	// ignores one: there is no filter or subscription API, because a hook that
-	// does not care about a type simply returns nil, and routing can be added as
-	// a wiring decorator if it ever pays for itself.
-	//
-	// Returning an error retries the event and, past the retry budget,
-	// dead-letters it. Return plain errors; classification is the consumer's
-	// job. An error must mean the side effect did not happen — reporting failure
-	// for work that succeeded turns at-least-once into repeated duplicate
-	// effects.
-	//
-	// A hook must never write pipeline state. Its outcome is invisible to the
-	// pipeline by design: that is what makes the side effect unable to affect
-	// the transition that triggered it.
-	//
-	// ctx is the delivery's, canceled when the consumer shuts down. Honor it
-	// and bound the work Handle does: nothing interrupts a Handle that blocks,
-	// and the delivery waits for it.
-	Handle(ctx context.Context, event *basehook.HookEvent) error
+	// Handle is idempotent on event id and returns a zero Result when done or uninterested.
+	// A positive RetryNotBeforeMs defers redelivery to all hooks until the latest requested
+	// deadline, without consuming retry budget. Any hook error takes precedence over deferral.
+	// Return plain errors for failures; the consumer classifies them. Honor ctx and bound
+	// backend calls. Hooks must never write pipeline state or report successful effects as failures.
+	Handle(ctx context.Context, event *basehook.HookEvent) (Result, error)
 
 	// Name identifies the hook in logs, metrics, and the failure attribution
 	// the controller reports. Stable and unique among the hooks a host wires.

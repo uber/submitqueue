@@ -26,9 +26,12 @@ Outcomes:
 
 | Situation | Result |
 |---|---|
-| Every resolved hook returns nil, or none resolve | Ack. Also how a hook ignores an event — there is no filter API. |
+| Every resolved hook returns a zero result and nil, or none resolve | Ack. Also how a hook ignores an event — there is no filter API. |
+| At least one hook returns a positive retry deadline and none returns an error | Postpone with `Delivery.Hold` until the latest deadline, without consuming retry budget. An elapsed deadline retries immediately. |
 | Any resolved hook returns an error | Nack, retry, and dead-letter past the budget. |
 | Payload does not decode, or the envelope is missing `id`/`source`/`type` | Non-retryable, so it dead-letters rather than being silently acked. |
+
+Deferral frees the worker while preserving the postponed delivery as a partition barrier. Actual errors take precedence over deferral, including when one hook returns both a result and an error. Deferred deliveries do not count as handled events or hook errors; `dispatch.deferred` counts them.
 
 Ordering is per subject only, since the partition key is the subject id. Hook outcomes never write pipeline state.
 
