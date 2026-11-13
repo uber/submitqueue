@@ -161,7 +161,7 @@ func TestProcess_AlreadyTerminal_NoOp(t *testing.T) {
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	reqStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{
-		ID: "1", Queue: "q", State: entity.RequestStateCancelled, Version: 5,
+		ID: "1", Queue: "q", State: entity.RequestStateLanded, Version: 5,
 	}, nil)
 
 	store := orchstoragemock.NewMockStorage(ctrl)

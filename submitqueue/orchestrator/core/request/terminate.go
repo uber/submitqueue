@@ -86,7 +86,7 @@ type TerminationResult struct {
 //   - the request is not found: nothing is done (TerminationOutcomeNotFound).
 //
 // The caller owns all logging and metrics — TerminationResult carries the state context needed to do so.
-// lastError and metadata are attached to the published RequestLog for diagnosis.
+// lastError and metadata describe the first transition; same-state repair reports unavailable original details.
 //
 // A storage.ErrVersionMismatch from the conditional write is returned as-is (it is
 // intrinsically retryable) so the caller's next attempt re-reads and re-evaluates.
@@ -123,6 +123,7 @@ func TerminateRequest(
 		// Idempotent retry: a prior attempt already wrote the terminal state.
 		// Skip the CAS and fall through to re-publish the terminal log.
 		outcome = TerminationOutcomeAlreadyInTargetState
+		lastError, metadata = "terminal status resent for consistency; original details may not have been retained", nil
 	case entity.IsRequestStateTerminal(request.State):
 		// Divergent terminal state — a concurrent path reached terminal first
 		// and owns the terminal log entry for the state it actually wrote.

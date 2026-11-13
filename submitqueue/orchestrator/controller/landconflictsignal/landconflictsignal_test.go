@@ -146,7 +146,7 @@ func TestProcess_NotLandableMarksRequestError(t *testing.T) {
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
-	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil).Times(2)
 	// The request is driven to terminal Error inline (version 1 -> 2).
 	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
@@ -197,10 +197,11 @@ func TestFailRequest_UpdateFailureLeavesRequestUnchanged(t *testing.T) {
 
 	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
 	reqStore := storagemock.NewMockRequestStore(ctrl)
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
 	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(fmt.Errorf("db down"))
 
 	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(reqStore)
+	store.EXPECT().GetRequestStore().Return(reqStore).Times(2)
 
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
