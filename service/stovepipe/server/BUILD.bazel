@@ -95,6 +95,7 @@ go_test(
         "//platform/consumer:go_default_library",
         "//platform/consumer/mock:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mock:go_default_library",
         "//stovepipe/controller/dlq:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",

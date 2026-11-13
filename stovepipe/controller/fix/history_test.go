@@ -37,6 +37,7 @@ func TestFixDLQRetainsAllDispositionsWithoutSubmitting(t *testing.T) {
 	dlq := NewDLQController(c.logger, tally.NoopScope, m.stores, m.materializer, m.executors, c.topicKey, c.consumerGroup)
 	require.NoError(t, dlq.Process(context.Background(), m.delivery(repairMessage(t))))
 	require.Len(t, m.history, 1)
+	require.Empty(t, *m.hookAttempts)
 }
 
 func TestFixDLQRetainsUnknownAcceptance(t *testing.T) {
@@ -54,6 +55,7 @@ func TestFixDLQRetainsUnknownAcceptance(t *testing.T) {
 				require.Equal(t, entity.RequestEventFixSubmissionAbandoned, log.Event)
 			}
 			require.Len(t, m.history, 1)
+			require.Empty(t, *m.hookAttempts)
 		})
 	}
 }

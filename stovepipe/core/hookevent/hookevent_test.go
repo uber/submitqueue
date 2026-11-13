@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	basehook "github.com/uber/submitqueue/api/base/hook"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
@@ -162,4 +163,37 @@ func TestProjectAnalysisCompletedIdentity(t *testing.T) {
 	other.Queue = "another/main"
 	assert.NotEqual(t, event.GetId(), NewProjectAnalysisCompleted(other).GetId())
 	assert.NotEqual(t, event.GetId(), NewValidationRepositoryRecorded(testRequest()).GetId())
+}
+
+func TestFixSubmittedIdentity(t *testing.T) {
+	log := entity.RequestLog{Queue: testQueue, RequestID: testID, TimestampMs: 1234, Metadata: map[string]string{
+		requestlog.MetadataKeyBuildID: "opening/build", requestlog.MetadataKeyTaskID: "test",
+		requestlog.MetadataKeyUnitID: "", requestlog.MetadataKeyExecutorID: "repair", requestlog.MetadataKeyFixID: "shared-fix",
+	}}
+	event := NewFixSubmitted(log)
+	require.NoError(t, basehook.Validate(event))
+	assert.Equal(t, Source, event.GetSource())
+	assert.Equal(t, string(TypeFixSubmitted), event.GetType())
+	assert.Equal(t, int64(1234), event.GetTimestampMs())
+	assert.Equal(t, map[string]any{
+		"queue": testQueue, "opening_build_id": "opening/build", "task_id": "test", "unit_id": "", "executor_id": "repair",
+	}, event.GetPayload().AsMap())
+	assert.Equal(t, event, NewFixSubmitted(log))
+	for _, field := range []string{"queue", requestlog.MetadataKeyBuildID, requestlog.MetadataKeyTaskID, requestlog.MetadataKeyUnitID, requestlog.MetadataKeyExecutorID} {
+		t.Run(field, func(t *testing.T) {
+			other := log
+			other.Metadata = map[string]string{}
+			for key, value := range log.Metadata {
+				other.Metadata[key] = value
+			}
+			if field == "queue" {
+				other.Queue += "/other"
+			} else {
+				other.Metadata[field] += "/other"
+			}
+			changed := NewFixSubmitted(other)
+			require.NoError(t, basehook.Validate(changed))
+			assert.NotEqual(t, event.GetId(), changed.GetId())
+		})
+	}
 }

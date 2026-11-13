@@ -38,6 +38,7 @@ type Controller struct {
 	stores        storage.Factory
 	materializer  requestlog.Materializer
 	executors     fixer.Factory
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -48,6 +49,7 @@ func NewController(
 	stores storage.Factory,
 	materializer requestlog.Materializer,
 	executors fixer.Factory,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -57,6 +59,7 @@ func NewController(
 		stores:        stores,
 		materializer:  materializer,
 		executors:     executors,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
