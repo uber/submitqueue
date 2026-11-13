@@ -24,3 +24,11 @@ The gateway owns the request log read model and is the only service that reads i
 - `GetRequestHistoryByID` and `GetRequestHistoryByChangeURI` read retained request-log rows directly.
 
 The materializer appends every audit event, selects the current authoritative winner, and repairs the queue projection. The normal orchestrator pipeline does not read or write the request-log store directly.
+
+## Final log recovery
+
+The primary `gateway-log` consumer sends failed deliveries to `log_dlq` after a non-retryable error or exhaustion of its finite retry budget. The gateway's `gateway-log-dlq` consumer replays retained entries through the same log controller and materializer, with unlimited attempts, capped backoff, and no second-level DLQ. Valid log deliveries are acknowledged only after history, summary, URI mappings, and receipt projection succeed. Replays may append equivalent history rows; terminal-summary precedence and mapping repair are unchanged.
+
+With valid envelope metadata, malformed payloads and payload-queue identity conflicts stay in `log_dlq`, with topic/group-tagged diagnostics and deserialize or identity-error counters. Retrying unchanged bad data does not repair it. This is retention, not isolated quarantine: poison records can occupy the fetch window and delay later recovery. Operators must durably export a bad record and record its disposition before deleting it; corrected payloads must be replayed through gateway materialization. No export/replay CLI is provided. Rolling back the gateway stops automatic recovery but must leave the backlog intact.
+
+Invalid envelope metadata is logged and rejected before the controller runs. If no further DLQ exists, rejection may acknowledge and discard the delivery without retry; operators investigate the logged failure if needed.
