@@ -135,6 +135,13 @@ func TestFilterProposals_Rejects(t *testing.T) {
 			want: rejectCancelPassed,
 		},
 		{
+			name:     "build would resurrect a cancelled path",
+			proposal: entity.Speculation{Path: valid, Action: entity.PathActionBuild},
+			snap: checkSnapshot(entity.BatchStateSpeculating,
+				entryFor(valid, entity.SpeculationPathStatusCancelled)),
+			want: rejectPathTerminal,
+		},
+		{
 			name:     "build would resurrect a finished path",
 			proposal: entity.Speculation{Path: valid, Action: entity.PathActionBuild},
 			snap: checkSnapshot(entity.BatchStateSpeculating,
