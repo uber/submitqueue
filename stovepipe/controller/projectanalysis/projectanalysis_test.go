@@ -152,18 +152,20 @@ func newFixture(t *testing.T) *fixture {
 	reverse.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.reverse, "reverse/create")).AnyTimes()
 	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-		if log.Event != entity.RequestEventProjectAnalysisAbandoned {
+		if log.Event == entity.RequestEventProjectFactsRecorded || log.Event == entity.RequestEventProjectAnalysisCompleted {
 			require.Len(t, f.facts, len(f.projectStatuses))
 			require.Len(t, f.indexes, len(f.projectStatuses))
+			projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+			require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
 		}
 		if log.Event == entity.RequestEventProjectIssuesRecorded {
 			require.Equal(t, f.source, f.reverse)
-			factsLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
-			require.Contains(t, f.logs, factsLog.ID)
-		}
-		if log.Event == entity.RequestEventProjectAnalysisCompleted {
-			projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
-			require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
+			for _, attribution := range f.attributions {
+				for _, project := range attribution.Projects {
+					entry := entity.ProjectIssueAttribution{TaskID: attribution.TaskID, UnitID: attribution.UnitID, Project: project}
+					require.True(t, f.source[entry])
+				}
+			}
 		}
 		if err := f.fail("log/" + string(log.Event)); err != nil {
 			return err
@@ -183,6 +185,8 @@ func newFixture(t *testing.T) *fixture {
 	}).AnyTimes()
 	resolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request entity.Request) ([]projectstatus.Result, error) {
 		require.Equal(t, f.request, request)
+		projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+		require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
 		f.resolverCalls++
 		return f.projectStatuses, f.fail("resolve")
 	}).AnyTimes()
@@ -193,10 +197,6 @@ func newFixture(t *testing.T) *fixture {
 	}).AnyTimes()
 	attributer.EXPECT().Attribute(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request entity.Request) ([]projectissues.Attribution, error) {
 		require.Equal(t, f.request, request)
-		require.Len(t, f.facts, len(f.projectStatuses))
-		require.Len(t, f.indexes, len(f.projectStatuses))
-		projectFactsRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
-		require.Contains(t, f.logs, projectFactsRecordedLog.ID)
 		f.attributerCalls++
 		return f.attributions, f.fail("attribute")
 	}).AnyTimes()
@@ -356,21 +356,17 @@ func TestProcessRetriesPartialWork(t *testing.T) {
 				require.NotContains(t, f.logs, f.completion().ID)
 			}
 			switch operation {
-			case "resolve":
-				require.Empty(t, f.source)
-				require.Empty(t, f.facts)
-			case "fact/create", "index/create", "log/project_facts_recorded":
-				require.Zero(t, f.attributerCalls)
-				require.Empty(t, f.source)
-				require.Empty(t, f.reverse)
-			case "log/project_analysis_completed":
+			case "resolver/for", "resolve", "fact/create", "index/create", "log/project_facts_recorded", "log/project_analysis_completed":
+				require.Len(t, f.source, 2)
+				require.Equal(t, f.source, f.reverse)
 				projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
 				require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
-			case "attributer/for", "attribute", "source/create", "reverse/create":
-				require.Len(t, f.facts, 2)
-				require.Len(t, f.indexes, 2)
-				projectFactsRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
-				require.Contains(t, f.logs, projectFactsRecordedLog.ID)
+			case "attributer/for", "attribute", "source/create", "reverse/create", "log/project_issues_recorded":
+				require.Zero(t, f.resolverCalls)
+				require.Empty(t, f.facts)
+				require.Empty(t, f.indexes)
+				projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+				require.NotContains(t, f.logs, projectIssuesRecordedLog.ID)
 			}
 			retained := make(map[string]entity.ValidationFact, len(f.facts))
 			for project, fact := range f.facts {
@@ -431,15 +427,15 @@ func TestProcessRequiresFinalAnalysis(t *testing.T) {
 
 func TestProcessRejectsInvalidProviderOutput(t *testing.T) {
 	for _, tt := range []struct {
-		name          string
-		invalidStatus bool
-		attribution   projectissues.Attribution
-		wantFacts     int
+		name             string
+		invalidStatus    bool
+		attribution      projectissues.Attribution
+		wantAssociations int
 	}{
-		{name: "invalid status", invalidStatus: true},
-		{name: "missing task", attribution: projectissues.Attribution{UnitID: "unit", Projects: []string{"a"}}, wantFacts: 2},
-		{name: "task wide issue", attribution: projectissues.Attribution{TaskID: "task", Projects: []string{"a"}}, wantFacts: 2},
-		{name: "missing project", attribution: projectissues.Attribution{TaskID: "task", UnitID: "unit", Projects: []string{""}}, wantFacts: 2},
+		{name: "invalid status", invalidStatus: true, wantAssociations: 2},
+		{name: "missing task", attribution: projectissues.Attribution{UnitID: "unit", Projects: []string{"a"}}},
+		{name: "task wide issue", attribution: projectissues.Attribution{TaskID: "task", Projects: []string{"a"}}},
+		{name: "missing project", attribution: projectissues.Attribution{TaskID: "task", UnitID: "unit", Projects: []string{""}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -449,10 +445,13 @@ func TestProcessRejectsInvalidProviderOutput(t *testing.T) {
 				f.attributions = []projectissues.Attribution{tt.attribution}
 			}
 			require.Error(t, f.deliver(context.Background(), f.message(t)))
-			require.Len(t, f.facts, tt.wantFacts)
-			require.Len(t, f.indexes, tt.wantFacts)
-			require.Empty(t, f.source)
-			require.Empty(t, f.reverse)
+			require.Empty(t, f.facts)
+			require.Empty(t, f.indexes)
+			require.Len(t, f.source, tt.wantAssociations)
+			require.Len(t, f.reverse, tt.wantAssociations)
+			if !tt.invalidStatus {
+				require.Zero(t, f.resolverCalls)
+			}
 			require.NotContains(t, f.logs, f.completion().ID)
 			require.Empty(t, f.records)
 		})

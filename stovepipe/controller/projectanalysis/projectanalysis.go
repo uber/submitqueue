@@ -148,10 +148,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("require completed terminal build analysis: %w", err)
 	}
 
-	if err := c.recordProjectStatuses(ctx, store, request); err != nil {
+	if err := c.recordIssueAttribution(ctx, store, request); err != nil {
 		return err
 	}
-	if err := c.recordIssueAttribution(ctx, store, request); err != nil {
+	if err := c.recordProjectStatuses(ctx, store, request); err != nil {
 		return err
 	}
 	if err := c.requestLogMaterializer.PersistLog(ctx, store, projectAnalysisCompletedLog); err != nil {
