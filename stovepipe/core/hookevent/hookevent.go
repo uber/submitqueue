@@ -17,7 +17,7 @@
 // wire contract in one place, so a controller names an event rather than
 // assembling one.
 //
-// Payloads carry identity only: the queue and request or issue transition.
+// Payloads carry identity only: the queue and request, issue transition, or repair.
 // A hook can resolve additional context from storage without depending on a
 // snapshot taken at publication time. See doc/rfc/stovepipe/steps/record.md.
 package hookevent
@@ -28,6 +28,7 @@ import (
 	"time"
 
 	basehook "github.com/uber/submitqueue/api/base/hook"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -44,6 +45,8 @@ const (
 	TypeIssueOpened Type = "issue.opened"
 	// TypeIssueClosed announces a durable closure.
 	TypeIssueClosed Type = "issue.closed"
+	// TypeFixSubmitted announces backend acceptance of repair work for one opening and executor.
+	TypeFixSubmitted Type = "fix.submitted"
 	// TypeProjectAnalysisCompleted announces durable project facts and issue attribution.
 	TypeProjectAnalysisCompleted Type = "project.analysis.completed"
 	// TypeValidationRepositoryStarted announces that whole-repository validation
@@ -69,6 +72,31 @@ func NewIssueOpened(queue string, log entity.IssueLog) *basehook.HookEvent {
 // NewIssueClosed identifies one immutable closure. Replays retain its ID and timestamp.
 func NewIssueClosed(queue string, log entity.IssueLog) *basehook.HookEvent {
 	return newIssueEvent(TypeIssueClosed, "closing_build_id", queue, log)
+}
+
+// NewFixSubmitted retains the submitted log's identity and timestamp on replay.
+// Acceptance does not establish repair completion or issue recovery.
+func NewFixSubmitted(log entity.RequestLog) *basehook.HookEvent {
+	buildID := log.Metadata[requestlog.MetadataKeyBuildID]
+	taskID := log.Metadata[requestlog.MetadataKeyTaskID]
+	unitID := log.Metadata[requestlog.MetadataKeyUnitID]
+	executorID := log.Metadata[requestlog.MetadataKeyExecutorID]
+	identity := fmt.Sprintf("%d:%s%d:%s%d:%s%d:%s%d:%s", len(log.Queue), log.Queue,
+		len(buildID), buildID, len(taskID), taskID, len(unitID), unitID, len(executorID), executorID)
+	subject := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
+	return &basehook.HookEvent{
+		Id:          basehook.NewEventID(Source, string(TypeFixSubmitted), subject, unversioned),
+		Source:      Source,
+		Type:        string(TypeFixSubmitted),
+		TimestampMs: log.TimestampMs,
+		Payload: &structpb.Struct{Fields: map[string]*structpb.Value{
+			"queue":            structpb.NewStringValue(log.Queue),
+			"opening_build_id": structpb.NewStringValue(buildID),
+			"task_id":          structpb.NewStringValue(taskID),
+			"unit_id":          structpb.NewStringValue(unitID),
+			"executor_id":      structpb.NewStringValue(executorID),
+		}},
+	}
 }
 
 func newIssueEvent(eventType Type, buildField, queue string, log entity.IssueLog) *basehook.HookEvent {

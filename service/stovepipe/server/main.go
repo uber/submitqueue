@@ -434,7 +434,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	fixController := fix.NewController(logger, scope, store, materializer, repairExecutors, stovepipemq.TopicKeyFix, "stovepipe-fix")
+	fixController := fix.NewController(logger, scope, store, materializer, repairExecutors, registry, stovepipemq.TopicKeyFix, "stovepipe-fix")
 	if err := c.Register(fixController); err != nil {
 		return count, fmt.Errorf("failed to register fix controller: %w", err)
 	}
