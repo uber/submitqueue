@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it, vi } from "vitest";
-import { OpenIssuePagesProvider, OpenIssues } from "./issues.js";
+import { OpenIssuePagesProvider, OpenIssues, RequestIssues } from "./issues.js";
 import type { OpenIssueModel } from "../entity/index.js";
 
 afterEach(cleanup);
@@ -185,4 +185,31 @@ it("does not loop when a continuation repeats", async () => {
   await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
   expect(screen.getByRole("status")).toHaveTextContent("1 issue loaded");
   expect(loadPage).toHaveBeenCalledOnce();
+});
+
+it("groups request updates into new, existing and resolved without hiding unknown kinds", () => {
+  render(<RequestIssues model={{ status: "complete", firstHref: null, nextHref: "/next", issues: [
+    { taskId: "buildtest", unitId: "//pkg:new", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7" },
+    { taskId: "buildtest", unitId: "//pkg:existing", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/1" },
+    { taskId: "entrypoint", unitId: "", kind: "closed", buildId: "build/7", firstSeenBuildId: "build/2" },
+    { taskId: "future", unitId: "//pkg:unknown", kind: "future", buildId: "", firstSeenBuildId: "" },
+  ] }} />);
+  expect(screen.getByRole("table", { name: "New Issues" })).toHaveTextContent("//pkg:new");
+  expect(screen.getByRole("table", { name: "Existing Issues" })).toHaveTextContent("//pkg:existing");
+  expect(screen.getByRole("table", { name: "Resolved Issues" })).toHaveTextContent("Task-wide failure");
+  expect(screen.getByRole("table", { name: "Other Issues" })).toHaveTextContent("//pkg:unknown");
+  expect(screen.getByRole("link", { name: "Next issues →" })).toHaveAttribute("href", "/next");
+});
+
+it.each([
+  ["in_progress", "Issue recording in progress"],
+  ["incomplete", "Issue recording was abandoned"],
+  ["unavailable", "Issue results are not available"],
+  ["complete", "Issue recording complete"],
+  ["future", "Issue recording status is unknown"],
+])("distinguishes an empty request page with status %s", (status, message) => {
+  render(<RequestIssues model={{ status, firstHref: "/first", nextHref: null, issues: [] }} />);
+  expect(screen.getByRole("status")).toHaveTextContent(message);
+  expect(screen.getByText("No new issues on this page.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "First issues" })).toHaveAttribute("href", "/first");
 });

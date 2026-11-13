@@ -63,3 +63,21 @@
   margin-top: 0;
   margin-bottom: 0;
 }
+
+.sq-stovepipe-request-issues table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 48rem;
+}
+
+.sq-stovepipe-request-issues th:first-child {
+  width: 10rem;
+}
+
+.sq-stovepipe-request-issues th:nth-child(n + 3) {
+  width: 12rem;
+}
+
+.sq-stovepipe-request-issues td {
+  overflow-wrap: anywhere;
+}

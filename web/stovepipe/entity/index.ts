@@ -51,6 +51,16 @@ export interface OpenIssuesModel {
   /** Opaque continuation URL; null when no further row was observed. */
   nextHref: string | null;
 }
+export interface RequestIssuesModel {
+  /** Accepted issue updates on this page, not the queue's open-issue set. */
+  issues: { taskId: string; unitId: string; kind: string; buildId: string; firstSeenBuildId: string }[];
+  /** Backend reconciliation status; completion does not imply a green build. */
+  status: string;
+  /** First issue page for this request; null when already on it. */
+  firstHref: string | null;
+  /** Opaque continuation URL; null on the final page. */
+  nextHref: string | null;
+}
 export interface HistoryEventModel {
   /** Stable event identifier within the request. */
   id: string;
@@ -122,5 +132,6 @@ export type StovepipePageModel = PageBase &
         requestId: string;
         history: ReadResult<RequestHistoryModel>;
         projectStatus: ReadResult<ProjectStatusModel>;
+        requestIssues: ReadResult<RequestIssuesModel> | null;
       }
   );

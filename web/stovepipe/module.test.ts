@@ -22,6 +22,7 @@ const summary: RequestSummary = {
 };
 function createPageTestContext(options: Pick<StovepipeWebOptions, "resolveBuildUrl"> = {}) {
   const service: StovepipeService = {
+    getIssuesByRequestID: vi.fn().mockResolvedValue({ issues: [], status: "complete", nextPageToken: "" }),
     listOpenIssues: vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" }),
     list: vi
       .fn()
@@ -530,4 +531,35 @@ describe("Stovepipe page loading", () => {
       },
     } } });
   });
+});
+
+it("loads request issues only for their tab and preserves opaque continuation tokens", async () => {
+  const { app, service, paths } = createPageTestContext();
+  const signal = new AbortController().signal;
+  vi.mocked(service.getIssuesByRequestID).mockResolvedValue({
+    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind: "new", buildId: "runner/7", firstSeenBuildId: "runner/7" }],
+    status: "in_progress", nextPageToken: "next+/=",
+  });
+  await app.handle({ path: paths.request("repo/main", summary.requestId), search: new URLSearchParams() });
+  expect(service.getIssuesByRequestID).not.toHaveBeenCalled();
+  const result = await app.handle({ path: paths.request("repo/main", summary.requestId),
+    search: new URLSearchParams({ view: "issues", issues: "opaque+/=" }), signal });
+  expect(service.getIssuesByRequestID).toHaveBeenCalledWith(
+    { queue: "repo/main", requestId: summary.requestId, pageSize: 50, pageToken: "opaque+/=" }, { signal },
+  );
+  expect(result).toMatchObject({ kind: "render", model: { kind: "request", requestIssues: { ok: true, data: {
+    status: "in_progress", firstHref: paths.requestIssues("repo/main", summary.requestId),
+    nextHref: paths.requestIssues("repo/main", summary.requestId, "next+/="),
+    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind: "new" }],
+  } } } });
+});
+
+it("keeps request history and project results when the request issues read fails", async () => {
+  const { app, service, paths } = createPageTestContext();
+  vi.mocked(service.getIssuesByRequestID).mockRejectedValue(new Error("backend details"));
+  const result = await app.handle({ path: paths.request("repo/main", summary.requestId), search: new URLSearchParams({ view: "issues" }) });
+  expect(result).toMatchObject({ kind: "render", model: {
+    history: { ok: true }, projectStatus: { ok: true },
+    requestIssues: { ok: false, error: expect.not.stringContaining("backend details") },
+  } });
 });

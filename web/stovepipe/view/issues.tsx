@@ -7,7 +7,7 @@ import { Button, SIZE } from "baseui/button";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { HeadingSmall, ParagraphSmall } from "baseui/typography";
-import type { OpenIssueModel, OpenIssuesModel } from "../entity/index.js";
+import type { OpenIssueModel, OpenIssuesModel, RequestIssuesModel } from "../entity/index.js";
 import { Link, Table } from "./components.js";
 
 export type OpenIssuePageLoader = (href: string, signal: AbortSignal) => Promise<OpenIssuesModel>;
@@ -88,4 +88,42 @@ export function OpenIssues({ initial }: { initial: OpenIssuesModel }) {
       </Block>
     </section>
   );
+}
+
+export function RequestIssues({ model }: { model: RequestIssuesModel }) {
+  const status = model.status === "complete" ? "Issue recording complete"
+    : model.status === "in_progress" ? "Issue recording in progress. Results may change; return to the first page after recording completes."
+      : model.status === "incomplete" ? "Issue recording was abandoned. These results may be incomplete."
+        : model.status === "unavailable" ? "Issue results are not available. Recording may not have started, or this request predates retained coverage."
+          : "Issue recording status is unknown.";
+  const groups = [
+    { kind: "new", label: "New Issues" },
+    { kind: "existing", label: "Existing Issues" },
+    { kind: "closed", label: "Resolved Issues" },
+  ];
+  if (model.issues.some(issue => !groups.some(group => group.kind === issue.kind)))
+    groups.push({ kind: "unknown", label: "Other Issues" });
+  return <Block className="sq-stovepipe-request-issues">
+    <ParagraphSmall role="status" marginTop="0">{status}</ParagraphSmall>
+    {groups.map(group => {
+      const issues = model.issues.filter(issue => group.kind === "unknown"
+        ? !["new", "existing", "closed"].includes(issue.kind) : issue.kind === group.kind);
+      return <Block as="section" key={group.kind} aria-label={group.label} marginBottom="scale500">
+        <HeadingSmall as="h3" marginTop="0" marginBottom="scale300">{group.label}</HeadingSmall>
+        {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build"]}>
+          {issues.map(issue => <StyledTableBodyRow key={JSON.stringify([issue.taskId, issue.unitId])}>
+            <StyledTableBodyCell>{issue.taskId}</StyledTableBodyCell>
+            <StyledTableBodyCell>{issue.unitId ? <Block as="code" font="MonoParagraphXSmall">{issue.unitId}</Block>
+              : <Tag closeable={false} size="small" kind="neutral">Task-wide failure</Tag>}</StyledTableBodyCell>
+            <StyledTableBodyCell>{issue.firstSeenBuildId || "Unknown"}</StyledTableBodyCell>
+            <StyledTableBodyCell>{issue.buildId || "Unknown"}</StyledTableBodyCell>
+          </StyledTableBodyRow>)}
+        </Table> : <ParagraphSmall color="contentSecondary">No {group.label.toLowerCase()} on this page.</ParagraphSmall>}
+      </Block>;
+    })}
+    <Block as="nav" aria-label="Request issue pages" display="flex" flexWrap gridGap="scale500" paddingBottom="scale400">
+      {model.firstHref && <Link href={model.firstHref} scroll={false}>First issues</Link>}
+      {model.nextHref && <Link href={model.nextHref} scroll={false}>Next issues →</Link>}
+    </Block>
+  </Block>;
 }
