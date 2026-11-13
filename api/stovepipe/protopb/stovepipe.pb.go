@@ -215,7 +215,11 @@ type IngestRequest struct {
 	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
 	// Optional ENABLED or DISABLED coverage decision, independent of pause or processing.
 	// Omission or UNKNOWN preserves durable enablement.
-	Enablement    QueueEnablement `protobuf:"varint,2,opt,name=enablement,proto3,enum=uber.submitqueue.stovepipe.QueueEnablement" json:"enablement,omitempty"`
+	Enablement QueueEnablement `protobuf:"varint,2,opt,name=enablement,proto3,enum=uber.submitqueue.stovepipe.QueueEnablement" json:"enablement,omitempty"`
+	// Require a full build for the request resolved by this ingest call.
+	// Returns an invalid-argument error if that request has already left accepted.
+	// Accepted full requests remain eligible when newer heads arrive.
+	ForceFull     bool `protobuf:"varint,3,opt,name=force_full,json=forceFull,proto3" json:"force_full,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -262,6 +266,13 @@ func (x *IngestRequest) GetEnablement() QueueEnablement {
 		return x.Enablement
 	}
 	return QueueEnablement_QUEUE_ENABLEMENT_UNKNOWN
+}
+
+func (x *IngestRequest) GetForceFull() bool {
+	if x != nil {
+		return x.ForceFull
+	}
+	return false
 }
 
 // IngestResponse is the response for the Ingest method.
@@ -2851,12 +2862,14 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname\"r\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x91\x01\n" +
 	"\rIngestRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12K\n" +
 	"\n" +
 	"enablement\x18\x02 \x01(\x0e2+.uber.submitqueue.stovepipe.QueueEnablementR\n" +
-	"enablement\"s\n" +
+	"enablement\x12\x1d\n" +
+	"\n" +
+	"force_full\x18\x03 \x01(\bR\tforceFull\"s\n" +
 	"\x0eIngestResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12Q\n" +
 	"\n" +

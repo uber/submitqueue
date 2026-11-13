@@ -42,6 +42,7 @@ go_test(
     srcs = [
         "get_issues_by_request_id_test.go",
         "get_queue_status_test.go",
+        "ingest_full_test.go",
         "ingest_test.go",
         "list_consistency_test.go",
         "list_open_issues_test.go",

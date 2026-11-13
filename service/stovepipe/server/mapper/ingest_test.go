@@ -34,6 +34,11 @@ func TestProtoToIngestRequest(t *testing.T) {
 			expected: entity.IngestRequest{Queue: "monorepo/main"},
 		},
 		{
+			name:     "maps forced full validation",
+			req:      &pb.IngestRequest{Queue: "monorepo/main", ForceFull: true},
+			expected: entity.IngestRequest{Queue: "monorepo/main", ForceFull: true},
+		},
+		{
 			name:     "empty request yields zero value",
 			req:      &pb.IngestRequest{},
 			expected: entity.IngestRequest{},

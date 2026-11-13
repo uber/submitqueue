@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/id"
@@ -87,16 +88,10 @@ func NewIngestController(
 	}
 }
 
-// Ingest admits a queue's newly observed commit into the validation pipeline and returns the
-// request ID validating it, with the applied or observed enablement status.
-// An optional enablement decision records coverage; it does not pause ingestion or processing.
-//
-// It is idempotent and runs to completion on every call, each step tolerant of having already
-// run: it resolves (or claims) the (queue, URI) mapping, ensures the Request row and accepted log
-// entry exist, and publishes the request to the process stage. A retry after a partial failure —
-// for example the URI mapping committed but the request write failed — completes the missing
-// steps instead of returning a dangling reference. The (queue, URI) mapping is the dedup gate,
-// so concurrent ingests of the same head converge on one request.
+// Ingest resolves the queue's head and converges on its existing request or creates one.
+// ForceFull upgrades an accepted request before publication; later states reject it.
+// Ordinary ingestion republishes accepted requests and preserves their explicit strategy.
+// An optional enablement decision records coverage without pausing processing.
 func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest) (result entity.IngestResult, retErr error) {
 	const opName = "ingest"
 
@@ -148,13 +143,15 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 
 	// Ensure the request row exists, healing a prior partial write where the mapping committed
 	// but the request did not.
-	request, err := c.ensureRequest(ctx, store, id, queue, uri)
+	request, err := c.ensureRequest(ctx, store, id, queue, uri, req.ForceFull)
 	if err != nil {
 		return entity.IngestResult{}, err
 	}
 
 	if request.State == entity.RequestStateAccepted {
-		log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+		// A strategy update is not another acceptance; retain the original occurrence and timestamp.
+		accepted := entity.Request{ID: request.ID, Queue: request.Queue, State: entity.RequestStateAccepted, Version: 1}
+		log := requestlog.NewRequestStateLog(accepted, entity.RequestOutcomeReasonUnknown)
 		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 			return entity.IngestResult{}, fmt.Errorf("failed to record accepted state for request %s: %w", id, err)
 		}
@@ -238,14 +235,13 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 	return requestID, nil
 }
 
-// ensureRequest returns the request for id, creating it in the Accepted state if it does not yet
-// exist. A concurrent creator (ErrAlreadyExists) is resolved by re-reading the canonical row.
-func (c *IngestController) ensureRequest(ctx context.Context, store storage.Storage, id, queue, uri string) (entity.Request, error) {
+// ensureRequest converges on the request row and applies a full override only while accepted.
+func (c *IngestController) ensureRequest(ctx context.Context, store storage.Storage, id, queue, uri string, forceFull bool) (entity.Request, error) {
 	reqStore := store.GetRequestStore()
 
 	got, err := reqStore.Get(ctx, id)
 	if err == nil {
-		return got, nil
+		return c.ensureFullStrategy(ctx, reqStore, got, forceFull)
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
 		return entity.Request{}, fmt.Errorf("failed to load request %s: %w", id, err)
@@ -258,14 +254,55 @@ func (c *IngestController) ensureRequest(ctx context.Context, store storage.Stor
 		State:   entity.RequestStateAccepted,
 		Version: 1,
 	}
+	if forceFull {
+		request.BuildStrategy = entity.BuildStrategyFull
+	}
 	if err := reqStore.Create(ctx, request); err != nil {
 		if !errors.Is(err, storage.ErrAlreadyExists) {
 			return entity.Request{}, fmt.Errorf("failed to persist request %s: %w", id, err)
 		}
 		// Raced with a concurrent creator; read the canonical row.
-		return reqStore.Get(ctx, id)
+		got, getErr := reqStore.Get(ctx, id)
+		if getErr != nil {
+			return entity.Request{}, getErr
+		}
+		return c.ensureFullStrategy(ctx, reqStore, got, forceFull)
 	}
 	return request, nil
+}
+
+func (c *IngestController) ensureFullStrategy(ctx context.Context, reqStore storage.RequestStore, request entity.Request, forceFull bool) (entity.Request, error) {
+	if !forceFull {
+		return request, nil
+	}
+	for {
+		if request.State != entity.RequestStateAccepted {
+			return entity.Request{}, fmt.Errorf("cannot force full request %s in state %q: %w", request.ID, request.State, ErrInvalidRequest)
+		}
+		if request.BuildStrategy == entity.BuildStrategyFull && request.BaseURI == "" {
+			return request, nil
+		}
+		if request.Version == math.MaxInt32 {
+			return entity.Request{}, fmt.Errorf("request version exhausted")
+		}
+		updated := request
+		updated.BuildStrategy = entity.BuildStrategyFull
+		updated.BaseURI = ""
+		newVersion := request.Version + 1
+		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				got, getErr := reqStore.Get(ctx, request.ID)
+				if getErr != nil {
+					return entity.Request{}, fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
+				}
+				request = got
+				continue
+			}
+			return entity.Request{}, fmt.Errorf("failed to force full request %s: %w", request.ID, err)
+		}
+		updated.Version = newVersion
+		return updated, nil
+	}
 }
 
 // ensureQueue returns the queue row for name, creating it if it does not yet exist.

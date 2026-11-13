@@ -23,12 +23,12 @@ For a delivery carrying request id `R`:
 3. If R.State is processing (strategy already recorded):
    - re-announce validation start and re-publish R to build, ack, return.
 4. R.State is accepted. Load the Queue row Q.
-5. Coalesce: if CompareRequestID(R.Queue, R.ID, Q.latest_request_id) < 0:
+5. Coalesce: if R.build_strategy is not full and CompareRequestID(R.ID, Q.latest_request_id) < 0:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
-6. R is the latest head. Gate: if Q.in_flight_count >= max_concurrent (from queue config; see below):
-   - defer (hold the delivery) -> re-check on redelivery until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
+6. R is the latest head or explicitly full. Gate: if Q.in_flight_count >= max_concurrent (from queue config; see below):
+   - defer (hold the delivery) -> re-check on redelivery until the slot frees (admit) or a newer head supersedes an ordinary request. See [Waiting for a slot](#waiting-for-a-slot).
 7. Admit R:
-   a. Derive build strategy + baseline (see "Build-strategy decision").
+   a. Honor an explicit full strategy; otherwise derive strategy + baseline (see "Build-strategy decision").
    b. Register the tracking job, then CAS the Queue version to revalidate this head.
       - version conflict -> hold for immediate redelivery, rechecking the head and gate from step 1.
    c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
@@ -39,13 +39,13 @@ For a delivery carrying request id `R`:
    g. ack.
 ```
 
-Step 5 runs before the gate: an accepted intermediate head is superseded even when all build slots are occupied, because superseding consumes no slot.
+Step 5 runs before the gate: an accepted intermediate head without an explicit full strategy is superseded even when all build slots are occupied, because superseding consumes no slot. Accepted full requests remain eligible and wait for capacity.
 
 Step 7b reserves the request's place in [issue tracking](../../../../stovepipe/controller/issuetrack/README.md#validation-order) before its build can start. The Queue-version CAS checks that no newer head overtook the registration. If the request is superseded before admission, its tracking job is acknowledged without updating issues.
 
 ## Build-strategy decision
 
-To admit a Request (step 7a), `process` reads the Queue's **last-green URI** and asks the same `SourceControl` implementation ingest uses:
+To admit a Request (step 7a), `process` first honors an existing full strategy with no baseline. Otherwise it reads the Queue's **last-green URI** and asks the same `SourceControl` implementation ingest uses:
 
 1. **No** last-green URI (cold start) → **full**, no baseline.
 2. Last-green URI present → call `SourceControl.IsAncestor(lastGreen, R.URI)`:
@@ -54,7 +54,7 @@ To admit a Request (step 7a), `process` reads the Queue's **last-green URI** and
    - **`ErrNotFound`** — a URI isn't on the ref (ancestry uncertainty). A full build is always a valid superset, so fall back to **full** and log a warning; not a retryable error.
    - **any other error** (connection/timeout) — return it raw; the consumer's classifier decides retryability (see [errs](../../../../platform/errs/README.md)).
 
-Strategy and baseline are persisted on the Request and are **immutable**: a redelivery sees `processing` at step 3 and never re-derives them. `SourceControl` owns ancestry; `process` never parses a URI.
+Strategy and baseline are **immutable once processing**: a redelivery sees `processing` at step 3 and never re-derives them. `SourceControl` owns ancestry; `process` never parses a URI.
 
 ## Per-Queue concurrency gate
 
@@ -95,7 +95,7 @@ So per-baseline concurrency isn't an unsolved semantics problem — it's specula
 
 ## Backlog coalescing
 
-While a validation runs, ingest keeps admitting newer heads (distinct Requests, deduped on `(Queue, URI)`). Only the **latest** is worth validating; intermediates are skipped.
+While a validation runs, ingest keeps admitting newer heads (distinct Requests, deduped on `(Queue, URI)`). Ordinary requests coalesce to the **latest** head; accepted requests with an explicit full strategy remain eligible even when newer heads exist. A full override stays on its selected request and does not grant admission priority.
 
 "Latest" is the **monotonic ingest order**, not VCS history:
 
@@ -122,8 +122,8 @@ The gate is **not** tied to `process` returning; a slot taken at admit is held u
 
 1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `record` decrements on terminal.
 2. **No skip-ahead while in-flight.** The latest head waits for a slot until the running validation completes; it never preempts.
-3. **Intermediates are superseded on sight**, gate open or closed — no slot consumed (step 5).
-4. **Coalesce-to-latest on gate open.** When a slot frees, the waiting latest head is admitted.
+3. **Ordinary intermediates are superseded on sight**, gate open or closed — no slot consumed (step 5).
+4. **Coalesce-to-latest except explicit full requests.** When a slot frees, an eligible waiting request is admitted.
 5. **The cycle repeats** for whatever accumulated during the previous validation.
 
 **Worked example** — Queue `monorepo/main`, `max_concurrent = 1`, poller reporting heads A→F:
