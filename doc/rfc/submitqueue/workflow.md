@@ -4,7 +4,7 @@ The orchestrator processes land requests through the queue-driven pipeline decla
 
 Two cycles re-enter speculation. `speculate` dispatches funded paths to `build`; `build` starts each pending path and publishes the build id to `buildsignal`; `buildsignal` polls with `delivery.Hold` and, when the status changes, publishes the batch id back to `speculate`. A batch that can land is published to `submitqueue-land`, which sends the merge request to Runway; `landsignal` correlates the result, marks the batch Succeeded or Failed, and fans out to `conclude` and `speculate`. `speculate` also publishes Failed and Cancelled batches straight to `conclude`.
 
-Terminal request states are not `conclude`'s alone. `cancel` completes a request that has not been enrolled in a batch. `landconflictsignal` fails a request Runway reports as conflicted. `conclude` maps a terminal batch onto its member requests. The DLQ reconcilers force a failed terminal state when a consumed stage cannot finish.
+Terminal request states are not `conclude`'s alone. `cancel` completes a request that has not been enrolled in a batch. `landconflictsignal` fails a request Runway reports as conflicted. `conclude` maps a terminal batch onto its member requests. Most DLQ reconcilers force a failed terminal state when a consumed stage cannot finish; conclude’s final reconciler preserves the batch’s authoritative outcome.
 
 The same `Stages` table registers a `submitqueue-hook` stage, outside the order of the flow above. It consumes hook events and invokes the wired hooks, and it publishes nothing onward. No orchestrator controller publishes a hook event; `service/submitqueue/orchestrator/server` resolves every event to noop. The comment on that row in `pipeline.go` is the contract: any stage can publish there.
 
@@ -163,6 +163,8 @@ Every consumed stage in `pipeline.go` is paired with a `{topic}_dlq` subscriptio
 DLQ handlers do not resume the failed request's normal workflow. They reconcile terminal state and its outputs, preserving authoritative terminal winners. The generic request reconciler also preserves valid downstream batch ownership. The [DLQ package guide](../../../submitqueue/orchestrator/controller/dlq/README.md) defines the reconcile-only boundary, handler-specific dispositions, and named limits; the [stage table](../../../submitqueue/orchestrator/pipeline.go) defines the bindings. Unlimited final retries protect reconciliation, not another business retry budget.
 
 The start DLQ reports a failed submission through an Error request log with version 0 when no Request was saved. Existing rows retain their ownership, terminal-outcome, and conditional-write protections.
+
+The conclude DLQ repairs terminal membership and uses primary conclusion’s shared member fan-out: Succeeded becomes Landed, Failed becomes Error, and Cancelled becomes Cancelled. It never infers a merge failure from a failed conclusion. Non-terminal batches (including Landing), missing batches or members, malformed payload identities, and partial writes/publishes remain in the final queue until resolved. Newly failed members receive the original message’s failure reason, never an incidental DLQ infrastructure error; matching terminal members repair their status logs, and different terminal winners remain unchanged.
 
 The narrow speculate nudge concerns other live batches after culprit failure; it never reopens the failed batch. Hook DLQ is report-and-stop, with side-effect recovery left to a person. Neither authorizes replay of the failed business command.
 
