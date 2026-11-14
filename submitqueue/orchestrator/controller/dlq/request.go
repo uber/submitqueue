@@ -34,21 +34,11 @@ import (
 
 // RequestIDDecoder extracts the affected request's identity — its ID and its
 // queue — from the raw payload bytes of a DLQ message. Different primary
-// topics carry different payload shapes (LandRequest on start, CancelRequest
-// on cancel, RequestID on validate / batch), so the caller injects the right
+// topics carry different payload shapes (CancelRequest on cancel, RequestID
+// on validate / batch), so the caller injects the right
 // decoder for the topic being reconciled. Returning an empty ID is treated as
 // a decode failure.
 type RequestIDDecoder func(payload []byte) (entity.RequestID, error)
-
-// DecodeLandRequestID extracts the request ID from a LandRequest payload
-// (the shape used by the start topic).
-func DecodeLandRequestID(payload []byte) (entity.RequestID, error) {
-	lr, err := sqmq.UnmarshalLandRequest(payload)
-	if err != nil {
-		return entity.RequestID{}, err
-	}
-	return entity.RequestID{ID: lr.ID, Queue: lr.Queue}, nil
-}
 
 // DecodeCancelRequestID extracts the request ID from a CancelRequest payload
 // (the shape used by the cancel topic).
