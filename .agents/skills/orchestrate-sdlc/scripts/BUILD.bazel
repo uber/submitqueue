@@ -1,0 +1,27 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+filegroup(
+    name = "watch-control-source",
+    srcs = ["watch_control.py"],
+    visibility = ["//.agents/skills/orchestrate-sdlc:__pkg__"],
+)
+
+py_binary(
+    name = "watch-control",
+    srcs = ["watch_control.py"],
+    legacy_create_init = 0,
+    main = "watch_control.py",
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "watch-control-test",
+    size = "small",
+    srcs = [
+        "watch_control.py",
+        "watch_control_test.py",
+    ],
+    imports = ["."],
+    legacy_create_init = 0,
+    main = "watch_control_test.py",
+)
