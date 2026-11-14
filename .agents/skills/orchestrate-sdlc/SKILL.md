@@ -7,6 +7,8 @@ description: Coordinate an issue-to-PR campaign through independent subagents, d
 
 Act as the orchestrator: retain the user's decisions, delegate implementation to issue owners, maintain the campaign ledger, arrange independent review, and coordinate publication and merges. Do not become the shared checkout in which every agent edits.
 
+Timestamp all displayed outputs, not just `PEW`: include the date, local time, and short timezone abbreviation, for example `2026-11-14 09:30 UTC`. Use the user's configured timezone or the environment's local timezone; state which is in use rather than guessing. Display deadlines and event times locally too. Store absolute UTC timestamps in durable state; raw machine records are not presentation output.
+
 Read [workflow.md](references/workflow.md) when starting a campaign or dispatching changes. Read [watch.md](references/watch.md) for watch commands, event handling, and merge gates. These references are the maintained instruction set, not a transcript of past implementations.
 
 ## Start a campaign
@@ -34,9 +36,18 @@ The [watch control helper](scripts/watch_control.py) implements durable start/st
 
 ## PEW dashboard
 
-Print one compact table, ordered by issue priority, with columns such as `Issue / scope | Subagent | PR | State / CI / blocker`. Show every nonarchived agent by name, including dormant/completed owners, researchers, and agents with no PR. An issue owner with several PRs may occupy several rows.
+Prefer one row per agent, including dormant/completed owners, researchers, and agents without PRs. Consolidate the worker-state marker, subagent name, and issue ID/work in the first field. Use these separate columns:
 
-Omit archived review-agent names and show their aggregate count instead; retain their reports and transcripts. Do not wake agents merely to list them. Show fresh PR state, real dependencies, skipped versus passing CI, and the watch's active/stopped state and absolute UTC deadline. Mark unavailable or stale data unknown rather than inventing a current state.
+`Worker / agent / issue-work | PR number | PR link | PR state / CI | Agent state / next step`
+
+- Sort by the most recent meaningful work-item update, newest first, not issue priority. Code changes, PR/check-state transitions, new/edited comments, agent responses, and new agent instructions qualify. Persist the event time and last action; read-only polls, unchanged snapshots, and `PEW` itself do not bump the order.
+- Worker markers: 🔵 `working` (executing assigned work), ⚪ `dormant` (idle/awaiting an event), 🟡 `waiting` (known dependency or operator decision), 🔴 `blocked/error` (cannot proceed or failed), 🟢 `complete` (assigned work finished, retained for visibility). Always include text; color alone is insufficient, and worker state is independent of PR state.
+- PR markers: 🟣 `Draft`, 🔵 `Ready`, 🟢 `Merged`, ⚫ `Closed` (unmerged), ⚪ `Unknown`. Show approval separately when known; `Ready` is not approval or merge eligibility. CI markers: 🟢 `pass` (all required checks explicitly passed on the current head), 🟡 `pending`, 🔴 `fail`, ⚪ `skipped`/`absent`/`unknown` (name the actual state). Preserve the raw result of any authorized exception rather than coloring it as passed.
+- The final column explicitly includes `Operator input: YES/NO`, the next step, and `Last action: <action + local timestamp>`. Use `YES` when a PR comment or agent response awaits a decision, any PR comment remains unresolved, or a Draft awaits operator review. Link the decision/comment where possible. A fixing reply is not proof that a human thread is resolved; do not infer `NO` just because the worker is dormant.
+- Put `—` in both PR columns for agents without PRs. For several PRs, keep number/link/state entries aligned within the same row; split only when needed to show different work-item states clearly. Render a merged work item's entire row with strikethrough, applying `~~…~~` to every cell while retaining readable links; do not strike through active work sharing an owner.
+- Omit archived review-agent names and show their aggregate count instead; retain their reports and transcripts. Merged implementer owners become eligible for archival and removal from the active ledger only after one week from merge, with no active assignment, unresolved follow-up, or other/shared PR ownership. Preserve their full historical record before removal; age alone never archives an active owner.
+
+Do not wake agents merely to list them. Show fresh PR state, real dependencies, skipped versus passing CI, and the watch's active/stopped state and fixed deadline in local time with its timezone. Mark unavailable or stale data unknown rather than inventing a current state.
 
 Persist later user customizations to the command, columns, scope, or archive display. `PEW` is read-only: it never grants mutation authority, restarts a watcher, or renews a watch window.
 
@@ -44,6 +55,6 @@ Persist later user customizations to the command, columns, scope, or archive dis
 
 An owner reports the issue/event, result (`fixed`, `no_fix_needed`, `fix_failed`, or `fixer_error`), exact published head, verification, reply IDs, preserved PR state, and remaining blockers. Arrange independent review of first code publication and substantive updates, including a smaller/lower-complexity alternative check.
 
-Archive completed review agents after their report is consolidated, retaining evidence. Keep ordinary dormant owners and non-PR agents in the registry and dashboard. Never delete history, dirty worktrees, or ongoing work merely to free concurrency.
+Archive completed review agents after their report is consolidated, retaining evidence. Keep ordinary dormant owners and non-PR agents in the registry and dashboard until eligible for the merged-owner archival rule above. Never delete history, dirty worktrees, or ongoing work merely to free concurrency.
 
 This skill has one canonical directory in `.agents/skills`; the `.claude/skills` symlink exposes the same instructions to Claude Code. Both tools' official discovery documentation supports symlinked skill folders: [Codex](https://learn.chatgpt.com/docs/build-skills) and [Claude Code](https://code.claude.com/docs/en/skills).
