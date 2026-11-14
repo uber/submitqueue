@@ -27,3 +27,11 @@ Terminal-state records (and their batches) accumulate as the queue processes wor
 ### Composite primary key: `(queue, uri, request_id)`
 
 The `change` table records per-URI claims by in-flight requests. `request_id` is part of the primary key so that concurrent claims on the same URI by different requests coexist as distinct rows — a same-request retry collides on the PK and is a no-op (`INSERT IGNORE`), while a different-request claim is a new row that `GetByURI` surfaces for overlap detection. `queue` leads the key so queue-scoped lookups are primary-key-prefix scans and the table is shardable by queue.
+
+## dlq_reconciliation table
+
+`dlq_reconciliation` stores final-message reconciliation snapshots under `(queue, source_topic, source_partition_key, source_message_id)`, with no secondary indexes or lookup by the generated record ID. The record ID and source identity are immutable; mutable fields are replaced under the record ID and explicit version guard. The store rejects another queue's snapshot and reads from the primary under the storage read-after-write contract.
+
+Queue and logical topic use `VARBINARY(255)` to preserve exact bytes, including trailing spaces. Opaque partition and message IDs use `VARCHAR(255)` with MySQL 8's `utf8mb4_0900_bin` NO PAD collation; unlike legacy binary collations, it does not equate an identifier with its trailing-space variant. The primary key's maximum payload is 2,550 bytes (255 + 255 + 1,020 + 1,020), below InnoDB's 3,072-byte limit. Identifiers are stored directly, never hashed or re-encoded.
+
+This additive table supplies persistence only; no final handler or planner uses it yet. Keep pending and completed rows independently of message-row garbage collection, including during rollout and rollback. Removing application access does not authorize dropping records: acknowledgment-loss replay needs the completed markers.

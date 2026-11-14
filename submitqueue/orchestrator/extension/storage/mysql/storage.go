@@ -59,6 +59,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		queueBatchStateStore:    NewQueueBatchStateStore(s.db, s.scope.SubScope("queue_batch_state_store"), queueName),
 		buildStore:              NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
 		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store"), queueName),
+		dlqReconciliationStore:  NewDLQReconciliationStore(s.db, s.scope.SubScope("dlq_reconciliation_store"), queueName),
 		pathBuildStore:          NewPathBuildStore(s.db, s.scope.SubScope("path_build_store"), queueName),
 	}, nil
 }
@@ -78,6 +79,7 @@ type boundStorage struct {
 	queueBatchStateStore    basestorage.QueueBatchStateStore
 	buildStore              basestorage.BuildStore
 	speculationPathSetStore basestorage.SpeculationPathSetStore
+	dlqReconciliationStore  basestorage.DLQReconciliationStore
 	pathBuildStore          basestorage.PathBuildStore
 }
 
@@ -127,4 +129,9 @@ func (f *boundStorage) GetSpeculationPathSetStore() basestorage.SpeculationPathS
 // GetPathBuildStore returns the bound MySQL-backed PathBuildStore.
 func (f *boundStorage) GetPathBuildStore() basestorage.PathBuildStore {
 	return f.pathBuildStore
+}
+
+// GetDLQReconciliationStore returns the bound MySQL-backed reconciliation store.
+func (f *boundStorage) GetDLQReconciliationStore() basestorage.DLQReconciliationStore {
+	return f.dlqReconciliationStore
 }
