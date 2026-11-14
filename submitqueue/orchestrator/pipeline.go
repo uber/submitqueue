@@ -120,7 +120,7 @@ var Stages = []pipeline.Stage[Deps]{
 			return cancel.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeCancelRequestID, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQCancelController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{

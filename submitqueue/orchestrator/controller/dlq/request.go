@@ -29,15 +29,12 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	corebatch "github.com/uber/submitqueue/submitqueue/orchestrator/core/batch"
+	requestcore "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
 	"go.uber.org/zap"
 )
 
-// RequestIDDecoder extracts the affected request's identity — its ID and its
-// queue — from the raw payload bytes of a DLQ message. Different primary
-// topics carry different payload shapes (LandRequest on start, CancelRequest
-// on cancel, RequestID on validate / batch), so the caller injects the right
-// decoder for the topic being reconciled. Returning an empty ID is treated as
-// a decode failure.
+// RequestIDDecoder extracts a request's ID and queue from a request-scoped
+// DLQ payload. Returning an empty ID is treated as a decode failure.
 type RequestIDDecoder func(payload []byte) (entity.RequestID, error)
 
 // DecodeLandRequestID extracts the request ID from a LandRequest payload
@@ -50,14 +47,13 @@ func DecodeLandRequestID(payload []byte) (entity.RequestID, error) {
 	return entity.RequestID{ID: lr.ID, Queue: lr.Queue}, nil
 }
 
-// DecodeCancelRequestID extracts the request ID from a CancelRequest payload
-// (the shape used by the cancel topic).
+// DecodeCancelRequestID extracts the request identity from a cancellation payload.
 func DecodeCancelRequestID(payload []byte) (entity.RequestID, error) {
-	cr, err := sqmq.UnmarshalCancelRequest(payload)
+	request, err := sqmq.UnmarshalCancelRequest(payload)
 	if err != nil {
 		return entity.RequestID{}, err
 	}
-	return entity.RequestID{ID: cr.ID, Queue: cr.Queue}, nil
+	return entity.RequestID{ID: request.ID, Queue: request.Queue}, nil
 }
 
 // DecodeRequestID extracts the request ID from a validate or batch payload.
@@ -69,18 +65,17 @@ func DecodeRequestID(primary consumer.TopicKey) RequestIDDecoder {
 }
 
 // requestController is the DLQ reconciler for request-scoped pipeline stages.
-// It is registered once per primary request-scoped topic (cancel, validate,
-// batch) with the matching decoder. On each delivery it decodes the
-// request ID and transitions the request to RequestStateError, unless a live
-// batch already owns the request's outcome.
+// It uses the matching decoder for cancel, validate, or batch and fails the
+// request unless a batch already owns its outcome.
 type requestController struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	stores        orchstorage.Factory
-	registry      consumer.TopicRegistry
-	decode        RequestIDDecoder
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger               *zap.SugaredLogger
+	metricsScope         tally.Scope
+	stores               orchstorage.Factory
+	registry             consumer.TopicRegistry
+	decode               RequestIDDecoder
+	topicKey             consumer.TopicKey
+	consumerGroup        string
+	retainMissingRequest bool
 }
 
 // Verify requestController implements consumer.Controller at compile time.
@@ -98,6 +93,17 @@ func NewDLQRequestController(
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
+	return newRequestController(logger, scope, stores, registry, decode, topicKey, consumerGroup)
+}
+
+// NewDLQCancelController reconciles only Error; missing Requests remain durable until they exist.
+func NewDLQCancelController(logger *zap.SugaredLogger, scope tally.Scope, stores orchstorage.Factory, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) consumer.Controller {
+	controller := newRequestController(logger, scope, stores, registry, DecodeCancelRequestID, topicKey, consumerGroup)
+	controller.retainMissingRequest = true
+	return controller
+}
+
+func newRequestController(logger *zap.SugaredLogger, scope tally.Scope, stores orchstorage.Factory, registry consumer.TopicRegistry, decode RequestIDDecoder, topicKey consumer.TopicKey, consumerGroup string) *requestController {
 	name := string(topicKey) + "_controller"
 	return &requestController{
 		logger:        logger.Named(name),
@@ -151,33 +157,70 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	// A batch that got as far as enrolling the request owns its outcome, and
-	// conclude writes that outcome when the batch finishes. This dead letter can
-	// be a redundant attempt whose predecessor is already speculating — the batch
-	// stage mints one batch per delivery — and TerminateRequest does not guard
-	// against Batched, so failing the request here would overwrite a live batch's
-	// claim and leave it building for a request reported as failed.
-	owner, err := owningBatch(ctx, store, rid.ID)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1, metrics.TagsFromContext(ctx)...)
+	if c.retainMissingRequest {
+		err := c.reconcileCancelRequest(ctx, delivery, store, rid.ID, lastError, failureMeta)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
+		}
 		return err
 	}
-	if owner != "" {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_owned_by_batch", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("dlq reconcile: batch owns the request outcome, leaving completion to conclude",
-			"request_id", rid.ID,
-			"batch_id", owner,
-		)
-		return nil
+	owned, err := c.requestHasOwningBatch(ctx, store, rid.ID)
+	if err != nil || owned {
+		return err
 	}
-
 	if err := failRequest(ctx, store, c.registry, c.logger, rid.ID, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
-
 	return nil
 }
+
+func (c *requestController) reconcileCancelRequest(ctx context.Context, delivery consumer.Delivery, store orchstorage.Storage, requestID, lastError string, metadata map[string]string) error {
+	request, err := store.GetRequestStore().Get(ctx, requestID)
+	if errors.Is(err, storage.ErrNotFound) {
+		metrics.NamedCounter(c.metricsScope, "process", "waiting_for_request", 1, metrics.TagsFromContext(ctx)...)
+		delivery.Hold(waitForRequestDelayMs)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to load request for cancel reconciliation: %w", err)
+	}
+	if request.State == entity.RequestStateError {
+		return requestcore.ResendTerminalRequestLog(ctx, c.registry, request)
+	}
+	if entity.IsRequestStateTerminal(request.State) {
+		return nil
+	}
+	owned, err := c.requestHasOwningBatch(ctx, store, requestID)
+	if err != nil || owned {
+		return err
+	}
+	request.State = entity.RequestStateError
+	newVersion := request.Version + 1
+	// The version observed before owner lookup fences a later batch claim.
+	if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
+		return fmt.Errorf("failed to fail cancelled request %s: %w", requestID, err)
+	}
+	request.Version = newVersion
+	entry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusError, request.Version, lastError, metadata)
+	return requestcore.PublishLog(ctx, c.registry, entry, request.ID, "")
+}
+
+func (c *requestController) requestHasOwningBatch(ctx context.Context, store orchstorage.Storage, requestID string) (bool, error) {
+	owner, err := owningBatch(ctx, store, requestID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, "process", "batch_lookup_errors", 1, metrics.TagsFromContext(ctx)...)
+		return false, err
+	}
+	if owner == "" {
+		return false, nil
+	}
+	metrics.NamedCounter(c.metricsScope, "process", "skipped_owned_by_batch", 1, metrics.TagsFromContext(ctx)...)
+	c.logger.Infow("dlq reconcile: batch owns the request outcome, leaving completion to conclude", "request_id", requestID, "batch_id", owner)
+	return true, nil
+}
+
+const waitForRequestDelayMs int64 = 1000
 
 // owningBatch returns a batch that is still running or whose result has not been recorded on the request yet.
 // Creating batches must have claimed the request; failed batches do not stop it from being marked Error.
