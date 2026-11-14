@@ -24,8 +24,6 @@ import (
 
 // ResendTerminalRequestLog resends the request's terminal status without another state write.
 // The log identifies the resend; original diagnostics may be unavailable.
-// For example, validation can store Error and crash before publishing its status log.
-// Redelivery must resend the status without another request-state write.
 func ResendTerminalRequestLog(ctx context.Context, registry consumer.TopicRegistry, request entity.Request) error {
 	status, err := terminalStateToStatus(request.State)
 	if err != nil {
