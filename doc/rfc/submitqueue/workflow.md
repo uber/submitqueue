@@ -162,6 +162,8 @@ Every consumed stage in `pipeline.go` is paired with a `{topic}_dlq` subscriptio
 
 DLQ handlers do not resume the failed request's normal workflow. They reconcile terminal state and its outputs, preserving authoritative terminal winners. The generic request reconciler also preserves valid downstream batch ownership. The [DLQ package guide](../../../submitqueue/orchestrator/controller/dlq/README.md) defines the reconcile-only boundary, handler-specific dispositions, and named limits; the [stage table](../../../submitqueue/orchestrator/pipeline.go) defines the bindings. Unlimited final retries protect reconciliation, not another business retry budget.
 
+The start DLQ reports a failed submission through an Error request log with version 0 when no Request was saved. Existing rows retain their ownership, terminal-outcome, and conditional-write protections.
+
 The narrow speculate nudge concerns other live batches after culprit failure; it never reopens the failed batch. Hook DLQ is report-and-stop, with side-effect recovery left to a person. Neither authorizes replay of the failed business command.
 
 The orchestrator publishes terminal status logs and the gateway alone materializes them; replaying a log into gateway read models is not orchestration restart. Runway owns failure-result publication for dead letters on its inbound merge queues, without rerunning the merge.
