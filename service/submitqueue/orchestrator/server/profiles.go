@@ -30,6 +30,7 @@ import (
 	"context"
 
 	platformbuildkite "github.com/uber/submitqueue/platform/buildkite"
+	"github.com/uber/submitqueue/platform/conduit"
 	"github.com/uber/submitqueue/platform/extension/gitworkspace"
 	gitworkspacelocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
 	gitrepo "github.com/uber/submitqueue/platform/git/repo"
@@ -592,26 +593,21 @@ func (b *profileBuilder) newGitHubChangeProvider(cfg githubProviderConfig, where
 
 // newPhabChangeProvider returns a function building the Phabricator change
 // provider for a given queue, or nil when its token is unset. As with GitHub,
-// the HTTP client is built once here.
+// the Conduit client is built once here.
 func (b *profileBuilder) newPhabChangeProvider(cfg phabProviderConfig, where string) (func(changeprovider.Config) changeprovider.ChangeProvider, error) {
 	token, ok := tokenFrom(cfg.TokenEnv)
 	if !ok {
 		return nil, nil
 	}
-	client, err := http.NewClient(cfg.Endpoint)
+	conduitClient, err := b.conduitClient(cfg.Endpoint, cfg.Timeout, token, where)
 	if err != nil {
-		return nil, fmt.Errorf("%s: failed to build Phabricator HTTP client: %w", where, err)
+		return nil, err
 	}
-	client.Timeout = timeoutOr(cfg.Timeout, defaultHTTPTimeout)
-
-	baseTransport := client.Transport.(*http.BaseURLTransport)
-	baseTransport.Next = &apiTokenTransport{token: token, next: baseTransport.Next}
-
 	scope := b.scope.SubScope("changeprovider.phabricator")
 	return func(c changeprovider.Config) changeprovider.ChangeProvider {
 		return phabprovider.NewProvider(phabprovider.Params{
 			Config:       c,
-			HTTPClient:   client,
+			Conduit:      conduitClient,
 			Logger:       b.logger.Sugar(),
 			MetricsScope: scope,
 		})
@@ -873,17 +869,14 @@ func (b *profileBuilder) githubClient(baseURL, timeout, token, where string) (*n
 	return client, nil
 }
 
-// apiTokenTransport injects a Phabricator API token as a query parameter in
-// each request.
-type apiTokenTransport struct {
-	token string
-	next  nethttp.RoundTripper
-}
-
-func (t *apiTokenTransport) RoundTrip(req *nethttp.Request) (*nethttp.Response, error) {
-	r := req.Clone(req.Context())
-	q := r.URL.Query()
-	q.Set("api.token", t.token)
-	r.URL.RawQuery = q.Encode()
-	return t.next.RoundTrip(r)
+// conduitClient builds a Conduit client rooted at a Phabricator host. It is the
+// counterpart of githubClient: Conduit reads its token from the request body,
+// so the token goes to the client rather than to a transport.
+func (b *profileBuilder) conduitClient(endpoint, timeout, token, where string) (*conduit.Client, error) {
+	client, err := http.NewClient(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build Phabricator HTTP client: %w", where, err)
+	}
+	client.Timeout = timeoutOr(timeout, defaultHTTPTimeout)
+	return conduit.NewClient(client, token), nil
 }
