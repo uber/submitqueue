@@ -16,6 +16,8 @@ Dead letters have exhausted the primary retry budget or returned a non-retryable
 
 Disposition remains handler-specific: the generic request/batch reconcilers acknowledge missing entities; buildsignal also acknowledges a missing build or empty batch ID. Decode errors returned by these handlers remain retryable and may need operator removal. Payload/tenant mismatches are acknowledged, while invalid envelope tenant metadata is rejected before controller error processing. The shared hook handler reports and acknowledges even undecodable events. Final retry policy therefore does not promise retention of every poison message or recreation of every missing entity.
 
+Start reports the failed submission through an Error request log with version 0, because there is no saved Request version. No normal work is published. Reconciliation validates the request identity and queue; existing rows retain authoritative-identity, batch-ownership, terminal-winner, and conditional-write guards.
+
 ## Terminal outputs and ownership
 
 - An already-Error request skips the state CAS but republishes its terminal status log. A different terminal request outcome is left unchanged. This repairs status delivery, not the original diagnostic content or timestamp.
@@ -29,7 +31,7 @@ Request logs are published to `log`; the gateway alone materializes them into it
 
 The [stage table](../../pipeline.go) is the source of truth rather than a second topology table here:
 
-- `start`, `cancel`, `validate`, and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
+- `start` uses dedicated request reconciliation; `cancel`, `validate`, and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
 - `dependency-analysis`, `build`, `submitqueue-land`, and `conclude` use generic batch reconciliation.
 - `buildsignal` carries a build-ID payload, not a full Build. Its handler loads the build to find the batch and leaves build status untouched. The two Runway signal handlers read a request or batch correlation ID from `MergeResult`.
 - **Speculation queue-isolation nudge:** after failing attributed culprit work (or the labelled payload fallback), a delivery that transitioned a batch may nudge `speculate` with another live batch. The primary re-derives current queue state; the failed batch is not reopened. This narrow protection for other work does not authorize replay of the dead-lettered command or guarantee a nudge after every partial reconciliation failure.
