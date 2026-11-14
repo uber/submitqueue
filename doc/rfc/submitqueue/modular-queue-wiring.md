@@ -156,10 +156,9 @@ var Stages = []pipeline.Stage[Deps]{
         New: func(d Deps) (consumer.Controller, error) {
             return start.NewController(d.Logger, d.Scope, d.Storage, d.Queues), nil
         },
-        DLQ: func(d Deps) (consumer.Controller, error) {
-            return dlq.NewRequestController(d.Logger, d.Scope, d.Storage,
-                dlq.DecodeLandRequestID, dlq.TopicKey(topickey.Start),
-                "orchestrator-start-dlq"), nil
+        DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
+            return dlq.NewDLQStartController(d.Logger, d.Scope, d.Storage,
+                sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
         },
     },
     { Key: topickey.Validate, /* same shape */ },
