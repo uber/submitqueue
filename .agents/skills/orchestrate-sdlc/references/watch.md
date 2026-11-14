@@ -6,6 +6,8 @@ Keep one campaign ledger outside tracked files. The orchestrator is its writer; 
 
 Keep these records separate: `agents` includes each name/ID, role, task, worktree, PRs, live/dormant state, and archive flag; `prs` includes the current head, readiness, dependencies, and owner; `permissions`, `feedback`, `reply_ids`, `cursors`, `budgets`, and `operations` retain their corresponding evidence. Register watcher/receiver identities and verification evidence under `watch.runtime`, tagged with the current run ID.
 
+Record per-work-item last meaningful update time, last action, and whether operator input is required. A new event or instruction changes that record; an unchanged poll or `PEW` does not. Store absolute UTC times and render all displayed event/deadline/status output with local date, time, and short timezone abbreviation. After one week from merge, an inactive implementer with no other/shared ownership or unresolved follow-up may leave the active ledger only after its complete record is preserved in history.
+
 The control helper changes only the ledger's `watch`/`watch_history` fields and preserves other fields. It uses POSIX file locking and atomic replacement; use it from a POSIX checkout such as the repository's supported Linux environment. Run it through Bazel from the repository root:
 
 ```bash
