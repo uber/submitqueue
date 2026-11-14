@@ -45,13 +45,15 @@
 // Concurrent producers surface as the intrinsically retryable
 // storage.ErrVersionMismatch; the controller returns the wrapped error as-is
 // so the next attempt sees the new state and takes the other branch.
-// storage.ErrNotFound on the initial Get (the start
-// controller has not yet persisted the request) is returned as-is for the
-// same reason.
+// A missing request on the initial read holds the original delivery without
+// spending failure budget or expiring: independent cancel and start topics can
+// overtake one another. An ID that never appears remains an operator-visible
+// obligation, not a synthetic terminal outcome.
 package cancel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
@@ -82,7 +84,10 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-const opName = "process"
+const (
+	opName                      = "process"
+	waitForRequestDelayMs int64 = 1000
+)
 
 // NewController creates a new cancel controller for the orchestrator.
 func NewController(
@@ -104,7 +109,7 @@ func NewController(
 }
 
 // Process processes a cancel delivery from the queue.
-// Returns nil to ack (success), or error to nack (retry).
+// Returns nil to ack or honor a recorded Hold; errors follow the consumer retry policy.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
@@ -125,6 +130,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	request, err := store.GetRequestStore().Get(ctx, cancelReq.ID)
+	if errors.Is(err, storage.ErrNotFound) {
+		metrics.NamedCounter(c.metricsScope, opName, "waiting_for_request", 1, metrics.TagsFromContext(ctx)...)
+		delivery.Hold(waitForRequestDelayMs)
+		return nil
+	}
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get request %s: %w", cancelReq.ID, err)
