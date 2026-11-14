@@ -8,7 +8,7 @@
 - Stack only when a child actually needs a parent's code. Record the dependency, coordinate affected child deltas after a parent changes, and remove the relationship when no longer necessary. Historical ancestry is not a reason to keep a stack.
 - Use actual runtime concurrency. Do not claim a requested increase is available before verifying it. Keep independent work moving while another branch is blocked; do not retain a global publication lock or a stale merged-PR hold.
 - The orchestrator maintains the ledger and assigns work; owners implement, verify, and publish in their own worktrees. A reviewer may read a frozen artifact without a checkout; checks that can rewrite files need an isolated review worktree.
-- Retain each work item's most recent meaningful update time, last action, and explicit operator-input requirement for `PEW`. Record code/status/feedback changes, agent responses, and new instructions, not unchanged polling or dashboard reads. Display all reports, acknowledgments, comments, and other outputs with date, local time, and short timezone abbreviation; persist absolute UTC timestamps.
+- Retain each work item's most recent meaningful update time, last action, and pending change-author action for `PEW`; waiting for another human reviewer is not operator input. Record code/status/feedback changes, agent responses, and new instructions, not unchanged polling or dashboard reads. Display all reports, acknowledgments, comments, and other outputs with date, time, and short timezone abbreviation in configurable `display_timezone` (default `America/Los_Angeles`, PST/PDT); persist absolute UTC timestamps and never shift a deadline when changing its display.
 
 ## Authorization and preservation
 
