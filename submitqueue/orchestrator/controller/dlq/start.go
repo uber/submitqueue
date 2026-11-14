@@ -23,6 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	corerequest "github.com/uber/submitqueue/submitqueue/orchestrator/core/request"
@@ -59,7 +60,7 @@ func (c *startController) Process(ctx context.Context, delivery consumer.Deliver
 	}()
 
 	msg := delivery.Message()
-	rid, err := DecodeLandRequestID(msg.Payload)
+	rid, err := decodeLandRequestID(msg.Payload)
 	if err != nil {
 		return fmt.Errorf("failed to decode start dlq payload: %w", err)
 	}
@@ -86,6 +87,14 @@ func (c *startController) Process(ctx context.Context, delivery consumer.Deliver
 		err = c.failExistingStartRequest(ctx, store, request, rid, lastError, metadata)
 	}
 	return err
+}
+
+func decodeLandRequestID(payload []byte) (entity.RequestID, error) {
+	lr, err := sqmq.UnmarshalLandRequest(payload)
+	if err != nil {
+		return entity.RequestID{}, err
+	}
+	return entity.RequestID{ID: lr.ID, Queue: lr.Queue}, nil
 }
 
 func (c *startController) failExistingStartRequest(ctx context.Context, store orchstorage.Storage, request entity.Request, rid entity.RequestID, lastError string, metadata map[string]string) error {

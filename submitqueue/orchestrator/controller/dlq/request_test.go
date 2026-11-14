@@ -65,7 +65,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, decodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
 
 	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(entity.LandRequest{ID: "1", Queue: "q"}))
 	require.NoError(t, err)
