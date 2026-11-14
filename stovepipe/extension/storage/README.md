@@ -40,6 +40,10 @@ Listing fixes the queue/request prefix and returns bounded pages in ascending by
 
 Create returns `ErrAlreadyExists` for a repeated entry. Listing fixes the queue/request/project prefix and returns bounded pages in ascending bytewise task/unit order. The zero cursor starts the range; other cursors must match the project and exclude their task/unit key. An empty page ends the range, not evidence that attribution recording is complete. There are no update or delete operations.
 
+## Requests
+
+Existing MySQL deployments must add `outcome_reason VARCHAR(64) NOT NULL DEFAULT ''` to `request` before deploying its readers and writers. Empty reasons retain the legacy fallback; existing immutable logs are not rewritten.
+
 ## Build issue observations
 
 `BuildIssueStore` accumulates observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.
