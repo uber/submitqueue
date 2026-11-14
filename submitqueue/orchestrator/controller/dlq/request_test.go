@@ -267,9 +267,8 @@ func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T)
 	}
 }
 
-// A batch that already concluded does not own anything conclude has not written
-// yet, so the request is still the dead letter's to fail.
-func TestDLQRequestController_Process_FailsWhenEveryBatchIsTerminal(t *testing.T) {
+// A failed batch permits the same Error outcome to be reconciled.
+func TestDLQRequestController_Process_FailsWhenAssociatedBatchFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{ID: "1", Queue: "q", Version: 1, State: entity.RequestStateBatched}
