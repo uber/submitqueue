@@ -157,7 +157,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 	// stage mints one batch per delivery — and TerminateRequest does not guard
 	// against Batched, so failing the request here would overwrite a live batch's
 	// claim and leave it building for a request reported as failed.
-	owner, err := owningBatch(ctx, store, rid.ID)
+	owner, err := owningBatch(ctx, store, rid.ID, "")
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
@@ -195,7 +195,10 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 // mid-promotion and owns it, and any other request state means the claim never
 // landed. A request that has since disappeared is left to failRequest, which
 // reports the missing row.
-func owningBatch(ctx context.Context, store orchstorage.Storage, requestID string) (string, error) {
+//
+// excludeBatchID, when set, names a batch to ignore, so a caller reconciling
+// that batch is not answered with the batch itself.
+func owningBatch(ctx context.Context, store orchstorage.Storage, requestID, excludeBatchID string) (string, error) {
 	batches, _, err := corebatch.FindByRequestID(ctx, store, requestID)
 	if err != nil {
 		return "", err
@@ -204,6 +207,7 @@ func owningBatch(ctx context.Context, store orchstorage.Storage, requestID strin
 	creating := ""
 	for _, batch := range batches {
 		switch {
+		case excludeBatchID != "" && batch.ID == excludeBatchID:
 		case batch.State.IsTerminal():
 		case batch.State != entity.BatchStateCreating:
 			return batch.ID, nil

@@ -235,6 +235,20 @@ func failBatch(ctx context.Context, store orchstorage.Storage, registry consumer
 	}
 
 	for _, requestID := range batch.Contains {
+		// A lost ack on the batch topic leaves two batch attempts for one
+		// request, and the other may still land it.
+		owner, err := owningBatch(ctx, store, requestID, batchID)
+		if err != nil {
+			return transitioned, fmt.Errorf("fan-out for batch %s: %w", batchID, err)
+		}
+		if owner != "" {
+			logger.Infow("dlq reconcile: request is carried by another live batch, leaving the outcome to conclude",
+				"request_id", requestID,
+				"batch_id", batchID,
+				"owning_batch_id", owner,
+			)
+			continue
+		}
 		if err := failRequest(ctx, store, registry, logger, requestID, lastError, metadata); err != nil {
 			return transitioned, fmt.Errorf("fan-out for batch %s: %w", batchID, err)
 		}
