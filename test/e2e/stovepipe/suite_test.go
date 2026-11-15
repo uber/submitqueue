@@ -67,6 +67,10 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 		listPaginationQueue, listTimeBoundsQueue, listPrimaryQueue, listOtherQueue, listValidationQueue, queueStateTestQueue,
 		issueTrackingQueue, issueTrackingDLQQueue, openIssuesQueue, requestIssuesQueue, projectIssuesQueue, projectAnalysisQueue, projectAnalysisDLQQueue,
 	}, ","))
+	// Production holds of 30s-2m would dominate the suite's runtime.
+	for _, name := range []string{"BUILD_ANALYSIS_POLL_DELAY", "ISSUE_TRACK_ANALYSIS_WAIT", "ISSUE_TRACK_RECOVERY_DELAY"} {
+		t.Setenv(name, "1s")
+	}
 
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")
 

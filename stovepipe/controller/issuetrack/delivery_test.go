@@ -45,7 +45,7 @@ func (f *fixture) deliver(msg entityqueue.Message, hold bool) error {
 	if hold {
 		delivery.EXPECT().Hold(int64(0))
 	} else {
-		delivery.EXPECT().Hold(_analysisWaitMs).MaxTimes(1)
+		delivery.EXPECT().Hold(DefaultHoldDelays.AnalysisWaitMs).MaxTimes(1)
 	}
 	return f.controller.Process(context.Background(), delivery)
 }
@@ -220,11 +220,11 @@ func TestNewerRequestWaitsForThePendingCursorAndFinalization(t *testing.T) {
 	f.reportIssue("build/100", "task", "unit")
 	f.retain(currentCursor())
 	incoming := f.message("build/101", true)
-	require.NoError(t, f.deliverRequest(incoming, _analysisWaitMs))
+	require.NoError(t, f.deliverRequest(incoming, DefaultHoldDelays.AnalysisWaitMs))
 	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
 	require.Empty(t, f.states)
 	older := f.message("build/100", false)
-	require.NoError(t, f.deliverRequest(older, _analysisWaitMs))
+	require.NoError(t, f.deliverRequest(older, DefaultHoldDelays.AnalysisWaitMs))
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
 	f.source("build/100", "100", entity.BuildStatusSucceeded)
 	f.analysisEvent("build/100", entity.RequestEventBuildAnalysisCompleted)
@@ -562,7 +562,7 @@ func TestResumedPassRetainsTheSavedTerminalIntent(t *testing.T) {
 	progress.Finalize = true
 	f.retain(progress)
 	msg := f.message("build/101", false)
-	require.NoError(t, f.deliverRequest(msg, _analysisWaitMs))
+	require.NoError(t, f.deliverRequest(msg, DefaultHoldDelays.AnalysisWaitMs))
 	older := f.message("build/100", false)
 
 	require.NoError(t, f.deliver(older, true))
@@ -682,11 +682,11 @@ func TestRequestJobWaitsForAnalysisThenPreservesReopening(t *testing.T) {
 			f.seedIssue("task", "unit", entity.IssueStatusOpen)
 			f.reportIssue("build/101", "task", "unit")
 			older, newer := f.requestJob("build/100"), f.requestJob("build/101")
-			require.NoError(t, f.deliverRequest(older, _analysisWaitMs))
+			require.NoError(t, f.deliverRequest(older, DefaultHoldDelays.AnalysisWaitMs))
 			if newerTerminal {
 				f.analysisEvent("build/101", entity.RequestEventBuildAnalysisCompleted)
 			}
-			require.NoError(t, f.deliverRequest(newer, _analysisWaitMs))
+			require.NoError(t, f.deliverRequest(newer, DefaultHoldDelays.AnalysisWaitMs))
 			require.Equal(t, "100", f.progress.RequestID)
 			require.Equal(t, "older", f.states[issueKey{"task", "unit"}].FirstSeenBuildID)
 			f.analysisEvent("build/100", entity.RequestEventBuildAnalysisCompleted)
@@ -694,7 +694,7 @@ func TestRequestJobWaitsForAnalysisThenPreservesReopening(t *testing.T) {
 			require.NoError(t, f.deliverRequest(older, -1))
 			require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"task", "unit"}].Status)
 			require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventClosed})
-			wait := _analysisWaitMs
+			wait := DefaultHoldDelays.AnalysisWaitMs
 			if newerTerminal {
 				wait = 0
 			}
@@ -720,7 +720,7 @@ func TestRequestJobWaitsForBuildAssociation(t *testing.T) {
 			f.requests["100"] = request
 			wait := int64(-1)
 			if !state.IsTerminal() {
-				wait = _analysisWaitMs
+				wait = DefaultHoldDelays.AnalysisWaitMs
 			}
 			if state == entity.RequestStateFailed {
 				err := f.deliverRequest(msg, -1)
@@ -741,7 +741,7 @@ func TestRequestJobAppliesLaterRefreshesWithoutCompletingTheJob(t *testing.T) {
 	job := f.requestJob("build/100")
 	for _, unit := range []string{"a", "b"} {
 		f.reportIssue("build/100", "task", unit)
-		require.NoError(t, f.deliverRequest(job, _analysisWaitMs))
+		require.NoError(t, f.deliverRequest(job, DefaultHoldDelays.AnalysisWaitMs))
 		require.Equal(t, "build/100", f.states[issueKey{"task", unit}].FirstSeenBuildID)
 		require.Equal(t, entity.IssueTrackingPhaseRefreshed, f.progress.Phase)
 	}
@@ -794,7 +794,7 @@ func TestAnalysisAbandonmentFinishesTheCursorBeforeTheNextRequest(t *testing.T) 
 	progress.NotificationID = older.ID
 	f.retain(progress)
 	f.analysisEvent("build/100", entity.RequestEventBuildAnalysisAbandoned)
-	require.NoError(t, f.deliverRequest(newer, _analysisWaitMs))
+	require.NoError(t, f.deliverRequest(newer, DefaultHoldDelays.AnalysisWaitMs))
 	err := f.deliverRequest(older, -1)
 	require.Error(t, err)
 	require.False(t, errs.IsRetryable(err))
@@ -804,7 +804,7 @@ func TestAnalysisAbandonmentFinishesTheCursorBeforeTheNextRequest(t *testing.T) 
 	require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)
 	require.Equal(t, "100", f.progress.RequestID)
 	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"task", "unit"}].Status)
-	require.NoError(t, f.deliverRequest(newer, _analysisWaitMs))
+	require.NoError(t, f.deliverRequest(newer, DefaultHoldDelays.AnalysisWaitMs))
 	require.Equal(t, "101", f.progress.RequestID)
 }
 
@@ -854,7 +854,7 @@ func TestDLQResumesAnalysisAbandonmentCleanupAfterHistoryFailure(t *testing.T) {
 			require.ErrorIs(t, f.recover(job, false), assert.AnError)
 			require.Equal(t, entity.IssueTrackingPhaseAbandoning, f.progress.Phase)
 			before := f.progress
-			require.NoError(t, f.deliverRequest(job, _recoveryDelayMs))
+			require.NoError(t, f.deliverRequest(job, DefaultHoldDelays.RecoveryDelayMs))
 			require.Equal(t, before, f.progress)
 			require.NoError(t, f.recover(job, false))
 			require.Equal(t, entity.IssueTrackingPhaseAbandoned, f.progress.Phase)

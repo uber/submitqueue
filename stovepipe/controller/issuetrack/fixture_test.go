@@ -432,7 +432,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return log, nil
 	}).AnyTimes()
-	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, f.materializer, registry, messagequeue.TopicKeyIssueTrack, "test")
+	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, f.materializer, registry, messagequeue.TopicKeyIssueTrack, "test", DefaultHoldDelays)
 	f.controller.nowMs = func() int64 { return 1000 }
 	return f
 }

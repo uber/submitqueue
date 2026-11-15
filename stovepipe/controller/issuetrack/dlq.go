@@ -36,9 +36,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Avoid spinning the primary consumer while recovery retries storage or history writes.
-const _recoveryDelayMs int64 = 30000
-
 // DLQController abandons incomplete issue tracking while retaining accepted issue changes.
 type DLQController struct {
 	logger              *zap.SugaredLogger

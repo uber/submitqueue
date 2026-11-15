@@ -36,9 +36,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// PollDelayMs is the delay in milliseconds between successful polling passes.
+// DefaultPollDelayMs is the production delay in milliseconds between successful polling passes.
 // Two minutes limits provider traffic during long-running builds.
-const PollDelayMs int64 = 120000
+const DefaultPollDelayMs int64 = 120000
 
 // Controller accumulates build issues while builds run and after completion.
 // Terminal analysis must persist all build issues and its completion event before acknowledging.
@@ -51,6 +51,7 @@ type Controller struct {
 	detectorFactory buildissue.DetectorFactory
 	topicKey        consumer.TopicKey
 	consumerGroup   string
+	pollDelayMs     int64
 }
 
 func NewController(
@@ -62,6 +63,7 @@ func NewController(
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
+	pollDelayMs int64,
 ) *Controller {
 	return &Controller{
 		logger:          logger.Named("buildanalysis_controller"),
@@ -72,6 +74,7 @@ func NewController(
 		detectorFactory: detectorFactory,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
+		pollDelayMs:     pollDelayMs,
 	}
 }
 
@@ -207,7 +210,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	if hold {
-		delivery.Hold(PollDelayMs)
+		delivery.Hold(c.pollDelayMs)
 	}
 
 	c.logger.Debugw("build analysis pass complete",

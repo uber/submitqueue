@@ -71,7 +71,7 @@ jobs:
         run: make check-mocks
 
   # ---------------------------------------------------------------------------
-  # BUILD AND UNIT TESTS (parallel jobs, separate Bazel caches)
+  # BUILD AND UNIT TESTS (parallel jobs, one shared Bazel cache)
   # ---------------------------------------------------------------------------
   build:
     name: Build
@@ -83,7 +83,12 @@ jobs:
           # This job executes untrusted PR code (make build/test/lint). Don't
           # leave the GITHUB_TOKEN in the workspace git config while it runs.
           persist-credentials: false
+      # The one job that saves the shared Bazel cache: `bazel build //...` is a
+      # superset of every other job's build. Only main saves, since a PR's cache
+      # is visible to that PR alone and would crowd out main's.
       - uses: ./.github/actions/setup
+        with:
+          save: ${{ github.event_name == 'push' }}
 
       - name: Build project
         run: make build
