@@ -140,7 +140,7 @@ class node_submitter toneIndigo
 | **gateway/Land** | RPC | start | Mint the request id, persist an accepting receipt, publish the full land request, then persist Accepted |
 | **gateway/Cancel** | RPC | cancel | Persist `cancelling` for an existing land, then publish the cancel request |
 | **start** | LandRequest | validate, log | Persist the Request and publish it to validate |
-| **cancel** | CancelRequest | log, or speculate | Record Cancelling. Finish a request that has no applicable batch. Hand each cancellable batch attempt to speculate. Leave a Landing or already-terminal batch for conclude |
+| **cancel** | CancelRequest | log, or speculate | Hold a missing Request without spending failure budget or expiring, then record Cancelling. Finish a request that has no applicable batch. Hand each cancellable batch attempt to speculate. Leave a Landing or already-terminal batch for conclude |
 | **validate** | RequestID | merge-conflict-check (Runway), log | Dedup, fetch change metadata, claim changes, then publish the full `MergeRequest` to Runway keyed by the request id |
 | **landconflictsignal** | MergeResult | batch, or log | Correlate Runway's check; advance a landable request to batch, or fail a conflicted request |
 | **batch** | RequestID | dependency-analysis, log | Mint a Creating batch for the request and hand that batch id onward |
@@ -163,6 +163,8 @@ Every consumed stage in `pipeline.go` is paired with a `{topic}_dlq` subscriptio
 DLQ handlers do not resume the failed request's normal workflow. They reconcile terminal state and its outputs, preserving authoritative terminal winners. The generic request reconciler also preserves valid downstream batch ownership. The [DLQ package guide](../../../submitqueue/orchestrator/controller/dlq/README.md) defines the reconcile-only boundary, handler-specific dispositions, and named limits; the [stage table](../../../submitqueue/orchestrator/pipeline.go) defines the bindings. Unlimited final retries protect reconciliation, not another business retry budget.
 
 The start DLQ reports a failed submission through an Error request log with version 0 when no Request was saved. Existing rows retain their ownership, terminal-outcome, and conditional-write protections.
+
+The primary cancel stage holds a cancellation whose Request is missing without expiry or failure-budget consumption, then performs ordinary best-effort cancellation with the original reason. The cancel DLQ holds the same missing identity until an authoritative Request exists, then reconciles only Error; it does not cancel builds or publish normal-work commands. Reconciliation preserves owning batches and other terminal outcomes, and its observed-version write rejects a concurrent batch claim. Missing IDs remain durable for operator investigation. Primary cancellation remains best-effort once an attempt reaches Landing.
 
 The narrow speculate nudge concerns other live batches after culprit failure; it never reopens the failed batch. Hook DLQ is report-and-stop, with side-effect recovery left to a person. Neither authorizes replay of the failed business command.
 

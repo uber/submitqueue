@@ -16,6 +16,7 @@ package dlq
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,7 @@ import (
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	orchstoragemock "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -85,34 +87,6 @@ func TestDLQRequestController_Process_TenantPayloadQueueMismatchAcks(t *testing.
 	require.NoError(t, c.Process(context.Background(), newMockDeliveryWithTenant(ctrl, payload, "other-queue")))
 }
 
-func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	request := entity.Request{
-		ID: "7", Queue: "q", Version: 2, State: entity.RequestStateBatched,
-	}
-	requestStore.EXPECT().Get(gomock.Any(), "7").Return(request, nil)
-	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(2), int32(3)).Return(nil)
-
-	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
-		return nil
-	})
-
-	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
-
-	payload, err := sqmq.Marshal(sqmq.CancelFromEntity(entity.CancelRequest{ID: "7", Queue: "q", Reason: "user"}))
-	require.NoError(t, err)
-
-	delivery := newMockDelivery(ctrl, payload)
-	require.NoError(t, c.Process(context.Background(), delivery))
-}
-
 func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -142,26 +116,120 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	require.NoError(t, c.Process(context.Background(), delivery))
 }
 
-func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T) {
-	ctrl := gomock.NewController(t)
+func TestDLQCancelController_WaitsThenReconcilesError(t *testing.T) {
+	for _, claim := range []bool{false, true} {
+		name := "unowned request fails"
+		if claim {
+			name = "batch claim after ownership lookup"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			var persisted entity.Request
+			requests := storagemock.NewMockRequestStore(ctrl)
+			requests.EXPECT().Get(gomock.Any(), "1").DoAndReturn(func(context.Context, string) (entity.Request, error) {
+				if persisted.ID == "" {
+					return entity.Request{}, storage.ErrNotFound
+				}
+				return persisted, nil
+			}).AnyTimes()
+			requests.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request entity.Request, oldVersion, newVersion int32) error {
+				if oldVersion != persisted.Version {
+					return storage.ErrVersionMismatch
+				}
+				assert.Equal(t, oldVersion, request.Version)
+				assert.Equal(t, oldVersion+1, newVersion)
+				persisted = request
+				persisted.Version = newVersion
+				return nil
+			}).Times(1)
+			associations := storagemock.NewMockRequestBatchStore(ctrl)
+			associations.EXPECT().GetByRequestID(gomock.Any(), "1").DoAndReturn(func(context.Context, string) ([]entity.RequestBatch, error) {
+				if claim && persisted.State == entity.RequestStateValidated {
+					persisted.State = entity.RequestStateBatched
+					persisted.Version++
+					return nil, nil
+				}
+				if claim && persisted.State == entity.RequestStateBatched {
+					return []entity.RequestBatch{{RequestID: "1", BatchID: "batch"}}, nil
+				}
+				return nil, nil
+			}).AnyTimes()
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
+			logCount := 1
+			if claim {
+				logCount = 0
+				batches := storagemock.NewMockBatchStore(ctrl)
+				batches.EXPECT().Get(gomock.Any(), "batch").Return(entity.Batch{ID: "batch", State: entity.BatchStateCreated}, nil)
+				store.EXPECT().GetBatchStore().Return(batches)
+			}
+			registry := newTestLogRegistry(t, ctrl, logCount, func(log entity.RequestLog) error {
+				assert.Equal(t, entity.RequestStatusError, log.Status)
+				assert.Equal(t, "1", log.RequestID)
+				assert.Equal(t, int32(8), log.RequestVersion)
+				assert.Equal(t, "boom", log.LastError)
+				return nil
+			})
+			controller := NewDLQCancelController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store}, registry, TopicKey(topickey.TopicKeyCancel), "orchestrator-dlq")
+			payload, err := sqmq.Marshal(sqmq.CancelFromEntity(entity.CancelRequest{ID: "1", Queue: "q", Reason: "user changed mind"}))
+			require.NoError(t, err)
+			delivery := newMockDelivery(ctrl, payload)
+			delivery.EXPECT().Hold(waitForRequestDelayMs).Times(2)
+			for range 2 {
+				require.NoError(t, controller.Process(context.Background(), delivery))
+			}
+			persisted = entity.Request{ID: "1", Queue: "q", State: entity.RequestStateValidated, Version: 7}
+			err = controller.Process(context.Background(), delivery)
+			if claim {
+				require.ErrorIs(t, err, storage.ErrVersionMismatch)
+				require.NoError(t, controller.Process(context.Background(), delivery))
+				assert.Equal(t, entity.RequestStateBatched, persisted.State)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, entity.RequestStateError, persisted.State)
+			}
+			assert.Equal(t, int32(8), persisted.Version)
+		})
+	}
+}
 
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "1").Return(entity.Request{
-		ID: "1", Queue: "q", Version: 5, State: entity.RequestStateLanded,
-	}, nil)
-
-	store := orchstoragemock.NewMockStorage(ctrl)
-	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID(topickey.TopicKeyValidate), TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
-
-	payload, err := sqmq.MarshalID(sqmq.TopicKeyValidate, "1", "q")
-	require.NoError(t, err)
-
-	delivery := newMockDelivery(ctrl, payload)
-	require.NoError(t, c.Process(context.Background(), delivery))
+func TestDLQCancelController_Process_TerminalOutcomes(t *testing.T) {
+	for _, state := range []entity.RequestState{entity.RequestStateLanded, entity.RequestStateCancelled, entity.RequestStateError} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			request := entity.Request{ID: "1", Queue: "q", Version: 5, State: state}
+			calls := 1
+			logCount := 0
+			if state == entity.RequestStateError {
+				calls, logCount = 2, 2
+			}
+			requests := storagemock.NewMockRequestStore(ctrl)
+			requests.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).Times(calls)
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetRequestStore().Return(requests).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
+			publishErr := errors.New("publisher unavailable")
+			published := 0
+			registry := newTestLogRegistry(t, ctrl, logCount, func(log entity.RequestLog) error {
+				assert.Equal(t, entity.RequestStatusError, log.Status)
+				assert.Equal(t, request.Version, log.RequestVersion)
+				published++
+				if published == 1 {
+					return publishErr
+				}
+				return nil
+			})
+			controller := NewDLQCancelController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store}, registry, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
+			payload, err := sqmq.Marshal(sqmq.CancelFromEntity(entity.CancelRequest{ID: request.ID, Queue: request.Queue}))
+			require.NoError(t, err)
+			delivery := newMockDelivery(ctrl, payload)
+			if state == entity.RequestStateError {
+				require.ErrorIs(t, controller.Process(context.Background(), delivery), publishErr)
+			}
+			require.NoError(t, controller.Process(context.Background(), delivery))
+		})
+	}
 }
 
 func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {

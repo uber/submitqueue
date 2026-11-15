@@ -18,6 +18,8 @@ Disposition remains handler-specific: the generic request/batch reconcilers ackn
 
 When the Request is absent, Start reports the failed submission through an Error request log with version 0, because there is no saved Request version. No normal work is published. Reconciliation validates the request identity and queue; existing rows retain authoritative-identity, batch-ownership, terminal-winner, and conditional-write guards.
 
+Cancellation deliveries in the primary and final queues use Hold while the Request is absent, without expiry or failure-budget consumption. The primary controller then applies ordinary best-effort cancellation with the original reason. The cancel DLQ instead reconciles only Error under the batch-ownership and terminal-winner rules; it does not cancel builds or publish normal-work commands. Missing identities remain held for operator investigation.
+
 ## Terminal outputs and ownership
 
 - An already-Error request skips the state CAS but republishes its terminal status log. A different terminal request outcome is left unchanged. This repairs status delivery, not the original diagnostic content or timestamp.
@@ -31,7 +33,7 @@ Request logs are published to `log`; the gateway alone materializes them into it
 
 The [stage table](../../pipeline.go) is the source of truth rather than a second topology table here:
 
-- `start` uses dedicated request reconciliation; `cancel`, `validate`, and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
+- `start` and `cancel` use dedicated request reconciliation; `validate` and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
 - `build`, `submitqueue-land`, and `conclude` use generic batch reconciliation.
 - `dependency-analysis` has a dedicated handler because its batch may be a duplicate whose requests another batch already carries past `Creating`; such a duplicate is left inert. An owning batch in `Creating`, `Created`, or `Failed` is failed and fanned out; any later state belongs to a downstream stage and is acknowledged untouched. See `dependencyanalysis.go`.
 - `buildsignal` carries a build-ID payload, not a full Build. Its handler loads the build to find the batch and leaves build status untouched. The two Runway signal handlers read a request or batch correlation ID from `MergeResult`.
