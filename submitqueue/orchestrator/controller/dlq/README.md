@@ -32,7 +32,8 @@ Request logs are published to `log`; the gateway alone materializes them into it
 The [stage table](../../pipeline.go) is the source of truth rather than a second topology table here:
 
 - `start` uses dedicated request reconciliation; `cancel`, `validate`, and `batch` use generic request reconciliation. Their decoders read LandRequest, CancelRequest, or the topic's request-ID payload.
-- `dependency-analysis`, `build`, `submitqueue-land`, and `conclude` use generic batch reconciliation.
+- `build`, `submitqueue-land`, and `conclude` use generic batch reconciliation.
+- `dependency-analysis` has a dedicated handler because its batch may be a duplicate whose requests another batch already carries past `Creating`; such a duplicate is left inert. An owning batch in `Creating`, `Created`, or `Failed` is failed and fanned out; any later state belongs to a downstream stage and is acknowledged untouched. See `dependencyanalysis.go`.
 - `buildsignal` carries a build-ID payload, not a full Build. Its handler loads the build to find the batch and leaves build status untouched. The two Runway signal handlers read a request or batch correlation ID from `MergeResult`.
 - **Speculation queue-isolation nudge:** after failing attributed culprit work (or the labelled payload fallback), a delivery that transitioned a batch may nudge `speculate` with another live batch. The primary re-derives current queue state; the failed batch is not reopened. This narrow protection for other work does not authorize replay of the dead-lettered command or guarantee a nudge after every partial reconciliation failure.
 - **Hook report-and-stop:** the shared hook DLQ logs the raw event, counts it as dropped, and acknowledges it. A person decides whether to republish; the DLQ does not invoke hooks.
