@@ -15,6 +15,8 @@ docker ps
 # - Linux: sudo systemctl start docker
 ```
 
+Docker-backed tests are isolated from your Docker client setup: each test runs Docker and Compose with an empty client config, so credential helpers, CLI plugins and hooks in `~/.docker` are never used. The tests talk to the daemon named by `DOCKER_HOST`; when it is unset they use your active Docker context's endpoint (the one `docker context inspect` shows), so Docker Desktop, Colima and rootless Docker work through both `make` and plain `bazel test`.
+
 ---
 
 ## Database Architecture
