@@ -8,7 +8,7 @@ This is a separate contract from `submitqueue/extension/storage` — same shape 
 
 ## Optimistic locking contract
 
-Entities that support concurrent mutation (`Request`, `Build`, `IssueState`, `IssueTrackingState`) carry an `int32 Version` field. `Update` methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write) — the store performs a pure conditional write and never computes `oldVersion + 1` itself. Version arithmetic is owned by the controller: it computes `newVersion`, calls `Update`, and only assigns `entity.Version = newVersion` after the call succeeds. See [AGENTS.md](../../../AGENTS.md) and the [submitqueue storage README](../../../submitqueue/extension/storage/README.md#optimistic-locking-contract) for the full rationale and the caller pattern — the convention is identical here.
+Entities that support concurrent mutation (`Request`, `Build`, `IssueState`, `IssueTrackingState`, `IssueRepair`) carry an `int32 Version` field. `Update` methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write) — the store performs a pure conditional write and never computes `oldVersion + 1` itself. Version arithmetic is owned by the controller: it computes `newVersion`, calls `Update`, and only assigns `entity.Version = newVersion` after the call succeeds. See [AGENTS.md](../../../AGENTS.md) and the [submitqueue storage README](../../../submitqueue/extension/storage/README.md#optimistic-locking-contract) for the full rationale and the caller pattern — the convention is identical here.
 
 ## Read-after-write consistency
 
@@ -26,6 +26,20 @@ Same design space as [`submitqueue/extension/storage`](../../../submitqueue/exte
 
 `ProjectFactByDegreeStore` is the ordered lookup mapping for named project facts. Its immutable `(queue, URI, degree DESC, project ASC)` primary key stores the original degree and orders by descending degree and ascending bytewise project ID, so listing is a bounded key-range read. It holds no duplicate validation payload; readers hydrate facts by their original keys and verify the mapping. The record controller ensures mappings from persisted winning facts before recording project completion, including retries after partial writes. Create the table before deploying writers. The table starts empty: only results processed by index-aware writers receive mappings, with no historical population or read-time fallback.
 
+## Request projects by issue
+
+`RequestProjectsByIssueStore` retains source rows keyed by `(queue, request_id, task_id, unit_id, project)`. Each row records one affected project for a unit-level issue; task, unit, and project must be nonempty. Rows are immutable and duplicate creates return `ErrAlreadyExists`.
+
+Attribution is assumed stable for a request. Retries recreate the same pairs and treat duplicate creates as success. All rows must be written before retaining the request's `project_issues_recorded` occurrence, whose metadata identifies the build. The occurrence establishes completion even when there are no associations. Without it, retained rows are incomplete.
+
+Listing fixes the queue/request prefix and returns bounded pages in ascending bytewise task/unit/project order. The cursor excludes its key. An empty page ends that range; it does not establish that attribution completed. The MySQL key uses the issue stores' task/unit capacities and a 1020-byte project name, matching the byte capacity of existing project names. Create the source table before deploying writers. This store does not maintain current project-issue lookups.
+
+## Request issues by project
+
+`RequestIssuesByProjectStore` is a derived lookup keyed by `(queue, request_id, project, task_id, unit_id)`. It reuses the attribution row's issue/project identity with project-first ordering within the request. Entries describe the failure associations recorded for that validation; they do not change when an issue later closes.
+
+Create returns `ErrAlreadyExists` for a repeated entry. Listing fixes the queue/request/project prefix and returns bounded pages in ascending bytewise task/unit order. The zero cursor starts the range; other cursors must match the project and exclude their task/unit key. An empty page ends the range, not evidence that attribution recording is complete. There are no update or delete operations.
+
 ## Build issue observations
 
 `BuildIssueStore` accumulates observations identified by build, task, and unit within the bound queue. The build ID is supplied separately from the detected issue. Repeated observations return `ErrAlreadyExists`, which callers may treat as successful persistence. Build and task IDs must be nonempty; empty unit IDs represent task-wide observations.
@@ -36,9 +50,13 @@ Each observation is stored separately, not in a serialized collection. Observati
 
 The MySQL primary key contains the queue, build ID, task ID, and unit ID directly as binary strings, preserving byte-exact identity. Their limits are 255, 1020, 255, and 1024 bytes respectively, for a combined maximum of 2554 bytes. Creates and reads reject identifiers exceeding these limits before querying the database; identifiers are never truncated.
 
-`BuildIssue.FixID` associates an observation with an opaque executor-provided repair ID. An empty ID means no association is recorded. `Update` uses the existing entity CAS convention: it guards `oldVersion` and writes `newVersion`, returning `ErrVersionMismatch` for a stale or missing record. The caller owns version arithmetic and repair policy; storage does not enforce a per-build submission limit. Observation identity and membership survive recovery.
+`BuildIssue.FixID` is the legacy single-executor repair association. An empty ID means no association is recorded. `Update` uses the existing entity CAS convention: it guards `oldVersion` and writes `newVersion`, returning `ErrVersionMismatch` for a stale or missing record. The caller owns version arithmetic and repair policy; storage does not enforce a per-build submission limit. Observation identity and membership survive recovery.
 
-Existing MySQL deployments must add `fix_id VARCHAR(255) NOT NULL DEFAULT ''` and `version INT NOT NULL DEFAULT 0` to `build_issue` before deploying the new readers and writers. The schema's `CREATE TABLE IF NOT EXISTS` does not alter existing tables.
+`IssueRepairStore` retains versioned submission state keyed by the complete opening identity and executor ID. Pending rows have empty fix IDs and skip reasons. Create never overwrites existing state; Update replaces a snapshot guarded by its version. The controller creates pending rows and owns submission outcomes; executors own metadata and must preserve other fields when updating. Both writers reload on version conflicts before reapplying their edits. Fix IDs are not unique: an executor can accept multiple issues in one external request. Executor-owned metadata remains a `map[string]string` in Go and is serialized to the non-null JSON `metadata` column. Nil and empty maps are equivalent; empty metadata is stored as `{}`. String values may contain serialized JSON without interpretation by the store. Apply `mysql/schema/issue_repair.sql` before deploying the new readers and writers. Host adapters own backend-specific dispatch limits. The schema's `CREATE TABLE IF NOT EXISTS` does not alter existing tables.
+
+## Request metadata
+
+`Request.Metadata` contains arbitrary namespaced extension JSON, retained across lifecycle transitions. Create writes initial metadata and Get returns it with the complete request. Update replaces the complete mutable snapshot, including metadata, using the request's existing version guard. Callers compute the next version, copy maps before changing them, preserve unrelated namespaces and fields, and reload after `ErrVersionMismatch` before reapplying their edits. Metadata-only updates advance the request version like other updates; storage does not publish history. Nil, empty maps, and legacy SQL NULL are equivalent.
 
 ## Issue state
 
@@ -91,3 +109,9 @@ The issue-tracking table must include the notification, cursor, `finalize`, and 
 ### Applied transition facts
 
 `IssueState.LastProcessedBuildID` identifies the most recent build applied to an issue, including unchanged results. `LastChangedBuildID` and `ChangedAtMs` identify the actual opening or closing and supply its history identity and timestamp. They do not advance when only the processed build changes. `FirstSeenBuildID` remains the opening identity across closure and changes on reopening. These references must remain readable while used for source ordering. The current-issue cursor and the row's processed source provide the storage needed for retry-safe application without retaining a future write payload.
+
+## Request issue results
+
+The request-issue summary store retains one materialized result per request, task, and unit in its bound queue. New includes reopened issues; existing means this request reported an issue that was already open; closed means this request actually closed it. Issues merely left open because closure was suppressed are not existing results. Reads use a bounded request-prefix scan in task/unit order. These results describe the request's accepted updates, not the queue's full open-issue set.
+
+Issue history retains openings, repeat reports, and closures. The existing event column and its open/closed values remain unchanged; reported events do not change lifecycle projections. New occurrences retain the opening build reference so request projections can be reconstructed without current issue state. Deploy the additive opening-reference column before updated writers. Existing lifecycle records may have an empty reference and continue using the opening supplied to lifecycle materialization.

@@ -147,6 +147,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
+	// The cancellation may be terminal even though its final log was never published.
+	if request.State == entity.RequestStateCancelled {
+		return corerequest.ResendTerminalRequestLog(ctx, c.registry, request)
+	}
+
+	// Other terminal outcomes belong to their winning writer and are left untouched.
 	if entity.IsRequestStateTerminal(request.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "already_terminal", 1, metrics.TagsFromContext(ctx)...)
 		return nil

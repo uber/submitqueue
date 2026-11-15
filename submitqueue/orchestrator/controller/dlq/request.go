@@ -34,21 +34,11 @@ import (
 
 // RequestIDDecoder extracts the affected request's identity — its ID and its
 // queue — from the raw payload bytes of a DLQ message. Different primary
-// topics carry different payload shapes (LandRequest on start, CancelRequest
-// on cancel, RequestID on validate / batch), so the caller injects the right
+// topics carry different payload shapes (CancelRequest on cancel, RequestID
+// on validate / batch), so the caller injects the right
 // decoder for the topic being reconciled. Returning an empty ID is treated as
 // a decode failure.
 type RequestIDDecoder func(payload []byte) (entity.RequestID, error)
-
-// DecodeLandRequestID extracts the request ID from a LandRequest payload
-// (the shape used by the start topic).
-func DecodeLandRequestID(payload []byte) (entity.RequestID, error) {
-	lr, err := sqmq.UnmarshalLandRequest(payload)
-	if err != nil {
-		return entity.RequestID{}, err
-	}
-	return entity.RequestID{ID: lr.ID, Queue: lr.Queue}, nil
-}
 
 // DecodeCancelRequestID extracts the request ID from a CancelRequest payload
 // (the shape used by the cancel topic).
@@ -69,8 +59,8 @@ func DecodeRequestID(primary consumer.TopicKey) RequestIDDecoder {
 }
 
 // requestController is the DLQ reconciler for request-scoped pipeline stages.
-// It is registered once per primary request-scoped topic (start, cancel,
-// validate, batch) with the matching decoder. On each delivery it decodes the
+// It is registered once per primary request-scoped topic (cancel, validate,
+// batch) with the matching decoder. On each delivery it decodes the
 // request ID and transitions the request to RequestStateError, unless a live
 // batch already owns the request's outcome.
 type requestController struct {
@@ -164,7 +154,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 	}
 	if owner != "" {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_owned_by_batch", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("dlq reconcile: request is carried by a live batch, leaving the outcome to conclude",
+		c.logger.Infow("dlq reconcile: batch owns the request outcome, leaving completion to conclude",
 			"request_id", rid.ID,
 			"batch_id", owner,
 		)
@@ -179,53 +169,45 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 	return nil
 }
 
-// owningBatch returns a batch that owns the request's outcome, or the empty
-// string if none does.
-//
-// A non-terminal batch past Creating owns the request outright: conclude writes
-// its outcome when the batch finishes. Creating is the ambiguous case, because
-// the association is written before the claim that enrols the request, so it
-// also survives an abandoned attempt — one whose claim lost to cancel, or found
-// the request already halted. Such a batch is inert: nothing promotes it and no
-// conclude will ever run for it, so letting it answer "owned" would suppress
-// the reconcile forever and strand the request.
-//
-// The request's own state separates the two, because the claim is the only
-// writer of Batched: a Creating batch alongside a Batched request is
-// mid-promotion and owns it, and any other request state means the claim never
-// landed. A request that has since disappeared is left to failRequest, which
-// reports the missing row.
+// owningBatch returns a batch that is still running or whose result has not been recorded on the request yet.
+// Creating batches must have claimed the request; failed batches do not stop it from being marked Error.
 func owningBatch(ctx context.Context, store orchstorage.Storage, requestID string) (string, error) {
 	batches, _, err := corebatch.FindByRequestID(ctx, store, requestID)
 	if err != nil {
 		return "", err
 	}
 
-	creating := ""
+	owner := ""
+	needsClaim := false
 	for _, batch := range batches {
 		switch {
-		case batch.State.IsTerminal():
+		case batch.State == entity.BatchStateFailed:
+		case batch.State == entity.BatchStateSucceeded || batch.State == entity.BatchStateCancelled:
+			owner, needsClaim = batch.ID, false
 		case batch.State != entity.BatchStateCreating:
 			return batch.ID, nil
-		case creating == "":
-			creating = batch.ID
+		case owner == "":
+			owner, needsClaim = batch.ID, true
 		}
 	}
-	if creating == "" {
+	if owner == "" {
 		return "", nil
 	}
 
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) && needsClaim {
 			return "", nil
+		}
+		if errors.Is(err, storage.ErrNotFound) {
+			return owner, nil
 		}
 		return "", err
 	}
-	if request.State != entity.RequestStateBatched {
+	if entity.IsRequestStateTerminal(request.State) || needsClaim && request.State != entity.RequestStateBatched {
 		return "", nil
 	}
-	return creating, nil
+	return owner, nil
 }
 
 // Name returns the controller name for logging and metrics.

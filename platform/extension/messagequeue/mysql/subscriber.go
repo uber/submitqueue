@@ -1515,7 +1515,7 @@ func (s *subscriber) runLeaseTick(ctx context.Context, sub *subscription, timeou
 			"fair_share_cap", fairShareCap,
 		)
 	}
-	s.logger.Infow("lease tick", tickFields...)
+	s.logger.Debugw("lease tick", tickFields...)
 	if err := s.sendHeartbeats(tickCtx, sub); err != nil {
 		s.logger.Errorw("periodic heartbeat failed", append(logFields, "error", err)...)
 	}

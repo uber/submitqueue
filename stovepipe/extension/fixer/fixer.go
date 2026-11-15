@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package fixer defines repair submission for an open issue.
+// Package fixer defines repair submission for open issues.
 package fixer
 
 //go:generate mockgen -source=fixer.go -destination=mock/fixer_mock.go -package=mock
@@ -23,22 +23,42 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// RepairExecutor submits repair work for one open issue within a configured queue.
-// Implementations must be concurrency-safe and return promptly after submission.
+// RepairExecutor chooses how to group repair work. Implementations must be concurrency-safe.
 type RepairExecutor interface {
-	// Submit returns a nonempty opaque fix ID on acceptance, without establishing recovery.
-	// An ID returned alongside an error still identifies the repair attempt.
-	// Errors without an ID may follow acceptance; repeated calls can start additional work.
-	Submit(context.Context, entity.OpenIssue) (string, error)
+	// Submit returns per-item backend acceptance or terminal skips, not repair completion.
+	// Valid submissions returned alongside errors are persisted; omitted items remain pending.
+	// Retries may include subsets or additional items; implementations deduplicate by opening.
+	// Pending rows exist before Submit. Executors manage metadata through injected storage,
+	// preserving submission fields and reloading on version conflicts.
+	Submit(context.Context, []entity.OpenIssue) ([]Submission, error)
 }
 
-// Config identifies the queue whose repair executor is requested.
+// Submission associates one input item with accepted repair work or a deliberate skip.
+// Acceptance does not indicate repair completion or success.
+type Submission struct {
+	// Issue identifies the input opening, including its first-seen build.
+	Issue entity.OpenIssue
+	// FixID is the backend request or run ID for accepted work; multiple items may share it.
+	FixID string
+	// SkipReason is nonempty for a terminal skip. Exactly one of FixID and SkipReason is required.
+	SkipReason string
+}
+
+// Registration binds a stable queue-local identity to an executor.
+type Registration struct {
+	// ID is durable across configuration changes and must not be reused for another backend.
+	ID string
+	// Executor implements the registered repair policy.
+	Executor RepairExecutor
+}
+
+// Config identifies a validation queue.
 type Config struct {
 	// QueueName identifies the validation queue.
 	QueueName string
 }
 
-// Factory resolves queue-bound executors; routing belongs to service wiring.
+// Factory resolves all registered executors; an empty slice disables dispatch.
 type Factory interface {
-	For(Config) (RepairExecutor, error)
+	For(Config) ([]Registration, error)
 }

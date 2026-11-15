@@ -76,6 +76,14 @@ func (r *testRepo) commit(message string) string {
 	return r.run("rev-parse", "HEAD")
 }
 
+// newServer returns a server reading the repository at dir.
+func newServer(t *testing.T, dir string) tangopb.TangoYARPCServer {
+	t.Helper()
+	workspaces, err := local.NewFactory(local.Params{Dir: dir})
+	require.NoError(t, err)
+	return New(Params{Workspaces: workspaces})
+}
+
 // newTestRepo commits three targets: //app depends on //lib, which depends on
 // //base.
 func newTestRepo(t *testing.T) (*testRepo, string) {
@@ -159,7 +167,7 @@ func TestGetChangedTargets(t *testing.T) {
 			head := repo.commit("change")
 
 			stream := &fakeStream{}
-			err := New(Params{Workspaces: local.NewFactory(local.Params{Dir: repo.work})}).GetChangedTargets(
+			err := newServer(t, repo.work).GetChangedTargets(
 				&tangopb.GetChangedTargetsRequest{SecondRevision: &tangopb.BuildDescription{
 					BaseSha:  base,
 					Requests: []*tangopb.Request{{Url: "git://example.invalid/org/repo/refs%2Fheads%2Fmain/" + head}},
@@ -193,7 +201,7 @@ func TestGetChangedTargets(t *testing.T) {
 
 func TestGetChangedTargets_Rejects(t *testing.T) {
 	repo, base := newTestRepo(t)
-	server := New(Params{Workspaces: local.NewFactory(local.Params{Dir: repo.work})})
+	server := newServer(t, repo.work)
 
 	tests := []struct {
 		name    string
@@ -231,7 +239,7 @@ func TestServedOverGRPC(t *testing.T) {
 		Name:     "tango",
 		Inbounds: yarpc.Inbounds{grpc.NewTransport().NewInbound(listener)},
 	})
-	dispatcher.Register(tangopb.BuildTangoYARPCProcedures(New(Params{Workspaces: local.NewFactory(local.Params{Dir: repo.work})})))
+	dispatcher.Register(tangopb.BuildTangoYARPCProcedures(newServer(t, repo.work)))
 	require.NoError(t, dispatcher.Start())
 	t.Cleanup(func() { _ = dispatcher.Stop() })
 

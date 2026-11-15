@@ -30,12 +30,20 @@ const (
 	RequestEventValidationFactRecorded RequestEvent = "validation_fact_recorded"
 	// RequestEventProjectFactsRecorded records that all project validation facts for a request were established.
 	RequestEventProjectFactsRecorded RequestEvent = "project_facts_recorded"
+	// RequestEventProjectIssuesRecorded records completed project-issue attribution for a request.
+	RequestEventProjectIssuesRecorded RequestEvent = "project_issues_recorded"
+	// RequestEventProjectAnalysisCompleted records that project status and issue attribution are complete.
+	RequestEventProjectAnalysisCompleted RequestEvent = "project_analysis_completed"
+	// RequestEventProjectAnalysisAbandoned records unfinished project analysis after primary processing stopped.
+	RequestEventProjectAnalysisAbandoned RequestEvent = "project_analysis_abandoned"
 	// RequestEventRecordAbandoned records that record-stage work stopped after exhausting retries.
 	RequestEventRecordAbandoned RequestEvent = "record_abandoned"
 	// RequestEventBuildAnalysisAbandoned records incomplete build analysis, not a validation outcome.
 	RequestEventBuildAnalysisAbandoned RequestEvent = "build_analysis_abandoned"
 	// RequestEventBuildAnalysisCompleted records completed issue analysis for the winning terminal build.
 	RequestEventBuildAnalysisCompleted RequestEvent = "build_analysis_completed"
+	// RequestEventIssueTrackingStarted records the start of per-request issue result recording.
+	RequestEventIssueTrackingStarted RequestEvent = "issue_tracking_started"
 	// RequestEventIssuesReconciled records completed final issue reconciliation for a build.
 	RequestEventIssuesReconciled RequestEvent = "issues_reconciled"
 	// RequestEventIssueTrackingAbandoned records unfinished issue reconciliation after primary processing stopped.
@@ -151,9 +159,10 @@ func (e RequestLog) validateEvent() error {
 		return fmt.Errorf("event log must not contain request-state context")
 	}
 	switch e.Event {
-	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded, RequestEventProjectFactsRecorded,
+	case RequestEventBuildTriggered, RequestEventBuildFinished, RequestEventValidationFactRecorded,
+		RequestEventProjectFactsRecorded, RequestEventProjectIssuesRecorded, RequestEventProjectAnalysisCompleted, RequestEventProjectAnalysisAbandoned,
 		RequestEventRecordAbandoned, RequestEventBuildAnalysisAbandoned, RequestEventBuildAnalysisCompleted,
-		RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,
+		RequestEventIssueTrackingStarted, RequestEventIssuesReconciled, RequestEventIssueTrackingAbandoned,
 		RequestEventFixSubmitted, RequestEventFixSubmissionSkipped, RequestEventFixSubmissionAbandoned:
 	default:
 		return fmt.Errorf("unknown request event %q", e.Event)

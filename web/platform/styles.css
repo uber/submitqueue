@@ -1,1 +1,2 @@
 .sq-app :is(a, code, dd, h1, p, [role="alert"]) { overflow-wrap: anywhere; }
+.sq-app table time { white-space: nowrap; }

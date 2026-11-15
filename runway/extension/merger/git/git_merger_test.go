@@ -35,6 +35,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
+	"github.com/uber/submitqueue/platform/extension/gitworkspace"
 	gitlocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
@@ -98,7 +99,7 @@ func TestCherryPickRange_NonConflictFailureIsRetryable(t *testing.T) {
 	// object or an unreadable repository. Reporting those as ErrConflict would
 	// permanently fail a request that a retry could complete.
 	f := setupGitFixture(t)
-	m := f.newMerger(t, mergestrategypb.Strategy_REBASE).(*gitMerger)
+	m := f.openMerger(t)
 
 	err := m.cherryPickRange(context.Background(), "notarevision", "alsonotarevision")
 	require.Error(t, err)
@@ -113,7 +114,7 @@ func TestCherryPickRange_RealConflictIsErrConflict(t *testing.T) {
 	mainBefore, conflictingSHA := f.setupConflict(t)
 	require.NotEmpty(t, mainBefore)
 
-	m := f.newMerger(t, mergestrategypb.Strategy_REBASE).(*gitMerger)
+	m := f.openMerger(t)
 	require.NoError(t, m.resetToRemote(context.Background()))
 	require.NoError(t, m.ensureObjects(context.Background(), []changeRef{{SHA: conflictingSHA}}))
 
@@ -297,16 +298,13 @@ func TestMerge_Rebase_GivesUpAfterMaxAttempts(t *testing.T) {
 	f.installRaceHook(t, raceSHAs)
 
 	m, err := NewMerger(Params{
-		CheckoutPath:    f.checkoutDir,
+		Workspaces:      f.workspaces(t),
 		Remote:          "origin",
 		Target:          "main",
 		DefaultStrategy: mergestrategypb.Strategy_REBASE,
-		Runtime:         testGitRuntime(t),
 		MaxPushAttempts: 2,
 		Logger:          zaptest.NewLogger(t).Sugar(),
 		MetricsScope:    tally.NoopScope,
-		CommitterName:   "Test",
-		CommitterEmail:  "test@example.com",
 	})
 	require.NoError(t, err)
 
@@ -488,7 +486,7 @@ func TestMerge_Default_ResolvesToRebase(t *testing.T) {
 
 func TestClassifyMergeFailure(t *testing.T) {
 	f := setupGitFixture(t)
-	m := f.newMerger(t, mergestrategypb.Strategy_REBASE).(*gitMerger)
+	m := f.openMerger(t)
 	ref := changeRef{SHA: fakeSHA, Label: "uber/repo#1"}
 
 	tests := []struct {
@@ -539,8 +537,12 @@ func TestClassifyMergeFailure(t *testing.T) {
 // stronger claim than observing that the remote did not move.
 func (f gitFixture) newUnrunnableMerger(t *testing.T) merger.Merger {
 	t.Helper()
+	runtime := testGitRuntime(t)
+	runtime.Executable = filepath.Join(t.TempDir(), "no-such-git")
+	ws, err := gitlocal.NewFactory(gitlocal.Params{Dir: f.checkoutDir, Runtime: runtime})
+	require.NoError(t, err)
 	return f.newMergerWith(t, func(p *Params) {
-		p.Runtime.Executable = filepath.Join(t.TempDir(), "no-such-git")
+		p.Workspaces = ws
 	})
 }
 
@@ -902,22 +904,21 @@ func TestAuthorIdent(t *testing.T) {
 	tests := []struct {
 		name     string
 		ident    authorIdent
-		complete bool
-		wantEnv  []string
+		wantArgs []string
 	}{
 		{
 			name:     "both halves present",
 			ident:    authorIdent{Name: "Jane Dev", Email: "jane@example.com"},
-			complete: true,
-			wantEnv:  []string{"GIT_AUTHOR_NAME=Jane Dev", "GIT_AUTHOR_EMAIL=jane@example.com"},
+			wantArgs: []string{"--author", "Jane Dev <jane@example.com>"},
 		},
 		{
-			// Passed through verbatim: the environment carries the two halves
-			// separately, so nothing has to survive being parsed back apart.
-			name:     "name containing angle brackets",
-			ident:    authorIdent{Name: "Jane <the dev> Doe", Email: "jane@example.com"},
-			complete: true,
-			wantEnv:  []string{"GIT_AUTHOR_NAME=Jane <the dev> Doe", "GIT_AUTHOR_EMAIL=jane@example.com"},
+			// --author would split "Name <address>" in the wrong place.
+			name:  "name containing angle brackets falls back",
+			ident: authorIdent{Name: "Jane <the dev> Doe", Email: "jane@example.com"},
+		},
+		{
+			name:  "line break falls back",
+			ident: authorIdent{Name: "Jane\nDev", Email: "jane@example.com"},
 		},
 		{
 			name:  "missing email falls back",
@@ -935,8 +936,8 @@ func TestAuthorIdent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.complete, tt.ident.complete())
-			assert.Equal(t, tt.wantEnv, tt.ident.env())
+			assert.Equal(t, tt.wantArgs != nil, tt.ident.usable())
+			assert.Equal(t, tt.wantArgs, tt.ident.args())
 		})
 	}
 }
@@ -962,7 +963,7 @@ func TestMerge_SquashRebase_CreditsChangeAuthor(t *testing.T) {
 
 func TestMerge_Merge_CreditsChangeAuthorOnMergeCommit(t *testing.T) {
 	// `git merge` has no --author flag, so the merge commit is the case that
-	// only the environment can attribute.
+	// has to be committed separately to be attributed.
 	f := setupGitFixture(t)
 	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
 
@@ -1345,20 +1346,31 @@ func (f gitFixture) publishPRRef(t *testing.T, n int, sha string) {
 		fmt.Sprintf("%s:refs/pull/%d/head", sha, n))
 }
 
+// workspaces opens the fixture checkout on the pinned runtime, committing as
+// the merger's test identity.
+func (f gitFixture) workspaces(t *testing.T) gitworkspace.Factory {
+	t.Helper()
+	ws, err := gitlocal.NewFactory(gitlocal.Params{
+		Dir:            f.checkoutDir,
+		Runtime:        testGitRuntime(t),
+		CommitterName:  "Test",
+		CommitterEmail: "test@example.com",
+	})
+	require.NoError(t, err)
+	return ws
+}
+
 // newMergerWith builds a Merger with non-default Params, for the options that
 // only some tests exercise.
 func (f gitFixture) newMergerWith(t *testing.T, mutate func(*Params)) merger.Merger {
 	t.Helper()
 	p := Params{
-		CheckoutPath:    f.checkoutDir,
+		Workspaces:      f.workspaces(t),
 		Remote:          "origin",
 		Target:          "main",
 		DefaultStrategy: mergestrategypb.Strategy_REBASE,
-		Runtime:         testGitRuntime(t),
 		Logger:          zaptest.NewLogger(t).Sugar(),
 		MetricsScope:    tally.NoopScope,
-		CommitterName:   "Test",
-		CommitterEmail:  "test@example.com",
 	}
 	mutate(&p)
 	m, err := NewMerger(p)
@@ -1382,18 +1394,27 @@ func (f gitFixture) checkoutClean(t *testing.T) bool {
 	return true
 }
 
+// openMerger builds a merger with a workspace already open, for tests that
+// drive its git helpers directly rather than through an operation.
+func (f gitFixture) openMerger(t *testing.T) *gitMerger {
+	t.Helper()
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE).(*gitMerger)
+	ws, err := m.workspaces.For(context.Background(), m.repo)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ws.Close() })
+	m.ws = ws
+	return m
+}
+
 func (f gitFixture) newMerger(t *testing.T, defaultStrategy mergestrategypb.Strategy) merger.Merger {
 	t.Helper()
 	m, err := NewMerger(Params{
-		CheckoutPath:    f.checkoutDir,
+		Workspaces:      f.workspaces(t),
 		Remote:          "origin",
 		Target:          "main",
 		DefaultStrategy: defaultStrategy,
-		Runtime:         testGitRuntime(t),
 		Logger:          zaptest.NewLogger(t).Sugar(),
 		MetricsScope:    tally.NoopScope,
-		CommitterName:   "Test",
-		CommitterEmail:  "test@example.com",
 	})
 	require.NoError(t, err)
 	return m

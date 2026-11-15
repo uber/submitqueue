@@ -289,6 +289,9 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topic
 	partitionChs := make(map[entityqueue.PartitionIdentity]chan extqueue.Delivery)
 	var wg sync.WaitGroup
 
+	// Unchanged invalid metadata is a permanent input error; the failure is logged
+	// for operator investigation. Without a downstream DLQ, rejection may acknowledge
+	// and drop the delivery without retry.
 	for {
 		select {
 		case <-ctx.Done():

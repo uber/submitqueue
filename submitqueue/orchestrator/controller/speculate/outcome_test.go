@@ -352,41 +352,38 @@ func TestHasNoViableFuture(t *testing.T) {
 		pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds),
 		entity.SpeculationPathStatusFailed)
 
-	t.Run("waits while a dependency is unresolved", func(t *testing.T) {
-		// An unresolved dependency means futures the queue has not tried yet.
-		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSpeculating)
-		assert.False(t, hasNoViableFuture(headBatch, setOf(failed), snap))
-	})
-
-	t.Run("fails once everything is resolved and every live path failed", func(t *testing.T) {
-		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
-		assert.True(t, hasNoViableFuture(headBatch, setOf(failed), snap))
-	})
-
-	t.Run("does not fail while a path is still running", func(t *testing.T) {
-		running := entryFor(
-			pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds),
-			entity.SpeculationPathStatusBuilding)
-		running.ID = "still-running"
-		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
-		assert.False(t, hasNoViableFuture(headBatch, setOf(failed, running), snap))
-	})
-
-	t.Run("does not fail a head with nothing funded", func(t *testing.T) {
-		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
-		assert.False(t, hasNoViableFuture(headBatch, setOf(), snap),
-			"an unfunded head is waiting for the Speculator, not out of options")
-	})
-
-	t.Run("ignores broken paths when judging", func(t *testing.T) {
-		// This path assumed dep1 would fail; it succeeded, so the failed build
-		// tells us nothing about a future that can still happen.
-		brokenFail := entryFor(
-			pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionSucceeds),
-			entity.SpeculationPathStatusFailed)
-		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
-		assert.False(t, hasNoViableFuture(headBatch, setOf(brokenFail), snap))
-	})
+	cancelled := failed
+	cancelled.Status = entity.SpeculationPathStatusCancelled
+	settled := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
+	for _, status := range []entity.SpeculationPathStatus{
+		entity.SpeculationPathStatusFailed, entity.SpeculationPathStatusCancelled,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			entry := failed
+			entry.Status = status
+			assert.True(t, hasNoViableFuture(headBatch, setOf(entry), settled))
+			assert.False(t, hasNoViableFuture(headBatch, setOf(entry),
+				snapWith(entity.BatchStateSucceeded, entity.BatchStateSpeculating)))
+			assert.True(t, hasNoViableFuture(entity.Batch{ID: head},
+				setOf(entryFor(entity.SpeculationPath{Head: head}, status)), snapshot{}))
+			broken := entry
+			broken.Path = pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionSucceeds)
+			assert.False(t, hasNoViableFuture(headBatch, setOf(broken), settled))
+		})
+	}
+	assert.True(t, hasNoViableFuture(headBatch, setOf(failed, cancelled), settled))
+	assert.False(t, hasNoViableFuture(headBatch, setOf(), settled))
+	for _, status := range []entity.SpeculationPathStatus{
+		entity.SpeculationPathStatusUnknown, entity.SpeculationPathStatusPending,
+		entity.SpeculationPathStatusBuilding, entity.SpeculationPathStatusCancelling,
+		entity.SpeculationPathStatusPassed,
+	} {
+		t.Run("not exhausted "+string(status), func(t *testing.T) {
+			entry := failed
+			entry.Status = status
+			assert.False(t, hasNoViableFuture(headBatch, setOf(cancelled, entry), settled))
+		})
+	}
 }
 
 func TestDecide(t *testing.T) {
@@ -406,6 +403,10 @@ func TestDecide(t *testing.T) {
 
 	assert.Equal(t, outcomeLand, decide(headBatch, setOf(passed), allResolved))
 	assert.Equal(t, outcomeFail, decide(headBatch, setOf(failed), allResolved))
+	cancelled := failed
+	cancelled.Status = entity.SpeculationPathStatusCancelled
+	assert.Equal(t, outcomeFail, decide(headBatch, setOf(cancelled), allResolved))
+	assert.Equal(t, outcomeLand, decide(headBatch, setOf(cancelled, passed), allResolved))
 	assert.Equal(t, outcomeWait, decide(headBatch, setOf(building), allResolved))
 
 	// A passed path wins over a failed sibling: one way through is enough.

@@ -1,17 +1,17 @@
 "use client";
 
-import { Timestamp, TimeZoneProvider, TimeZoneToggle } from "@submitqueue/web-platform";
+import { AppBrand, AppHeader, Timestamp, TimeZoneProvider } from "@submitqueue/web-platform";
 import { styled } from "baseui";
 import { Block } from "baseui/block";
-import { Tag } from "baseui/tag";
-import { HeadingLarge, HeadingMedium, HeadingSmall, LabelMedium, ParagraphSmall } from "baseui/typography";
+import { HeadingLarge, HeadingMedium, HeadingSmall, ParagraphSmall } from "baseui/typography";
 import { RefreshControls } from "./refresh.js";
 import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestDetails, History } from "./pages.js";
 import { QueueRequests } from "./queue.js";
-import { OpenIssues } from "./issues.js";
+import { OpenIssues, RequestIssues } from "./issues.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
+import { StovepipeLogo } from "./stovepipe-logo.js";
 
 const ViewLink = styled<typeof Link, { $active: boolean }>(Link, ({ $theme, $active }) => ({
   display: "inline-block",
@@ -40,7 +40,12 @@ function requestViews(routeKey: string) {
   const search = new URLSearchParams(query.join("?"));
   const selected = requestViewTabs.find(tab => tab.id === search.get("view"))?.id ?? "projects";
   search.delete("view");
-  const projectsHref = path + (search.size ? `?${search}` : "");
+  const projectPage = new URLSearchParams();
+  for (const key of ["projects", "projectPageSize"]) {
+    const value = search.get(key);
+    if (value) projectPage.set(key, value);
+  }
+  const projectsHref = path + (projectPage.size ? `?${projectPage}` : "");
   const tabs = requestViewTabs.map(tab => {
     const params = new URLSearchParams(search);
     if (tab.id !== "projects") params.set("view", tab.id);
@@ -55,16 +60,13 @@ function Page({ model }: { model: StovepipePageModel }) {
     <Block className={model.kind === "request" ? "sq-app sq-stovepipe-request" : "sq-app"} backgroundColor="backgroundPrimary" color="contentPrimary" font="ParagraphSmall"
       minHeight="100vh" height={model.kind === "request" ? "100dvh" : "auto"} display="grid" gridTemplateColumns="minmax(0, 1fr)" gridTemplateRows={model.kind === "request" ? "auto minmax(min-content, 1fr) auto" : "auto 1fr auto"}
       paddingLeft="scale600" paddingRight="scale600">
-      <Block as="header" display="flex" alignItems="center" justifyContent="space-between" flexWrap gridGap="scale600"
-        paddingTop="scale300" paddingBottom="scale300">
-        <Block as={Link} display="inline-flex" alignItems="center" gridGap="scale300" href={model.queueHref}>
-          <Tag closeable={false} kind="neutral" size="small">SP</Tag><LabelMedium as="span">Stovepipe</LabelMedium>
-        </Block>
+      <AppHeader>
+        <AppBrand href={model.queueHref} homeLabel="Stovepipe queue" mark={<StovepipeLogo />}>Stovepipe</AppBrand>
         <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
-          <TimeZoneToggle /><RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
+          <RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
-      </Block>
-      <Block as="main" paddingTop="scale400" paddingBottom="scale600">
+      </AppHeader>
+      <Block as="main" paddingTop="scale400" paddingBottom={model.kind === "request" ? "scale200" : "scale600"}>
         <Block as="nav" aria-label="Queues" display="flex" alignItems="center" flexWrap gridGap="scale500" marginBottom="scale400">
           {model.queues.map((queue) => (
             <Link
@@ -124,8 +126,11 @@ function Page({ model }: { model: StovepipePageModel }) {
                     </ViewNavigation>
                     {views.tabs.map(tab => (
                       <section key={tab.id} className="sq-stovepipe-request-view" aria-label={tab.label} hidden={!tab.selected}>
-                        <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>
-                        {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} />
+                        {(tab.id !== "projects" || !projects) && <HeadingSmall as="h2" marginTop="0" marginBottom="scale400">{tab.label}</HeadingSmall>}
+                        {tab.id === "projects" ? projects && <ProjectResults model={projects} pageKey={views.projectsHref} issues={model.projectIssues} />
+                          : tab.id === "issues" ? model.requestIssues && <Section cacheKey={model.key} result={model.requestIssues}>
+                            {issues => issues && <RequestIssues model={issues} projects={model.issueProjects} />}
+                          </Section>
                           : tab.id === "history" ? history && <History events={history.events} />
                             : <ParagraphSmall color="contentSecondary">Coming soon</ParagraphSmall>}
                       </section>
@@ -137,7 +142,7 @@ function Page({ model }: { model: StovepipePageModel }) {
           </Section>
         )}
       </Block>
-      <Block as="footer" paddingTop="scale300" paddingBottom="scale300" font="ParagraphXSmall" color="contentSecondary">
+      <Block as="footer" paddingTop={model.kind === "request" ? "0" : "scale300"} paddingBottom={model.kind === "request" ? "scale200" : "scale300"} font="ParagraphXSmall" color="contentSecondary">
         Loaded <Timestamp value={model.loadedAtMs} />
       </Block>
     </Block>

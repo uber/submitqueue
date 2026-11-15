@@ -52,6 +52,8 @@ const (
 	MetadataKeyClosureMode = "closure_mode"
 	// MetadataKeyFixID identifies an opaque repair attempt.
 	MetadataKeyFixID = "fix_id"
+	// MetadataKeyExecutorID identifies the queue-local registered repair backend.
+	MetadataKeyExecutorID = "executor_id"
 	// MetadataKeyTaskID identifies the validation task associated with a repair attempt.
 	MetadataKeyTaskID = "task_id"
 	// MetadataKeyUnitID identifies the validation unit; empty means a task-wide issue.
@@ -131,10 +133,13 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 		return err
 	}
 
-	if retained.State == entity.RequestStateUnknown &&
-		retained.Event != entity.RequestEventProjectFactsRecorded &&
-		retained.Event != entity.RequestEventRecordAbandoned {
-		return nil
+	if retained.State == entity.RequestStateUnknown {
+		switch retained.Event {
+		case entity.RequestEventProjectFactsRecorded,
+			entity.RequestEventProjectAnalysisCompleted, entity.RequestEventProjectAnalysisAbandoned:
+		default:
+			return nil
+		}
 	}
 	if err := materializeRequestProjections(ctx, stores, retained); err != nil {
 		m.count(ctx, "projection_failure")

@@ -37,6 +37,7 @@ type RequestStore interface {
 	// oldVersion, writing newVersion as the new version. Returns ErrVersionMismatch if the
 	// stored version does not match (including when the request does not exist).
 	//
+	// Updates include metadata. Callers preserve other extensions' metadata and copy maps before changing them.
 	// Version arithmetic is owned by the caller: it computes newVersion (typically oldVersion+1)
 	// and only assigns request.Version = newVersion after this call succeeds. The store performs
 	// a pure conditional write and does not read request.Version.

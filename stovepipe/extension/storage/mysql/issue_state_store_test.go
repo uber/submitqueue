@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -54,9 +55,9 @@ func TestIssueStateCreate(t *testing.T) {
 			store := NewIssueStateStore(db, testMetrics(), "queue")
 
 			q := mock.ExpectExec(regexp.QuoteMeta(
-				`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)).
-				WithArgs("queue", issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version)
+				`INSERT INTO issue_state (queue, task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version, metadata)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)).
+				WithArgs("queue", issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, []byte("null"))
 			if tt.dbErr != nil {
 				q.WillReturnError(tt.dbErr)
 			} else {
@@ -85,7 +86,7 @@ func TestIssueStateGet(t *testing.T) {
 			store := NewIssueStateStore(db, testMetrics(), "queue")
 
 			q := mock.ExpectQuery(regexp.QuoteMeta(
-				`SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version
+				`SELECT task_id, unit_id, status, first_seen_build_id, last_processed_build_id, last_changed_build_id, changed_at_ms, version, metadata
                  FROM issue_state WHERE queue = ? AND task_id = ? AND unit_id = ?`)).
 				WithArgs("queue", issue.TaskID, issue.UnitID)
 			switch kind {
@@ -99,8 +100,8 @@ func TestIssueStateGet(t *testing.T) {
 					firstBuild = nil
 				}
 
-				q.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version"}).
-					AddRow(issue.TaskID, issue.UnitID, issue.Status, firstBuild, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version))
+				q.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version", "metadata"}).
+					AddRow(issue.TaskID, issue.UnitID, issue.Status, firstBuild, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, nil))
 			}
 
 			got, err := store.Get(context.Background(), issue.TaskID, issue.UnitID)
@@ -143,8 +144,8 @@ func TestIssueStateUpdate(t *testing.T) {
 			defer db.Close()
 			issue := issueStateFixture()
 			issue.Status = entity.IssueStatusClosed
-			expectation := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_state SET status = ?, first_seen_build_id = ?, last_processed_build_id = ?, last_changed_build_id = ?, changed_at_ms = ?, version = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`)).
-				WithArgs(issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, int32(2), "queue", issue.TaskID, issue.UnitID, int32(1))
+			expectation := mock.ExpectExec(regexp.QuoteMeta(`UPDATE issue_state SET status = ?, first_seen_build_id = ?, last_processed_build_id = ?, last_changed_build_id = ?, changed_at_ms = ?, version = ?, metadata = ? WHERE queue = ? AND task_id = ? AND unit_id = ? AND version = ?`)).
+				WithArgs(issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, int32(2), []byte("null"), "queue", issue.TaskID, issue.UnitID, int32(1))
 			switch {
 			case tt.dbErr != nil:
 				expectation.WillReturnError(tt.dbErr)
@@ -204,8 +205,8 @@ func TestIssueStateRejectsInvalidIdentifiers(t *testing.T) {
 			mock.ExpectExec("INSERT INTO issue_state").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec("UPDATE issue_state").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery("SELECT task_id, unit_id").WillReturnRows(
-				sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version"}).
-					AddRow(issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version),
+				sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version", "metadata"}).
+					AddRow(issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, nil),
 			)
 			store := NewIssueStateStore(db, testMetrics(), queue)
 
@@ -219,4 +220,64 @@ func TestIssueStateRejectsInvalidIdentifiers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIssueStateMetadataPersistence(t *testing.T) {
+	for _, raw := range []string{"", "null", `{}`, `{"example-hook":{"channels":{"C123":{"thread_ts":"123.456","deliveries":{"opened":"sent"}}}}}`} {
+		t.Run(raw, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			store := NewIssueStateStore(db, testMetrics(), "queue")
+			issue := issueStateFixture()
+			if raw != "" {
+				require.NoError(t, json.Unmarshal([]byte(raw), &issue.Metadata))
+			}
+			encoded, err := json.Marshal(issue.Metadata)
+			require.NoError(t, err)
+			mock.ExpectExec("INSERT INTO issue_state").WithArgs("queue", issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, encoded).WillReturnResult(sqlmock.NewResult(0, 1))
+			require.NoError(t, store.Create(context.Background(), issue))
+			mock.ExpectExec("UPDATE issue_state SET").WithArgs(issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, int32(2), encoded, "queue", issue.TaskID, issue.UnitID, int32(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+			require.NoError(t, store.Update(context.Background(), issue, 1, 2))
+			var stored any
+			if raw != "" {
+				stored = []byte(raw)
+			}
+			rows := func() *sqlmock.Rows {
+				return sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version", "metadata"}).AddRow(issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, stored)
+			}
+			mock.ExpectQuery("SELECT task_id").WithArgs("queue", issue.TaskID, issue.UnitID).WillReturnRows(rows())
+			got, err := store.Get(context.Background(), issue.TaskID, issue.UnitID)
+			require.NoError(t, err)
+			require.Equal(t, issue, got)
+			mock.ExpectQuery("SELECT task_id").WithArgs("queue", 1).WillReturnRows(rows())
+			listed, err := store.List(context.Background(), storage.IssueStateRange{Limit: 1})
+			require.NoError(t, err)
+			require.Equal(t, []entity.IssueState{issue}, listed)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestIssueStateMetadataRejectsInvalidJSON(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewIssueStateStore(db, testMetrics(), "queue")
+	issue := issueStateFixture()
+	issue.Metadata = map[string]json.RawMessage{"hook": json.RawMessage(`invalid`)}
+	require.Error(t, store.Create(context.Background(), issue))
+	require.Error(t, store.Update(context.Background(), issue, 1, 2))
+	for _, raw := range []string{`invalid`, `[]`, `"not an object"`} {
+		rows := func() *sqlmock.Rows {
+			return sqlmock.NewRows([]string{"task_id", "unit_id", "status", "first_seen_build_id", "last_processed_build_id", "last_changed_build_id", "changed_at_ms", "version", "metadata"}).AddRow(issue.TaskID, issue.UnitID, issue.Status, issue.FirstSeenBuildID, issue.LastProcessedBuildID, issue.LastChangedBuildID, issue.ChangedAtMs, issue.Version, []byte(raw))
+		}
+		mock.ExpectQuery("SELECT task_id").WillReturnRows(rows())
+		_, err := store.Get(context.Background(), issue.TaskID, issue.UnitID)
+		require.Error(t, err)
+		mock.ExpectQuery("SELECT task_id").WillReturnRows(rows())
+		_, err = store.List(context.Background(), storage.IssueStateRange{Limit: 1})
+		require.Error(t, err)
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
 }

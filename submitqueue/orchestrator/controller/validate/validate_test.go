@@ -614,7 +614,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 	for _, state := range []entity.RequestState{
 		entity.RequestStateCancelled,
 		entity.RequestStateLanded,
-		entity.RequestStateError,
+		entity.RequestStateCancelling,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -70,6 +71,33 @@ func persistIssuesReconciledLog(ctx context.Context, materializer requestlog.Mat
 		})
 	if err := materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("retain issue reconciliation for build %q: %w", build.ID, err)
+	}
+	return nil
+}
+
+func persistIssueHistory(ctx context.Context, materializer issuelog.Materializer, store storage.Storage, issue entity.IssueState) error {
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Event: entity.IssueEvent(issue.Status), TimestampMs: issue.ChangedAtMs}
+	if err := materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
+		return fmt.Errorf("record issue transition: %w", err)
+	}
+	return nil
+}
+
+// persistReportedIssue records only reports accepted for this pass, not older rows fenced by recovery.
+func persistReportedIssue(ctx context.Context, materializer issuelog.Materializer, store storage.Storage, progress entity.IssueTrackingState, issue entity.IssueState) error {
+	if issue.LastProcessedBuildID != progress.BuildID {
+		return nil
+	}
+	if issue.Status != entity.IssueStatusOpen {
+		return nil
+	}
+	if issue.FirstSeenBuildID == progress.BuildID {
+		return nil
+	}
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, Event: entity.IssueEventReported,
+		BuildID: progress.BuildID, FirstSeenBuildID: issue.FirstSeenBuildID}
+	if err := materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
+		return fmt.Errorf("record reported issue: %w", err)
 	}
 	return nil
 }

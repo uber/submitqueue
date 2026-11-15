@@ -142,7 +142,7 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 	}
 
 	if request.State == entity.RequestStateFailed {
-		fact, _, err := recordFact(ctx, c.logger, c.metricsScope, store, request, nil)
+		fact, _, err := recordFact(ctx, c.logger, c.metricsScope, store, request, 0)
 		if err != nil {
 			return err
 		}

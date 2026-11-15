@@ -59,8 +59,10 @@ type (
 	// FixRequest identifies the build whose issues should be considered for repair.
 	FixRequest = protopb.FixRequest
 
-	// Record is the payload buildsignal publishes to the record stage once a
-	// build reaches a terminal status: the build id to record.
+	// ProjectAnalysis requests project-status resolution and issue attribution.
+	ProjectAnalysis = protopb.ProjectAnalysis
+
+	// Record identifies a terminal request whose repository outcome can be recorded.
 	Record = protopb.Record
 )
 

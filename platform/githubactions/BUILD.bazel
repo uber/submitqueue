@@ -5,7 +5,10 @@ go_library(
     srcs = ["client.go"],
     importpath = "github.com/uber/submitqueue/platform/githubactions",
     visibility = ["//visibility:public"],
-    deps = ["//platform/http:go_default_library"],
+    deps = [
+        "//platform/githubapi:go_default_library",
+        "//platform/http:go_default_library",
+    ],
 )
 
 go_test(

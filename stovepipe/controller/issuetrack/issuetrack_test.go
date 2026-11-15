@@ -79,7 +79,7 @@ func TestProcessIssueOpensAndCloses(t *testing.T) {
 				f.seedIssue("task", "unit", entity.IssueStatusOpen)
 			}
 
-			next, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, reported)
+			next, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, reported)
 			require.NoError(t, err)
 			require.Equal(t, "task", next.CursorTaskID)
 			require.Equal(t, "unit", next.CursorUnitID)
@@ -99,13 +99,13 @@ func TestProcessIssueOpensAndCloses(t *testing.T) {
 				require.Equal(t, entity.IssueStatusOpen, issue.Status)
 				require.Equal(t, "build/100", issue.FirstSeenBuildID)
 				require.Equal(t, int32(1), issue.Version)
-				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen})
+				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened})
 			} else {
 				require.NotContains(t, f.openIssues, issueKey{"task", "unit"})
 				require.Equal(t, entity.IssueStatusClosed, issue.Status)
 				require.Equal(t, "older", issue.FirstSeenBuildID)
 				require.Equal(t, int32(8), issue.Version)
-				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusClosed})
+				require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventClosed})
 			}
 		})
 	}
@@ -118,7 +118,7 @@ func TestUnchangedIssueRecordsTheProcessedBuild(t *testing.T) {
 	progress := currentCursor()
 	f.retain(progress)
 
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.NoError(t, err)
 	issue := f.states[issueKey{"task", "unit"}]
 	require.Equal(t, "build/100", issue.LastProcessedBuildID)
@@ -126,7 +126,9 @@ func TestUnchangedIssueRecordsTheProcessedBuild(t *testing.T) {
 	require.Equal(t, "older", issue.FirstSeenBuildID)
 	require.Equal(t, int64(500), issue.ChangedAtMs)
 	require.Equal(t, int32(8), issue.Version)
-	require.Empty(t, f.logs)
+	require.Len(t, f.logs, 1)
+	require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventReported})
+	require.Equal(t, "older", f.summaries[issueKey{"task", "unit"}].BuildID)
 }
 
 func TestHistoryRetryUsesTheStoredTransition(t *testing.T) {
@@ -137,16 +139,16 @@ func TestHistoryRetryUsesTheStoredTransition(t *testing.T) {
 	f.retain(progress)
 	f.failures["history/create"] = 1
 
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.ErrorIs(t, err, assert.AnError)
 	applied := f.states[issueKey{"task", "unit"}]
 	require.Empty(t, f.logs)
 	f.controller.nowMs = func() int64 { return 2000 }
 
-	_, err = f.controller.processIssue(context.Background(), f.store, f.progress, issueKey{"task", "unit"}, false)
+	_, err = f.controller.processIssue(context.Background(), f.store, testQueue, f.progress, issueKey{"task", "unit"}, false)
 	require.NoError(t, err)
 	require.Equal(t, applied, f.states[issueKey{"task", "unit"}])
-	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueStatusOpen}].TimestampMs)
+	require.Equal(t, int64(1000), f.logs[logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventOpened}].TimestampMs)
 }
 
 func TestCursorFailureDoesNotMutateTheIssue(t *testing.T) {
@@ -155,7 +157,7 @@ func TestCursorFailureDoesNotMutateTheIssue(t *testing.T) {
 	f.retain(progress)
 	f.failures["progress/update"] = 1
 
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.ErrorIs(t, err, assert.AnError)
 	require.Empty(t, f.states)
 	require.Empty(t, f.logs)
@@ -170,7 +172,7 @@ func TestSummaryRetryRepairsTheRetainedTransition(t *testing.T) {
 	f.retain(progress)
 	f.failures["summary/create"] = 1
 
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.ErrorIs(t, err, assert.AnError)
 	applied := f.states[issueKey{"task", "unit"}]
 	require.Len(t, f.logs, 1)
@@ -178,7 +180,7 @@ func TestSummaryRetryRepairsTheRetainedTransition(t *testing.T) {
 	require.Equal(t, entity.IssueTrackingPhaseRefreshing, f.progress.Phase)
 	f.controller.nowMs = func() int64 { return 2000 }
 
-	_, err = f.controller.processIssue(context.Background(), f.store, f.progress, issueKey{"task", "unit"}, false)
+	_, err = f.controller.processIssue(context.Background(), f.store, testQueue, f.progress, issueKey{"task", "unit"}, false)
 	require.NoError(t, err)
 	require.Equal(t, applied, f.states[issueKey{"task", "unit"}])
 	require.Len(t, f.logs, 1)
@@ -198,7 +200,7 @@ func TestOlderSourceCannotChangeTheIssue(t *testing.T) {
 	progress := currentCursor()
 	f.retain(progress)
 
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.ErrorIs(t, err, storage.ErrVersionMismatch)
 	require.Equal(t, current, f.states[issueKey{"task", "unit"}])
 	require.Equal(t, progress, f.progress)
@@ -213,7 +215,7 @@ func TestOpenIssueFailureKeepsTheCursorForRetry(t *testing.T) {
 	f.retain(progress)
 	f.failures["open-issue/create"] = 1
 
-	_, err := f.controller.processIssue(context.Background(), f.store, progress, issueKey{"task", "unit"}, true)
+	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.ErrorIs(t, err, assert.AnError)
 	accepted := f.states[issueKey{"task", "unit"}]
 	require.Contains(t, f.summaries, issueKey{"task", "unit"})
@@ -222,7 +224,7 @@ func TestOpenIssueFailureKeepsTheCursorForRetry(t *testing.T) {
 	require.Equal(t, "task", f.progress.CursorTaskID)
 	require.Equal(t, "unit", f.progress.CursorUnitID)
 
-	_, err = f.controller.processIssue(context.Background(), f.store, f.progress, issueKey{"task", "unit"}, false)
+	_, err = f.controller.processIssue(context.Background(), f.store, testQueue, f.progress, issueKey{"task", "unit"}, false)
 	require.NoError(t, err)
 	require.Equal(t, accepted, f.states[issueKey{"task", "unit"}])
 	require.Equal(t, accepted.FirstSeenBuildID, f.openIssues[issueKey{"task", "unit"}].FirstSeenBuildID)

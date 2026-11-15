@@ -13,7 +13,7 @@ import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/
 import { StovepipeApp } from "@submitqueue/web-stovepipe";
 import { createStovepipeWeb } from "@submitqueue/web-stovepipe/server";
 
-test("renders and hydrates packaged pages with React 18 and host themes", async () => {
+test("renders and hydrates packaged pages with React 18 and host themes", { timeout: 30_000 }, async () => {
   assert.match(React.version, /^18\./u);
 
   const web = createSubmitQueueWeb({
@@ -49,16 +49,21 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   }
 
   const stovepipe = createStovepipeWeb({ queues: [{ name: "repo/main" }], service: {
+    getIssuesByRequestID: async () => ({ issues: [
+      { taskId: "buildtest", unitId: "unit-1", kind: "new", buildId: "build/1", firstSeenBuildId: "build/1" },
+    ], status: "complete", nextPageToken: "" }),
+    listRequestProjectsByIssue: async () => ({ attributions: [{ taskId: "buildtest", unitId: "unit-1", project: "example-project" }], attributionComplete: true, nextPageToken: "" }),
+    listRequestIssuesByProject: async () => ({ attributions: [{ taskId: "buildtest", unitId: "unit-1", project: "example-project" }], attributionComplete: true, nextPageToken: "" }),
     list: async () => ({ requests: [], nextPageToken: "" }),
     getProjectStatusByID: async () => ({
-      queue: "repo/main", requestId: "1", updatedAtMs: 100n,
+      queue: "repo/main", requestId: "1", requestState: "failed", updatedAtMs: 100n,
       repositoryResult: { case: "repositoryBreakageDegree", value: 0.25 },
       projectResultsComplete: true, nextPageToken: "",
       projects: [{ project: "example-project", projectType: "service", result: { case: "breakageDegree", value: 0 } }],
     }),
     getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 }, events: [] }),
   } });
-  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history"]) {
+  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history", "/repo%2Fmain/request/1?view=issues", "/repo%2Fmain/request/1?view=issues&issueTask=buildtest&issueUnit=unit-1", "/repo%2Fmain/request/1?project=example-project"]) {
     const url = new URL(href, "https://submitqueue.test");
     const result = await stovepipe.handle({ path: url.pathname, search: url.searchParams });
     assert.equal(result.kind, "render");
@@ -74,8 +79,9 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   const reportError = console.error;
   console.error = (...values) => {
     const message = values.map(String).join(" ");
-    // BaseUI's Popover still uses defaultProps; React 18 warns but hydrates correctly.
-    if (message.includes("Popover") && message.includes("Support for defaultProps will be removed from function components")) {
+    // BaseUI's Popover and StatefulTooltip still use defaultProps; React 18 hydrates correctly.
+    if (message.includes("Support for defaultProps will be removed from function components")
+      && /\b(?:Popover|StatefulTooltip)\b/u.test(String(values[1]))) {
       reportError(...values);
     } else {
       errors.push(message);
@@ -86,6 +92,11 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
   // waiting to hydrate is itself reported as a hydration failure.
   const { act } = React;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  function textColor(element) {
+    const color = dom.window.getComputedStyle(element).color;
+    // JSDOM leaves explicit inheritance unresolved on styled buttons.
+    return color === "inherit" && element.parentElement ? textColor(element.parentElement) : color;
+  }
   for (const { route, page, theme, html, stylesheets } of pages) {
     const styles = stylesheets.map(({ css, attrs }) => {
       const style = document.createElement("style");
@@ -107,11 +118,13 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
     document.body.append(expected);
     assert.equal(dom.window.getComputedStyle(container.querySelector(".sq-app")).backgroundColor,
       dom.window.getComputedStyle(expected).backgroundColor, "the page must inherit its host's background");
-    expected.style.color = theme.colors.contentPrimary;
-    const selectedTimeZone = container.querySelector('[role="option"][aria-selected="true"]');
-    assert.ok(selectedTimeZone);
-    assert.equal(dom.window.getComputedStyle(selectedTimeZone).color,
-      dom.window.getComputedStyle(expected).color, "the selected time zone must inherit its host's text color");
+    const timestamps = container.querySelectorAll('button[aria-haspopup="dialog"]');
+    assert.equal(timestamps.length, container.querySelectorAll("time[datetime]").length);
+    for (const timestamp of timestamps) {
+      assert.equal(textColor(timestamp), textColor(timestamp.parentElement),
+        "the timestamp must inherit its surrounding text color");
+    }
+    assert.equal(container.querySelector('[role="listbox"][aria-label="Time zone"]'), null);
     expected.remove();
     if (route === "/repo%2Fmain/request/1") {
       assert.match(container.textContent, /example-project/u);
@@ -120,7 +133,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", async 
         .find(entry => entry.textContent.includes("example-project"));
       assert.ok(row);
       assert.deepEqual([...row.querySelectorAll("td")].map(cell => cell.textContent),
-        ["example-project", "service", "Green"]);
+        ["example-project", "service", "Green", "Show issues"]);
       assert.doesNotMatch(container.textContent, /%/u);
     }
     await act(async () => root.unmount());

@@ -654,6 +654,7 @@ GO_GENERATE_PACKAGES := \
 	./stovepipe/extension/buildissue/... \
 	./stovepipe/extension/buildrunner/... \
 	./stovepipe/extension/fixer/... \
+	./stovepipe/extension/projectissues/... \
 	./stovepipe/extension/projectstatus/... \
 	./stovepipe/extension/queueconfig/... \
 	./stovepipe/extension/sourcecontrol/... \

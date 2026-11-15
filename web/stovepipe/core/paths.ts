@@ -20,6 +20,24 @@ export class StovepipePaths {
     if (page) search.set("page", page);
     return `${this.queue(queue)}?${search}`;
   }
+  requestIssues(queue: string, requestId: string, page = ""): string {
+    const search = new URLSearchParams({ view: "issues" });
+    if (page) search.set("issues", page);
+    return `${this.request(queue, requestId)}?${search}`;
+  }
+  issueProjects(queue: string, requestId: string, taskId: string, unitId: string, issues = "", page = ""): string {
+    const search = new URLSearchParams({ view: "issues", issueTask: taskId, issueUnit: unitId });
+    if (issues) search.set("issues", issues);
+    if (page) search.set("affectedProjects", page);
+    return `${this.request(queue, requestId)}?${search}`;
+  }
+  projectIssues(queue: string, requestId: string, project: string, projects = "", projectPageSize = 50, page = ""): string {
+    const search = new URLSearchParams({ project });
+    if (projects) search.set("projects", projects);
+    if (projectPageSize !== 50) search.set("projectPageSize", String(projectPageSize));
+    if (page) search.set("projectIssues", page);
+    return `${this.request(queue, requestId)}?${search}`;
+  }
   request(queue: string, requestId: string, projects = "", projectPageSize = 50): string {
     const path = `${this.queue(queue)}/request/${encodePathSegment(requestId)}`;
     const search = new URLSearchParams();

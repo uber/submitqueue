@@ -72,6 +72,7 @@ func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 				historyFailure := pass == 0 && tt.failHistory
 				if waiting {
 					m.request.TerminalBuildID = ""
+					m.request.State = entity.RequestStateProcessing
 				}
 				if historyFailure {
 					*m.historyFailure = assert.AnError

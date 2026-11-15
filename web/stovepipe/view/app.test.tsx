@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it } from "vitest";
 import { WebNavigationProvider } from "@submitqueue/web-platform";
 import { StovepipeApp } from "./app.js";
@@ -14,9 +14,13 @@ const model: StovepipePageModel = {
   latestHref: "/repo%2Fmain",
   showLatestLink: false,
   loadedAtMs: 1000,
+  requestIssues: null,
+  issueProjects: null,
+  projectIssues: null,
   projectStatus: {
     ok: true,
     data: {
+      requestState: "processing",
       updatedAtMs: "1000",
       repositoryBreakageDegree: null,
       complete: false,
@@ -25,10 +29,10 @@ const model: StovepipePageModel = {
         value, href: "/repo%2Fmain/request/7?projectPageSize=" + value,
       })),
       projects: [
-        { project: "green-project", projectType: "service", breakageDegree: 0 },
-        { project: "partial-breakage-project", projectType: "future-type", breakageDegree: 0.25 },
-        { project: "broken-project", projectType: "", breakageDegree: 1 },
-        { project: "unknown-project", projectType: "", breakageDegree: null },
+        { project: "green-project", projectType: "service", breakageDegree: 0, issuesHref: "/project-issues" },
+        { project: "partial-breakage-project", projectType: "future-type", breakageDegree: 0.25, issuesHref: "/project-issues" },
+        { project: "broken-project", projectType: "", breakageDegree: 1, issuesHref: "/project-issues" },
+        { project: "unknown-project", projectType: "", breakageDegree: null, issuesHref: "/project-issues" },
       ],
       firstHref: null,
       nextHref: "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D",
@@ -62,6 +66,19 @@ const model: StovepipePageModel = {
     },
   },
 };
+it("keeps the shared brand and refresh control in the app header", () => {
+  render(<WebNavigationProvider value={{ refresh: async () => undefined }}>
+    <StovepipeApp model={model} />
+  </WebNavigationProvider>);
+  const header = screen.getByRole("banner");
+  expect(within(header).getByRole("link", { name: "Stovepipe queue" })).toHaveAttribute("href", model.queueHref);
+  const logo = within(header).getByRole("link", { name: "Stovepipe queue" }).querySelector("svg");
+  expect(logo?.parentElement).toHaveAttribute("aria-hidden", "true");
+  expect(within(header).queryByText("SP")).toBeNull();
+  expect(within(header).getByText("Stovepipe")).toBeVisible();
+  expect(within(header).getByRole("button", { name: "Enable auto-refresh" })).toBeVisible();
+});
+
 it("displays request summary data", () => {
   render(<StovepipeApp model={model} />);
   const status = screen.getByRole("region", { name: "Request status" });
@@ -107,7 +124,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
   const { rerender } = render(<WebNavigationProvider value={navigation}>
     <StovepipeApp model={issuesModel} />
   </WebNavigationProvider>);
-  fireEvent.click(screen.getByRole("checkbox", { name: "Auto refresh every 10s" }));
+  fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
   rerender(<WebNavigationProvider value={navigation}>
     <StovepipeApp model={{
       ...issuesModel, key: issuesModel.latestHref, showLatestLink: false,
@@ -116,7 +133,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
   </WebNavigationProvider>);
   expect(screen.getByText("Task-wide failure")).toBeVisible();
   expect(screen.getByRole("alert")).toHaveTextContent("Unable to load open issues");
-  expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).toBeChecked();
+  expect(screen.getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "true");
   rerender(<WebNavigationProvider value={navigation}>
     <StovepipeApp model={{
       ...issuesModel, queue: "other", key: "/other?view=issues", latestHref: "/other?view=issues",
@@ -124,7 +141,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
     }} />
   </WebNavigationProvider>);
   expect(screen.queryByText("Task-wide failure")).toBeNull();
-  expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "false");
 });
 it("links queue entries by request ID even when the change URI is missing", () => {
   if (!model.history.ok) throw new Error("No summary");
@@ -193,30 +210,32 @@ it("renders recorded project results, completion and shareable pagination", () =
   expect(within(table).getByText("service")).toBeVisible();
   expect(within(table).getAllByText("Unknown")).toHaveLength(2);
   expect(within(projects).getByText("Green")).toBeVisible();
-  expect(within(table).getByRole("row", { name: "partial-breakage-project future-type Partial Breakage" })).toBeVisible();
+  expect(within(table).getByRole("row", { name: "partial-breakage-project future-type Partial Breakage Show issues" })).toBeVisible();
   expect(within(projects).getByText("Breakage")).toBeVisible();
   expect(within(projects).getByText("No result recorded")).toBeVisible();
   expect(within(projects).queryByText(/%/)).toBeNull();
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("2 of 51")).toBeVisible();
-  expect(within(projects).getByText(/still in progress/)).toBeVisible();
-  for (const link of within(projects).getAllByRole("link", { name: /Next projects/ })) {
-    expect(link).toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
-  }
+  expect(within(projects).getByText("Waiting for builds")).toBeVisible();
+  const pager = within(projects).getByRole("navigation", { name: "Project pages (bottom)" });
+  expect(within(projects).getAllByLabelText("Projects per page")).toHaveLength(1);
+  expect(within(projects).queryByRole("navigation", { name: "Project pages (top)" })).toBeNull();
+  expect(within(pager).getByRole("link", { name: /Next projects/ }))
+    .toHaveAttribute("href", "/repo%2Fmain/request/7?projects=opaque%2B%2F%3D");
 });
 
 it.each(["projects=next", "projectPageSize=25"])("preserves the request summary and pager focus when loading %s", (query) => {
   if (!model.projectStatus.ok) throw new Error("No projects");
   const { rerender } = render(<StovepipeApp model={model} />);
-  const next = within(screen.getByRole("navigation", { name: "Project pages (top)" }))
+  const next = within(screen.getByRole("navigation", { name: "Project pages (bottom)" }))
     .getByRole("link", { name: /Next projects/ });
-  next.focus();
+  act(() => next.focus());
   rerender(<StovepipeApp model={{
     ...model,
     key: "/repo%2Fmain/request/7?" + query,
     projectStatus: { ok: true, data: {
       ...model.projectStatus.data,
-      projects: [{ project: "next-project", projectType: "", breakageDegree: 0 }],
+      projects: [{ project: "next-project", projectType: "", breakageDegree: 0, issuesHref: "/project-issues" }],
     } },
   }} />);
   expect(screen.getByText("git://repo/sha")).toBeVisible();
@@ -243,13 +262,45 @@ it("shows complete empty results without inventing green or a continuation", () 
       ...model.projectStatus.data, complete: true, projects: [], nextHref: null,
     } },
   }} />);
-  expect(screen.getByText("Project result recording is complete.")).toBeVisible();
+  expect(screen.getByText("Recording finished")).toBeVisible();
   expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
   expect(screen.queryByRole("link", { name: /Next projects/ })).toBeNull();
   const table = screen.getByRole("table", { name: "Recorded project results" });
   expect(within(table).getAllByRole("row")).toHaveLength(1);
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("No result recorded")).toBeVisible();
+});
+
+it("explains completed repository-wide breakage without project results", () => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  render(<StovepipeApp model={{
+    ...model,
+    projectStatus: { ok: true, data: {
+      ...model.projectStatus.data, repositoryBreakageDegree: 1, complete: true,
+      projects: [], firstHref: null, nextHref: null,
+    } },
+  }} />);
+  const results = screen.getByRole("region", { name: "Recorded project results" });
+  expect(within(results).getByText("Repository-wide breakage recorded")).toBeVisible();
+  expect(within(results).getByText("This request is fully broken at the repository level. No individual project results were recorded.")).toBeVisible();
+  expect(within(results).queryByRole("table")).toBeNull();
+  expect(screen.queryByText("No project results recorded on this page.")).toBeNull();
+});
+
+it.each([
+  { complete: false, repositoryBreakageDegree: 1, firstHref: null, nextHref: null },
+  { complete: true, repositoryBreakageDegree: null, firstHref: null, nextHref: null },
+  { complete: true, repositoryBreakageDegree: 0, firstHref: null, nextHref: null },
+  { complete: true, repositoryBreakageDegree: 1, firstHref: "/repo%2Fmain/request/7", nextHref: null },
+  { complete: true, repositoryBreakageDegree: 1, firstHref: null, nextHref: "/repo%2Fmain/request/7?projects=next" },
+])("does not infer repository-only breakage from an empty page: %j", (status) => {
+  if (!model.projectStatus.ok) throw new Error("No projects");
+  render(<StovepipeApp model={{
+    ...model,
+    projectStatus: { ok: true, data: { ...model.projectStatus.data, ...status, projects: [] } },
+  }} />);
+  expect(screen.queryByText("Repository-wide breakage recorded")).toBeNull();
+  expect(screen.getByText("No project results recorded on this page.")).toBeVisible();
 });
 
 it.each([
@@ -278,6 +329,7 @@ it("shows repository and project results when history is unavailable", async () 
   expect(within(screen.getByRole("region", { name: "Request status" }))
     .getByText("No result recorded")).toBeVisible();
   expect(screen.getByText("green-project")).toBeVisible();
+  expect(screen.getByLabelText("Project result recording")).toHaveTextContent("Waiting for builds");
 });
 
 it("shows history when repository and project results are unavailable", async () => {
@@ -302,7 +354,16 @@ it.each([
   expect(within(navigation).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   const section = screen.getByRole("region", { name: label });
   expect(section).toBeVisible();
-  if (view === "issues" || view === "fix-attempts") {
-    expect(within(section).getByText("Coming soon")).toBeVisible();
-  }
+  if (view === "fix-attempts") expect(within(section).getByText("Coming soon")).toBeVisible();
+});
+
+it("renders request issues and retains them on a same-page refresh failure", () => {
+  const issuesPage: StovepipePageModel = { ...model, key: model.key + "view=issues", requestIssues: { ok: true, data: {
+    status: "incomplete", issues: [], firstHref: null, nextHref: null,
+  } } };
+  const { rerender } = render(<StovepipeApp model={issuesPage} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Issue recording was abandoned");
+  rerender(<StovepipeApp model={{ ...issuesPage, requestIssues: { ok: false, error: "Issues unavailable" } }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Issues unavailable");
+  expect(screen.getByRole("status")).toHaveTextContent("Issue recording was abandoned");
 });

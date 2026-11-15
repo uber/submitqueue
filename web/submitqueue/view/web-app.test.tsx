@@ -34,7 +34,7 @@ describe("WebApp", () => {
 
     await act(async () => vi.advanceTimersByTime(30_000));
     expect(refresh).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Auto refresh every 10s" }));
+    fireEvent.click(screen.getByRole("button", { name: /auto-refresh/i }));
     await act(async () => vi.advanceTimersByTime(10_000));
 
     expect(refresh).toHaveBeenCalledWith("/latest");
@@ -61,7 +61,7 @@ describe("WebApp", () => {
 
   it("omits auto-refresh when the host cannot refresh in place", () => {
     renderApp(pageModel("First"), {});
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /auto-refresh/i })).toBeNull();
   });
 });
 

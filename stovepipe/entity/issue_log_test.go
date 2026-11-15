@@ -27,17 +27,17 @@ func TestIssueLogValidate(t *testing.T) {
 		invalid bool
 	}{
 		{name: "open"},
-		{name: "closed", change: func(l *IssueLog) { l.Status = "closed" }},
+		{name: "closed", change: func(l *IssueLog) { l.Event = "closed" }},
 		{name: "task-wide issue", change: func(l *IssueLog) { l.UnitID = "" }},
 		{name: "missing build", change: func(l *IssueLog) { l.BuildID = "" }, invalid: true},
 		{name: "zero timestamp", change: func(l *IssueLog) { l.TimestampMs = 0 }, invalid: true},
 		{name: "negative timestamp", change: func(l *IssueLog) { l.TimestampMs = -1 }, invalid: true},
-		{name: "unknown status", change: func(l *IssueLog) { l.Status = IssueStatusUnknown }, invalid: true},
-		{name: "unsupported status", change: func(l *IssueLog) { l.Status = "other" }, invalid: true},
+		{name: "unknown event", change: func(l *IssueLog) { l.Event = "" }, invalid: true},
+		{name: "unsupported event", change: func(l *IssueLog) { l.Event = "other" }, invalid: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			log := IssueLog{TaskID: "task", UnitID: "unit",
-				Status: IssueStatusOpen, BuildID: "build/1", TimestampMs: 1000}
+				Event: IssueEventOpened, BuildID: "build/1", TimestampMs: 1000}
 			if tt.change != nil {
 				tt.change(&log)
 			}
@@ -49,4 +49,13 @@ func TestIssueLogValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReportedIssueRequiresEarlierOpening(t *testing.T) {
+	log := IssueLog{TaskID: "test", BuildID: "build/2", Event: IssueEventReported, TimestampMs: 1000}
+	require.Error(t, log.Validate())
+	log.FirstSeenBuildID = log.BuildID
+	require.Error(t, log.Validate())
+	log.FirstSeenBuildID = "build/1"
+	require.NoError(t, log.Validate())
 }

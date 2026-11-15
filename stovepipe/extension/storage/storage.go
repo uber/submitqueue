@@ -69,6 +69,9 @@ type Factory interface {
 // to that queue: entity arguments whose queue disagrees with the binding are
 // rejected, and reads never surface another queue's records.
 type Storage interface {
+	// GetIssueRepairStore returns per-executor repair dispositions.
+	GetIssueRepairStore() IssueRepairStore
+
 	// GetRequestStore returns the RequestStore instance.
 	GetRequestStore() RequestStore
 
@@ -97,6 +100,9 @@ type Storage interface {
 	// GetBuildIssueStore returns the BuildIssueStore instance.
 	GetBuildIssueStore() BuildIssueStore
 
+	// GetRequestIssueSummaryStore returns immutable per-request issue results.
+	GetRequestIssueSummaryStore() RequestIssueSummaryStore
+
 	// GetIssueStateStore returns the IssueStateStore instance.
 	GetIssueStateStore() IssueStateStore
 
@@ -116,4 +122,8 @@ type Storage interface {
 	GetValidationFactStore() ValidationFactStore
 
 	GetProjectFactByDegreeStore() ProjectFactByDegreeStore
+
+	GetRequestProjectsByIssueStore() RequestProjectsByIssueStore
+
+	GetRequestIssuesByProjectStore() RequestIssuesByProjectStore
 }

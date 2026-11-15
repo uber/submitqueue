@@ -322,8 +322,8 @@ test("paginates change history through more than 500 queue requests", async ({ p
 
 test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
   await page.goto(`/queue/${queue}`);
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await expect(automatic).not.toBeChecked();
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   const now = new Date();
   await page.clock.install({ time: now });
   // The installed clock keeps running, so pausing at the install time races it.
@@ -334,53 +334,69 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
   page.on("request", request => { if (isRefresh(request)) refreshRequests++; });
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(0);
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await automatic.click();
   await page.clock.runFor(9_999);
   expect(refreshRequests).toBe(0);
   for (let cycle = 0; cycle < 2; cycle++) {
     const response = page.waitForResponse(response => isRefresh(response.request()));
     await page.clock.runFor(cycle === 0 ? 1 : 10_000);
     expect((await response).ok()).toBe(true);
-    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
-    await expect(automatic).toBeChecked();
+    await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
   }
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
-  await expect(automatic).not.toBeChecked();
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(2);
 });
 
 test.describe("time zone selection", () => {
   test.use({ timezoneId: "America/New_York" });
-  test("switches queue, request history and change timestamps from the shared header", async ({ page }) => {
+  test("switches queue, request history and change timestamps from the shared popover", async ({ page }) => {
     const expectTimeZone = async (zone: string) => {
       await expect.poll(() => page.locator("time[datetime]").evaluateAll((times, timeZone) => {
         const formatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "long", timeZone });
         return times.length > 0 && times.every(time => time.textContent === formatter.format(new Date(time.getAttribute("datetime")!)));
       }, zone)).toBe(true);
     };
-    const timeZones = page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true });
+    const timeZones = page.getByRole("dialog", { name: "Timestamp", exact: true });
+    const openTimeZones = () => page.getByRole("button", { name: /timestamp options$/ }).first().click();
+    const closeTimeZones = () => timeZones.getByRole("button", { name: "Close timestamp options" }).click();
     await page.goto(`/queue/${queue}`);
-    await expect(timeZones.getByRole("option", { name: "Browser", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true })).toHaveCount(0);
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "Local", exact: true })).toBeChecked();
     await expectTimeZone("America/New_York");
-    await timeZones.getByRole("option", { name: "UTC", exact: true }).click();
+    await timeZones.getByRole("radio", { name: "UTC", exact: true }).check();
     await expectTimeZone("UTC");
-    await page.locator(".sq-request-list__item td:first-child a").first().click();
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await closeTimeZones();
+    const requestLink = page.locator(".sq-request-list__item td:first-child a").first();
+    const requestId = await requestLink.innerText();
+    await requestLink.click();
+    await expect(page).toHaveURL(`${webURL}/queue/${queue}/request/${requestId}`);
+    await expect(page.getByRole("heading", { name: requestId, exact: true })).toBeVisible();
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
+    await closeTimeZones();
     await expect(page.getByText("Received", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: /^History/ }).click();
     await expect(page.getByRole("list", { name: "Request history", exact: true })).toBeVisible();
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
+    await closeTimeZones();
     const changePath = `/queue/${queue}/change/git/git.example.com/demo/refs%2Fheads%2Fpagination`;
     for (const path of [changePath, `${changePath}/7777777777777777777777777777777777777777`]) {
       await page.goto(path);
       await expect(page.getByRole("table", { name: "Change submissions" })).toBeVisible();
-      await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+      await openTimeZones();
+      await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
       await expectTimeZone("UTC");
+      await closeTimeZones();
     }
-    await timeZones.getByRole("option", { name: "Browser", exact: true }).click();
+    await openTimeZones();
+    await timeZones.getByRole("radio", { name: "Local", exact: true }).check();
     await expectTimeZone("America/New_York");
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   });

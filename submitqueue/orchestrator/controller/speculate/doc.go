@@ -54,7 +54,7 @@
 //     cancelled to free the slot.
 //   - A fails and P2 passed: B lands without A, again with no new build.
 //     P1's guess is broken.
-//   - A resolved either way, and every unbroken path failed: no future
+//   - A resolved either way, and every unbroken path failed or was cancelled: no future
 //     remains in which B passes, so B fails.
 //
 // # The life of a path
@@ -85,9 +85,9 @@
 // stops it, and only an observation of that stop (or proof nothing was ever
 // dispatched) moves the path to cancelled. The intent needs no dispatch of its
 // own — the poll loop reads it off the set and asks the runner to stop the
-// build. A terminal path can be resurrected by a new build proposal — status
-// returns to pending and Attempt increments, the one backwards step in the
-// diagram.
+// build. Terminal paths cannot be rebuilt. Failed and cancelled attempts are
+// exhausted once dependencies settle; preempting a viable path consumes its
+// attempt too. The sticky allocator does not preempt.
 //
 // # The life of a batch, as seen from here
 //

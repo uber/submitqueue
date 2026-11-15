@@ -16,6 +16,7 @@ package process
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -693,7 +694,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "mark processing retry preserves derived strategy after accepted reload",
+			name: "mark processing retry preserves derived strategy and concurrent metadata after accepted reload",
 			setup: func(m processMocks) {
 				const lastGreenURI = "git://repo/monorepo/main/green"
 
@@ -712,6 +713,7 @@ func TestProcess(t *testing.T) {
 
 				reloaded := acceptedRequest(testID)
 				reloaded.Version = 2
+				reloaded.Metadata = map[string]json.RawMessage{"extension": json.RawMessage(`{"thread":"123.456"}`)}
 				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(reloaded, nil)
 
 				retry := reloaded

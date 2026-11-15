@@ -29,6 +29,10 @@ func New() fixer.RepairExecutor {
 	return executor{}
 }
 
-func (executor) Submit(_ context.Context, issue entity.OpenIssue) (string, error) {
-	return "noop/" + issue.FirstSeenBuildID, nil
+func (executor) Submit(_ context.Context, issues []entity.OpenIssue) ([]fixer.Submission, error) {
+	submissions := make([]fixer.Submission, 0, len(issues))
+	for _, issue := range issues {
+		submissions = append(submissions, fixer.Submission{Issue: issue, FixID: "noop/" + issue.FirstSeenBuildID})
+	}
+	return submissions, nil
 }

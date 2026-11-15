@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/conduit"
 	"github.com/uber/submitqueue/platform/errs"
 	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	phttp "github.com/uber/submitqueue/platform/http"
@@ -21,10 +23,12 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
 
-func newTestProvider(t *testing.T, client *http.Client) changeprovider.ChangeProvider {
+func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvider {
 	t.Helper()
+	httpClient, err := phttp.NewClient(serverURL)
+	require.NoError(t, err)
 	return NewProvider(Params{
-		HTTPClient:   client,
+		Conduit:      conduit.NewClient(httpClient, "test-token"),
 		Logger:       zaptest.NewLogger(t).Sugar(),
 		MetricsScope: tally.NoopScope,
 	})
@@ -63,6 +67,14 @@ func TestProvider_Get(t *testing.T) {
 			wantErr: "failed to parse Phabricator change ID",
 		},
 		{
+			name: "rejected token returns error",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"result":null,"error_code":"ERR-INVALID-SESSION","error_info":"Session key is not present."}`))
+			},
+			uris:    []string{"phab://phab.example.com/D200/100"},
+			wantErr: "ERR-INVALID-SESSION",
+		},
+		{
 			name: "HTTP error returns error",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -74,16 +86,14 @@ func TestProvider_Get(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var client *http.Client
+			serverURL := "http://localhost"
 			if tc.handler != nil {
 				server := httptest.NewServer(tc.handler)
 				defer server.Close()
-				client = &http.Client{Transport: &testTransport{baseURL: server.URL}}
-			} else {
-				client = &http.Client{Transport: &testTransport{baseURL: "http://localhost"}}
+				serverURL = server.URL
 			}
 
-			p := newTestProvider(t, client)
+			p := newTestProvider(t, serverURL)
 			infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: tc.uris}})
 
 			if tc.wantErr != "" {
@@ -119,8 +129,7 @@ func TestProvider_Get_MultipleDiffs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
-	p := newTestProvider(t, client)
+	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"phab://phab.example.com/D200/100", "phab://phab.example.com/D201/101"},
 	}})
@@ -133,8 +142,7 @@ func TestProvider_Get_MultipleDiffs(t *testing.T) {
 }
 
 func TestProvider_Get_ConnectionError(t *testing.T) {
-	client := &http.Client{Transport: &testTransport{baseURL: "http://127.0.0.1:0"}}
-	p := newTestProvider(t, client)
+	p := newTestProvider(t, "http://127.0.0.1:0")
 	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"phab://phab.example.com/D200/100"},
 	}})
@@ -163,8 +171,7 @@ func TestProvider_Get_HTTPStatusError(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
-			p := newTestProvider(t, client)
+			p := newTestProvider(t, server.URL)
 			_, err := p.Get(t.Context(), entity.Request{Change: change.Change{
 				URIs: []string{"phab://phab.example.com/D200/100"},
 			}})
@@ -193,15 +200,11 @@ func TestProvider_Get_FileDetails(t *testing.T) {
 				},
 			},
 		}
-		resultBytes, _ := json.Marshal(result)
-		resp := conduitResponse{Result: resultBytes}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		serveConduit(t, w, result)
 	}))
 	defer server.Close()
 
-	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
-	p := newTestProvider(t, client)
+	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"phab://phab.example.com/D200/100"},
 	}})
@@ -232,8 +235,7 @@ func TestProvider_Get_Batching(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		query := r.URL.Query()
-		ids := query["ids[]"]
+		ids := requestedDiffIDs(t, r)
 		result := make(map[string]*diffResult, len(ids))
 		for _, id := range ids {
 			result[id] = &diffResult{
@@ -252,8 +254,7 @@ func TestProvider_Get_Batching(t *testing.T) {
 		uris[i] = fmt.Sprintf("phab://phab.example.com/D%d/%d", revisionID, diffID)
 	}
 
-	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
-	p := newTestProvider(t, client)
+	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: uris}})
 
 	require.NoError(t, err)
@@ -269,8 +270,7 @@ func TestProvider_Get_BatchingStopsOnError(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		query := r.URL.Query()
-		ids := query["ids[]"]
+		ids := requestedDiffIDs(t, r)
 		result := make(map[string]*diffResult, len(ids))
 		for _, id := range ids {
 			result[id] = &diffResult{
@@ -288,10 +288,33 @@ func TestProvider_Get_BatchingStopsOnError(t *testing.T) {
 		uris[i] = fmt.Sprintf("phab://phab.example.com/D%d/%d", revisionID, diffID)
 	}
 
-	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
-	p := newTestProvider(t, client)
+	p := newTestProvider(t, server.URL)
 	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: uris}})
 
 	require.Error(t, err)
 	assert.Equal(t, 2, callCount)
+}
+
+// serveConduit writes a successful Conduit response envelope.
+func serveConduit(t *testing.T, w http.ResponseWriter, result any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": result, "error_code": nil, "error_info": nil}))
+}
+
+// requestedDiffIDs returns the diff IDs a querydiffs call asked for, as the
+// string keys Conduit answers with.
+func requestedDiffIDs(t *testing.T, r *http.Request) []string {
+	t.Helper()
+	var params struct {
+		IDs []int `json:"ids"`
+	}
+	if !assert.NoError(t, r.ParseForm()) || !assert.NoError(t, json.Unmarshal([]byte(r.PostForm.Get("params")), &params)) {
+		return nil
+	}
+	ids := make([]string, len(params.IDs))
+	for i, id := range params.IDs {
+		ids[i] = strconv.Itoa(id)
+	}
+	return ids
 }

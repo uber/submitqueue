@@ -143,7 +143,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	)
 
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, stovepipemq.TopicKeyBuildAnalysis, "analysis")
+		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
 	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
 		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
 		stovepipemq.TopicKeyBuildSignal, "signal")
@@ -170,7 +170,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	assert.True(t, persisted[b])
 
 	require.NoError(t, statusController.Process(ctx, delivered(published["buildsignal"][0])))
-	require.Len(t, published["record"], 1)
+	require.Empty(t, published["record"])
 	require.Len(t, published["buildanalysis"], 2)
 	assert.Equal(t, entity.BuildStatusFailed, savedBuild.Status)
 	assert.Equal(t, entity.RequestStateFailed, request.State)

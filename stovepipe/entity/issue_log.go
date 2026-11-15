@@ -16,22 +16,32 @@ package entity
 
 import "fmt"
 
-// IssueLog is an immutable issue lifecycle transition within a queue.
-// Task, unit, build, and status identify one transition.
+// IssueEvent identifies an issue occurrence; reporting does not change status.
+type IssueEvent string
+
+const (
+	IssueEventOpened   IssueEvent = "open"
+	IssueEventReported IssueEvent = "reported"
+	IssueEventClosed   IssueEvent = "closed"
+)
+
+// IssueLog is an immutable occurrence identified by task, unit, build, and event within a queue.
 type IssueLog struct {
 	// TaskID identifies the logical validation task.
 	TaskID string `json:"task_id"`
 	// UnitID identifies the validation unit; empty for a task-wide issue.
 	UnitID string `json:"unit_id"`
-	// Status is the open or closed status established by this transition.
-	Status IssueStatus `json:"status"`
-	// BuildID identifies the build where the issue was first seen or confirmed closed.
+	// Event identifies an opening, repeat report, or closure.
+	Event IssueEvent `json:"event"`
+	// BuildID identifies the build that produced this occurrence.
 	BuildID string `json:"build_id"`
-	// TimestampMs is when the transition was first recorded, in Unix milliseconds.
+	// TimestampMs is when this occurrence was first recorded, in Unix milliseconds.
 	TimestampMs int64 `json:"timestamp_ms"`
+	// FirstSeenBuildID identifies this opening; empty only on legacy lifecycle records.
+	FirstSeenBuildID string `json:"first_seen_build_id"`
 }
 
-// Validate verifies the invariants required for a newly persisted issue log.
+// Validate checks the event identity, timestamp, and opening reference.
 func (l IssueLog) Validate() error {
 	if l.BuildID == "" {
 		return fmt.Errorf("issue log build ID must not be empty")
@@ -39,10 +49,21 @@ func (l IssueLog) Validate() error {
 	if l.TimestampMs <= 0 {
 		return fmt.Errorf("issue log timestamp must be positive")
 	}
-	switch l.Status {
-	case IssueStatusOpen, IssueStatusClosed:
-		return nil
+	switch l.Event {
+	case IssueEventOpened:
+		if l.FirstSeenBuildID != "" && l.FirstSeenBuildID != l.BuildID {
+			return fmt.Errorf("issue opening must reference its source build")
+		}
+	case IssueEventReported:
+		if l.FirstSeenBuildID == "" {
+			return fmt.Errorf("reported issue requires an opening build")
+		}
+		if l.FirstSeenBuildID == l.BuildID {
+			return fmt.Errorf("reported issue must reference an earlier opening")
+		}
+	case IssueEventClosed:
 	default:
-		return fmt.Errorf("invalid issue status %q", l.Status)
+		return fmt.Errorf("invalid issue event %q", l.Event)
 	}
+	return nil
 }

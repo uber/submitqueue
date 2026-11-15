@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package git is a Merger implementation backed by a local git checkout. It
-// applies a MergeRequest's ordered steps onto a target branch, honoring each
-// step's merge strategy, and (for a committing Merge) pushes the result.
+// Package git is a Merger implementation that drives git through a
+// gitworkspace.Workspace. It applies a MergeRequest's ordered steps onto a
+// target branch, honoring each step's merge strategy, and (for a committing
+// Merge) pushes the result.
 //
 // Strategy → git operation:
 //
@@ -30,8 +31,8 @@
 //   - DEFAULT:       resolved to the instance's configured DefaultStrategy
 //     before any step runs.
 //
-// Authorship: the committer is always the merger's configured identity, since
-// it is what applied the change. The author is the person who wrote it —
+// Authorship: the committer is always the workspace's configured identity,
+// since it is what applied the change. The author is the person who wrote it —
 // carried across automatically by cherry-pick under REBASE, and set explicitly
 // on the commits SQUASH_REBASE and MERGE mint, from the author recorded on the
 // commit each change's URI pins. See author.go.
@@ -68,7 +69,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 
@@ -78,8 +78,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
-	gitlocal "github.com/uber/submitqueue/platform/extension/gitworkspace/local"
-	gitexec "github.com/uber/submitqueue/platform/git/exec"
+	"github.com/uber/submitqueue/platform/extension/gitworkspace"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/runway/extension/merger"
 )
@@ -88,20 +87,14 @@ import (
 // under us. Bounded to prevent an infinite loop against a busy remote.
 const defaultMaxPushAttempts = 10
 
-// Default committer identity used when Params leaves it unset. The scrubbed
-// environment (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL=/dev/null) leaves no
-// ambient identity, so commit-creating strategies (REBASE/SQUASH_REBASE/MERGE)
-// need one supplied explicitly.
-const (
-	defaultCommitterName  = "SubmitQueue Runway"
-	defaultCommitterEmail = "runway@submitqueue.invalid"
-)
-
 // Params holds the dependencies for the git Merger.
 type Params struct {
-	// CheckoutPath is the absolute path to an existing git checkout that the
-	// Merger will operate against. The Merger owns this working tree.
-	CheckoutPath string
+	// Workspaces opens the git workspace every operation runs in. The workspace
+	// owns the checkout, the git runtime and the committer identity, and the
+	// Merger must be the only user of the checkout it opens.
+	Workspaces gitworkspace.Factory
+	// Repo names the repository Workspaces opens.
+	Repo string
 	// Remote is the name of the git remote to fetch from and push to
 	// (e.g. "origin").
 	Remote string
@@ -110,8 +103,6 @@ type Params struct {
 	// DefaultStrategy resolves a step whose strategy is DEFAULT. Must be a
 	// concrete strategy (REBASE, SQUASH_REBASE, MERGE, or PROMOTE).
 	DefaultStrategy mergestrategypb.Strategy
-	// Runtime is the pinned Git runtime used for every invocation.
-	Runtime gitlocal.Runtime
 	// MaxPushAttempts caps how many times a committing merge retries the full
 	// reset/apply/push cycle when the remote tip moves under it. Defaults to
 	// defaultMaxPushAttempts when zero or negative.
@@ -132,38 +123,33 @@ type Params struct {
 	// producing a nonsense result. Enable it on a queue that exists to perform
 	// such an import.
 	AllowUnrelatedHistories bool
-	// CommitterName / CommitterEmail identify the author/committer of
-	// service-created commits. Defaults are used when empty.
-	CommitterName  string
-	CommitterEmail string
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
 	MetricsScope tally.Scope
 }
 
-// gitMerger implements merger.Merger by shelling out to the `git` CLI against a
-// local checkout.
+// gitMerger implements merger.Merger by running `git` commands in a workspace.
 type gitMerger struct {
-	checkoutPath    string
+	workspaces      gitworkspace.Factory
+	repo            string
 	remote          string
 	target          string
 	defaultStrategy mergestrategypb.Strategy
-	runtime         gitlocal.Runtime
 	maxPushAttempts int
 	fetchRefspecs   []string
 	checkStaleness  bool
 
 	// allowUnrelatedHistories permits a MERGE across disjoint history graphs.
 	allowUnrelatedHistories bool
-	committerName           string
-	committerEmail          string
 	logger                  *zap.SugaredLogger
 	metricsScope            tally.Scope
 
 	// mu serializes concurrent operations — the underlying checkout cannot be
 	// safely shared between operations.
 	mu sync.Mutex
+	// ws is the workspace of the operation holding mu, nil between operations.
+	ws gitworkspace.Workspace
 }
 
 // Verify gitMerger implements merger.Merger at compile time.
@@ -180,12 +166,12 @@ type resolvedStep struct {
 	refs []changeRef
 }
 
-// NewMerger constructs a git-backed Merger operating against the given checkout.
-// The checkout must already exist and have the configured remote. Runtime paths
-// must be absolute and DefaultStrategy must be a concrete strategy.
+// NewMerger constructs a git-backed Merger running in the workspaces Params
+// opens. The checkout must already exist and have the configured remote, and
+// DefaultStrategy must be a concrete strategy.
 func NewMerger(params Params) (merger.Merger, error) {
-	if err := params.Runtime.Validate(); err != nil {
-		return nil, err
+	if params.Workspaces == nil {
+		return nil, errors.New("git workspace factory is required")
 	}
 	if !isConcreteStrategy(params.DefaultStrategy) {
 		return nil, fmt.Errorf("default strategy must be concrete (REBASE, SQUASH_REBASE, MERGE, or PROMOTE), got %v", params.DefaultStrategy)
@@ -194,27 +180,17 @@ func NewMerger(params Params) (merger.Merger, error) {
 	if maxAttempts <= 0 {
 		maxAttempts = defaultMaxPushAttempts
 	}
-	committerName := params.CommitterName
-	if committerName == "" {
-		committerName = defaultCommitterName
-	}
-	committerEmail := params.CommitterEmail
-	if committerEmail == "" {
-		committerEmail = defaultCommitterEmail
-	}
 	return &gitMerger{
-		checkoutPath:    params.CheckoutPath,
+		workspaces:      params.Workspaces,
+		repo:            params.Repo,
 		remote:          params.Remote,
 		target:          params.Target,
 		defaultStrategy: params.DefaultStrategy,
-		runtime:         params.Runtime,
 		maxPushAttempts: maxAttempts,
 		fetchRefspecs:   params.FetchRefspecs,
 		checkStaleness:  params.CheckStaleness,
 
 		allowUnrelatedHistories: params.AllowUnrelatedHistories,
-		committerName:           committerName,
-		committerEmail:          committerEmail,
 		logger:                  params.Logger.Named("git_merger"),
 		metricsScope:            params.MetricsScope.SubScope("git_merger"),
 	}, nil
@@ -251,6 +227,18 @@ func (m *gitMerger) process(ctx context.Context, req *runwaymq.MergeRequest, com
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	ws, err := m.workspaces.For(ctx, m.repo)
+	if err != nil {
+		return nil, fmt.Errorf("open git workspace for %s: %w", m.repo, err)
+	}
+	m.ws = ws
+	defer func() {
+		m.ws = nil
+		if err := ws.Close(); err != nil {
+			m.logger.Warnw("closing git workspace failed", "repo", m.repo, "err", err)
+		}
+	}()
 
 	m.logger.Debugw("starting merge",
 		"id", req.GetId(),
@@ -548,13 +536,13 @@ func (m *gitMerger) squashChange(ctx context.Context, step *runwaymq.MergeStep, 
 		return "", false, err
 	}
 	if preTree == postTree {
-		if _, err := m.run(ctx, nil, "reset", "--hard", preSHA); err != nil {
+		if _, err := m.run(ctx, "reset", "--hard", preSHA); err != nil {
 			return "", false, fmt.Errorf("git reset --hard %s after empty squash: %w", preSHA, err)
 		}
 		return "", false, nil
 	}
 
-	if _, err := m.run(ctx, nil, "reset", "--soft", preSHA); err != nil {
+	if _, err := m.run(ctx, "reset", "--soft", preSHA); err != nil {
 		return "", false, fmt.Errorf("git reset --soft %s: %w", preSHA, err)
 	}
 	// The squash is a new commit, so it carries no authorship of its own.
@@ -563,7 +551,7 @@ func (m *gitMerger) squashChange(ctx context.Context, step *runwaymq.MergeStep, 
 	if err != nil {
 		return "", false, err
 	}
-	if _, err := m.runAs(ctx, author, nil, "commit", "-m", squashMessage(step, ref)); err != nil {
+	if _, err := m.run(ctx, append([]string{"commit", "-m", squashMessage(step, ref)}, author.args()...)...); err != nil {
 		return "", false, fmt.Errorf("git commit (squash): %w", err)
 	}
 	sha, err := m.headSHA(ctx)
@@ -589,24 +577,30 @@ func (m *gitMerger) applyMerge(ctx context.Context, rs resolvedStep) (applied, e
 			continue
 		}
 
-		args := []string{"merge", "--no-ff", "--no-edit"}
+		args := []string{"merge", "--no-ff", "--no-commit"}
 		if m.allowUnrelatedHistories {
 			args = append(args, "--allow-unrelated-histories")
 		}
-		// The merge commit is minted by the merger, so it would otherwise be
-		// authored by the service. Credit it to the change being merged; the
-		// change's own commits keep their authors through the second parent.
-		author, err := m.commitAuthor(ctx, ref.SHA)
-		if err != nil {
-			return applied{}, err
-		}
-		o, err := m.runCombinedAs(ctx, author, nil, append(args, ref.SHA)...)
+		o, err := m.runCombined(ctx, append(args, ref.SHA)...)
 		if err != nil {
 			// Read the index before aborting clears it; a non-zero exit alone
 			// does not establish that anything collided.
 			conflicted := m.hasUnmergedPaths(ctx)
-			_, _ = m.run(ctx, nil, "merge", "--abort")
+			_, _ = m.run(ctx, "merge", "--abort")
 			return applied{}, m.classifyMergeFailure(ref, o, conflicted, err)
+		}
+		// The merge commit is minted by the merger, so it would otherwise be
+		// authored by the service. git merge takes no --author, so the merge
+		// stops short of committing and the commit credits the change's author;
+		// the change's own commits keep theirs through the second parent.
+		author, err := m.commitAuthor(ctx, ref.SHA)
+		if err != nil {
+			_, _ = m.run(ctx, "merge", "--abort")
+			return applied{}, err
+		}
+		if _, err := m.run(ctx, append([]string{"commit", "--no-edit"}, author.args()...)...); err != nil {
+			_, _ = m.run(ctx, "merge", "--abort")
+			return applied{}, fmt.Errorf("git commit (merge %s): %w", ref.SHA, err)
 		}
 		mergeSHA, err := m.headSHA(ctx)
 		if err != nil {
@@ -674,7 +668,7 @@ func (m *gitMerger) promote(ctx context.Context, req *runwaymq.MergeRequest, rs 
 		}
 
 		refspec := sha + ":refs/heads/" + m.target
-		if _, err := m.run(ctx, nil, "push", m.remote, refspec); err != nil {
+		if _, err := m.run(ctx, "push", m.remote, refspec); err != nil {
 			// The target may have moved under us; re-fetch and re-classify.
 			coremetrics.NamedCounter(m.metricsScope, "promote", "push_retries", 1)
 			m.logger.Warnw("promote push failed, re-classifying",
@@ -776,17 +770,17 @@ func (m *gitMerger) pickRange(ctx context.Context, ref changeRef) ([]string, err
 // the attempt, and the in-progress pick is aborted so the checkout stays
 // usable for the next request.
 func (m *gitMerger) cherryPickRange(ctx context.Context, base, head string) error {
-	out, err := m.runCombined(ctx, nil, "cherry-pick", base+".."+head)
+	out, err := m.runCombined(ctx, "cherry-pick", base+".."+head)
 	for err != nil {
 		if isRedundantCherryPick(out) {
-			out, err = m.runCombined(ctx, nil, "cherry-pick", "--skip")
+			out, err = m.runCombined(ctx, "cherry-pick", "--skip")
 			continue
 		}
 		// Ask the index what happened before aborting clears it. A non-zero
 		// exit alone does not establish a conflict; without unmerged paths,
 		// preserve the command error for infrastructure classification.
 		conflicted := m.hasUnmergedPaths(ctx)
-		_, _ = m.run(ctx, nil, "cherry-pick", "--abort")
+		_, _ = m.run(ctx, "cherry-pick", "--abort")
 		detail := strings.TrimSpace(string(out))
 		if !conflicted {
 			coremetrics.NamedCounter(m.metricsScope, "merge", "cherry_pick_errors", 1)
@@ -803,7 +797,7 @@ func (m *gitMerger) cherryPickRange(ctx context.Context, base, head string) erro
 // invocation exited non-zero, and it has to be read before the operation is
 // aborted, since aborting clears the index.
 func (m *gitMerger) hasUnmergedPaths(ctx context.Context) bool {
-	out, err := m.run(ctx, nil, "ls-files", "--unmerged")
+	out, err := m.run(ctx, "ls-files", "--unmerged")
 	return err == nil && len(bytes.TrimSpace(out)) > 0
 }
 
@@ -811,15 +805,17 @@ func (m *gitMerger) hasUnmergedPaths(ctx context.Context) bool {
 // share no history. git exits 1 for the latter, which is an answer rather than
 // a failure.
 func (m *gitMerger) mergeBase(ctx context.Context, a, b string) (string, error) {
-	out, err := m.run(ctx, nil, "merge-base", a, b)
-	if err == nil {
-		return strings.TrimSpace(string(out)), nil
+	cmd, out, err := m.execGit("merge-base", a, b)
+	if err != nil {
+		return "", err
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+	switch out.ExitCode {
+	case 0:
+		return strings.TrimSpace(out.Stdout), nil
+	case 1:
 		return "", nil
 	}
-	return "", fmt.Errorf("git merge-base %s %s: %w", a, b, err)
+	return "", fmt.Errorf("git merge-base %s %s: %w", a, b, gitworkspace.CommandFailure(ctx, cmd, out))
 }
 
 // revList lists the commits reachable from `to` but not from `from`, oldest
@@ -827,7 +823,7 @@ func (m *gitMerger) mergeBase(ctx context.Context, a, b string) (string, error) 
 // rather than tracked per-invocation, which stays correct when the sequencer
 // drops some of them.
 func (m *gitMerger) revList(ctx context.Context, from, to string) ([]string, error) {
-	out, err := m.run(ctx, nil, "rev-list", "--reverse", from+".."+to)
+	out, err := m.run(ctx, "rev-list", "--reverse", from+".."+to)
 	if err != nil {
 		return nil, fmt.Errorf("git rev-list %s..%s: %w", from, to, err)
 	}
@@ -838,22 +834,22 @@ func (m *gitMerger) revList(ctx context.Context, from, to string) ([]string, err
 // HEAD to refs/remotes/<remote>/<target>, producing a clean working tree pinned
 // to the latest remote tip.
 func (m *gitMerger) resetToRemote(ctx context.Context) error {
-	if _, err := m.run(ctx, nil, "fetch", m.remote); err != nil {
+	if _, err := m.run(ctx, "fetch", m.remote); err != nil {
 		return fmt.Errorf("git fetch %s: %w", m.remote, err)
 	}
 	// Deployment-supplied refspecs, for a server that refuses a fetch for an
 	// unadvertised object and so cannot satisfy the by-SHA fetch in
 	// ensureObject. Normally empty.
 	for _, refspec := range m.fetchRefspecs {
-		if _, err := m.run(ctx, nil, "fetch", m.remote, refspec); err != nil {
+		if _, err := m.run(ctx, "fetch", m.remote, refspec); err != nil {
 			return fmt.Errorf("git fetch %s %s: %w", m.remote, refspec, err)
 		}
 	}
 	remoteRef := m.remote + "/" + m.target
-	if _, err := m.run(ctx, nil, "reset", "--hard", remoteRef); err != nil {
+	if _, err := m.run(ctx, "reset", "--hard", remoteRef); err != nil {
 		return fmt.Errorf("git reset --hard %s: %w", remoteRef, err)
 	}
-	if _, err := m.run(ctx, nil, "clean", "-fdx"); err != nil {
+	if _, err := m.run(ctx, "clean", "-fdx"); err != nil {
 		return fmt.Errorf("git clean: %w", err)
 	}
 	return nil
@@ -861,7 +857,7 @@ func (m *gitMerger) resetToRemote(ctx context.Context) error {
 
 // headSHA returns the SHA at HEAD in the local checkout.
 func (m *gitMerger) headSHA(ctx context.Context) (string, error) {
-	out, err := m.run(ctx, nil, "rev-parse", "HEAD")
+	out, err := m.run(ctx, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
@@ -872,11 +868,11 @@ func (m *gitMerger) headSHA(ctx context.Context) (string, error) {
 // refs/remotes/<remote>/<target>. Used after a push failure to detect whether
 // the remote tip moved under us.
 func (m *gitMerger) refetchTipSHA(ctx context.Context) (string, error) {
-	if _, err := m.run(ctx, nil, "fetch", m.remote); err != nil {
+	if _, err := m.run(ctx, "fetch", m.remote); err != nil {
 		return "", fmt.Errorf("git fetch %s: %w", m.remote, err)
 	}
 	remoteRef := m.remote + "/" + m.target
-	out, err := m.run(ctx, nil, "rev-parse", remoteRef)
+	out, err := m.run(ctx, "rev-parse", remoteRef)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse %s: %w", remoteRef, err)
 	}
@@ -887,29 +883,23 @@ func (m *gitMerger) refetchTipSHA(ctx context.Context) (string, error) {
 // descendant. `git merge-base --is-ancestor` exits 0 for true, 1 for false;
 // any other exit is a real error.
 func (m *gitMerger) isAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
-	args := []string{"merge-base", "--is-ancestor", ancestor, descendant}
-	cmd := m.command(ctx, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
+	cmd, out, err := m.execGit("merge-base", "--is-ancestor", ancestor, descendant)
+	if err != nil {
+		return false, err
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+	switch out.ExitCode {
+	case 0:
+		return true, nil
+	case 1:
 		return false, nil
 	}
-	message := err.Error()
-	if detail := strings.TrimSpace(stderr.String()); detail != "" {
-		message += ": " + detail
-	}
 	return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %w",
-		ancestor, descendant, gitexec.CommandFailure(ctx, args, message, err))
+		ancestor, descendant, gitworkspace.CommandFailure(ctx, cmd, out))
 }
 
 // commitTreeSHA returns the tree SHA recorded in the commit object at ref.
 func (m *gitMerger) commitTreeSHA(ctx context.Context, ref string) (string, error) {
-	out, err := m.run(ctx, nil, "rev-parse", ref+"^{tree}")
+	out, err := m.run(ctx, "rev-parse", ref+"^{tree}")
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse %s^{tree}: %w", ref, err)
 	}
@@ -919,82 +909,48 @@ func (m *gitMerger) commitTreeSHA(ctx context.Context, ref string) (string, erro
 // push pushes the current HEAD to refs/heads/<target> on the remote.
 func (m *gitMerger) push(ctx context.Context) error {
 	refspec := "HEAD:refs/heads/" + m.target
-	if _, err := m.run(ctx, nil, "push", m.remote, refspec); err != nil {
+	if _, err := m.run(ctx, "push", m.remote, refspec); err != nil {
 		return fmt.Errorf("git push %s %s: %w", m.remote, refspec, err)
 	}
 	return nil
 }
 
-// run executes a `git` command in the checkout. Returns captured stdout and an
-// error that includes captured stderr for diagnostics.
-func (m *gitMerger) run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	return m.runAs(ctx, authorIdent{}, stdin, args...)
-}
-
-// runAs is run with any commit the command creates credited to the given
-// author. A zero author leaves the committer identity to author it too.
-func (m *gitMerger) runAs(ctx context.Context, author authorIdent, stdin []byte, args ...string) ([]byte, error) {
-	cmd := m.commandAs(ctx, author, args...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		message := err.Error()
-		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			message += ": " + detail
-		}
-		return nil, gitexec.CommandFailure(ctx, args, message, err)
-	}
-	return stdout.Bytes(), nil
-}
-
-// runCombined is like run but returns combined stdout+stderr both on success
-// and failure. Used when the caller needs to inspect git's diagnostic output.
-func (m *gitMerger) runCombined(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	return m.runCombinedAs(ctx, authorIdent{}, stdin, args...)
-}
-
-// runCombinedAs is runCombined with any commit the command creates credited to
-// the given author.
-func (m *gitMerger) runCombinedAs(ctx context.Context, author authorIdent, stdin []byte, args ...string) ([]byte, error) {
-	cmd := m.commandAs(ctx, author, args...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	out, err := cmd.CombinedOutput()
+// execGit runs one git command in the operation's workspace. A non-zero exit
+// is reported in the Output; the error is reserved for not running it at all.
+func (m *gitMerger) execGit(args ...string) (gitworkspace.Command, gitworkspace.Output, error) {
+	cmd := gitworkspace.Command{Alias: args[0], Bin: "git", Args: args}
+	outs, err := m.ws.Exec([]gitworkspace.Command{cmd})
 	if err != nil {
-		message := err.Error()
-		if detail := strings.TrimSpace(string(out)); detail != "" {
-			message += ": " + detail
-		}
-		return out, gitexec.CommandFailure(ctx, args, message, err)
+		return cmd, gitworkspace.Output{}, fmt.Errorf("git %s: %w", args[0], err)
 	}
-	return out, nil
+	return cmd, outs[0], nil
 }
 
-// command builds a git command with the committer identity injected via -c
-// flags, on top of the pinned runtime and scrubbed environment.
-func (m *gitMerger) command(ctx context.Context, args ...string) *exec.Cmd {
-	return m.commandAs(ctx, authorIdent{}, args...)
+// run executes a git command and returns its stdout. A non-zero exit is an
+// error carrying the command's diagnostics for classification.
+func (m *gitMerger) run(ctx context.Context, args ...string) ([]byte, error) {
+	cmd, out, err := m.execGit(args...)
+	if err != nil {
+		return nil, err
+	}
+	if out.ExitCode != 0 {
+		return nil, gitworkspace.CommandFailure(ctx, cmd, out)
+	}
+	return []byte(out.Stdout), nil
 }
 
-// commandAs is command with the author supplied through the environment. The
-// committer identity is injected either way, so the author overrides only who
-// the commit is credited to, never who is recorded as having applied it.
-func (m *gitMerger) commandAs(ctx context.Context, author authorIdent, args ...string) *exec.Cmd {
-	withIdentity := make([]string, 0, len(args)+6)
-	withIdentity = append(withIdentity,
-		"-c", "user.name="+m.committerName,
-		"-c", "user.email="+m.committerEmail,
-		"-c", "commit.gpgsign=false",
-	)
-	withIdentity = append(withIdentity, args...)
-	cmd := m.runtime.Command(ctx, m.checkoutPath, withIdentity...)
-	cmd.Env = append(cmd.Env, author.env()...)
-	return cmd
+// runCombined is like run but returns stdout and stderr together, on success
+// and on failure, for callers that inspect git's diagnostics.
+func (m *gitMerger) runCombined(ctx context.Context, args ...string) ([]byte, error) {
+	cmd, out, err := m.execGit(args...)
+	if err != nil {
+		return nil, err
+	}
+	combined := []byte(out.Stdout + out.Stderr)
+	if out.ExitCode != 0 {
+		return combined, gitworkspace.CommandFailure(ctx, cmd, out)
+	}
+	return combined, nil
 }
 
 // isConcreteStrategy reports whether s names a concrete integration strategy

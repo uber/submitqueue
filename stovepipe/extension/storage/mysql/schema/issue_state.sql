@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS issue_state (
     last_processed_build_id VARBINARY(1020) NOT NULL,
     last_changed_build_id   VARBINARY(1020) NOT NULL,
     changed_at_ms           BIGINT          NOT NULL,
+    metadata                JSON            NULL,
 
     PRIMARY KEY (queue, task_id, unit_id)
 ) ENGINE=InnoDB;

@@ -101,9 +101,16 @@ func failRequest(
 	}
 
 	if request.State.IsTerminal() {
-		if request.State == entity.RequestStateFailed {
-			// The originating DLQ remains the retry trigger after the state write. Its stage-specific
-			// reason repairs that write's missing log; PersistLog rejects an already-retained conflict.
+		if request.State == entity.RequestStateFailed && request.TerminalBuildID == "" {
+			// A prior reconciler may own the failure reason; repair its retained log rather than replacing it.
+			failedRequestLog := requestlog.NewRequestStateLog(request, reason)
+			retained, err := store.GetRequestLogStore().Get(ctx, request.ID, failedRequestLog.ID)
+			if err == nil {
+				return materializer.PersistLog(ctx, store, retained)
+			}
+			if !errors.Is(err, storage.ErrNotFound) {
+				return fmt.Errorf("read retained failed request state: %w", err)
+			}
 			return persistFailureLog(ctx, store, materializer, request, reason)
 		}
 		logger.Infow("dlq reconcile: request already terminal, skipping",

@@ -43,10 +43,10 @@ func (m *MockRepairExecutor) EXPECT() *MockRepairExecutorMockRecorder {
 }
 
 // Submit mocks base method.
-func (m *MockRepairExecutor) Submit(arg0 context.Context, arg1 entity.OpenIssue) (string, error) {
+func (m *MockRepairExecutor) Submit(arg0 context.Context, arg1 []entity.OpenIssue) ([]fixer.Submission, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Submit", arg0, arg1)
-	ret0, _ := ret[0].(string)
+	ret0, _ := ret[0].([]fixer.Submission)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -82,10 +82,10 @@ func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
 }
 
 // For mocks base method.
-func (m *MockFactory) For(arg0 fixer.Config) (fixer.RepairExecutor, error) {
+func (m *MockFactory) For(arg0 fixer.Config) ([]fixer.Registration, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "For", arg0)
-	ret0, _ := ret[0].(fixer.RepairExecutor)
+	ret0, _ := ret[0].([]fixer.Registration)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

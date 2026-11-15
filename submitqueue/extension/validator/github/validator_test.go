@@ -31,6 +31,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/githubapi"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
@@ -80,7 +81,7 @@ type fakeGitHub struct {
 
 func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
-	var req graphqlRequest
+	var req githubapi.GraphQLRequest
 	_ = json.Unmarshal(raw, &req)
 
 	f.mu.Lock()

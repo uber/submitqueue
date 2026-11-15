@@ -9,7 +9,9 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango/tangoclient",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/metrics:go_default_library",
         "//submitqueue/extension/conflict/tango:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
         "@com_github_uber_tango//tangopb:go_default_library",
         "@org_uber_go_yarpc//:go_default_library",
         "@org_uber_go_yarpc//transport/grpc:go_default_library",
@@ -27,6 +29,7 @@ go_test(
         "//submitqueue/extension/conflict/tango:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
         "@com_github_uber_tango//tangopb:go_default_library",
         "@org_uber_go_yarpc//:go_default_library",
     ],

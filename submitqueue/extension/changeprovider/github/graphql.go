@@ -1,15 +1,6 @@
 package github
 
-import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-
-	phttp "github.com/uber/submitqueue/platform/http"
-)
+import "github.com/uber/submitqueue/platform/githubapi"
 
 // pullRequestQuery is the GraphQL query to fetch pull request information including files, author, and head SHA.
 const pullRequestQuery = `
@@ -43,26 +34,11 @@ query($owner: String!, $repo: String!, $prNumber: Int!, $filesCursor: String) {
 }
 `
 
-// graphqlRequest represents a GraphQL request.
-type graphqlRequest struct {
-	Query     string         `json:"query"`
-	Variables map[string]any `json:"variables"`
-}
-
-// graphqlResponse represents the top-level GraphQL response.
-type graphqlResponse struct {
-	Data struct {
-		Repository struct {
-			PullRequest pullRequestData `json:"pullRequest"`
-		} `json:"repository"`
-	} `json:"data"`
-	Errors []graphqlError `json:"errors,omitempty"`
-}
-
-// graphqlError represents a GraphQL error.
-type graphqlError struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
+// pullRequestQueryData is the data of a pullRequestQuery response.
+type pullRequestQueryData struct {
+	Repository struct {
+		PullRequest pullRequestData `json:"pullRequest"`
+	} `json:"repository"`
 }
 
 // pullRequestData contains the pull request metadata.
@@ -102,8 +78,8 @@ type fileNode struct {
 }
 
 // buildGraphQLRequest builds a GraphQL request for fetching pull request data.
-func buildGraphQLRequest(org, repo string, prNumber int, cursor string) graphqlRequest {
-	return graphqlRequest{
+func buildGraphQLRequest(org, repo string, prNumber int, cursor string) githubapi.GraphQLRequest {
+	return githubapi.GraphQLRequest{
 		Query: pullRequestQuery,
 		Variables: map[string]any{
 			"owner":       org,
@@ -112,47 +88,4 @@ func buildGraphQLRequest(org, repo string, prNumber int, cursor string) graphqlR
 			"filesCursor": cursor,
 		},
 	}
-}
-
-// doGraphQLRequest executes a GraphQL HTTP request.
-// The path "/graphql" is relative — BaseURLTransport on the client resolves it to the full URL.
-func doGraphQLRequest(
-	ctx context.Context,
-	bodyBytes []byte,
-	client *http.Client,
-) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/graphql", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-
-	return resp, nil
-}
-
-// parseGraphQLResponse parses and validates a GraphQL response.
-func parseGraphQLResponse(
-	resp *http.Response,
-) (*pullRequestData, error) {
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API request failed: %w", phttp.NewStatusError(resp.StatusCode, body))
-	}
-
-	var gqlResp graphqlResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
-		return nil, fmt.Errorf("failed to decode GraphQL response: %w", err)
-	}
-
-	if len(gqlResp.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL errors: %+v", gqlResp.Errors)
-	}
-
-	return &gqlResp.Data.Repository.PullRequest, nil
 }

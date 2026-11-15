@@ -1,9 +1,7 @@
 package github
 
 import (
-	"io"
-	"net/http"
-	"strings"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,34 +54,29 @@ func TestBuildGraphQLRequest(t *testing.T) {
 	}
 }
 
-func TestParseGraphQLResponse(t *testing.T) {
+func TestPullRequestQueryData_DecodesGraphQLData(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		body       string
-		wantErr    bool
-		wantData   *pullRequestData
+		name string
+		data string
+		want pullRequestData
 	}{
 		{
-			name:       "success",
-			statusCode: http.StatusOK,
-			body: `{
-				"data": {
-					"repository": {
-						"pullRequest": {
-							"number": 42,
-							"headRefOid": "abc123",
-							"author": {"login": "octocat", "name": "The Octocat", "email": "octocat@example.com"},
-							"files": {
-								"totalCount": 1,
-								"pageInfo": {"endCursor": "cur1", "hasNextPage": false},
-								"nodes": [{"path": "main.go", "additions": 10, "deletions": 2, "changeType": "MODIFIED"}]
-							}
+			name: "pull request with author and files",
+			data: `{
+				"repository": {
+					"pullRequest": {
+						"number": 42,
+						"headRefOid": "abc123",
+						"author": {"login": "octocat", "name": "The Octocat", "email": "octocat@example.com"},
+						"files": {
+							"totalCount": 1,
+							"pageInfo": {"endCursor": "cur1", "hasNextPage": false},
+							"nodes": [{"path": "main.go", "additions": 10, "deletions": 2, "changeType": "MODIFIED"}]
 						}
 					}
 				}
 			}`,
-			wantData: &pullRequestData{
+			want: pullRequestData{
 				Number:     42,
 				HeadRefOid: "abc123",
 				Author:     authorData{Login: "octocat", Name: "The Octocat", Email: "octocat@example.com"},
@@ -94,52 +87,13 @@ func TestParseGraphQLResponse(t *testing.T) {
 				},
 			},
 		},
-		{
-			name:       "non-200 status",
-			statusCode: http.StatusInternalServerError,
-			body:       `{"message":"Internal Server Error"}`,
-			wantErr:    true,
-		},
-		{
-			name:       "404 not found",
-			statusCode: http.StatusNotFound,
-			body:       `{"message":"Not Found"}`,
-			wantErr:    true,
-		},
-		{
-			name:       "invalid JSON",
-			statusCode: http.StatusOK,
-			body:       `{invalid json`,
-			wantErr:    true,
-		},
-		{
-			name:       "GraphQL errors",
-			statusCode: http.StatusOK,
-			body:       `{"errors":[{"message":"Field doesn't exist","type":"INVALID_FIELD"}]}`,
-			wantErr:    true,
-		},
-		{
-			name:       "multiple GraphQL errors",
-			statusCode: http.StatusOK,
-			body:       `{"errors":[{"message":"Not Found","type":"NOT_FOUND"},{"message":"Forbidden","type":"FORBIDDEN"}]}`,
-			wantErr:    true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := &http.Response{
-				StatusCode: tt.statusCode,
-				Body:       io.NopCloser(strings.NewReader(tt.body)),
-			}
-
-			got, err := parseGraphQLResponse(resp)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantData, got)
+			var got pullRequestQueryData
+			require.NoError(t, json.Unmarshal([]byte(tt.data), &got))
+			assert.Equal(t, tt.want, got.Repository.PullRequest)
 		})
 	}
 }

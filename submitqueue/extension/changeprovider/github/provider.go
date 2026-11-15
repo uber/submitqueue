@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -10,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
+	"github.com/uber/submitqueue/platform/githubapi"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
@@ -155,18 +155,9 @@ func (p *provider) fetchPullRequest(ctx context.Context, parsed entitygithub.Cha
 
 // fetchPullRequestPage fetches a single page of PR data.
 func (p *provider) fetchPullRequestPage(ctx context.Context, org, repo string, prNumber int, cursor string) (*pullRequestData, error) {
-	reqBody := buildGraphQLRequest(org, repo, prNumber, cursor)
-
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
+	var data pullRequestQueryData
+	if err := githubapi.QueryGraphQL(ctx, p.httpClient, buildGraphQLRequest(org, repo, prNumber, cursor), &data); err != nil {
+		return nil, fmt.Errorf("GitHub GraphQL query failed: %w", err)
 	}
-
-	resp, err := doGraphQLRequest(ctx, bodyBytes, p.httpClient)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	return parseGraphQLResponse(resp)
+	return &data.Repository.PullRequest, nil
 }

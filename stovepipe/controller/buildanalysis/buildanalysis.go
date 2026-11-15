@@ -26,6 +26,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
@@ -46,6 +47,7 @@ type Controller struct {
 	metricsScope    tally.Scope
 	stores          storage.Factory
 	materializer    requestlog.Materializer
+	registry        consumer.TopicRegistry
 	detectorFactory buildissue.DetectorFactory
 	topicKey        consumer.TopicKey
 	consumerGroup   string
@@ -57,6 +59,7 @@ func NewController(
 	stores storage.Factory,
 	materializer requestlog.Materializer,
 	detectorFactory buildissue.DetectorFactory,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -65,6 +68,7 @@ func NewController(
 		metricsScope:    scope.SubScope("buildanalysis_controller"),
 		stores:          stores,
 		materializer:    materializer,
+		registry:        registry,
 		detectorFactory: detectorFactory,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
@@ -116,6 +120,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
+	buildAnalysisAbandonedLog := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, build.ID, nil)
+	_, err = store.GetRequestLogStore().Get(ctx, request.ID, buildAnalysisAbandonedLog.ID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("read abandoned build analysis: %w", err)
+	}
+
 	// The Build may finish between the initial Build read and the Request read.
 	// Recheck its status so stopping here does not skip final analysis.
 	if !build.Status.IsTerminal() && request.State.IsTerminal() {
@@ -127,9 +140,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		if !build.Status.IsTerminal() {
 			c.logger.Warnw("stopping analysis for a terminal request with nonterminal build",
 				"queue", request.Queue, "build_id", build.ID, "request_id", request.ID, "request_state", string(request.State))
-			log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, build.ID,
+			buildAnalysisAbandonedLog := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, build.ID,
 				map[string]string{requestlog.MetadataKeyBuildID: build.ID})
-			return c.materializer.PersistLog(ctx, store, log)
+			return c.materializer.PersistLog(ctx, store, buildAnalysisAbandonedLog)
 		}
 	}
 
@@ -172,7 +185,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		if err := c.retainCompletedAnalysis(ctx, store, request, build.ID, len(issues)); err != nil {
 			return fmt.Errorf("retain completed analysis for build %q: %w", build.ID, err)
 		}
+		switch request.State {
+		case entity.RequestStateSucceeded, entity.RequestStateFailed:
+			payload, err := stovepipemq.Marshal(&stovepipemq.ProjectAnalysis{Id: request.ID, QueueName: request.Queue})
+			if err != nil {
+				return fmt.Errorf("serialize project analysis: %w", err)
+			}
+			if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyProjectAnalysis, publish.MessageParams{
+				Tenant: request.Queue, ID: publish.IntentID(request.ID), Payload: payload, PartitionKey: request.ID,
+			}); err != nil {
+				return err
+			}
+		}
 		c.logger.Infow("terminal issue analysis ready", "queue", request.Queue, "request_id", request.ID, "build_id", build.ID, "issue_count", len(issues))
+	}
+
+	if !complete && request.State.IsTerminal() {
+		buildAnalysisAbandonedLog := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisAbandoned, build.ID,
+			map[string]string{requestlog.MetadataKeyBuildID: build.ID})
+		return c.materializer.PersistLog(ctx, store, buildAnalysisAbandonedLog)
 	}
 
 	if hold {

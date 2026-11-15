@@ -170,7 +170,7 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			name: "issue_log_store",
 			op:   "get",
 			read: func(bound storage.Storage, _ string) error {
-				_, err := bound.GetIssueLogStore().Get(context.Background(), "task", "unit", "build-id", entity.IssueStatusOpen)
+				_, err := bound.GetIssueLogStore().Get(context.Background(), "task", "unit", "build-id", entity.IssueEventOpened)
 				return err
 			},
 		},
@@ -195,6 +195,22 @@ func TestStorageForQueueMetrics(t *testing.T) {
 			op:   "list",
 			read: func(bound storage.Storage, _ string) error {
 				_, err := bound.GetProjectFactByDegreeStore().List(context.Background(), "change-uri", entity.ProjectFactByDegree{}, 1)
+				return err
+			},
+		},
+		{
+			name: "request_projects_by_issue_store",
+			op:   "list",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetRequestProjectsByIssueStore().List(context.Background(), "1", entity.ProjectIssueAttribution{}, 1)
+				return err
+			},
+		},
+		{
+			name: "request_issues_by_project_store",
+			op:   "list",
+			read: func(bound storage.Storage, _ string) error {
+				_, err := bound.GetRequestIssuesByProjectStore().List(context.Background(), "1", "service", entity.ProjectIssueAttribution{}, 1)
 				return err
 			},
 		},

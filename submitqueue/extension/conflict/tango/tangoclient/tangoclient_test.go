@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	"github.com/uber/tango/tangopb"
 	"go.uber.org/yarpc"
 
@@ -221,4 +222,45 @@ func TestClient_ChangedTargets_Request(t *testing.T) {
 		},
 		OutputConfig: &tangopb.OutputConfig{MaxDistance: -1},
 	}, fake.request)
+}
+
+func TestClient_ChangedTargets_Metrics(t *testing.T) {
+	const remote = "remote=org/repo"
+	tests := []struct {
+		name       string
+		fake       *fakeTango
+		wantResult string
+	}{
+		{
+			name: "a successful call",
+			fake: &fakeTango{stream: &fakeStream{responses: []*tangopb.GetChangedTargetsResponse{
+				changedTargets(target(tangopb.CHANGE_TYPE_CHANGED, 1, 1, 0)),
+				metadata(map[int32]string{1: "//app:lib"}),
+			}}},
+			wantResult: "success",
+		},
+		{
+			name:       "a request that cannot be opened",
+			fake:       &fakeTango{openErr: errTestFailure},
+			wantResult: "error",
+		},
+		{
+			name:       "a stream that fails part-way",
+			fake:       &fakeTango{stream: &fakeStream{endErr: errTestFailure}},
+			wantResult: "error",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scope := tally.NewTestScope("", nil)
+			c := New(tt.fake, Config{Remote: "org/repo", Strategy: tangopb.COMPUTATION_STRATEGY_NATIVE, MetricsScope: scope})
+
+			_, _ = c.ChangedTargets(context.Background(), tango.ChangedTargetsRequest{BaseRevision: testBaseRevision})
+
+			snapshot := scope.Snapshot()
+			require.Contains(t, snapshot.Counters(), "tango_client.changed_targets.start+"+remote)
+			assert.Equal(t, int64(1), snapshot.Counters()["tango_client.changed_targets.start+"+remote].Value())
+			assert.Contains(t, snapshot.Histograms(), "tango_client.changed_targets.finish+"+remote+",result="+tt.wantResult)
+		})
+	}
 }

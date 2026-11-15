@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
@@ -38,12 +39,13 @@ const testQueue = "validation/main"
 
 type logKey struct {
 	issueKey
-	build  string
-	status entity.IssueStatus
+	build string
+	event entity.IssueEvent
 }
 
 type fixture struct {
 	requestHistory map[string]entity.RequestLog
+	requestIssues  map[string]map[issueKey]entity.RequestIssueSummary
 	materializer   requestlog.Materializer
 	failOnPhase    entity.IssueTrackingPhase
 	t              *testing.T
@@ -63,6 +65,7 @@ type fixture struct {
 	requests       map[string]entity.Request
 	buildIssues    map[string]map[issueKey]entity.BuildIssue
 
+	hookMessages  []entityqueue.Message
 	fixMessages   []entityqueue.Message
 	onFixPublish  func(entityqueue.Message)
 	onHistoryRead func()
@@ -72,6 +75,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{t: t, mocks: gomock.NewController(t), states: map[issueKey]entity.IssueState{}, logs: map[logKey]entity.IssueLog{}, failures: map[string]int{}, initialLogs: map[logKey]entity.IssueLog{}}
 	f.factory = storagemock.NewMockFactory(f.mocks)
+	f.requestIssues = map[string]map[issueKey]entity.RequestIssueSummary{}
 	f.builds = map[string]entity.Build{}
 	f.requests = map[string]entity.Request{}
 	f.buildIssues = map[string]map[issueKey]entity.BuildIssue{}
@@ -84,6 +88,45 @@ func newFixture(t *testing.T) *fixture {
 	history := storagemock.NewMockIssueLogStore(f.mocks)
 	summaries := storagemock.NewMockIssueSummaryStore(f.mocks)
 	openIssues := storagemock.NewMockOpenIssueStore(f.mocks)
+	requestIssues := storagemock.NewMockRequestIssueSummaryStore(f.mocks)
+	store.EXPECT().GetRequestIssueSummaryStore().Return(requestIssues).AnyTimes()
+	requestIssues.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.RequestIssueSummary) error {
+		if err := f.fail("request-issue/create"); err != nil {
+			return err
+		}
+		if f.requestIssues[issue.RequestID] == nil {
+			f.requestIssues[issue.RequestID] = map[issueKey]entity.RequestIssueSummary{}
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		if _, ok := f.requestIssues[issue.RequestID][key]; ok {
+			return storage.ErrAlreadyExists
+		}
+		f.requestIssues[issue.RequestID][key] = issue
+		return nil
+	}).AnyTimes()
+	requestIssues.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, request, task, unit string) (entity.RequestIssueSummary, error) {
+		if err := f.fail("request-issue/get"); err != nil {
+			return entity.RequestIssueSummary{}, err
+		}
+		issue, ok := f.requestIssues[request][issueKey{task, unit}]
+		if !ok {
+			return entity.RequestIssueSummary{}, storage.ErrNotFound
+		}
+		return issue, nil
+	}).AnyTimes()
+	requestIssues.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, issue entity.RequestIssueSummary, oldVersion, newVersion int32) error {
+		if err := f.fail("request-issue/update"); err != nil {
+			return err
+		}
+		key := issueKey{issue.TaskID, issue.UnitID}
+		current, ok := f.requestIssues[issue.RequestID][key]
+		if !ok || current.Version != oldVersion {
+			return storage.ErrVersionMismatch
+		}
+		issue.Version = newVersion
+		f.requestIssues[issue.RequestID][key] = issue
+		return nil
+	}).AnyTimes()
 	tracking := storagemock.NewMockIssueTrackingStore(f.mocks)
 	f.factory.EXPECT().For(storage.Config{QueueName: testQueue}).Return(store, nil).AnyTimes()
 	store.EXPECT().GetIssueStateStore().Return(states).AnyTimes()
@@ -130,7 +173,7 @@ func newFixture(t *testing.T) *fixture {
 		if err := f.fail("history/create"); err != nil {
 			return err
 		}
-		key := logKey{issueKey{log.TaskID, log.UnitID}, log.BuildID, log.Status}
+		key := logKey{issueKey{log.TaskID, log.UnitID}, log.BuildID, log.Event}
 		if _, ok := f.initialLogs[key]; ok {
 			return storage.ErrAlreadyExists
 		}
@@ -140,11 +183,11 @@ func newFixture(t *testing.T) *fixture {
 		f.logs[key] = log
 		return nil
 	}).AnyTimes()
-	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit, build string, status entity.IssueStatus) (entity.IssueLog, error) {
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, task, unit, build string, event entity.IssueEvent) (entity.IssueLog, error) {
 		if err := f.fail("history/get"); err != nil {
 			return entity.IssueLog{}, err
 		}
-		key := logKey{issueKey{task, unit}, build, status}
+		key := logKey{issueKey{task, unit}, build, event}
 		if log, ok := f.logs[key]; ok {
 			return log, nil
 		}
@@ -352,7 +395,14 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return f.fail("fix/publish")
 	}).AnyTimes()
-	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{{Key: messagequeue.TopicKeyFix, Name: "fix", Queue: queue}})
+	publisher.EXPECT().Publish(gomock.Any(), "hook", gomock.Any()).DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+		f.hookMessages = append(f.hookMessages, msg)
+		return f.fail("hook/publish")
+	}).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: messagequeue.TopicKeyFix, Name: "fix", Queue: queue},
+		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
+	})
 	require.NoError(t, err)
 	f.requestHistory = map[string]entity.RequestLog{}
 	f.materializer = requestlog.NewMaterializer(tally.NoopScope)
@@ -433,7 +483,7 @@ func (f *fixture) reportIssue(build, task, unit string) {
 
 func (f *fixture) seedIssue(task, unit string, status entity.IssueStatus) {
 	f.states[issueKey{task, unit}] = entity.IssueState{TaskID: task, UnitID: unit, Status: status, FirstSeenBuildID: "older", Version: 7, LastProcessedBuildID: "older", LastChangedBuildID: "older", ChangedAtMs: 500}
-	f.initialLogs[logKey{issueKey{task, unit}, "older", status}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Status: status, TimestampMs: 500}
+	f.initialLogs[logKey{issueKey{task, unit}, "older", entity.IssueEvent(status)}] = entity.IssueLog{TaskID: task, UnitID: unit, BuildID: "older", Event: entity.IssueEvent(status), TimestampMs: 500}
 	f.summaries[issueKey{task, unit}] = entity.IssueSummary{TaskID: task, UnitID: unit, Status: status,
 		FirstSeenBuildID: "older", RequestID: "1", BuildID: "older", ChangedAtMs: 500, Version: 1}
 	if status == entity.IssueStatusOpen {

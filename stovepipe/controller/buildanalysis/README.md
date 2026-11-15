@@ -32,10 +32,18 @@ Detection, persistence, configuration, state-loading, and message-validation err
 
 The recovery controller records a `build_analysis_abandoned` event in the Request's history, with the build ID, to indicate that analysis could not complete and the recorded build issues may be incomplete. It does not rerun detection, delete earlier build issues, change Request or Build state, or release a build slot. Original failure details are logged rather than included in the immutable history event.
 
-History identity is stable per build, so repeated recovery deliveries and separate analysis notices for the same build retain one event. Different builds retain different events, even for the same Request. A later successful analysis does not erase the historical occurrence.
+History identity is stable per build, so repeated recovery deliveries and separate analysis notices for the same build retain one event. Different builds retain different events, even for the same Request. A delivery already in flight can still finish successfully without erasing the historical occurrence. New deliveries recognize abandonment rather than rerunning detection.
 
 State-read and history-write errors are returned for retry. Hosts must run recovery with the DLQ consumer's always-retryable processor and unlimited-retry subscription; only recovery work is retried, not analysis. Unusable payloads, invalid or unresolvable queues, missing Build or Request records, and queue mismatches are logged and acknowledged rather than retried indefinitely.
 
 ## Host integration
 
 The reference service supplies a no-op detector, registers tracking at admission, and publishes analysis notices at build start and completion. It registers both analysis and issue tracking with bounded normal retries and the existing DLQ consumer for recovery. See [issue tracking](../issuetrack/README.md) for reconciliation and recovery behavior and [build issue detection](../../../doc/rfc/stovepipe/steps/buildanalysis.md) for the publication rules and retry configuration.
+
+## Project-analysis handoff
+
+Completed terminal analysis queues project analysis only after its final issues
+and completion event are durable. Cancellation is recorded directly by
+buildsignal. Abandoned analysis stops without initiating project analysis or
+repository recording. Losing builds never initiate project analysis for the
+winning outcome.

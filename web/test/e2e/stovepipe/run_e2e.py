@@ -85,6 +85,33 @@ def _pagination_fixture_sql() -> str:
         statements.append(
             f"INSERT INTO open_issue VALUES ('web/pagination','{task}','{unit}','web/build/51');"
         )
+    for event in ("issue_tracking_started", "issues_reconciled"):
+        statements.append(
+            f"INSERT INTO request_log VALUES ('web/pagination','51','{event}',3000,'','{event}',1,'','{{}}');"
+        )
+    for i in range(51):
+        kind = ("new", "existing", "closed")[i % 3]
+        unit = "" if i == 0 else f"//packages/test-{i:02d}:go_default_test"
+        statements.append(
+            "INSERT INTO request_issue_summary "
+            "(queue,request_id,task_id,unit_id,kind,build_id,first_seen_build_id,version) "
+            f"VALUES ('web/pagination','51','buildtest','{unit}','{kind}','web/build/51','web/build/50',1);"
+        )
+    statements.append(
+        "INSERT INTO request_log VALUES ('web/pagination','51','project-issues',3001,'','project_issues_recorded',1,'','{}');"
+    )
+    for i in range(1, 52):
+        for table in ("request_projects_by_issue", "request_issues_by_project"):
+            statements.append(
+                f"INSERT INTO {table} (queue,request_id,task_id,unit_id,project) "
+                f"VALUES ('web/pagination','51','buildtest','//packages/test-01:go_default_test','project-{i:02d}');"
+            )
+    for i in range(50):
+        for table in ("request_projects_by_issue", "request_issues_by_project"):
+            statements.append(
+                f"INSERT INTO {table} (queue,request_id,task_id,unit_id,project) "
+                f"VALUES ('web/pagination','51','expensive','//packages/extra-{i:02d}:test','project-01');"
+            )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):
         closed = i < closed_issue_count

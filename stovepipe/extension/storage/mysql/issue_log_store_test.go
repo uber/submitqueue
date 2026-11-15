@@ -31,7 +31,7 @@ import (
 
 func issueLogFixture() entity.IssueLog {
 	return entity.IssueLog{TaskID: "task", UnitID: "unit",
-		Status: entity.IssueStatusClosed, BuildID: "build/2", TimestampMs: 2000}
+		Event: entity.IssueEventClosed, BuildID: "build/2", TimestampMs: 2000}
 }
 
 func TestIssueLogCreate(t *testing.T) {
@@ -52,9 +52,9 @@ func TestIssueLogCreate(t *testing.T) {
 			store := NewIssueLogStore(db, testMetrics(), "queue")
 			log := issueLogFixture()
 			query := mock.ExpectExec(regexp.QuoteMeta(
-				`INSERT INTO issue_log (queue, task_id, unit_id, build_id, event, timestamp_ms)
-                 VALUES (?, ?, ?, ?, ?, ?)`)).
-				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, "closed", log.TimestampMs)
+				`INSERT INTO issue_log (queue, task_id, unit_id, build_id, event, timestamp_ms, first_seen_build_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`)).
+				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, "closed", log.TimestampMs, log.FirstSeenBuildID)
 			if tt.dbErr != nil {
 				query.WillReturnError(tt.dbErr)
 			} else {
@@ -81,7 +81,7 @@ func TestIssueLogGet(t *testing.T) {
 			store := NewIssueLogStore(db, testMetrics(), "queue")
 			log := issueLogFixture()
 			query := mock.ExpectQuery(regexp.QuoteMeta(
-				`SELECT task_id, unit_id, build_id, event, timestamp_ms
+				`SELECT task_id, unit_id, build_id, event, timestamp_ms, first_seen_build_id
                  FROM issue_log WHERE queue = ? AND task_id = ? AND unit_id = ? AND build_id = ? AND event = ?`)).
 				WithArgs("queue", log.TaskID, log.UnitID, log.BuildID, "closed")
 			switch kind {
@@ -94,11 +94,11 @@ func TestIssueLogGet(t *testing.T) {
 				if kind == "scan error" {
 					timestamp = "invalid"
 				}
-				query.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms"}).
-					AddRow(log.TaskID, log.UnitID, log.BuildID, log.Status, timestamp))
+				query.WillReturnRows(sqlmock.NewRows([]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms", "first_seen_build_id"}).
+					AddRow(log.TaskID, log.UnitID, log.BuildID, log.Event, timestamp, log.FirstSeenBuildID))
 			}
 
-			got, err := store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Status)
+			got, err := store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Event)
 			switch kind {
 			case "found":
 				require.NoError(t, err)
@@ -128,8 +128,8 @@ func TestIssueLogRejectsInvalidKeys(t *testing.T) {
 		{name: "oversized unit", change: func(l *entity.IssueLog, _ *string) { l.UnitID = strings.Repeat("😀", 257) }},
 		{name: "oversized build", change: func(l *entity.IssueLog, _ *string) { l.BuildID = strings.Repeat("b", 1021) }},
 		{name: "empty build", change: func(l *entity.IssueLog, _ *string) { l.BuildID = "" }},
-		{name: "unknown status", change: func(l *entity.IssueLog, _ *string) { l.Status = entity.IssueStatusUnknown }},
-		{name: "unsupported status", change: func(l *entity.IssueLog, _ *string) { l.Status = "other" }},
+		{name: "unknown event", change: func(l *entity.IssueLog, _ *string) { l.Event = "" }},
+		{name: "unsupported event", change: func(l *entity.IssueLog, _ *string) { l.Event = "other" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
@@ -142,11 +142,11 @@ func TestIssueLogRejectsInvalidKeys(t *testing.T) {
 			mock.MatchExpectationsInOrder(false)
 			mock.ExpectExec("INSERT INTO issue_log").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows(
-				[]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms"}).
-				AddRow(log.TaskID, log.UnitID, log.BuildID, log.Status, log.TimestampMs))
+				[]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms", "first_seen_build_id"}).
+				AddRow(log.TaskID, log.UnitID, log.BuildID, log.Event, log.TimestampMs, log.FirstSeenBuildID))
 
 			require.Error(t, store.Create(context.Background(), log))
-			_, err = store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Status)
+			_, err = store.Get(context.Background(), log.TaskID, log.UnitID, log.BuildID, log.Event)
 			require.Error(t, err)
 		})
 	}

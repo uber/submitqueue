@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -54,9 +55,13 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
 	}
 
-	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, build_id, version)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	metadata, err := encodeRequestMetadata(request.Metadata)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, build_id, version, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		request.ID,
 		request.Queue,
 		request.URI,
@@ -65,6 +70,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 		request.BaseURI,
 		request.BuildID,
 		request.Version,
+		metadata,
 	)
 	if err != nil {
 		if isDuplicateEntry(err) {
@@ -82,8 +88,9 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	defer func() { op.Complete(retErr) }()
 
 	var req entity.Request
+	var metadata []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, queue, uri, state, build_strategy, base_uri, build_id, COALESCE(terminal_build_id, ''), version
+		`SELECT id, queue, uri, state, build_strategy, base_uri, build_id, COALESCE(terminal_build_id, ''), version, metadata
 		 FROM request WHERE queue = ? AND id = ?`,
 		r.queue, id,
 	).Scan(
@@ -96,6 +103,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 		&req.BuildID,
 		&req.TerminalBuildID,
 		&req.Version,
+		&metadata,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -105,11 +113,15 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 		return entity.Request{}, fmt.Errorf("failed to get request entity id=%s from the database: %w", id, err)
 	}
 
+	req.Metadata, err = decodeRequestMetadata(metadata)
+	if err != nil {
+		return entity.Request{}, err
+	}
 	return req, nil
 }
 
 // Update persists the mutable fields of request (URI, state, build strategy,
-// base URI, associated build ID, terminal build ID) if the oldVersion, writing newVersion. Returns
+// base URI, associated build ID, terminal build ID, metadata) if the oldVersion, writing newVersion. Returns
 // ErrVersionMismatch if the stored version does not match (including when the
 // request does not exist). This is a pure conditional write; the caller owns
 // version arithmetic.
@@ -121,9 +133,13 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
 	}
 
+	metadata, err := encodeRequestMetadata(request.Metadata)
+	if err != nil {
+		return err
+	}
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE request
-		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, build_id = ?, terminal_build_id = NULLIF(?, ''), version = ?
+		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, build_id = ?, terminal_build_id = NULLIF(?, ''), version = ?, metadata = ?
 		 WHERE queue = ? AND id = ? AND version = ?`,
 		request.URI,
 		request.State,
@@ -132,6 +148,7 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 		request.BuildID,
 		request.TerminalBuildID,
 		newVersion,
+		metadata,
 		request.Queue,
 		request.ID,
 		oldVersion,
@@ -159,6 +176,30 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	}
 
 	return nil
+}
+
+func encodeRequestMetadata(metadata map[string]json.RawMessage) ([]byte, error) {
+	if len(metadata) == 0 {
+		return []byte("{}"), nil
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("encode request metadata: %w", err)
+	}
+	return data, nil
+}
+
+func decodeRequestMetadata(data []byte) (map[string]json.RawMessage, error) {
+	var metadata map[string]json.RawMessage
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return nil, fmt.Errorf("decode request metadata: %w", err)
+		}
+	}
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+	return metadata, nil
 }
 
 // isDuplicateEntry reports whether err is a MySQL duplicate-key (1062) error.

@@ -16,12 +16,11 @@ package github
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
 	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
-	phttp "github.com/uber/submitqueue/platform/http"
+	"github.com/uber/submitqueue/platform/githubapi"
 )
 
 // maxCheckContexts bounds the checks read; one past it still surfaces through
@@ -64,23 +63,10 @@ query($owner: String!, $repo: String!, $number: Int!, $maxChecks: Int!) {
 }
 `
 
-type graphqlRequest struct {
-	Query     string         `json:"query"`
-	Variables map[string]any `json:"variables"`
-}
-
-type graphqlResponse struct {
-	Data struct {
-		Repository struct {
-			PullRequest pullRequestNode `json:"pullRequest"`
-		} `json:"repository"`
-	} `json:"data"`
-	Errors []graphqlError `json:"errors"`
-}
-
-type graphqlError struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
+type pullRequestStateData struct {
+	Repository struct {
+		PullRequest pullRequestNode `json:"pullRequest"`
+	} `json:"repository"`
 }
 
 type pullRequestNode struct {
@@ -115,7 +101,7 @@ type checkContextNode struct {
 // fetchPullRequestState fails, rather than rejects, on a missing pull request:
 // the change provider resolved the URI before validators run.
 func fetchPullRequestState(ctx context.Context, client *http.Client, cid entitygithub.ChangeID) (pullRequestState, error) {
-	body, err := json.Marshal(graphqlRequest{
+	req := githubapi.GraphQLRequest{
 		Query: pullRequestStateQuery,
 		Variables: map[string]any{
 			"owner":     cid.Org,
@@ -123,36 +109,16 @@ func fetchPullRequestState(ctx context.Context, client *http.Client, cid entityg
 			"number":    cid.PRNumber,
 			"maxChecks": maxCheckContexts,
 		},
-	})
-	if err != nil {
-		return pullRequestState{}, fmt.Errorf("marshal GraphQL request: %w", err)
 	}
-
-	// The path is relative: the client's transport roots it at the API.
-	status, respBody, err := phttp.SendRequest(ctx, client, http.MethodPost, "/graphql", body, setGraphQLHeaders)
-	if err != nil {
+	var data pullRequestStateData
+	if err := githubapi.QueryGraphQL(ctx, client, req, &data); err != nil {
 		return pullRequestState{}, err
 	}
-	if status != http.StatusOK {
-		return pullRequestState{}, phttp.NewStatusError(status, respBody)
-	}
-
-	var resp graphqlResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return pullRequestState{}, fmt.Errorf("decode GraphQL response: %w", err)
-	}
-	if len(resp.Errors) > 0 {
-		return pullRequestState{}, fmt.Errorf("GraphQL errors: %+v", resp.Errors)
-	}
-	pr := resp.Data.Repository.PullRequest
+	pr := data.Repository.PullRequest
 	if pr.HeadRefOid == "" {
 		return pullRequestState{}, fmt.Errorf("GraphQL response has no pull request")
 	}
 	return toPullRequestState(pr), nil
-}
-
-func setGraphQLHeaders(req *http.Request) {
-	req.Header.Set("Content-Type", "application/json")
 }
 
 func toPullRequestState(pr pullRequestNode) pullRequestState {

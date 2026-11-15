@@ -36,7 +36,7 @@ The post-read cursor write and processed-build updates, including unchanged stat
 
 Every pass starts in `refreshing`, applying the build's accumulated issues in primary-key order. Reported issues are opened or kept open; nothing is closed. A terminal pass retains `Finalize = true` in the progress record, so a replacement worker can distinguish terminal work from an ordinary refresh. Encountering a task-wide issue (empty unit ID) sets `HasTaskWideIssues` in that same versioned record. This fact remains set across batches and retries, including when the issue was already applied by an earlier pass.
 
-Once the entire build-issue range is exhausted, an opening pass with a nonempty task cursor publishes a build-scoped repair request before saving its next phase. Empty passes and closing sweeps do not publish. Publication failures leave the pass active so retries repeat the handoff after ensuring issue state and history are durable. The repair message identity includes the persisted checkpoint version: retries before phase completion share an identity, while later refreshes of one long-lived job can trigger another evaluation without depending on queue garbage collection. The fix controller selects an eligible issue and submits at most one repair per build.
+Once the entire build-issue range is exhausted, an opening pass with a nonempty task cursor publishes a build-scoped repair request before saving its next phase. Empty passes and closing sweeps do not publish. Publication failures leave the pass active so retries repeat the handoff after ensuring issue state and history are durable. The repair message identity includes the persisted checkpoint version: retries before phase completion share an identity, while later refreshes of one long-lived job can trigger another evaluation without depending on queue garbage collection. The fix controller offers each registered executor all pending issue openings first seen in that build; each executor chooses how to group its repairs.
 
 Once the entire build-issue range is exhausted:
 
@@ -47,6 +47,26 @@ Once the entire build-issue range is exhausted:
 The `finalizing` phase traverses retained issue states in primary-key order. Each key is looked up in the build's issues: a reported issue remains open, while an absent issue closes. Actual openings and closings are retained in history. Exhausting the issue-state range marks the pass `finalized`, so late refreshes are ignored.
 
 No closure occurs before all accumulated build issues have been processed. A task-wide failure in a later batch therefore protects existing issues across every task, not just keys encountered afterward. A later build makes its own decision; the restriction does not carry over. Both walks consume one ordered range at a time; no merge is required.
+
+## Issue lifecycle hooks
+
+After a transition's history and projections are durable, issue tracking publishes an `issue.opened` or `issue.closed` hook event. Openings include reopenings after closure; an unchanged status in a later build creates no transition event. Both payloads contain `queue`, `task_id`, and `unit_id` (empty for task-wide issues). An opening adds `opening_build_id`; a closure adds `closing_build_id`.
+
+The timestamp is the retained transition timestamp, and the ID hashes the queue/task/unit/changing-build identity under the event type. Retrying publication reproduces the event. Publication must succeed before advancing the cursor. Hosts bind the shared hook topic and pass the topic registry to the normal controller. DLQ recovery repairs accepted state and history without publishing hooks. If publication exhausts normal retries, the transition notification may be lost; reliable delivery beyond that boundary requires a separate durable delivery mechanism.
+
+Closure consumers can resolve the original opening with two direct reads, even after the issue has reopened:
+
+```go
+closed, err := logs.Get(ctx, taskID, unitID, closingBuildID, entity.IssueEventClosed)
+// Handle err before using closed.
+opened, err := logs.Get(ctx, taskID, unitID, closed.FirstSeenBuildID, entity.IssueEventOpened)
+```
+
+The opening build's request identifies any request-scoped extension metadata. Consumers that only need that request can skip the second log read and load `closed.FirstSeenBuildID` directly. Use the immutable closure log rather than the latest issue state, which may already describe a later reopening. Older log records may lack the opening reference; consumers must handle that absence.
+
+The hook framework delivers at least once. Implementations that perform external side effects must deduplicate by event ID in durable storage; queue deduplication alone cannot guarantee one external action.
+
+Issue state includes generic namespaced metadata for hook implementations. It survives subsequent observations, closing, and reopening. Hooks resolve the queue's issue store and update a copy of the latest state with its version guard; a concurrent lifecycle or hook write requires reloading before retrying. Metadata changes do not publish lifecycle events.
 
 ## Bounded passes
 
@@ -86,3 +106,11 @@ Each validation uses the single job registered at admission; analysis does not p
 Provision the non-null `request.build_id` column with an empty default before deploying. This is an additive association; existing terminal requests can still use their winning build ID. No new tables, secondary indexes, or cross-key transactions are required.
 
 Pause admission and drain pre-upgrade validations, completing or explicitly abandoning the existing tracking checkpoint before enabling request-scoped registration. Upgrade normal and recovery consumers together and use the single-head tracking subscription before resuming admission. Old per-analysis notifications are not supported. Do not mix old publishers or consumers with the request-scoped flow. To revert, pause admission and finish or safely abandon request-scoped jobs before restoring the old consumers; the added column can remain.
+
+## Per-request issue summaries
+
+The existing issue log is the source for both queue-level lifecycle projections and request-level summaries. Opening and closing events produce New and Closed request results. A reported event records an already-open issue encountered by a later build and produces Existing; it does not change issue status, transition time, or the open-issue lookup. Each event retains its opening build reference, and the materializer loads the source build to identify the request. Request-wide completion and abandonment events remain in request history.
+
+The cursor cannot advance until the accepted event and all its projections are durable. Retry repairs missing projections from the retained event, preserving the original timestamp and opening. A closure wins over an opening or report from the same request, with conditional writes preventing an older replay from changing it back. Recovery repairs lifecycle history and any accepted report before abandonment; merely fencing an older row does not attribute a report to the abandoned request.
+
+Existing lifecycle events can lack the additive opening reference. Their lifecycle projections continue using the supplied opening, but those records do not create request summaries from information absent from retained history. Requests begun before recording was deployed have no coverage marker and are not backfilled. Deploy the opening-reference column before updated writers; recording coverage assumes every worker uses the updated contract.

@@ -15,7 +15,7 @@ test.describe("server-rendered styling", () => {
   test("styles the queue before hydration", async ({ page }) => {
     await page.goto("/web%2Fpagination");
     await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
-    await expect(page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
+    await expect(page.getByRole("banner").getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
     await expect(page.getByRole("status")).toContainText("More requests available");
   });
@@ -38,12 +38,27 @@ test.describe("server-rendered styling", () => {
     await expect(status.getByText("Repository result", { exact: true })).toBeVisible();
     await expect(status.getByText("Partial Breakage", { exact: true })).toBeVisible();
     await expect(status.getByText("git://web/pagination/51?file=src%2Fmain#fragment", { exact: true })).toBeVisible();
+    const project = page.getByRole("table", { name: "Recorded project results" }).getByRole("row").filter({ has: page.getByRole("cell", { name: "project-01", exact: true }) }).first();
+    await project.getByRole("link", { name: "Show issues" }).click();
+    await expect(page.getByRole("table", { name: "Issues affecting project-01" }).locator("tbody tr")).toHaveCount(50);
+    await project.getByRole("link", { name: "Hide issues" }).click();
     await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "History", exact: true }).click();
     await expect(page.getByRole("table", { name: "Request history" })).toBeVisible();
-    for (const label of ["Build and Test Issues", "Fix Attempts"]) {
-      await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: label, exact: true }).click();
-      await expect(page.getByRole("region", { name: label, exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
-    }
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Build and Test Issues", exact: true }).click();
+    const issues = page.getByRole("region", { name: "Build and Test Issues", exact: true });
+    await expect(issues.getByRole("status")).toHaveText("Issue recording complete");
+    await expect(issues.locator("tbody tr")).toHaveCount(50);
+    await expect(issues.getByRole("table", { name: "New Issues" })).toContainText("Task-wide failure");
+    const existing = issues.getByRole("table", { name: "Existing Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+    await existing.getByRole("link", { name: "Show projects" }).click();
+    await expect(issues.getByRole("region", { name: "Affected projects for buildtest //packages/test-01:go_default_test" }).getByRole("listitem")).toHaveCount(50);
+    await existing.getByRole("link", { name: "Hide projects" }).click();
+    await page.getByRole("link", { name: "Next issues →" }).click();
+    await expect(issues.locator("tbody tr")).toHaveCount(1);
+    await page.getByRole("link", { name: "First issues" }).click();
+    await expect(issues.locator("tbody tr")).toHaveCount(50);
+    await page.getByRole("navigation", { name: "Request views" }).getByRole("link", { name: "Fix Attempts", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Fix Attempts", exact: true }).getByText("Coming soon", { exact: true })).toBeVisible();
   });
   test("keeps continuation links usable without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination");
@@ -59,6 +74,40 @@ test.describe("server-rendered styling", () => {
     const table = await page.getByRole("table", { name: "Requests", exact: true }).boundingBox();
     expect(table?.width).toBeGreaterThan(1920 * 0.95);
   });
+});
+
+test("expands request issue projects with paginated links and browser history", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51?view=issues");
+  const row = page.getByRole("table", { name: "Existing Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+  await row.getByRole("link", { name: "Show projects" }).click();
+  const projects = page.getByRole("region", { name: "Affected projects for buildtest //packages/test-01:go_default_test" });
+  await expect(projects.getByRole("listitem")).toHaveCount(50);
+  await projects.getByRole("link", { name: "More affected projects →" }).click();
+  await expect(projects.getByRole("listitem")).toHaveCount(1);
+  await expect(projects).toContainText("project-51");
+  await page.goBack();
+  await expect(projects.getByRole("listitem")).toHaveCount(50);
+  await row.getByRole("link", { name: "Hide projects" }).click();
+  await expect(projects).toHaveCount(0);
+});
+
+test("expands a project's request-scoped issues and pages them independently", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51?projectPageSize=25");
+  const results = page.getByRole("table", { name: "Recorded project results", exact: true });
+  const row = results.getByRole("row").filter({ has: page.getByRole("cell", { name: "project-01", exact: true }) }).first();
+  await row.getByRole("link", { name: "Show issues" }).click();
+  const attribution = page.getByRole("region", { name: "Issue attribution for project-01" });
+  const issues = attribution.getByRole("table", { name: "Issues affecting project-01" });
+  await expect(issues.locator("tbody tr")).toHaveCount(50);
+  await expect(issues).toContainText("//packages/test-01:go_default_test");
+  await attribution.getByRole("link", { name: "More project issues →" }).click();
+  await expect(issues.locator("tbody tr")).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
+  await page.goBack();
+  await expect(issues.locator("tbody tr")).toHaveCount(50);
+  await row.getByRole("link", { name: "Hide issues" }).click();
+  await expect(attribution).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("25");
 });
 
 test("loads and retries issue pages, merges task groups, and refreshes from the beginning", async ({ page }) => {
@@ -134,17 +183,18 @@ test("keeps auto-refresh enabled when an issue cursor refresh returns to the fir
   await expect(region.getByRole("status")).toContainText("3 issues loaded");
   const now = new Date();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  // Pause ahead of installation so the running clock cannot overtake the target.
+  await page.clock.pauseAt(new Date(now.getTime() + 60_000));
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await automatic.click();
   const response = page.waitForResponse(response =>
     response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === "/web%2Fpagination");
   await page.clock.runFor(10_000);
   expect((await response).ok()).toBe(true);
   await expect(region.getByRole("status")).toContainText("50 issues loaded");
-  await expect(automatic).toBeChecked();
+  await expect(automatic).toHaveAttribute("aria-pressed", "true");
   expect(new URL(page.url()).searchParams.has("page")).toBe(false);
-  await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+  await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
 });
 test("keeps loaded issue pages across polls until the viewer selects refreshed results", async ({ page }) => {
   await page.goto("/web%2Fpagination?view=issues");
@@ -153,24 +203,25 @@ test("keeps loaded issue pages across polls until the viewer selects refreshed r
   await expect(region.getByRole("status")).toContainText("53 issues loaded");
   const now = new Date();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  // Pause ahead of installation so the running clock cannot overtake the target.
+  await page.clock.pauseAt(new Date(now.getTime() + 60_000));
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await automatic.click();
   for (let cycle = 0; cycle < 2; cycle++) {
     const response = page.waitForResponse(response =>
       response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === "/web%2Fpagination");
     await page.clock.runFor(10_000);
     expect((await response).ok()).toBe(true);
-    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
+    await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
     await expect(region.getByRole("status")).toContainText("53 issues loaded");
     await expect(region.getByRole("heading", { name: "expensive", exact: true })).toBeVisible();
-    await expect(automatic).toBeChecked();
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
   }
   await region.getByRole("button", { name: "Show latest issues", exact: true }).click();
   await expect(region.getByRole("status")).toContainText("50 issues loaded");
   await expect(region.getByRole("heading", { name: "expensive", exact: true })).toHaveCount(0);
   await expect(region.getByRole("button", { name: "Show latest issues", exact: true })).toHaveCount(0);
-  await expect(automatic).toBeChecked();
+  await expect(automatic).toHaveAttribute("aria-pressed", "true");
 });
 test("keeps queue tables inside a narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -281,8 +332,8 @@ test("challenges anonymous continuation requests", async () => {
 });
 test("refreshes from the header only while auto-refresh is enabled", async ({ page }) => {
   await page.goto("/web%2Fpagination");
-  const automatic = page.getByRole("banner").getByRole("checkbox", { name: "Auto refresh every 10s" });
-  await expect(automatic).not.toBeChecked();
+  const automatic = page.getByRole("banner").getByRole("button", { name: /auto-refresh/i });
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   const now = new Date();
   await page.clock.install({ time: now });
   // The installed clock keeps running, so pausing at the install time races it.
@@ -293,18 +344,18 @@ test("refreshes from the header only while auto-refresh is enabled", async ({ pa
   page.on("request", request => { if (isRefresh(request)) refreshRequests++; });
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(0);
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
+  await automatic.click();
   await page.clock.runFor(9_999);
   expect(refreshRequests).toBe(0);
   for (let cycle = 0; cycle < 2; cycle++) {
     const response = page.waitForResponse(response => isRefresh(response.request()));
     await page.clock.runFor(cycle === 0 ? 1 : 10_000);
     expect((await response).ok()).toBe(true);
-    await expect(page.getByRole("banner").getByText("Live", { exact: true })).toBeVisible();
-    await expect(automatic).toBeChecked();
+    await expect(page.getByRole("banner").getByRole("status")).toHaveText("Live");
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
   }
-  await page.getByRole("banner").getByText("Auto refresh every 10s", { exact: true }).click();
-  await expect(automatic).not.toBeChecked();
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
   await page.clock.fastForward(30_000);
   expect(refreshRequests).toBe(2);
 });
@@ -323,30 +374,38 @@ test.describe("time zone selection", () => {
         return times.length > 0 && times.every(time => time.textContent === formatter.format(new Date(time.getAttribute("datetime")!)));
       }, zone)).toBe(true);
     };
-    const timeZones = page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true });
+    const timeZones = page.getByRole("dialog", { name: "Timestamp", exact: true });
+    const openTimeZones = () => page.getByRole("button", { name: /timestamp options$/ }).first().click();
+    const closeTimeZones = () => timeZones.getByRole("button", { name: "Close timestamp options" }).click();
     await page.goto("/web%2Fpagination");
-    await expect(timeZones.getByRole("option", { name: "Browser", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("banner").getByRole("listbox", { name: "Time zone", exact: true })).toHaveCount(0);
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "Local", exact: true })).toBeChecked();
     await expectTimeZone("America/Los_Angeles");
-    await timeZones.getByRole("option", { name: "UTC", exact: true }).click();
+    await timeZones.getByRole("radio", { name: "UTC", exact: true }).check();
     await expectTimeZone("UTC");
+    await closeTimeZones();
     await page.getByRole("link", { name: "51", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Request 51", exact: true })).toBeVisible();
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
-    await timeZones.getByRole("option", { name: "Browser", exact: true }).click();
+    await timeZones.getByRole("radio", { name: "Local", exact: true }).check();
     await expectTimeZone("America/Los_Angeles");
-    const browser = timeZones.getByRole("option", { name: "Browser", exact: true });
+    const browser = timeZones.getByRole("radio", { name: "Local", exact: true });
     await browser.focus();
     await page.keyboard.press("ArrowRight");
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     await page.reload();
-    await expect(timeZones.getByRole("option", { name: "UTC", exact: true })).toHaveAttribute("aria-selected", "true");
+    await openTimeZones();
+    await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
-    await browser.click();
+    await browser.check();
     await page.reload();
-    await expect(browser).toHaveAttribute("aria-selected", "true");
+    await openTimeZones();
+    await expect(browser).toBeChecked();
     await expectTimeZone("America/Los_Angeles");
     expect(errors).toEqual([]);
   });
@@ -542,6 +601,12 @@ test("pages through project results without reloading or moving the surrounding 
   const projectScroll = page.getByRole("region", { name: "Recorded project results", exact: true });
   const pager = page.getByRole("navigation", { name: "Project pages (bottom)" });
   await expect(rows).toHaveCount(50);
+  const projectColumns = () => page.getByRole("table", { name: "Recorded project results" })
+    .locator("th").evaluateAll(cells => cells.map(cell => {
+      const { x, width } = cell.getBoundingClientRect();
+      return { x, width };
+    }));
+  const firstPageColumns = await projectColumns();
   await page.evaluate(() => { document.documentElement.dataset.pageSession = "retained"; });
   await projectScroll.focus();
   await page.keyboard.press("End");
@@ -550,6 +615,7 @@ test("pages through project results without reloading or moving the surrounding 
   const scrollBeforeNext = await page.evaluate(() => window.scrollY);
   await pager.getByRole("link", { name: "Next projects →", exact: true }).click();
   await expect(rows).toHaveCount(1);
+  expect(await projectColumns()).toEqual(firstPageColumns);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeNext);
   expect(await projectScroll.evaluate(element => element.scrollTop)).toBe(0);
   await expect(pager.getByRole("link", { name: "Next projects →", exact: true })).toHaveCount(0);
@@ -592,7 +658,11 @@ test("retains project paging across views and resets the cursor when page size c
     await views.getByRole("link", { name: label, exact: true }).click();
     const section = page.getByRole("region", { name: label, exact: true });
     await expect(section).toBeVisible();
-    if (label !== "History") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
+    if (label === "Build and Test Issues") {
+      await expect(section.getByRole("status")).toHaveText("Issue recording complete");
+      await expect(section.getByRole("table", { name: "New Issues" })).toBeVisible();
+    }
+    if (label === "Fix Attempts") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
   }
   await views.getByRole("link", { name: "Project Results", exact: true }).click();
   await expect(rows).toHaveCount(25);

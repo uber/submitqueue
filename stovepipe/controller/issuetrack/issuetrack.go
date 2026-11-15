@@ -23,11 +23,14 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/fixrequest"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -208,6 +211,12 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				Finalize:       finalize,
 				Version:        progress.Version + 1,
 			}
+			if progress.RequestID != request.ID {
+				log := requestlog.NewRequestEventLog(request, entity.RequestEventIssueTrackingStarted, "", nil)
+				if err := c.requestMaterializer.PersistLog(ctx, store, log); err != nil {
+					return fmt.Errorf("record start of request issue results: %w", err)
+				}
+			}
 			if progress.Version == 0 {
 				err = tracking.Create(ctx, next)
 			} else {
@@ -278,7 +287,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	}
 
 	if progress.CursorTaskID != "" {
-		next, err := c.processIssue(ctx, store, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false)
+		next, err := c.processIssue(ctx, store, queue, progress, issueKey{progress.CursorTaskID, progress.CursorUnitID}, false)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
@@ -317,7 +326,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			return entity.IssueTrackingState{}, err
 		}
 		previousVersion := progress.Version
-		progress, err = c.processIssue(ctx, store, progress, key, !finalizing)
+		progress, err = c.processIssue(ctx, store, queue, progress, key, !finalizing)
 		if err != nil {
 			return entity.IssueTrackingState{}, err
 		}
@@ -358,7 +367,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 	return progress, nil
 }
 
-func (c *Controller) processIssue(ctx context.Context, store storage.Storage, progress entity.IssueTrackingState, key issueKey, reported bool) (entity.IssueTrackingState, error) {
+func (c *Controller) processIssue(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState, key issueKey, reported bool) (entity.IssueTrackingState, error) {
 	if err := ctx.Err(); err != nil {
 		return entity.IssueTrackingState{}, err
 	}
@@ -411,9 +420,11 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	next.CursorTaskID, next.CursorUnitID = key.task, key.unit
 	if !missing && current.LastProcessedBuildID == progress.BuildID && current.Status == desired {
 		if key == (issueKey{progress.CursorTaskID, progress.CursorUnitID}) {
-			return next, c.recordHistory(ctx, store, current)
+			if err := c.recordIssueTransition(ctx, store, queue, current); err != nil {
+				return entity.IssueTrackingState{}, err
+			}
 		}
-		return next, nil
+		return next, persistReportedIssue(ctx, c.materializer, store, progress, current)
 	}
 
 	// Read the issue before this CAS, including when resuming a cursor. A
@@ -425,7 +436,7 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 
 	if !missing {
 		if current.LastProcessedBuildID == progress.BuildID {
-			if err := c.recordHistory(ctx, store, current); err != nil {
+			if err := c.recordIssueTransition(ctx, store, queue, current); err != nil {
 				return entity.IssueTrackingState{}, err
 			}
 		}
@@ -460,15 +471,29 @@ func (c *Controller) processIssue(ctx context.Context, store storage.Storage, pr
 	}
 
 	if missing || current.Status != desired {
-		return next, c.recordHistory(ctx, store, target)
+		if err := c.recordIssueTransition(ctx, store, queue, target); err != nil {
+			return entity.IssueTrackingState{}, err
+		}
 	}
-	return next, nil
+	return next, persistReportedIssue(ctx, c.materializer, store, progress, target)
 }
 
-func (c *Controller) recordHistory(ctx context.Context, store storage.Storage, issue entity.IssueState) error {
-	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, Status: issue.Status, TimestampMs: issue.ChangedAtMs}
-	if err := c.materializer.PersistLog(ctx, store, log, issue.FirstSeenBuildID); err != nil {
-		return fmt.Errorf("record issue transition: %w", err)
+func (c *Controller) recordIssueTransition(ctx context.Context, store storage.Storage, queue string, issue entity.IssueState) error {
+	if err := persistIssueHistory(ctx, c.materializer, store, issue); err != nil {
+		return err
+	}
+	log := entity.IssueLog{TaskID: issue.TaskID, UnitID: issue.UnitID, BuildID: issue.LastChangedBuildID, TimestampMs: issue.ChangedAtMs}
+	var event *basehook.HookEvent
+	switch issue.Status {
+	case entity.IssueStatusOpen:
+		event = hookevent.NewIssueOpened(queue, log)
+	case entity.IssueStatusClosed:
+		event = hookevent.NewIssueClosed(queue, log)
+	default:
+		return nil
+	}
+	if err := hook.Publish(ctx, c.registry, queue, event, event.GetId()); err != nil {
+		return fmt.Errorf("publish issue transition: %w", err)
 	}
 	return nil
 }

@@ -36,34 +36,32 @@ type authorIdent struct {
 	Email string
 }
 
-// complete reports whether both halves are present. A half-known identity is
-// unusable — git wants a name and an address, and substituting a placeholder
-// for the missing half would attribute the commit to someone who does not
-// exist, which is worse than not attributing it at all.
-func (a authorIdent) complete() bool {
-	return a.Name != "" && a.Email != ""
+// usable reports whether the identity can be passed to `git commit --author`.
+//
+// A half-known identity is unusable — git wants a name and an address, and
+// substituting a placeholder for the missing half would attribute the commit
+// to someone who does not exist, which is worse than not attributing it at
+// all. So is one containing an angle bracket or a line break: --author takes a
+// single "Name <address>" string that git parses back apart, and such a value
+// splits in the wrong place or makes git search the history for a matching
+// author and fail the commit outright.
+func (a authorIdent) usable() bool {
+	if a.Name == "" || a.Email == "" {
+		return false
+	}
+	return !strings.ContainsAny(a.Name+a.Email, "<>\n")
 }
 
-// env renders the identity as the environment git reads an author from. It
-// returns nil for an incomplete identity, which leaves the configured committer
-// identity to stand in for both roles — the behavior from before attribution
-// existed.
-//
-// The identity travels as GIT_AUTHOR_* rather than as `git commit --author`
-// for two reasons. `git merge` has no --author flag at all, so the merge
-// strategy could not use one. And the environment carries name and address as
-// two values, where --author takes a single "Name <address>" string that git
-// has to parse back apart — a name containing an angle bracket splits in the
-// wrong place, and one that parses to nothing makes git search the history for
-// a matching author and fail the commit outright.
-func (a authorIdent) env() []string {
-	if !a.complete() {
+// args renders the identity as the `git commit` arguments that credit it. It
+// returns nil for an unusable identity, which leaves the configured committer
+// identity to stand in for both roles. The identity travels as an argument
+// rather than through the environment because a workspace command carries
+// arguments only.
+func (a authorIdent) args() []string {
+	if !a.usable() {
 		return nil
 	}
-	return []string{
-		"GIT_AUTHOR_NAME=" + a.Name,
-		"GIT_AUTHOR_EMAIL=" + a.Email,
-	}
+	return []string{"--author", a.Name + " <" + a.Email + ">"}
 }
 
 // commitAuthor reads the author recorded on a commit.
@@ -80,7 +78,7 @@ func (m *gitMerger) commitAuthor(ctx context.Context, sha string) (authorIdent, 
 	// NUL-separated: a display name may contain spaces, angle brackets, quotes
 	// or anything else a person put in their git config, and none of those can
 	// be mistaken for the field separator.
-	out, err := m.run(ctx, nil, "show", "--no-patch", "--format=%an%x00%ae", sha)
+	out, err := m.run(ctx, "show", "--no-patch", "--format=%an%x00%ae", sha)
 	if err != nil {
 		return authorIdent{}, fmt.Errorf("git show --no-patch --format author %s: %w", sha, err)
 	}

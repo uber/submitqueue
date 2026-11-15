@@ -22,13 +22,13 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// IssueLogStore retains immutable issue transitions within the bound queue.
-// Task, unit, build, and status identify one transition.
+// IssueLogStore retains immutable issue events within the bound queue.
+// Task, unit, build, and event identify one occurrence.
 type IssueLogStore interface {
-	// Create returns ErrAlreadyExists for a previously recorded transition.
+	// Create returns ErrAlreadyExists for a previously recorded occurrence.
 	// A duplicate never replaces the original timestamp.
 	Create(ctx context.Context, log entity.IssueLog) error
 
-	// Get returns ErrNotFound when the transition has not been recorded.
-	Get(ctx context.Context, taskID, unitID, buildID string, status entity.IssueStatus) (entity.IssueLog, error)
+	// Get returns ErrNotFound when the occurrence has not been recorded.
+	Get(ctx context.Context, taskID, unitID, buildID string, event entity.IssueEvent) (entity.IssueLog, error)
 }

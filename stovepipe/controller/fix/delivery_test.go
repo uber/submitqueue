@@ -24,6 +24,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	mq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"go.uber.org/mock/gomock"
 )
 
@@ -46,8 +47,7 @@ func TestProcessSubmitsBuildIssue(t *testing.T) {
 	controller, m := newTestController(t)
 	issue := testIssue()
 	m.expectIssue(issue)
-	m.executor.EXPECT().Submit(gomock.Any(), issue).Return("attempt", nil)
-	m.observations.EXPECT().Update(gomock.Any(), testBuildID, issueWithFixID(issue, "attempt"), int32(0), int32(1)).Return(nil)
+	m.executor.EXPECT().Submit(gomock.Any(), []entity.OpenIssue{issue}).Return(accepted([]entity.OpenIssue{issue}, "attempt"), nil)
 
 	require.NoError(t, controller.Process(context.Background(), m.delivery(repairMessage(t))))
 }

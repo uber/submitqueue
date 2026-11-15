@@ -3,12 +3,12 @@ package phabricator
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
 	changephab "github.com/uber/submitqueue/platform/base/change/phabricator"
+	"github.com/uber/submitqueue/platform/conduit"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
@@ -23,10 +23,8 @@ type Params struct {
 	// Config is the per-queue identity handed to the Factory that built
 	// this provider.
 	Config changeprovider.Config
-	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
-	// configuring the base URL (e.g. via httpclient.NewClient) and authentication
-	// (e.g. via a RoundTripper that injects credentials) via transport layers.
-	HTTPClient *http.Client
+	// Conduit calls the Phabricator instance the queue's diffs live on.
+	Conduit *conduit.Client
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
@@ -36,7 +34,7 @@ type Params struct {
 type provider struct {
 	// cfg is the per-queue identity this provider was built for.
 	cfg          changeprovider.Config
-	httpClient   *http.Client
+	conduit      *conduit.Client
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 }
@@ -45,7 +43,7 @@ type provider struct {
 func NewProvider(params Params) changeprovider.ChangeProvider {
 	return &provider{
 		cfg:          params.Config,
-		httpClient:   params.HTTPClient,
+		conduit:      params.Conduit,
 		logger:       params.Logger.Named("phabricator_changeprovider"),
 		metricsScope: params.MetricsScope.SubScope("phabricator_changeprovider"),
 	}
@@ -113,7 +111,7 @@ func (p *provider) fetchAllDiffs(ctx context.Context, changeIDs []changephab.Cha
 			end = len(diffIDs)
 		}
 
-		batch, err := p.fetchDiffBatch(ctx, diffIDs[start:end])
+		batch, err := queryDiffs(ctx, p.conduit, diffIDs[start:end])
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch diffs: %w", err)
 		}
@@ -123,17 +121,4 @@ func (p *provider) fetchAllDiffs(ctx context.Context, changeIDs []changephab.Cha
 	}
 
 	return results, nil
-}
-
-// fetchDiffBatch fetches a single batch of diffs from Phabricator.
-func (p *provider) fetchDiffBatch(ctx context.Context, diffIDs []int) (map[int]*diffResult, error) {
-	form := buildQueryDiffsRequest(diffIDs)
-
-	resp, err := doConduitRequest(ctx, p.httpClient, form)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	return parseConduitResponse(resp, diffIDs)
 }

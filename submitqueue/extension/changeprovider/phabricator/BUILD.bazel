@@ -3,15 +3,15 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
-        "conduit.go",
         "convert.go",
         "provider.go",
+        "querydiffs.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator",
     visibility = ["//visibility:public"],
     deps = [
         "//platform/base/change/phabricator:go_default_library",
-        "//platform/http:go_default_library",
+        "//platform/conduit:go_default_library",
         "//platform/metrics:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
@@ -23,14 +23,15 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
-        "conduit_test.go",
         "convert_test.go",
         "provider_test.go",
+        "querydiffs_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
         "//platform/base/change:go_default_library",
         "//platform/base/change/phabricator:go_default_library",
+        "//platform/conduit:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/errs/http:go_default_library",
         "//platform/http:go_default_library",

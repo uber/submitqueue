@@ -20,6 +20,7 @@ go_library(
         "//api/base/hook:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
         "//platform/buildkite:go_default_library",
+        "//platform/conduit:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
         "//platform/errs/git:go_default_library",

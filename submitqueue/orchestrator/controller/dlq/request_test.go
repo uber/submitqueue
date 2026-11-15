@@ -65,7 +65,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, decodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
 
 	payload, err := sqmq.Marshal(sqmq.StartFromLandRequest(entity.LandRequest{ID: "1", Queue: "q"}))
 	require.NoError(t, err)
@@ -267,9 +267,8 @@ func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T)
 	}
 }
 
-// A batch that already concluded does not own anything conclude has not written
-// yet, so the request is still the dead letter's to fail.
-func TestDLQRequestController_Process_FailsWhenEveryBatchIsTerminal(t *testing.T) {
+// A failed batch permits the same Error outcome to be reconciled.
+func TestDLQRequestController_Process_FailsWhenAssociatedBatchFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := entity.Request{ID: "1", Queue: "q", Version: 1, State: entity.RequestStateBatched}

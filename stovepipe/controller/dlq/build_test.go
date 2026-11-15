@@ -24,6 +24,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -42,6 +43,10 @@ func newBuildController(t *testing.T, ctrl *gomock.Controller) (consumer.Control
 	}
 	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+
+	history := storagemock.NewMockRequestLogStore(ctrl)
+	m.store.EXPECT().GetRequestLogStore().Return(history).AnyTimes()
+	history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.RequestLog{}, storage.ErrNotFound).AnyTimes()
 
 	c := NewDLQBuildController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
 	return c, m

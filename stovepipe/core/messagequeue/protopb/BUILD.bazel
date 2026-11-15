@@ -9,6 +9,7 @@ go_library(
         "fix.pb.go",
         "issuetrack.pb.go",
         "process.pb.go",
+        "projectanalysis.pb.go",
         "record.pb.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue/protopb",

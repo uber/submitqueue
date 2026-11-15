@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 
+	"errors"
+
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -26,6 +28,7 @@ import (
 	mq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/fixer"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -36,16 +39,17 @@ type DLQController struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	materializer  requestlog.Materializer
+	executors     fixer.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
 
 // NewDLQController creates repair history recovery. Hosts must use unlimited,
 // always-retryable DLQ processing so a history outage cannot discard its retry trigger.
-func NewDLQController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, topicKey consumer.TopicKey, consumerGroup string) *DLQController {
+func NewDLQController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, executors fixer.Factory, topicKey consumer.TopicKey, consumerGroup string) *DLQController {
 	return &DLQController{
 		logger: logger.Named("fix_dlq_controller"), metricsScope: scope.SubScope("fix_dlq_controller"),
-		stores: stores, materializer: materializer, topicKey: topicKey, consumerGroup: consumerGroup,
+		stores: stores, materializer: materializer, executors: executors, topicKey: topicKey, consumerGroup: consumerGroup,
 	}
 }
 
@@ -75,21 +79,45 @@ func (c *DLQController) Process(ctx context.Context, delivery consumer.Delivery)
 		}
 		return err
 	}
-	observation, eligible, err := findIssueToFix(ctx, store.GetBuildIssueStore(), store.GetIssueStateStore(), fix.GetId())
+	registrations, err := c.executors.For(fixer.Config{QueueName: fix.GetQueueName()})
 	if err != nil {
-		return fmt.Errorf("load repair decision for recovery: %w", err)
+		return err
 	}
-	if observation.FixID != "" {
-		return persistFixSubmittedLog(ctx, c.materializer, store, request, fix.GetId(), observation)
+	if err := validateRegistrations(registrations); err != nil {
+		return err
 	}
-	if !eligible {
-		return persistFixSubmissionDecision(ctx, c.materializer, store, request, fix.GetId(),
-			entity.RequestEventFixSubmissionSkipped, "no_eligible_issue")
+	observations, eligible, err := collectIssues(ctx, store, fix.GetId())
+	if err != nil {
+		return fmt.Errorf("load repair decisions: %w", err)
 	}
-	// A provider can have accepted work even when no ID was returned. Preserve
-	// that uncertainty and leave repair associations and issue status alone.
-	return persistFixSubmissionDecision(ctx, c.materializer, store, request, fix.GetId(),
-		entity.RequestEventFixSubmissionAbandoned, "acceptance_unknown")
+	open := map[entity.OpenIssue]bool{}
+	for _, issue := range eligible {
+		open[issue] = true
+	}
+	for _, registration := range registrations {
+		for _, observation := range observations {
+			issue := entity.OpenIssue{TaskID: observation.TaskID, UnitID: observation.UnitID, FirstSeenBuildID: fix.GetId()}
+			result, err := store.GetIssueRepairStore().Get(ctx, issue, registration.ID)
+			if errors.Is(err, storage.ErrNotFound) {
+				if !open[issue] {
+					continue
+				}
+				result = entity.IssueRepair{Issue: issue, ExecutorID: registration.ID}
+			} else if err != nil {
+				return err
+			}
+			if result.FixID == "" && result.SkipReason == "" {
+				if err := persistRepairEventLog(ctx, c.materializer, store, request, result, entity.RequestEventFixSubmissionAbandoned, "acceptance_unknown"); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := persistRepairSubmissionLog(ctx, c.materializer, store, request, result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (c *DLQController) Name() string                { return string(c.topicKey) }

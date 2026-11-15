@@ -43,7 +43,10 @@ describe("default reusable application views", () => {
     const refresh = vi.fn(async () => undefined);
     render(<WebNavigationProvider value={{ refresh }}><SubmitQueueApp model={result.model} /></WebNavigationProvider>);
     expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "Auto refresh every 10s" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "false");
+    const appHeader = screen.getByRole("link", { name: "SubmitQueue queues" }).closest("header")!;
+    expect(within(appHeader).getByRole("button", { name: /auto-refresh/i })).toBeTruthy();
+    expect(within(screen.getByRole("main")).queryByRole("button", { name: /auto-refresh/i })).toBeNull();
     expect(refresh).not.toHaveBeenCalled();
     const queueLinks = screen.queryAllByRole("link", { name: "demo-queue" });
     queueLinks.forEach(link => expect(link.getAttribute("href")).toBe("/sq/queue/demo-queue"));

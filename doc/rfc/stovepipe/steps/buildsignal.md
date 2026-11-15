@@ -10,11 +10,11 @@ It handles only the poll loop: it does not decide build strategy, write greennes
 
 `buildsignal` consumes a build id, published by `build` — once per phase, since Phase 1 (whole-repo) and Phase 2 (per-project) each run their own `build` → `buildsignal` cycle against builds tied to the same `Request` (see [workflow.md](../workflow.md#workflow)).
 
-Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the request id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
+Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and queues terminal build analysis. Cancelled outcomes also go directly to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
 
 `buildsignal` is the sole writer of `Build.Status`/`Build.Version` after `build` creates the row (see [build.md](build.md#input-partitioning-and-the-single-writer-property)). It reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and writes it exactly once, at the terminal transition, to record the build's outcome — the one `Request.State` write outside `process` and the DLQ reconciler.
 
-Its early-exit guard is deliberately narrower than `State.IsTerminal()`: it proceeds when the request is `processing` **or** already carries a build outcome. The second case matters because a redelivery after the outcome was stamped but before the `record` publish landed must re-publish rather than drop the signal; everything it re-runs is a no-op (the status is unchanged, the outcome is already recorded, the slot is not released twice) and the `record` publish is idempotent.
+Its early-exit guard is deliberately narrower than `State.IsTerminal()`: it proceeds when the request is `processing` **or** already carries a build outcome. The second case matters because a redelivery after the outcome was stamped but before the terminal-analysis publish landed must re-publish rather than drop the signal; everything it re-runs is a no-op (the status is unchanged, the outcome is already recorded, the slot is not released twice) and the downstream publish is idempotent.
 
 The states the guard actually rejects are terminal-without-an-outcome — today `superseded` alone, which `process` sets only from `accepted`, so it cannot reach the poll loop at all. The guard is kept rather than dropped because the slot release in step 7a is conditioned on *not* already having an outcome, so a superseded request arriving here would decrement a slot that superseding never claimed.
 
@@ -34,7 +34,7 @@ For a delivery carrying build id `B`:
 3. If R.State is neither processing nor already an outcome: ack and return.
    - a request reaches the poll loop only after process admitted it, so it is processing —
      or already carries this build's outcome on a redelivery, which falls through so the
-     signal is re-published to record instead of dropped.
+     terminal analysis is re-published instead of dropped.
    - the only other terminal-without-an-outcome state is superseded, and process supersedes
      solely from accepted, so it cannot occur here. Guarded anyway: step 7a would otherwise
      release a build slot the request never claimed, since superseding consumes none.
@@ -68,14 +68,13 @@ For a delivery carrying build id `B`:
       succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
    c. If the winning durable R.State is succeeded, advance the last-green bookmark
       in a CAS retry loop, even on a terminal redelivery. Preserve a newer bookmark.
-   Then publish R.ID to the record topic, partitioned by request id; ack, return.
-   No re-publish to buildsignal.
-   - record loads the Request directly by this key, derives greenness from its outcome, and
-     supplies its terminal build id to project-result resolution; it never reaches a Build.
-   - the message id is the request id, so a redelivery republishing the same terminal signal
-     dedups into the original message; record is idempotent regardless.
-   - publish failure -> return raw (non-retryable); the outcome is persisted, operational
-     republish recovers.
+   Then publish terminal BuildAnalysis, partitioned by build id. Cancelled requests
+   also publish R.ID directly to record, partitioned by request id. Ack and return.
+   - successful or failed outcomes reach record through completed build analysis
+     and project analysis, not directly from this poll.
+   - stable handoff IDs make republishing safe.
+   - publication failures return raw; DLQ recovery repairs the handoff without
+     polling the runner again.
 
 8. Else hold the delivery for delayMs (postpone: the same message redelivers after the delay):
    - delayMs = pollDelay(status): shorter while running, longer while accepted.
@@ -150,8 +149,8 @@ When the budget does run out the message dead-letters, and the buildsignal DLQ r
 Every branch is safe under at-least-once redelivery:
 
 - **Build not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
-- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to hold for the next poll (non-terminal) or republish the request id to `record` (terminal, idempotent). No corruption.
-- **Terminal already published** — a redelivery reloads, re-polls, no-ops at step 6, republishes the same terminal signal to `record` (idempotent), and acks. Harmless.
+- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to hold for the next poll (non-terminal) or retry the terminal-analysis handoff (terminal, idempotent). No corruption.
+- **Terminal already published** — a redelivery reloads, re-polls, no-ops at step 6, retries the same terminal-analysis handoff (idempotent), and acks. Harmless.
 - **Postpone write failed** — the framework abandons the delivery; the visibility timeout lapses into a normal redelivery, which re-runs from step 1 and no-ops at step 6. The poll loop's continuation is framework-owned.
 
 The window to guard is between persisting status (step 6) and ack (steps 7–8); because status writes are CAS-guarded, monotonic, and write-once at terminal, a redelivery always observes a consistent row.
@@ -169,4 +168,4 @@ One boundary of that posture is worth stating: the `MaxAttempts` path fires only
 
 ## Entity, storage, and queue additions
 
-No additions beyond [build.md](build.md#entity-and-storage-additions-needed): `buildsignal` calls `BuildStore.Get`/`Update` and `RequestStore.Get`/`Update` against the `Build`/`Request` shapes defined there — `Build.ID` being the runner-assigned id it hands straight back to `Status` — plus `QueueStore.Get`/`Update` to release the build slot, and consumes the `BuildSignal` message on `TopicKeyBuildSignal` introduced there. A non-terminal poll calls `delivery.Hold` on that delivery rather than publishing another one. `Request.State` gains the three build outcomes (`succeeded`, `failed`, `cancelled`), all terminal. The message it publishes to `record`, and the `record` topic key itself, are owned by the `record` stage and land with `record.md`; `buildsignal` only needs that the **request id** reaches the record topic once the build is terminal, partitioned by request id.
+No additions beyond [build.md](build.md#entity-and-storage-additions-needed): `buildsignal` calls `BuildStore.Get`/`Update` and `RequestStore.Get`/`Update` against the `Build`/`Request` shapes defined there — `Build.ID` being the runner-assigned id it hands straight back to `Status` — plus `QueueStore.Get`/`Update` to release the build slot, and consumes the `BuildSignal` message on `TopicKeyBuildSignal` introduced there. A non-terminal poll calls `delivery.Hold` on that delivery rather than publishing another one. `Request.State` gains the three build outcomes (`succeeded`, `failed`, `cancelled`), all terminal. Terminal analysis owns the next normal handoff; only cancellation publishes directly to the record topic. Both messages use their existing build-id or request-id partitions.

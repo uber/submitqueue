@@ -2,14 +2,14 @@
 
 `record` turns a terminal build outcome into a durable validation fact.
 
-- Phase 1 records whole-repository greenness and optional project facts. On green it promotes the commit onto the Queue's promotion ref if the Request still holds the last-green bookmark, then announces the outcome as a hook event. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
+- Phase 1 records whole-repository greenness using project results already persisted by `projectanalysis`. On green it promotes the commit onto the Queue's promotion ref if the Request still holds the last-green bookmark, then announces the outcome as a hook event. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
 - Phase 2 records greenness per project instead of per repository. Sketched here, to be expanded before implementation.
 
 Notifying downstream systems rides the cross-domain hook framework rather than a Stovepipe-specific extension; see [Hooks](#hooks).
 
 See [workflow.md](../workflow.md) for the whole pipeline, [build.md](build.md) for how builds are created, and [buildsignal.md](buildsignal.md) for the terminal-only handoff into this stage.
 
-`record` owns the validation facts and the promotion ref. `buildsignal` advances the last-green build baseline before handing off to this stage. `record` does not decide build scope, poll a build, release the Queue's build slot, interpret a target graph, or map targets to projects. Those belong to `process`, `buildsignal`, and `analyze`.
+`record` owns the repository fact and promotion ref; `projectanalysis` owns project facts and issue attribution. `buildsignal` advances the last-green build baseline before handing off to this stage. `record` does not decide build scope, poll a build, release the Queue's build slot, interpret a target graph, or map targets to projects. Those belong to `process`, `buildsignal`, and `projectanalysis`.
 
 ## Phase 1 algorithm
 
@@ -39,8 +39,8 @@ For a delivery carrying a `Record` payload:
    - superseded -> ack, no fact. Unreachable in practice.
    - accepted / processing / anything else -> return a non-retryable invariant error.
 
-6. Resolve optional project results using R and its TerminalBuildID, and validate
-   the entire result set before writing facts. A resolver error returns raw.
+6. Load the request summary and its persisted ProjectCount. Project analysis
+   has already recorded results or abandonment before publishing here.
 
 7. Map R.State and the project results to a whole-repository degree and create the
    ValidationFact keyed by (R.URI, empty project) in the queue-bound fact store.
@@ -50,9 +50,8 @@ For a delivery carrying a `Record` payload:
    - ErrAlreadyExists -> load and reconcile the existing immutable fact.
    - other store error -> return raw.
 
-8. Record each project fact with its resolver-provided degree and persist history
-   for the repository fact and completed project facts. A failure returns raw;
-   replay completes missing writes without replacing immutable facts.
+8. Persist history for the repository fact. A failure returns raw; replay adopts
+   the immutable fact and repairs its history.
 
 9. If the persisted repository fact is not green, skip to step 11. Report how long
    the break went undetected only if step 7 created the fact (see "Observability").
@@ -108,7 +107,7 @@ Absence is still distinct from degree `0`. Callers gating deployments must treat
 
 A fact is written only when the Request reaches `succeeded` or `failed`. A `cancelled` build is acked with no fact.
 
-The fail-closed path is subtler than "no fact". A DLQ reconciler forces the Request to `failed` and does not itself publish here, so reconciliation on its own records nothing. That is not the same as nothing being recorded: a `buildsignal` delivery still in flight can reach this stage afterwards, and it will write `DegreeBroken` from the forced state. See [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
+Project-analysis recovery hands off after retaining abandonment. A failed request without a completed set of project facts therefore records `DegreeBroken`; partial writes alone do not supply a project count. Build-status recovery also repairs the downstream handoff without polling the runner again. See [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
 
 ### Phase 1 degree mapping
 
@@ -123,7 +122,7 @@ Whole-repository degree depends on the outcome `buildsignal` stamped on the Requ
 | `cancelled`     | no fact                       |
 
 
-`DegreePartial` is hard coded to `0.5` for now; it does not measure the fraction of projects failing. Each project fact preserves the degree returned by the resolver, unless its immutable identity already exists. After persisting every project fact and its degree index, `record` retains total and broken project counts in `project_facts_recorded` for the request summary. Broken means a persisted degree above zero; retries count adopted facts rather than contradictory resolver results. Empty results record zero counts.
+`DegreePartial` is hard coded to `0.5` for now; it does not measure the fraction of projects failing. Each project fact preserves the degree returned by the resolver, unless its immutable identity already exists. After persisting every project fact and its degree index, `projectanalysis` retains total and broken project counts in `project_facts_recorded` for the request summary. Broken means a persisted degree above zero; retries count adopted facts rather than contradictory resolver results. Empty results record zero counts.
 
 ## Last-green advancement (Queue bookmark)
 
@@ -131,7 +130,7 @@ Whole-repository degree depends on the outcome `buildsignal` stamped on the Requ
 
 The write goes through `QueueStore.Update(ctx, queue, oldVersion, newVersion)`, so version arithmetic stays in the controller: it computes `newVersion = oldVersion + 1` and the store does a pure conditional write. `ErrVersionMismatch` is absorbed by the loop rather than returned, since a concurrent writer moved the row and reloading converges.
 
-The bookmark is a successful-build baseline and can precede validation facts. Project resolution and Git promotion remain in `record`. Releasing capacity and advancing the bookmark are separate Queue updates, so a new build may be admitted with the previous baseline before the advance lands. A terminal redelivery retries the bookmark update without releasing the slot again.
+The bookmark is a successful-build baseline and can precede validation facts. Project resolution runs in `projectanalysis`; Git promotion remains in `record`. Releasing capacity and advancing the bookmark are separate Queue updates, so a new build may be admitted with the previous baseline before the advance lands. A terminal redelivery retries the bookmark update without releasing the slot again.
 
 A failed or cancelled build never moves the bookmark, and so never promotes either.
 
