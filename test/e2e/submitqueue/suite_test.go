@@ -399,13 +399,16 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesLandingDependency() {
 func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 	t := s.T()
 
-	const queue = "e2e-chain-queue"
+	const queue = "e2e-bypass-head-queue"
 	const gateGroup = "orchestrator"
+	const heldBatch = "1"
 
-	lead := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-	heldBatch := s.awaitBatchID(lead)
+	// A dedicated queue makes the leader batch 1, so no build can beat this gate.
 	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the leader's build so the follower can fully cover it")
 	defer s.openGate(queue, gateGroup, heldBatch)
+
+	lead := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.Equal(t, heldBatch, s.awaitBatchID(lead))
 	s.awaitBatchState(queue, heldBatch, entity.BatchStateSpeculating)
 
 	follower := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
