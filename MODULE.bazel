@@ -2,6 +2,9 @@
 # which is pulled in transitively by rules_go/rules_proto.
 bazel_dep(name = "toolchains_protoc", version = "0.6.1")
 bazel_dep(name = "git", version = "2.55.0")
+
+# Git's libcurl dependency otherwise selects BoringSSL predating C23 support.
+bazel_dep(name = "boringssl", version = "0.20261105.0")
 bazel_dep(name = "rules_go", version = "0.59.0")
 bazel_dep(name = "gazelle", version = "0.53.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
