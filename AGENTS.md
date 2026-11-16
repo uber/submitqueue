@@ -215,6 +215,10 @@ Bazel with Bzlmod (NOT WORKSPACE).
 - **BUILD files**: Every Go package needs `BUILD.bazel`. Run `make gazelle` after adding/removing Go files.
 - **CI enforces** BUILD files are in sync — always run `make gazelle` before committing.
 
+### SQL Schema Changes
+
+When adding SQL columns, append them after all existing columns in schema definitions, before key and index declarations. Preserve existing column order. Use the default append behavior of `ADD COLUMN` in migrations, without `FIRST` or `AFTER` clauses, and add columns in the same order as the schema definition so fresh and upgraded databases have identical column order. Consumers derive migrations by comparing SQL definitions at their deployed and target revisions; do not duplicate schema changes as per-column migration lists in READMEs. `CREATE TABLE IF NOT EXISTS` does not upgrade existing tables.
+
 ### Proto Generation
 
 Generated proto files are committed. When modifying `.proto` files:
