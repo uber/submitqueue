@@ -32,17 +32,15 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
+	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
 
-// PollDelayMs is the delay in milliseconds between successful polling passes.
-// Two minutes limits provider traffic during long-running builds.
-const PollDelayMs int64 = 120000
-
 // Controller accumulates build issues while builds run and after completion.
 // Terminal analysis must persist all build issues and its completion event before acknowledging.
 type Controller struct {
+	queueConfigs    queueconfigprovider.Store
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	stores          storage.Factory
@@ -57,6 +55,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	queueConfigs queueconfigprovider.Store,
 	materializer requestlog.Materializer,
 	detectorFactory buildissue.DetectorFactory,
 	registry consumer.TopicRegistry,
@@ -64,6 +63,7 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
+		queueConfigs:    queueConfigs,
 		logger:          logger.Named("buildanalysis_controller"),
 		metricsScope:    scope.SubScope("buildanalysis_controller"),
 		stores:          stores,
@@ -96,6 +96,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 	if msg.PartitionKey != analysis.GetId() {
 		return fmt.Errorf("build analysis must be partitioned by build %q", analysis.GetId())
+	}
+
+	cfg, err := c.queueConfigs.Get(ctx, analysis.GetQueueName())
+	if err != nil {
+		return fmt.Errorf("load queue configuration: %w", err)
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: analysis.GetQueueName()})
@@ -207,7 +212,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	if hold {
-		delivery.Hold(PollDelayMs)
+		delivery.Hold(cfg.Stages.BuildAnalysis.PollDelayMs)
 	}
 
 	c.logger.Debugw("build analysis pass complete",
