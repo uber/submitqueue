@@ -44,6 +44,7 @@ import (
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
@@ -109,6 +110,18 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	// Use docker-compose from service/submitqueue (full stack), resolved from
 	// the test runfiles. All three service images are built from a staged
 	// build context assembled entirely from declared data dependencies.
+	const queueConfigFile = "test/e2e/submitqueue/queues.yaml"
+	queueConfigs, err := yamlqueueconfig.NewStore(testutil.Runfile(queueConfigFile))
+	require.NoError(t, err)
+	queues, err := queueConfigs.List(s.ctx)
+	require.NoError(t, err)
+	tenants := make([]string, 0, len(queues))
+	for _, queue := range queues {
+		tenants = append(tenants, queue.Name)
+	}
+	// All services must subscribe to exactly the registry staged into this test's gateway.
+	t.Setenv("MQ_TENANTS", strings.Join(tenants, ","))
+
 	composeFile := testutil.Runfile("service/submitqueue/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue",
 		testutil.WithBuildContext(map[string]string{
@@ -116,13 +129,13 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 			".docker-bin/orchestrator":                           "service/submitqueue/orchestrator/server/orchestrator_linux",
 			".docker-bin/runway":                                 "service/runway/server/runway_linux",
 			"service/submitqueue/gateway/server/Dockerfile":      "service/submitqueue/gateway/server/Dockerfile",
-			"service/submitqueue/gateway/server/queues.yaml":     "service/submitqueue/gateway/server/queues.yaml",
+			"service/submitqueue/gateway/server/queues.yaml":     queueConfigFile,
 			"service/submitqueue/orchestrator/server/Dockerfile": "service/submitqueue/orchestrator/server/Dockerfile",
 			"service/runway/server/Dockerfile":                   "service/runway/server/Dockerfile",
 		}))
 
 	// Start the compose stack (Gateway + Orchestrator + 2 MySQL DBs)
-	err := s.stack.Up()
+	err = s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
 
 	s.log.Logf("Compose stack started successfully")
@@ -417,33 +430,26 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 	)
 }
 
-// TestDependentBatch_NoBypassWhenCoverageIsIncomplete proves the complement:
-// with only the "dependency succeeds" side passed, a head waits for its
-// dependency to resolve and lands strictly, never dispatching ahead of it.
-//
-// Partial coverage is seeded directly: the follower's batch is stranded in
-// Created (build held), its "succeeds" path is written as passed, and a
-// trigger request wakes the queue. The follower's real speculative builds are
-// parked on its held batch partition, so the funded set stays exactly one
-// path. The single passed path is a live passed path, so the run reports the
-// wait — the signal this test then uses to prove nothing else advanced it.
+// TestDependentBatch_NoBypassWhenCoverageIsIncomplete proves a single passed
+// outcome cannot bypass an unresolved dependency, unlike complete coverage.
 func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplete() {
-	const queue = "e2e-chain-queue"
-	const gateGroup = "orchestrator"
+	t := s.T()
+	const queue = "e2e-partial-coverage-queue"
+	const runwayGateGroup = "runway-merge"
+	const heldBatch = "2"
 
+	// A dedicated queue gives the follower batch 2, so no build can beat this gate.
+	s.closeGate(queue, "orchestrator", heldBatch, "e2e: hold follower builds before submission")
+	defer s.openGate(queue, "orchestrator", heldBatch)
+
+	s.closeGate(queue, runwayGateGroup, queue, "e2e: hold the lead land while coverage is incomplete")
+	defer s.openGate(queue, runwayGateGroup, queue)
 	lead := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/1/cccccccccccccccccccccccccccccccccccccccc")
 	leadBatch := s.awaitBatchID(lead)
-	s.awaitBatchState(queue, leadBatch, entity.BatchStateSpeculating)
+	s.awaitParked(runwayGateGroup, runwaymq.TopicKeyMerge.String(), leadBatch)
 
 	follower := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/2/dddddddddddddddddddddddddddddddddddddddd")
-	heldBatch := s.awaitBatchID(follower)
-	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the follower's builds so only the seeded path exists")
-	defer s.openGate(queue, gateGroup, heldBatch)
-
-	// Strand the follower in Created, then seed exactly one passed path: the
-	// guess that the lead succeeds. Its builds are parked, so nothing can add
-	// the "fails" path while the queue is quiet.
-	s.strandInCreated(queue, heldBatch)
+	require.Equal(t, heldBatch, s.awaitBatchID(follower))
 	s.seedPassedPath(queue, entity.SpeculationPath{
 		Head: heldBatch,
 		Dependencies: []entity.PathDependency{
@@ -451,88 +457,44 @@ func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplet
 		},
 	})
 
-	trigger := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/3/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-	s.awaitBatchID(trigger)
-
-	// The run that admits the follower also reports the wait: its one passed
-	// path covers only one of the lead's two outcomes, so it cannot land
-	// until the lead resolves.
 	s.awaitEvent(follower, entity.RequestEventWaiting)
+	assert.Equal(t, entity.BatchStateLanding, s.batchState(queue, leadBatch))
+	assert.Equal(t, entity.BatchStateSpeculating, s.batchState(queue, heldBatch),
+		"incomplete coverage must not dispatch a land while the lead is unresolved")
 
-	// "No bypass" must not be read off the follower's batch state: waiting is
-	// a recorded event, not a moment, and the lead is ungated — it can land
-	// before this test looks, at which point the seeded path is landable
-	// *strictly* and the batch rightly moves to Landing. The bypass would
-	// show up differently: the follower landing while the lead is still
-	// unresolved. Assert the true invariant instead — the follower only lands
-	// after the lead has landed.
+	s.openGate(queue, runwayGateGroup, queue)
 	s.awaitStatus(lead, entity.RequestStatusLanded)
 	s.awaitStatus(follower, entity.RequestStatusLanded)
-
-	// Let the queue finish. The follower's own speculative builds were parked
-	// on the held partition; releasing it lets any surviving work drain. How
-	// the queue ultimately converges is exercised by the other tests.
-	s.openGate(queue, gateGroup, heldBatch)
-	s.awaitStatus(trigger, entity.RequestStatusLanded)
+	s.openGate(queue, "orchestrator", heldBatch)
 }
 
-// TestDependentBatch_IsWokenByTheLandAhead proves that a batch waiting on
-// another is woken when that one lands — an edge the queue was silently
-// dropping.
-//
-// A landed batch fans out to speculate so its dependents can re-plan. That
-// message used to reuse the bare batch ID, which the batch controller had
-// already published to the same topic and partition when the batch was
-// created. The queue deduplicates against rows it has not collected yet,
-// consumed ones included, so the wake-up was reported as a success, stored
-// nothing, and never arrived.
-//
-// Ordinarily something else re-plans the queue soon enough to hide that. This
-// test removes every other source of a wake-up, as stop → observe → start:
-//
-//  1. Stop: close the gate for runway-merge on this queue, before landing, so
-//     the lead batch cannot complete its land.
-//  2. Land the lead. It runs to the land hand-off and parks there.
-//  3. Land the dependent. The queue's analyzer serializes conservatively, so
-//     its batch depends on the lead's, which is in-flight (Landing counts).
-//  4. Fund only the path that assumes the lead succeeds, and hold every real
-//     build for the dependent so complete coverage cannot bypass the lead.
-//  5. Observe: wait for the dependent to record "waiting". From here the only
-//     event that can make its funded path landable is the lead landing.
-//  6. Start: open the gate. The lead lands and fans out.
-//
-// The dependent reaching "landed" is therefore attributable to the fan-out
-// alone. Against the old code it rests at "speculating" and the suite runs to
-// Bazel's timeout, which is how the harness reports a pipeline that stalled.
+// TestDependentBatch_IsWokenByTheLandAhead isolates the land fan-out: after the
+// dependent reports waiting, no build or new request can wake speculation.
+// Reusing the creation message ID for the fan-out would silently deduplicate
+// the only wake-up and leave the dependent stuck.
 func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheLandAhead() {
 	t := s.T()
 
-	const queue = "e2e-chain-queue"
+	const queue = "e2e-land-wakeup-queue"
 	const runwayGateGroup = "runway-merge"
-	const orchestratorGateGroup = "orchestrator"
+	const heldBatch = "2"
+
+	// A dedicated queue gives the follower batch 2, so no build can beat this gate.
+	s.closeGate(queue, "orchestrator", heldBatch, "e2e: hold follower builds before submission")
+	defer s.openGate(queue, "orchestrator", heldBatch)
 	gateTopic := runwaymq.TopicKeyMerge.String()
 
 	s.closeGate(queue, runwayGateGroup, queue, "e2e: hold the lead land while the dependent waits")
-	// Reopen even if an assertion below fails, so teardown does not stop the
-	// stack with a delivery still parked. Opening twice is a no-op.
 	defer s.openGate(queue, runwayGateGroup, queue)
 
 	lead := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/1/abcdef0123456789abcdef0123456789abcdef01")
-	s.log.Logf("Landed lead request %s; awaiting its land to park", lead.sqid)
-
-	// The land request is keyed by batch, so name the batch to prove the
-	// parked delivery is this request's land and not some other.
 	leadBatch := s.awaitBatchID(lead)
 	parked := s.awaitParked(runwayGateGroup, gateTopic, leadBatch)
 	assert.Equal(t, queue, parked.PartitionKey, "land request should be partitioned by queue")
 
-	// The lead is provably stopped mid-land. A request landed now serializes
-	// behind it.
+	dependentBatch := heldBatch
 	dependent := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/2/1234567890abcdef1234567890abcdef12345678")
-	dependentBatch := s.awaitBatchID(dependent)
-	require.NotEqual(t, leadBatch, dependentBatch, "the two requests must be carried by different batches")
-	s.closeGate(queue, orchestratorGateGroup, dependentBatch, "e2e: hold dependent builds so only the seeded path exists")
-	defer s.openGate(queue, orchestratorGateGroup, dependentBatch)
+	require.Equal(t, dependentBatch, s.awaitBatchID(dependent))
 
 	leadState, err := s.appStorage.For(queue)
 	require.NoError(t, err)
@@ -541,35 +503,22 @@ func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheLandAhead() {
 	require.Contains(t, got.Dependencies, leadBatch,
 		"batch %s must depend on the in-flight %s for this test to exercise anything", dependentBatch, leadBatch)
 
-	// Leave the real builds parked and fund only the world where the lead lands.
-	// A later request wakes the queue so it admits the stranded batch and
-	// reports the wait without adding the missing failure-assumption path.
-	s.strandInCreated(queue, dependentBatch)
 	s.seedPassedPath(queue, entity.SpeculationPath{
 		Head: dependentBatch,
 		Dependencies: []entity.PathDependency{
 			{Batch: leadBatch, Assumption: entity.DependencyAssumptionSucceeds},
 		},
 	})
-	trigger := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/3/fedcba9876543210fedcba9876543210fedcba98")
-	s.awaitBatchID(trigger)
-
 	s.awaitEvent(dependent, entity.RequestEventWaiting)
-	s.log.Logf("Dependent %s has passed its build and waits only on %s", dependent.sqid, leadBatch)
 
-	// Start: the lead lands, and its fan-out is now the only thing that can
-	// move the dependent.
 	s.openGate(queue, runwayGateGroup, queue)
 	s.awaitUnparked(runwayGateGroup, gateTopic, leadBatch)
-
 	s.awaitStatus(lead, entity.RequestStatusLanded)
 	s.awaitStatus(dependent, entity.RequestStatusLanded)
 
 	assert.Equal(t, entity.RequestStateLanded, s.terminalState(dependent),
 		"the dependent must land once the batch it waited on landed")
-
-	s.openGate(queue, orchestratorGateGroup, dependentBatch)
-	s.awaitStatus(trigger, entity.RequestStatusLanded)
+	s.openGate(queue, "orchestrator", dependentBatch)
 }
 
 // TestReadAPIs validates all five request read endpoints against receipts
