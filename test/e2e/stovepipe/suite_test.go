@@ -71,11 +71,19 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")
 
 	composeFile := testutil.Runfile("service/stovepipe/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe",
+	s.stack = testutil.NewComposeStack(
+		t,
+		s.log,
+		s.ctx,
+		composeFile,
+		"e2e-stovepipe",
+		testutil.WithOverlay(testutil.Runfile("test/e2e/stovepipe/docker-compose.e2e.yml")),
 		testutil.WithBuildContext(map[string]string{
 			".docker-bin/stovepipe":               "service/stovepipe/server/stovepipe_linux",
 			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
-		}))
+			"test/e2e/stovepipe/queues.yaml":      "test/e2e/stovepipe/queues.yaml",
+		}),
+	)
 
 	err := s.stack.Up("mysql-app", "mysql-queue")
 	require.NoError(t, err, "failed to start compose stack")
