@@ -1,0 +1,1 @@
+exports_files(["boringssl-memchr-const.patch"])
