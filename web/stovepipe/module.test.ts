@@ -282,15 +282,38 @@ describe("Stovepipe page loading", () => {
     });
   });
   it.each([
-    ...(["requestState", "buildTriggered", "buildFinished", "buildAnalysisAbandoned"] as const).map((eventCase) => ({
+    ...(["requestState", "buildTriggered", "buildFinished", "buildAnalysisAbandoned", "issueTrackingAbandoned"] as const).map((eventCase) => ({
       name: eventCase,
       data: { payload: { case: eventCase, value: { buildId: "runner/build/7?attempt=2" } } },
       details: [{ label: "Build ID", value: "runner/build/7?attempt=2" }],
     })),
     { name: "green validation", data: { payload: { case: "validationFactRecorded", value: { factDegree: 0 } } }, details: [{ label: "Breakage degree", value: "0" }] },
     { name: "partial breakage", data: { payload: { case: "validationFactRecorded", value: { factDegree: 0.25 } } }, details: [{ label: "Breakage degree", value: "0.25" }] },
-    { name: "no project facts", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 0n } } }, details: [{ label: "Project facts", value: "0" }] },
-    { name: "large project count", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 9007199254740993n } } }, details: [{ label: "Project facts", value: "9007199254740993" }] },
+    { name: "no project facts", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 0n, brokenProjectFactCount: 0n } } }, details: [{ label: "Project facts", value: "0" }, { label: "Broken project facts", value: "0" }] },
+    { name: "large project count", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 9007199254740993n, brokenProjectFactCount: 0n } } }, details: [{ label: "Project facts", value: "9007199254740993" }, { label: "Broken project facts", value: "0" }] },
+    { name: "green project facts", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 51n, brokenProjectFactCount: 0n } } }, details: [{ label: "Project facts", value: "51" }, { label: "Broken project facts", value: "0" }] },
+    { name: "broken project facts", data: { payload: { case: "projectFactsRecorded", value: { projectFactCount: 51n, brokenProjectFactCount: 2n } } }, details: [{ label: "Project facts", value: "51" }, { label: "Broken project facts", value: "2" }] },
+    { name: "analysis with no issues", data: { payload: { case: "buildAnalysisCompleted", value: { buildId: "build/7", issueCount: 0n } } }, details: [{ label: "Build ID", value: "build/7" }, { label: "Issues", value: "0" }] },
+    { name: "large issue count", data: { payload: { case: "buildAnalysisCompleted", value: { buildId: "build/7", issueCount: 9007199254740993n } } }, details: [{ label: "Build ID", value: "build/7" }, { label: "Issues", value: "9007199254740993" }] },
+    ...["reconciled", "suppressed_cancelled", "suppressed_task_wide_issue"].map((closureMode) => ({
+      name: closureMode,
+      data: { payload: { case: "issuesReconciled" as const, value: { buildId: "build/7", closureMode } } },
+      details: [{ label: "Build ID", value: "build/7" }, { label: "Closure mode", value: closureMode }],
+    })),
+    ...([
+      { eventCase: "fixSubmitted", fixId: "fix/7?attempt=2", reason: "" },
+      { eventCase: "fixSubmissionSkipped", fixId: "", reason: "no_open_issue" },
+      { eventCase: "fixSubmissionAbandoned", fixId: "", reason: "acceptance_unknown" },
+    ] as const).map(({ eventCase, fixId, reason }) => ({
+      name: eventCase,
+      data: { payload: { case: eventCase, value: { buildId: "build/7", taskId: "test", unitId: "//pkg:test", executorId: "repair", fixId, reason } } },
+      details: [
+        { label: "Build ID", value: "build/7" }, { label: "Task ID", value: "test" },
+        { label: "Unit ID", value: "//pkg:test" }, { label: "Executor ID", value: "repair" },
+        ...(fixId ? [{ label: "Fix ID", value: fixId }] : [{ label: "Reason", value: reason }]),
+      ],
+    })),
+    { name: "task wide repair", data: { payload: { case: "fixSubmissionSkipped", value: { buildId: "build/7", taskId: "test", unitId: "", executorId: "repair", fixId: "", reason: "no_open_issue" } } }, details: [{ label: "Build ID", value: "build/7" }, { label: "Task ID", value: "test" }, { label: "Executor ID", value: "repair" }, { label: "Reason", value: "no_open_issue" }] },
     { name: "missing metadata", data: undefined, details: [] },
     { name: "unknown metadata", data: { payload: { case: undefined } }, details: [] },
     { name: "empty build ID", data: { payload: { case: "buildTriggered", value: { buildId: "" } } }, details: [] },
@@ -306,7 +329,16 @@ describe("Stovepipe page loading", () => {
     expect(result).toMatchObject({ kind: "render", model: { history: { ok: true, data: { events: [{ details }] } } } });
     expect(() => JSON.stringify(result)).not.toThrow();
   });
-  it.each(["requestState", "buildTriggered", "buildFinished", "buildAnalysisAbandoned"] as const)("resolves %s build links with the opaque ID and queue", async (payloadCase) => {
+  it.each([
+    ...(["requestState", "buildTriggered", "buildFinished", "buildAnalysisAbandoned", "issueTrackingAbandoned"] as const).map((eventCase) => ({
+      payload: { case: eventCase, value: { buildId: "runner/build/7?attempt=2" } },
+    })),
+    { payload: { case: "buildAnalysisCompleted", value: { buildId: "runner/build/7?attempt=2", issueCount: 0n } } },
+    { payload: { case: "issuesReconciled", value: { buildId: "runner/build/7?attempt=2", closureMode: "" } } },
+    ...(["fixSubmitted", "fixSubmissionSkipped", "fixSubmissionAbandoned"] as const).map((eventCase) => ({
+      payload: { case: eventCase, value: { buildId: "runner/build/7?attempt=2", taskId: "", unitId: "", executorId: "", fixId: "", reason: "" } },
+    })),
+  ] satisfies NonNullable<HistoryEvent["data"]>[])("resolves $payload.case build links with the opaque ID and queue", async (data) => {
     const href = "https://builds.example.test/pipeline/builds/7?attempt=2";
     const resolveBuildUrl = vi.fn(() => href);
     const { app, service, paths } = createPageTestContext({ resolveBuildUrl });
@@ -314,13 +346,13 @@ describe("Stovepipe page loading", () => {
       requestSummary: summary,
       events: [{
         eventId: "e1", timestampMs: 100n, occurrence: { case: "event", value: "retained_event" }, outcomeReason: "",
-        data: { payload: { case: payloadCase, value: { buildId: "runner/build/7?attempt=2" } } },
+        data,
       }],
     });
     const result = await app.handle({ path: paths.request(summary.queue, summary.requestId), search: new URLSearchParams() });
     expect(resolveBuildUrl).toHaveBeenCalledExactlyOnceWith({ queue: summary.queue, buildId: "runner/build/7?attempt=2" });
     expect(result).toMatchObject({ kind: "render", model: { history: { ok: true, data: { events: [{
-      details: [{ label: "Build ID", value: "runner/build/7?attempt=2", href }],
+      details: expect.arrayContaining([{ label: "Build ID", value: "runner/build/7?attempt=2", href }]),
     }] } } } });
     expect(() => JSON.stringify(result)).not.toThrow();
   });

@@ -49,8 +49,13 @@ def _pagination_fixture_sql() -> str:
         ("finished", "", "build_finished", {"build_id": "runner/build/51?attempt=2"}),
         ("validation", "", "validation_fact_recorded", {"fact_degree": "0.25"}),
         ("green", "", "validation_fact_recorded", {"fact_degree": "0"}),
-        ("projects", "", "project_facts_recorded", {"project_fact_count": "51"}),
-        ("empty-projects", "", "project_facts_recorded", {"project_fact_count": "0"}),
+        ("projects", "", "project_facts_recorded", {"project_fact_count": "51", "broken_project_fact_count": "2"}),
+        ("empty-projects", "", "project_facts_recorded", {"project_fact_count": "0", "broken_project_fact_count": "0"}),
+        ("analysis-completed", "", "build_analysis_completed", {"build_id": "runner/build/51?attempt=2", "issue_count": "0"}),
+        ("legacy-analysis", "", "build_analysis_completed", {"build_id": "runner/build/50"}),
+        ("fix-submitted", "", "fix_submitted", {"build_id": "runner/build/51?attempt=2", "task_id": "buildtest", "unit_id": "//pkg:test", "executor_id": "repair", "fix_id": "fix/51?attempt=2"}),
+        ("fix-skipped", "", "fix_submission_skipped", {"build_id": "runner/build/51?attempt=2", "task_id": "buildtest", "unit_id": "", "executor_id": "repair", "reason": "no_open_issue"}),
+        ("fix-abandoned", "", "fix_submission_abandoned", {"build_id": "runner/build/51?attempt=2", "task_id": "buildtest", "unit_id": "//pkg:test", "executor_id": "repair", "reason": "acceptance_unknown"}),
         ("abandoned", "", "build_analysis_abandoned", {"build_id": "runner/build/51?attempt=2"}),
         ("failed", "failed", "", {"build_id": "runner/build/51?attempt=2"}),
     ]
@@ -86,9 +91,13 @@ def _pagination_fixture_sql() -> str:
             f"INSERT INTO open_issue VALUES ('web/pagination','{task}','{unit}','web/build/51');"
         )
     for event in ("issue_tracking_started", "issues_reconciled"):
+        metadata = {"build_id": "runner/build/51?attempt=2", "closure_mode": "suppressed_task_wide_issue"} if event == "issues_reconciled" else {}
         statements.append(
-            f"INSERT INTO request_log VALUES ('web/pagination','51','{event}',3000,'','{event}',1,'','{{}}');"
+            f"INSERT INTO request_log VALUES ('web/pagination','51','{event}',3000,'','{event}',1,'','{json.dumps(metadata)}');"
         )
+    statements.append(
+        "INSERT INTO request_log VALUES ('web/pagination','50','tracking-abandoned',3000,'','issue_tracking_abandoned',0,'','{\"build_id\":\"runner/build/50\"}');"
+    )
     for i in range(51):
         kind = ("new", "existing", "closed")[i % 3]
         unit = "" if i == 0 else f"//packages/test-{i:02d}:go_default_test"
