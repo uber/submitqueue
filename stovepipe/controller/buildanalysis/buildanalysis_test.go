@@ -29,15 +29,19 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuemock "github.com/uber/submitqueue/stovepipe/extension/buildissue/mock"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
+
+const testPollDelayMs int64 = 137
 
 const (
 	testQueue   = "validation/main"
@@ -132,8 +136,24 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	history.EXPECT().Get(gomock.Any(), gomock.Any(), "event/build_analysis_abandoned/"+testBuildID).DoAndReturn(readHistory).AnyTimes()
 	m.historyRead = history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(readHistory).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.materializer, m.detectorFactory, m.registry,
-		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	configs := queueconfigmock.NewMockStore(ctrl)
+
+	cfg := queueconfig.QueueConfig{Name: testQueue}
+	cfg.Stages.BuildAnalysis.PollDelayMs = testPollDelayMs
+
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(cfg, nil).AnyTimes()
+
+	c := NewController(
+		zap.NewNop().Sugar(),
+		m.scope,
+		m.stores,
+		configs,
+		m.materializer,
+		m.detectorFactory,
+		m.registry,
+		stovepipemq.TopicKeyBuildAnalysis,
+		"stovepipe-buildanalysis",
+	)
 
 	return c, m
 }
@@ -200,7 +220,7 @@ func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
 				if status.IsTerminal() {
 					m.historyCreate.After(last)
 				} else {
-					d.EXPECT().Hold(PollDelayMs).After(last)
+					d.EXPECT().Hold(testPollDelayMs).After(last)
 				}
 
 				require.NoError(t, c.Process(context.Background(), d))
@@ -224,7 +244,7 @@ func TestProcessAcceptsRepeatedAndTaskWideObservations(t *testing.T) {
 		Return(fmt.Errorf("already recorded: %w", storage.ErrAlreadyExists)).After(last)
 
 	d := m.delivery(t)
-	d.EXPECT().Hold(PollDelayMs).After(last)
+	d.EXPECT().Hold(testPollDelayMs).After(last)
 
 	require.NoError(t, c.Process(context.Background(), d))
 }
@@ -256,7 +276,7 @@ func TestProcessRetriesPartialPersistenceAndReloadsStatus(t *testing.T) {
 			assert.True(t, errs.IsRetryable(err))
 		} else {
 			if !pass.status.IsTerminal() {
-				d.EXPECT().Hold(PollDelayMs).After(last)
+				d.EXPECT().Hold(testPollDelayMs).After(last)
 			}
 
 			require.NoError(t, c.Process(context.Background(), d))
@@ -284,7 +304,7 @@ func TestProcessRunsAgainWhenBuildCompletesDuringDetection(t *testing.T) {
 	)
 
 	first := m.delivery(t)
-	first.EXPECT().Hold(PollDelayMs)
+	first.EXPECT().Hold(testPollDelayMs)
 
 	require.NoError(t, c.Process(context.Background(), first))
 
@@ -568,7 +588,7 @@ func TestProcessWaitsForWinningBuildBeforeFinalizing(t *testing.T) {
 			d := m.delivery(t)
 			if outcome != "another build wins" {
 				if outcome == "pending" {
-					d.EXPECT().Hold(PollDelayMs).After(detected)
+					d.EXPECT().Hold(testPollDelayMs).After(detected)
 				}
 			}
 
@@ -650,6 +670,7 @@ func TestProjectAnalysisPublicationRetries(t *testing.T) {
 	c, m := newTestController(t)
 	*m.publishFailure = assert.AnError
 	m.expectPass(entity.BuildStatusFailed, nil, nil)
+
 	require.ErrorIs(t, c.Process(context.Background(), m.delivery(t)), assert.AnError)
 	require.Len(t, m.history, 1)
 	*m.publishFailure = nil
@@ -672,4 +693,16 @@ func TestAbandonedAnalysisDoesNotResumeAfterOutcome(t *testing.T) {
 	m.request.TerminalBuildID = testBuildID
 	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
 	require.Empty(t, *m.published)
+}
+
+func TestProcessReturnsConfigurationError(t *testing.T) {
+	c, m := newTestController(t)
+
+	configs := queueconfigmock.NewMockStore(m.ctrl)
+
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(queueconfig.QueueConfig{}, assert.AnError)
+
+	c.queueConfigs = configs
+
+	require.ErrorIs(t, c.Process(context.Background(), m.delivery(t)), assert.AnError)
 }

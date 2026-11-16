@@ -27,8 +27,10 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -36,6 +38,11 @@ import (
 )
 
 const testQueue = "validation/main"
+
+const (
+	_analysisWaitMs  int64 = 151
+	_recoveryDelayMs int64 = 157
+)
 
 type logKey struct {
 	issueKey
@@ -432,7 +439,25 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return log, nil
 	}).AnyTimes()
-	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, f.factory, f.materializer, registry, messagequeue.TopicKeyIssueTrack, "test")
+
+	configs := queueconfigmock.NewMockStore(f.mocks)
+
+	cfg := queueconfig.QueueConfig{Name: testQueue}
+	cfg.Stages.IssueTrack.RefreshDelayMs = _analysisWaitMs
+	cfg.Stages.IssueTrack.RecoveryWaitDelayMs = _recoveryDelayMs
+
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(cfg, nil).AnyTimes()
+
+	f.controller = NewController(
+		zap.NewNop().Sugar(),
+		tally.NoopScope,
+		f.factory,
+		configs,
+		f.materializer,
+		registry,
+		messagequeue.TopicKeyIssueTrack,
+		"test",
+	)
 	f.controller.nowMs = func() int64 { return 1000 }
 	return f
 }
@@ -489,4 +514,16 @@ func (f *fixture) seedIssue(task, unit string, status entity.IssueStatus) {
 	if status == entity.IssueStatusOpen {
 		f.openIssues[issueKey{task, unit}] = entity.OpenIssue{TaskID: task, UnitID: unit, FirstSeenBuildID: "older"}
 	}
+}
+
+func TestProcessReturnsConfigurationError(t *testing.T) {
+	f := newFixture(t)
+
+	configs := queueconfigmock.NewMockStore(f.mocks)
+
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(queueconfig.QueueConfig{}, assert.AnError)
+
+	f.controller.queueConfigs = configs
+
+	require.ErrorIs(t, f.deliver(f.message("older", false), false), assert.AnError)
 }

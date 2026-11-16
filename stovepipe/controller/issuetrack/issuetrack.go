@@ -34,22 +34,24 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/issuelog"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
 
 const (
 	// Each delivery processes at most this many issue keys, including a revisited cursor and closed records.
-	_issueBatchSize       = 100
-	_analysisWaitMs int64 = 30000
+	_issueBatchSize = 100
 )
 
 type issueKey struct{ task, unit string }
 
 // Controller retains issue transitions and their queue-scoped progress.
 type Controller struct {
+	queueConfigs        queueconfigprovider.Store
 	logger              *zap.SugaredLogger
 	metricsScope        tally.Scope
 	stores              storage.Factory
@@ -61,8 +63,18 @@ type Controller struct {
 	nowMs               func() int64
 }
 
-func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) *Controller {
+func NewController(
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	stores storage.Factory,
+	queueConfigs queueconfigprovider.Store,
+	materializer requestlog.Materializer,
+	registry consumer.TopicRegistry,
+	topicKey consumer.TopicKey,
+	consumerGroup string,
+) *Controller {
 	return &Controller{
+		queueConfigs:        queueConfigs,
 		logger:              logger.Named("issuetrack_controller"),
 		metricsScope:        scope.SubScope("issuetrack_controller"),
 		stores:              stores,
@@ -94,14 +106,28 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if msg.PartitionKey != queue {
 		return fmt.Errorf("issue tracking must be partitioned by queue %q", queue)
 	}
+
+	cfg, err := c.queueConfigs.Get(ctx, queue)
+	if err != nil {
+		return fmt.Errorf("load queue configuration: %w", err)
+	}
+
 	store, err := c.stores.For(storage.Config{QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("resolve issue tracking storage: %w", err)
 	}
-	return c.trackRequest(ctx, delivery, store, notification, msg.ID)
+
+	return c.trackRequest(ctx, delivery, store, notification, msg.ID, cfg.Stages.IssueTrack)
 }
 
-func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Delivery, store storage.Storage, notification *stovepipemq.IssueTrack, notificationID string) error {
+func (c *Controller) trackRequest(
+	ctx context.Context,
+	delivery consumer.Delivery,
+	store storage.Storage,
+	notification *stovepipemq.IssueTrack,
+	notificationID string,
+	cfg queueconfig.IssueTrack,
+) error {
 	queue := notification.GetQueueName()
 	tracking := store.GetIssueTrackingStore()
 	for {
@@ -138,7 +164,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 			}
 			switch progress.Phase {
 			case entity.IssueTrackingPhaseAbandoning:
-				delivery.Hold(_recoveryDelayMs)
+				delivery.Hold(cfg.RecoveryWaitDelayMs)
 				return nil
 			case entity.IssueTrackingPhaseFinalized, entity.IssueTrackingPhaseAbandoned:
 				if order == 0 {
@@ -146,7 +172,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				}
 			default:
 				if order > 0 {
-					delivery.Hold(_analysisWaitMs)
+					delivery.Hold(cfg.RefreshDelayMs)
 					return nil
 				}
 			}
@@ -161,7 +187,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				return nil
 			}
 			if !request.State.IsTerminal() {
-				delivery.Hold(_analysisWaitMs)
+				delivery.Hold(cfg.RefreshDelayMs)
 				return nil
 			}
 		}
@@ -247,7 +273,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 		case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing:
 			delivery.Hold(0)
 		case entity.IssueTrackingPhaseRefreshed:
-			delivery.Hold(_analysisWaitMs)
+			delivery.Hold(cfg.RefreshDelayMs)
 		}
 		return nil
 	}
