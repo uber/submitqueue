@@ -33,6 +33,8 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
+	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
+	queueconfigyaml "github.com/uber/submitqueue/stovepipe/extension/queueconfig/yaml"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -53,10 +55,24 @@ func (c *recordingConsumer) Start(context.Context) error { return nil }
 
 func (c *recordingConsumer) Stop(int64) error { return nil }
 
+func testQueueConfigs(t *testing.T) queueconfigprovider.Store {
+	t.Helper()
+
+	configs, err := queueconfigyaml.NewStore("", []string{"monorepo/main"})
+	require.NoError(t, err)
+
+	return configs
+}
+
 // registeredControllers runs the host's registration exactly as run() does and
 // returns the registry it registers against, the primary controllers, and the
 // DLQ controllers.
 func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Controller, []consumer.Controller) {
+	t.Helper()
+	return registeredControllersWithConfig(t, testQueueConfigs(t))
+}
+
+func registeredControllersWithConfig(t *testing.T, configs queueconfigprovider.Store) (consumer.TopicRegistry, []consumer.Controller, []consumer.Controller) {
 	t.Helper()
 
 	registry, err := newTopicRegistry(nil, "subscriber")
@@ -67,8 +83,20 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	primary := &recordingConsumer{}
 	deadLetter := &recordingConsumer{}
 
-	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
-		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+	_, err = registerPrimaryControllers(
+		primary,
+		logger,
+		tally.NoopScope,
+		store,
+		requestlog.NewMaterializer(tally.NoopScope),
+		configs,
+		registry,
+		fakeSourceControlFactory{},
+		fakeBuildRunnerFactory{},
+		hookResolver{},
+		buildissuenoop.New(),
+		noopRepairExecutorFactory{},
+	)
 	require.NoError(t, err)
 
 	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry, noopRepairExecutorFactory{})
@@ -214,9 +242,20 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	registry, err := newTopicRegistry(queue, "subscriber")
 	require.NoError(t, err)
 	primary := &recordingConsumer{}
-	_, err = registerPrimaryControllers(primary, zaptest.NewLogger(t).Sugar(), tally.NoopScope, stores,
-		requestlog.NewMaterializer(tally.NoopScope), registry, fakeSourceControlFactory{}, fakeBuildRunnerFactory{},
-		hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+	_, err = registerPrimaryControllers(
+		primary,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		stores,
+		requestlog.NewMaterializer(tally.NoopScope),
+		testQueueConfigs(t),
+		registry,
+		fakeSourceControlFactory{},
+		fakeBuildRunnerFactory{},
+		hookResolver{},
+		buildissuenoop.New(),
+		noopRepairExecutorFactory{},
+	)
 	require.NoError(t, err)
 	var fixController consumer.Controller
 	for _, controller := range primary.controllers {

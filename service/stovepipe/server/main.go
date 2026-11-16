@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -66,7 +67,8 @@ import (
 	fixernoop "github.com/uber/submitqueue/stovepipe/extension/fixer/noop"
 	projectissuesnoop "github.com/uber/submitqueue/stovepipe/extension/projectissues/noop"
 	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
-	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
+	queueconfigyaml "github.com/uber/submitqueue/stovepipe/extension/queueconfig/yaml"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -114,8 +116,10 @@ func (hookResolver) For(*basehook.HookEvent) []hookext.Hook {
 }
 
 func main() {
+	configPath := flag.String("config", "", "optional path to Stovepipe stage settings and per-queue overrides")
+	flag.Parse()
 	code := 0
-	if err := run(); err != nil {
+	if err := run(*configPath); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Println("Stovepipe server stopped by signal")
 
@@ -131,7 +135,7 @@ func main() {
 	os.Exit(code)
 }
 
-func run() error {
+func run(configPath string) error {
 	// Set up signal handling early so retry loops can respond to SIGTERM
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -142,6 +146,18 @@ func run() error {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 	defer logger.Sync()
+
+	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
+	if err != nil {
+		return fmt.Errorf("failed to configure queue subscribers: %w", err)
+	}
+
+	configs, err := queueconfigyaml.NewStore(configPath, tenants)
+	if err != nil {
+		return fmt.Errorf("load queue configurations: %w", err)
+	}
+
+	logger.Info("queue configurations loaded", zap.Strings("queues", tenants))
 
 	// Initialize metrics scope
 	scope := tally.NewTestScope("stovepipe", nil)
@@ -205,11 +221,6 @@ func run() error {
 		return fmt.Errorf("failed to configure queue database pool: %w", err)
 	}
 
-	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
-	if err != nil {
-		return fmt.Errorf("failed to configure queue subscribers: %w", err)
-	}
-
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
@@ -263,7 +274,20 @@ func run() error {
 
 	storageFty := storageFactory{backend: store}
 	materializer := requestlog.NewMaterializer(scope)
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory, repairExecutors)
+	primaryCount, err := registerPrimaryControllers(
+		primaryConsumer,
+		logger.Sugar(),
+		scope,
+		storageFty,
+		materializer,
+		configs,
+		registry,
+		sourceControl,
+		brf,
+		hookResolver{},
+		detectorFactory,
+		repairExecutors,
+	)
 	if err != nil {
 		return err
 	}
@@ -385,6 +409,7 @@ func registerPrimaryControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	materializer requestlog.Materializer,
+	configs queueconfigprovider.Store,
 	registry consumer.TopicRegistry,
 	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
@@ -399,7 +424,7 @@ func registerPrimaryControllers(
 		scope,
 		store,
 		materializer,
-		queueconfigdefault.NewStore(),
+		configs,
 		sourceControl,
 		registry,
 		stovepipemq.TopicKeyProcess,
