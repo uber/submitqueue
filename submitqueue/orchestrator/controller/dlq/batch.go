@@ -29,9 +29,9 @@ import (
 )
 
 // batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (build, land, conclude). All three topics carry a BatchID payload, so this
-// controller is registered three times — one per topic, each with the matching
-// DLQ topic key and consumer group.
+// (build, land). Both topics carry a BatchID payload, so this controller is
+// registered twice — one per topic, each with the matching DLQ topic key and
+// consumer group.
 //
 // On each delivery the controller decodes the BatchID, transitions the batch
 // to BatchStateFailed (idempotent if already halted), and fans out by
@@ -40,10 +40,9 @@ import (
 // will not run for a DLQ'd batch.
 //
 // Blaming the batch on the message is right for these stages because their
-// work is that batch: whatever failed, it failed doing this batch's build,
-// land, or conclusion. The speculate stage is not like that — it re-plans a
-// whole queue from a message that names one batch — so it has its own
-// reconciler; see speculate.go.
+// work is that batch: whatever failed, it failed doing this batch's build or
+// land. The speculate stage is not like that — it re-plans a whole queue from
+// a message that names one batch — so it has its own reconciler; see speculate.go.
 type batchController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope

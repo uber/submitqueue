@@ -14,7 +14,9 @@
 
 // Package dlq contains controllers that consume messages from per-topic
 // dead-letter queues and reconcile the affected request and batch entities
-// into a terminal failed state.
+// into a terminal failed state. Conclude instead preserves the authoritative
+// terminal batch outcome and completes its matching member fan-out; non-terminal
+// or missing records remain errors rather than evidence of a failed merge.
 //
 // Background. The consumer framework moves a message to its DLQ after the
 // controller for the original topic returns a non-retryable error or exhausts
