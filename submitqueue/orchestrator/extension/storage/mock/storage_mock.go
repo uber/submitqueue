@@ -136,6 +136,20 @@ func (mr *MockStorageMockRecorder) GetChangeStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChangeStore", reflect.TypeOf((*MockStorage)(nil).GetChangeStore))
 }
 
+// GetDLQReconciliationStore mocks base method.
+func (m *MockStorage) GetDLQReconciliationStore() storage.DLQReconciliationStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDLQReconciliationStore")
+	ret0, _ := ret[0].(storage.DLQReconciliationStore)
+	return ret0
+}
+
+// GetDLQReconciliationStore indicates an expected call of GetDLQReconciliationStore.
+func (mr *MockStorageMockRecorder) GetDLQReconciliationStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDLQReconciliationStore", reflect.TypeOf((*MockStorage)(nil).GetDLQReconciliationStore))
+}
+
 // GetPathBuildStore mocks base method.
 func (m *MockStorage) GetPathBuildStore() storage.PathBuildStore {
 	m.ctrl.T.Helper()
