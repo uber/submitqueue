@@ -369,6 +369,11 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesLandingDependency() {
 	dependentBatch := s.awaitBatchID(dependent)
 	require.NotEqual(t, leadBatch, dependentBatch, "the two requests must be carried by different batches")
 
+	// Both paths pass while the lead is still parked. A Landing dependency is
+	// unresolved because its land can fail, so the durable Landing state proves
+	// the dependent advanced through complete coverage rather than strict land.
+	s.awaitBatchState(queue, dependentBatch, entity.BatchStateLanding)
+
 	leadState, err := s.appStorage.For(queue)
 	require.NoError(t, err)
 	got, err := leadState.GetBatchStore().Get(s.ctx, dependentBatch)
@@ -376,10 +381,6 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesLandingDependency() {
 	require.Contains(t, got.Dependencies, leadBatch,
 		"batch %s must depend on the in-flight %s for this test to exercise anything", dependentBatch, leadBatch)
 
-	// Both paths pass while the lead is still parked. A Landing dependency is
-	// unresolved because its land can fail, so the durable Landing state proves
-	// the dependent advanced through complete coverage rather than strict land.
-	s.awaitBatchState(queue, dependentBatch, entity.BatchStateLanding)
 	s.log.Logf("Dependent %s bypassed landing batch %s", dependent.sqid, leadBatch)
 
 	// Start: the lead lands, and its fan-out is now the only thing that can
@@ -495,6 +496,7 @@ func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheLandAhead() {
 	dependentBatch := heldBatch
 	dependent := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/2/1234567890abcdef1234567890abcdef12345678")
 	require.Equal(t, dependentBatch, s.awaitBatchID(dependent))
+	s.awaitBatchState(queue, dependentBatch, entity.BatchStateSpeculating)
 
 	leadState, err := s.appStorage.For(queue)
 	require.NoError(t, err)

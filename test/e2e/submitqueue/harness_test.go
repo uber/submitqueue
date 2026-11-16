@@ -192,12 +192,8 @@ func (s *E2EIntegrationSuite) assertStatusesNever(req request, banned ...entity.
 	}
 }
 
-// awaitBatchID polls the operating store until the request has been claimed by
-// a batch and returns that batch's ID.
-//
-// Messages about a batch are keyed by the batch ID, not the sqid the test
-// holds, so a test that wants to name one has to resolve it. Polling because
-// the claim happens asynchronously, several stages after Land returns.
+// awaitBatchID waits for a request's batch association, not dependency analysis.
+// The batch can still be Creating with no persisted dependencies.
 func (s *E2EIntegrationSuite) awaitBatchID(req request) string {
 	t := s.T()
 	store, err := s.appStorage.For(req.queue)
