@@ -32,10 +32,11 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -104,12 +105,17 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 	})
 	require.NoError(t, err)
 
+	configs := queueconfigmock.NewMockStore(ctrl)
+	cfg := queueconfig.QueueConfig{Name: testQueue}
+	cfg.Stages.Process = queueconfig.Process{MaxConcurrent: 1, GateWaitDelayMs: 5000}
+	configs.EXPECT().Get(gomock.Any(), gomock.Any()).Return(cfg, nil).AnyTimes()
+
 	c := NewController(
 		zap.NewNop().Sugar(),
 		scope,
 		staticStorageFactory{store: m.store},
 		m.materializer,
-		queueconfigdefault.NewStore(),
+		configs,
 		m.sourceFactory,
 		registry,
 		stovepipemq.TopicKeyProcess,

@@ -49,9 +49,18 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 |---------------------|----------|------------------------------------------|----------------------|
 | `STORAGE_MYSQL_DSN` | yes      | Storage database DSN | — |
 | `QUEUE_MYSQL_DSN`   | yes      | Queue database DSN                       | —                    |
+| `MQ_TENANTS`        | yes      | Comma-separated queue names served by this instance | — |
 | `QUEUE_LOG_LEVEL`   | no       | Message-queue logger level               | `info`               |
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
 | `HOSTNAME`          | no       | Subscriber name for the queue consumers  | `stovepipe-<unix_ts>` |
+
+## Queue and stage configuration
+
+`MQ_TENANTS` defines the queues served by this instance. Stage settings use built-in values unless overridden through a YAML file selected with `-config`.
+
+The file supports shared settings under `stages` and optional per-queue overrides under `queues`. Omitted fields inherit shared settings or built-in values. Per-queue overrides must reference a registered queue.
+
+Configuration is validated at startup; changes require a restart. See the [configuration provider](../../stovepipe/extension/queueconfig/README.md) for details.
 
 ## Running
 

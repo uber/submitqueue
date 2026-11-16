@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Uber Technologies, Inc.
+// Copyright (c) 2026 Uber Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,18 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package entity
+package queueconfig
 
-// QueueConfig holds deployment configuration for a Stovepipe validation queue.
-// Mutable runtime state (latest head, in-flight count) lives on the Queue row;
-// knobs such as max_concurrent are resolved here at gate-check time. Immutable
-// after load.
+import "fmt"
+
+// QueueConfig is an immutable, resolved configuration for a validation queue.
 type QueueConfig struct {
 	// Name uniquely identifies this queue within the system.
-	// Referenced by Request.Queue.
 	Name string `json:"name" yaml:"name"`
-	// MaxConcurrent is the cap on concurrent in-flight validations for the queue.
-	MaxConcurrent int32 `json:"max_concurrent" yaml:"max_concurrent"`
-	// GateWaitDelayMs is the redelivery delay while the latest head waits for a slot.
-	GateWaitDelayMs int64 `json:"gate_wait_delay_ms" yaml:"gate_wait_delay_ms"`
+
+	// Stages contains configuration grouped by pipeline stage.
+	Stages Stages `json:"stages" yaml:"stages"`
+}
+
+// Validate checks queue identity and stage configuration constraints.
+func (c QueueConfig) Validate() error {
+	if c.Name == "" {
+		return fmt.Errorf("queue name must not be empty")
+	}
+
+	if err := c.Stages.Validate(); err != nil {
+		return fmt.Errorf("queue %q: %w", c.Name, err)
+	}
+
+	return nil
 }
