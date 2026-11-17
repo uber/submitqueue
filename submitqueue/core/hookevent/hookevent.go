@@ -37,7 +37,9 @@
 //     accepted but the publish fails, no later status announces the receipt.
 //   - A finished status is announced again whenever its log is redelivered or
 //     resent, so a failed publish repairs itself; a copy that arrives after the
-//     queue forgot the id reaches hooks twice.
+//     queue forgot the id reaches hooks twice. That follows a failure: an
+//     orchestrator repair resend, a late log redelivery, or a retry after some
+//     of a stack's events were published, which repeats those on every retry.
 //   - Order holds within a request's partition, but a receipt waiting to retry
 //     does not hold back the finish, so a hook can see the finish first.
 //   - The queue drops a repeated event id only until the first copy is consumed
