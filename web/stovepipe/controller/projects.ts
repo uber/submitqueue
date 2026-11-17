@@ -33,13 +33,17 @@ export async function loadProjectStatus(
     pageSizeChoices: projectPageSizes.map(value => ({
       value, href: paths.request(queue, requestId, "", value),
     })),
-    projects: result.projects.map((entry) => ({
-      project: entry.project,
-      projectType: entry.projectType,
-      issuesHref: paths.projectIssues(queue, requestId, entry.project, pageToken, pageSize),
-      breakageDegree: entry.result.case === "breakageDegree"
-        ? breakageDegree(entry.result.value) : null,
-    })),
+    projects: result.projects.map((entry) => {
+      const degree = entry.result.case === "breakageDegree"
+        ? breakageDegree(entry.result.value) : null;
+      return {
+        project: entry.project,
+        projectType: entry.projectType,
+        issuesHref: degree !== null && degree > 0
+          ? paths.projectIssues(queue, requestId, entry.project, pageToken, pageSize) : null,
+        breakageDegree: degree,
+      };
+    }),
     firstHref: pageToken ? paths.request(queue, requestId, "", pageSize) : null,
     nextHref: result.nextPageToken
       ? paths.request(queue, requestId, result.nextPageToken, pageSize)

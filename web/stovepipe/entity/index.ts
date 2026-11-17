@@ -136,8 +136,8 @@ export interface ProjectStatusModel {
   pageSize: number;
   /** Supported page sizes and their first-page URLs for this request. */
   pageSizeChoices: { value: number; href: string }[];
-  /** Recorded projects on this page; null breakage means no result. */
-  projects: { project: string; projectType: string; breakageDegree: number | null; issuesHref: string }[];
+  /** Recorded projects on this page; null breakage means no result. Issue links are only available for recorded breakage. */
+  projects: { project: string; projectType: string; breakageDegree: number | null; issuesHref: string | null }[];
   /** First project page for this request; null on the first page. */
   firstHref: string | null;
   /** Opaque project continuation URL; null on the final page. */

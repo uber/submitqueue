@@ -62,6 +62,34 @@ it.each([false, true])("does not confuse missing attribution with a completed em
   expect(screen.getByRole("link", { name: "Hide issues" })).toHaveAttribute("href", "/projects");
 });
 
+it.each([false, true])("only offers issue drill-downs for recorded breakage (recording complete: %s)", complete => {
+  render(<ProjectResults pageKey="request/7" model={{ ...model, complete, projects: [
+    { project: "green", projectType: "service", breakageDegree: 0, issuesHref: null },
+    { project: "unknown", projectType: "", breakageDegree: null, issuesHref: null },
+    { project: "partial", projectType: "service", breakageDegree: 0.25, issuesHref: "/partial-issues" },
+    { project: "broken", projectType: "service", breakageDegree: 1, issuesHref: "/broken-issues" },
+  ] }} />);
+  expect(screen.getByRole("row", { name: "green service Green No issues" })).toBeVisible();
+  expect(screen.getByRole("row", { name: "unknown Unknown No result recorded Not available" })).toBeVisible();
+  expect(screen.getAllByRole("link", { name: "Show issues" }).map(link => link.getAttribute("href")))
+    .toEqual(["/partial-issues", "/broken-issues"]);
+});
+
+it.each([0, null])("removes stale issue expansion when the project no longer has a drill-down (%s)", breakageDegree => {
+  const project = { project: "p", projectType: "service", breakageDegree: 1, issuesHref: "/issues" };
+  const selection = { project: "p", key: "p", closeHref: "/projects", result: { ok: true as const, data: {
+    complete: true, issues: [{ taskId: "test", unitId: "//pkg:failed" }], firstHref: null, nextHref: null,
+  } } };
+  const { rerender } = render(<ProjectResults pageKey="request/7" model={{ ...model, projects: [project] }} issues={selection} />);
+  expect(screen.getByRole("region", { name: "Issue attribution for p" })).toBeVisible();
+  rerender(<ProjectResults pageKey="request/7" model={{ ...model, projects: [
+    { ...project, breakageDegree, issuesHref: null },
+  ] }} issues={selection} />);
+  expect(screen.queryByRole("region", { name: "Issue attribution for p" })).toBeNull();
+  expect(screen.queryByRole("link", { name: /issues/i })).toBeNull();
+  expect(screen.getByText(breakageDegree === 0 ? "No issues" : "Not available")).toBeVisible();
+});
+
 it("shows associated task/unit identities and keeps recorded results when a page fails", () => {
   const projectModel = { ...model, projects: [{ project: "p", projectType: "", breakageDegree: 0.25, issuesHref: "/issues" }] };
   const selection = { project: "p", key: "p/first", closeHref: "/projects" };

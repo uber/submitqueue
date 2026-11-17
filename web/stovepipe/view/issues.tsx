@@ -113,7 +113,7 @@ export function RequestIssues({ model, projects }: { model: RequestIssuesModel; 
         <HeadingSmall as="h3" marginTop="0" marginBottom="scale300">{group.label}</HeadingSmall>
         {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build", "Affected projects"]}>
           {issues.map(issue => {
-            const selected = projects?.taskId === issue.taskId && projects.unitId === issue.unitId ? projects : null;
+            const selected = issue.projectsHref && projects?.taskId === issue.taskId && projects.unitId === issue.unitId ? projects : null;
             return <Fragment key={JSON.stringify([issue.taskId, issue.unitId])}>
               <StyledTableBodyRow>
                 <StyledTableBodyCell>{issue.taskId}</StyledTableBodyCell>
