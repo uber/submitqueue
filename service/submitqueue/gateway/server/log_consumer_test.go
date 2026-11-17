@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -30,10 +31,12 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/lifecycle"
 	sqmq "github.com/uber/submitqueue/submitqueue/core/messagequeue"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	requestcore "github.com/uber/submitqueue/submitqueue/gateway/core/request"
 	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
 	gwstoragemock "github.com/uber/submitqueue/submitqueue/gateway/extension/storage/mock"
+	"github.com/uber/submitqueue/submitqueue/orchestrator"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -108,6 +111,25 @@ func TestLogConsumers_RetainFailedRecovery(t *testing.T) {
 				final <- delivery
 			}
 			<-settled
+		})
+	}
+}
+
+func TestGatewayTopicRegistry_MatchesOrchestratorStages(t *testing.T) {
+	registry, err := newGatewayTopicRegistry(queuemock.NewMockQueue(gomock.NewController(t)), "worker")
+	require.NoError(t, err)
+	stageNames := map[consumer.TopicKey]string{}
+	for _, stage := range orchestrator.Stages {
+		stageNames[stage.Key] = stage.Name
+	}
+
+	for _, key := range []consumer.TopicKey{topickey.TopicKeyStart, topickey.TopicKeyCancel, basehook.TopicKeyHook} {
+		t.Run(string(key), func(t *testing.T) {
+			want, ok := stageNames[key]
+			require.True(t, ok, "the orchestrator consumes every topic the gateway publishes to")
+			got, ok := registry.TopicName(key)
+			require.True(t, ok)
+			assert.Equal(t, want, got)
 		})
 	}
 }

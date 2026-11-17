@@ -6,7 +6,7 @@ Two cycles re-enter speculation. `speculate` dispatches funded paths to `build`;
 
 Terminal request states are not `conclude`'s alone. `cancel` completes a request that has not been enrolled in a batch. `landconflictsignal` fails a request Runway reports as conflicted. `conclude` maps a terminal batch onto its member requests. The DLQ reconcilers force a failed terminal state when a consumed stage cannot finish.
 
-The same `Stages` table registers a `submitqueue-hook` stage, outside the order of the flow above. It consumes hook events and invokes the wired hooks, and it publishes nothing onward. No orchestrator controller publishes a hook event; `service/submitqueue/orchestrator/server` resolves every event to noop. The comment on that row in `pipeline.go` is the contract: any stage can publish there.
+The same `Stages` table registers a `submitqueue-hook` stage, outside the order of the flow above. It consumes hook events and invokes the wired hooks, and it publishes nothing onward. The gateway's request materializer publishes request events there (see the [gateway README](../../../submitqueue/gateway/README.md)); no orchestrator controller does, and `service/submitqueue/orchestrator/server` resolves every event to noop. The comment on that row in `pipeline.go` is the contract: any stage can publish there.
 
 ## Diagram
 
@@ -131,7 +131,7 @@ class node_storagecontract,node_queuestorage,node_requestlog,node_messagequeue t
 class node_submitter toneIndigo
 ```
 
-`hook` is drawn with the other stages because the topology registers it. Nothing in the orchestrator publishes to it, so the diagram has no edge into that node.
+`hook` is drawn with the other stages because the topology registers it. Only the gateway's request materializer publishes to it, so the diagram has no edge into that node from an orchestrator stage.
 
 ## Per-controller summary
 
