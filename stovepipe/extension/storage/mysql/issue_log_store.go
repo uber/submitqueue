@@ -107,3 +107,49 @@ func (s *issueLogStore) validateKey(taskID, unitID, buildID string, event entity
 }
 
 var _ storage.IssueLogStore = (*issueLogStore)(nil)
+
+const listIssueLogsQuery = `SELECT task_id, unit_id, build_id, event, timestamp_ms, first_seen_build_id
+ FROM issue_log WHERE queue = ? AND task_id = ? AND unit_id = ?`
+const issueLogOrder = ` ORDER BY timestamp_ms ASC, build_id ASC, event ASC LIMIT ?`
+
+func (s *issueLogStore) List(ctx context.Context, taskID, unitID string, bounds storage.IssueLogRange) (ret []entity.IssueLog, retErr error) {
+	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+	if taskID == "" || bounds.Limit <= 0 {
+		return nil, fmt.Errorf("issue history requires a task and positive limit")
+	}
+	if err := validateBuildIssueKey(s.queue, "", taskID, unitID); err != nil {
+		return nil, err
+	}
+	query := listIssueLogsQuery
+	args := []any{s.queue, taskID, unitID}
+	after := bounds.After
+	if after != (storage.IssueLogCursor{}) {
+		if after.TimestampMs <= 0 {
+			return nil, fmt.Errorf("issue history cursor requires a positive timestamp")
+		}
+		if err := s.validateKey(taskID, unitID, after.BuildID, after.Event); err != nil {
+			return nil, err
+		}
+		query += ` AND (timestamp_ms, build_id, event) > (?, ?, ?)`
+		args = append(args, after.TimestampMs, after.BuildID, after.Event)
+	}
+	args = append(args, bounds.Limit)
+	rows, err := s.db.QueryContext(ctx, query+issueLogOrder, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list issue history: %w", err)
+	}
+	defer rows.Close()
+	logs := make([]entity.IssueLog, 0)
+	for rows.Next() {
+		var log entity.IssueLog
+		if err := rows.Scan(&log.TaskID, &log.UnitID, &log.BuildID, &log.Event, &log.TimestampMs, &log.FirstSeenBuildID); err != nil {
+			return nil, fmt.Errorf("scan issue history: %w", err)
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate issue history: %w", err)
+	}
+	return logs, nil
+}
