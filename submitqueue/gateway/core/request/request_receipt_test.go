@@ -37,7 +37,7 @@ type materializerReceiptFixture struct {
 	metrics      tally.TestScope
 }
 
-func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptFixture {
+func newMaterializerReceiptFixture(ctrl *gomock.Controller, opts ...MaterializerOption) materializerReceiptFixture {
 	f := materializerReceiptFixture{
 		summaries: storagemock.NewMockRequestSummaryStore(ctrl),
 		uris:      storagemock.NewMockRequestURIStore(ctrl), logs: storagemock.NewMockRequestLogStore(ctrl),
@@ -51,7 +51,7 @@ func newMaterializerReceiptFixture(ctrl *gomock.Controller) materializerReceiptF
 	stores.EXPECT().GetRequestReceiptStore().Return(f.receipts).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(stores, nil).AnyTimes()
-	f.materializer = NewMaterializer(factory, WithMetricsScope(f.metrics))
+	f.materializer = NewMaterializer(factory, append([]MaterializerOption{WithMetricsScope(f.metrics)}, opts...)...)
 	return f
 }
 
