@@ -334,7 +334,7 @@ func run() error {
 	// Land creates receipt projections, request-summary and List controllers
 	// read materialized views, and request-history controllers read retained
 	// logs. Normal log-topic persistence and terminal DLQ repair both use the
-	// materializer.
+	// materializer, which also publishes request hook events.
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
@@ -343,7 +343,7 @@ func run() error {
 	// Create controllers and wrap them for gRPC. Every store is queue-scoped and
 	// resolves through the factory adapter; land/cancel/log share one materializer.
 	storageFty := storageFactory{backend: store}
-	materializer := requestcore.NewMaterializer(storageFty, requestcore.WithMetricsScope(scope))
+	materializer := requestcore.NewMaterializer(storageFty, requestcore.WithMetricsScope(scope), requestcore.WithHookPublishing(registry))
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, storageFty, materializer, queueConfigs, queuePauses, registry)
 	cancelController := controller.NewCancelController(logger.Sugar(), scope, storageFty, materializer, registry)
