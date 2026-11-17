@@ -5,7 +5,7 @@ import type { Queue, StovepipePageModel } from "./entity/index.js";
 import { parseProjectPageSize, StovepipePaths } from "./core/paths.js";
 import { readSection } from "./controller/page.js";
 import { loadQueueRequests } from "./controller/queue.js";
-import { loadOpenIssues, loadRequestIssues, loadIssueProjects } from "./controller/issues.js";
+import { loadOpenIssues, loadRequestIssues, loadIssueProjects, loadIssueHistory } from "./controller/issues.js";
 import { loadRequestHistory, type BuildUrlResolver } from "./controller/request.js";
 import { loadProjectStatus, loadProjectIssues } from "./controller/projects.js";
 
@@ -51,9 +51,15 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
         const route = parseStovepipeRoute(request.path, paths, options.queues);
         if (!route) return { kind: "not-found" };
         const { queue, requestId } = route;
+        const issueHistoryView = !requestId && request.search.get("view") === "issue-history";
+        const historyTask = request.search.get("task") ?? "";
+        const historyUnit = request.search.get("unit") ?? "";
+        if (issueHistoryView && !historyTask) return { kind: "not-found" };
         const issuesView = !requestId && request.search.get("view") === "issues";
+
         if (options.authorize && !(await options.authorize(request.principal, queue.name)))
           return { kind: "forbidden" };
+
         const service =
           typeof options.service === "function" ? options.service(request) : options.service;
         const common = {
@@ -65,9 +71,26 @@ export function createStovepipeWeb(options: StovepipeWebOptions) {
           })),
           queueHref: paths.queue(queue.name),
           latestHref: issuesView ? paths.openIssues(queue.name) : paths.queue(queue.name),
-          showLatestLink: Boolean(!requestId && request.search.get("page")),
+          showLatestLink: Boolean(!requestId && !issueHistoryView && request.search.get("page")),
           loadedAtMs: Date.now(),
         };
+
+        if (issueHistoryView) {
+          const issueHistory = await readSection(
+            () => loadIssueHistory(
+              service, paths, queue.name, historyTask, historyUnit,
+              request.search.get("page") ?? "", request.signal,
+            ),
+            onLog,
+            "issue history",
+          );
+
+          return {
+            kind: "render",
+            model: { ...common, kind: "issue-history", issueHistory },
+          };
+        }
+
         if (issuesView) {
           const issues = await readSection(
             () => loadOpenIssues(service, paths, queue.name, request.search.get("page") ?? "", request.signal),

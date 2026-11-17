@@ -121,6 +121,43 @@ def _pagination_fixture_sql() -> str:
                 f"INSERT INTO {table} (queue,request_id,task_id,unit_id,project) "
                 f"VALUES ('web/pagination','51','expensive','//packages/extra-{i:02d}:test','project-01');"
             )
+    for unit, count in (("", 51), ("//packages/test-01:go_default_test", 4)):
+        opening_build = ""
+        for i in range(count):
+            request_id = 52 - count + i
+            build = "web/build/51" if request_id == 51 else f"history/build/{request_id:02d}"
+            if unit:
+                event = ("open", "closed", "open", "reported")[i]
+            else:
+                event = "open" if i in (0, count - 1) else "closed" if i == count - 2 else "reported"
+            if event == "open":
+                opening_build = build
+            if event in ("open", "closed"):
+                current_request, current_build, current_time = request_id, build, 4000 + i
+            statements.append(
+                "INSERT INTO issue_log (queue,task_id,unit_id,build_id,event,timestamp_ms,first_seen_build_id) "
+                f"VALUES ('web/pagination','buildtest','{unit}','{build}','{event}',{4000+i},'{opening_build}');"
+            )
+            if request_id == 51:
+                statements.append(
+                    f"UPDATE request_issue_summary SET kind='{event}',build_id='{build}',first_seen_build_id='{opening_build}' "
+                    f"WHERE queue='web/pagination' AND request_id='51' AND task_id='buildtest' AND unit_id='{unit}';"
+                )
+            else:
+                statements.append(
+                    "INSERT INTO request_issue_summary "
+                    "(queue,request_id,task_id,unit_id,kind,build_id,first_seen_build_id,version) "
+                    f"VALUES ('web/pagination','{request_id}','buildtest','{unit}','{event}','{build}','{opening_build}',1);"
+                )
+        statements.append(
+            f"UPDATE issue_summary SET first_seen_build_id='{opening_build}',request_id='{current_request}',"
+            f"build_id='{current_build}',changed_at_ms={current_time} "
+            f"WHERE queue='web/pagination' AND task_id='buildtest' AND unit_id='{unit}';"
+        )
+        statements.append(
+            f"UPDATE open_issue SET first_seen_build_id='{opening_build}' "
+            f"WHERE queue='web/pagination' AND task_id='buildtest' AND unit_id='{unit}';"
+        )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):
         closed = i < closed_issue_count

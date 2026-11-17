@@ -98,7 +98,7 @@ it("shows a separate queue issues tab and retains successful issue data on refre
   const issuesModel: StovepipePageModel = {
     ...model, kind: "issues", key: "/repo%2Fmain?view=issues", latestHref: "/repo%2Fmain?view=issues",
     issues: { ok: true, data: {
-      issues: [{ taskId: "buildtest", unitId: "", firstSeenAtMs: "1000", requestId: "7", requestHref: "/repo%2Fmain/request/7" }],
+      issues: [{ taskId: "buildtest", unitId: "", firstSeenAtMs: "1000", requestId: "7", requestHref: "/repo%2Fmain/request/7", historyHref: "/history" }],
       nextHref: null,
     } },
   };
@@ -116,7 +116,7 @@ it("retains issue data and auto-refresh when a cursor refresh fails on the first
     ...model, kind: "issues", key: "/repo%2Fmain?view=issues&page=cursor",
     latestHref: "/repo%2Fmain?view=issues", showLatestLink: true,
     issues: { ok: true, data: {
-      issues: [{ taskId: "buildtest", unitId: "", firstSeenAtMs: "1000", requestId: "7", requestHref: "/repo%2Fmain/request/7" }],
+      issues: [{ taskId: "buildtest", unitId: "", firstSeenAtMs: "1000", requestId: "7", requestHref: "/repo%2Fmain/request/7", historyHref: "/history" }],
       nextHref: null,
     } },
   };
@@ -366,4 +366,25 @@ it("renders request issues and retains them on a same-page refresh failure", () 
   rerender(<StovepipeApp model={{ ...issuesPage, requestIssues: { ok: false, error: "Issues unavailable" } }} />);
   expect(screen.getByRole("alert")).toHaveTextContent("Issues unavailable");
   expect(screen.getByRole("status")).toHaveTextContent("Issue recording was abandoned");
+});
+
+it("shows retained issue history independently and retains only the same page on failure", () => {
+  const historyModel: StovepipePageModel = {
+    ...model, kind: "issue-history", key: "/repo%2Fmain?view=issue-history&task=test&unit=u",
+    issueHistory: { ok: true, data: { taskId: "test", unitId: "u", firstHref: null, nextHref: "/next", events: [
+      { event: "reported", buildId: "build/7", timestampMs: "1000", firstSeenBuildId: "build/1", requestId: "7", requestHref: "/request/7?view=issues" },
+    ] } },
+  };
+  const { rerender } = render(<StovepipeApp model={historyModel} />);
+  expect(screen.getByRole("table", { name: "Issue history events" })).toHaveTextContent("build/7");
+  expect(screen.queryByRole("navigation", { name: "Request views" })).toBeNull();
+  expect(screen.queryByRole("navigation", { name: "Queue views" })).toBeNull();
+  expect(screen.getByRole("navigation", { name: "Queues" })).toBeVisible();
+  expect(screen.getByText("Retained events for one issue across requests.")).toBeVisible();
+  rerender(<StovepipeApp model={{ ...historyModel, issueHistory: { ok: false, error: "History unavailable" } }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("History unavailable");
+  expect(screen.getByText("build/7")).toBeVisible();
+  rerender(<StovepipeApp model={{ ...historyModel, key: historyModel.key + "&page=next", issueHistory: { ok: false, error: "Next history unavailable" } }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Next history unavailable");
+  expect(screen.queryByText("build/7")).toBeNull();
 });

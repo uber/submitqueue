@@ -3,7 +3,7 @@
 .sq-stovepipe-open-issues table {
   table-layout: fixed;
   width: 100%;
-  min-width: 40rem;
+  min-width: 48rem;
 }
 
 .sq-stovepipe-open-issues th:nth-child(2) {
@@ -67,7 +67,7 @@
 .sq-stovepipe-request-issues table {
   table-layout: fixed;
   width: 100%;
-  min-width: 58rem;
+  min-width: 66rem;
 }
 
 .sq-stovepipe-request-issues th:first-child {
@@ -84,4 +84,31 @@
 
 .sq-stovepipe-request-view[aria-label="Project Results"] table[aria-label="Recorded project results"] > thead th:nth-child(4) {
   width: 8rem;
+}
+
+.sq-stovepipe-open-issues th:last-child,
+.sq-stovepipe-request-issues th:last-child {
+  width: 8rem;
+}
+
+.sq-stovepipe-issue-history table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 60rem;
+}
+
+.sq-stovepipe-issue-history th:first-child {
+  width: 17rem;
+}
+
+.sq-stovepipe-issue-history th:nth-child(2) {
+  width: 12rem;
+}
+
+.sq-stovepipe-issue-history th:last-child {
+  width: 8rem;
+}
+
+.sq-stovepipe-issue-history td {
+  overflow-wrap: anywhere;
 }

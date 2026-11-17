@@ -9,7 +9,7 @@ import type { StovepipePageModel } from "../entity/index.js";
 import { Link, Section } from "./components.js";
 import { RequestDetails, History } from "./pages.js";
 import { QueueRequests } from "./queue.js";
-import { OpenIssues, RequestIssues } from "./issues.js";
+import { OpenIssues, RequestIssues, IssueHistory } from "./issues.js";
 import { ProjectResults, RecordedResult } from "./projects.js";
 import { StovepipeLogo } from "./stovepipe-logo.js";
 
@@ -34,6 +34,12 @@ const requestViewTabs = [
   { id: "issues", label: "Build and Test Issues" },
   { id: "fix-attempts", label: "Fix Attempts" },
 ] as const;
+
+const pageDescriptions = {
+  queue: "Requests ordered by acceptance time, newest first.",
+  issues: "Open issues grouped by task.",
+  "issue-history": "Retained events for one issue across requests.",
+};
 
 function requestViews(routeKey: string) {
   const [path, ...query] = routeKey.split("?");
@@ -88,11 +94,13 @@ function Page({ model }: { model: StovepipePageModel }) {
             )}
             {model.kind !== "request" ? <>
               <HeadingLarge marginTop="0" marginBottom="scale300" as="h1">{model.queue}</HeadingLarge>
-              <ParagraphSmall marginTop="0">{model.kind === "issues" ? "Open issues grouped by task." : "Requests ordered by acceptance time, newest first."}</ParagraphSmall>
+              <ParagraphSmall marginTop="0">
+                {pageDescriptions[model.kind]}
+              </ParagraphSmall>
             </> : <HeadingMedium marginTop="0" marginBottom="0" as="h1">Request {model.requestId}</HeadingMedium>}
           </div>
         </Block>
-        {model.kind !== "request" && <ViewNavigation aria-label="Queue views">
+        {(model.kind === "queue" || model.kind === "issues") && <ViewNavigation aria-label="Queue views">
           <ViewLink $active={model.kind === "queue"} href={model.queueHref} aria-current={model.kind === "queue" ? "page" : undefined}>Requests</ViewLink>
           <ViewLink $active={model.kind === "issues"} href={`${model.queueHref}?view=issues`} aria-current={model.kind === "issues" ? "page" : undefined}>Open issues</ViewLink>
         </ViewNavigation>}
@@ -105,6 +113,12 @@ function Page({ model }: { model: StovepipePageModel }) {
           <Section result={model.requests}>
             {(data) => data && <QueueRequests initial={data} routeKey={model.key} />}
           </Section>
+        ) : model.kind === "issue-history" ? (
+          <Block marginTop="scale600">
+            <Section cacheKey={model.key} result={model.issueHistory}>
+              {data => data && <IssueHistory model={data} />}
+            </Section>
+          </Block>
         ) : model.kind === "issues" ? (
           <Block marginTop="scale600">
             <Section cacheKey={model.latestHref} result={model.issues}>

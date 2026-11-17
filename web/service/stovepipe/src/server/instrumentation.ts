@@ -15,10 +15,29 @@ export function instrumentStovepipeWeb(
         const result = await web.handle(request);
         outcome = result.kind;
         if (result.kind === "render") {
-          const sections = result.model.kind === "queue"
-            ? [result.model.requests] : result.model.kind === "issues"
-              ? [result.model.issues] : [result.model.history, result.model.projectStatus, result.model.requestIssues, result.model.issueProjects?.result, result.model.projectIssues?.result];
-          if (sections.some((section) => section != null && !section.ok)) {
+          let hasErrors: boolean;
+          switch (result.model.kind) {
+            case "queue":
+              hasErrors = !result.model.requests.ok;
+              break;
+            case "issues":
+              hasErrors = !result.model.issues.ok;
+              break;
+            case "issue-history":
+              hasErrors = !result.model.issueHistory.ok;
+              break;
+            case "request":
+              hasErrors = [
+                result.model.history,
+                result.model.projectStatus,
+                result.model.requestIssues,
+                result.model.issueProjects?.result,
+                result.model.projectIssues?.result,
+              ].some((section) => section != null && !section.ok);
+              break;
+          }
+
+          if (hasErrors) {
             outcome = "error";
             observeTelemetry(() => span?.setStatus({ code: SpanStatusCode.ERROR }));
           }
