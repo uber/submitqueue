@@ -119,3 +119,7 @@ The issue-tracking table must include the notification, cursor, `finalize`, and 
 The request-issue summary store retains one materialized result per request, task, and unit in its bound queue. Opened includes reopened issues; reported means this request observed an already-open issue again; closed means this request actually closed it. Issues merely left open because closure was suppressed are not reported results. Reads use a bounded request-prefix scan in task/unit order. These results describe the request's accepted updates, not the queue's full open-issue set.
 
 Issue history retains openings, repeat reports, and closures. Events use open, reported, and closed; reported events do not change lifecycle projections. New occurrences retain the opening build reference so request projections can be reconstructed without current issue state. Deploy the additive opening-reference column before updated writers. Existing lifecycle records may have an empty reference and continue using the opening supplied to lifecycle materialization.
+
+### Browsing retained issue history
+
+History pages scan request acceptances, read each request's selected issue result, and fetch its original event with the existing exact-key lookup. Pages pin the acceptance-time window and advance after examined requests, including missing projections or logs. Coverage is limited to retained mappings and projected results; an empty page can still have a continuation. No new projection or timestamp sort is required.

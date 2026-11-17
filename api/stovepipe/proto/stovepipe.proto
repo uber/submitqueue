@@ -425,6 +425,61 @@ message ListOpenIssuesResponse {
     string next_page_token = 2;
 }
 
+// IssueHistoryEvent is one immutable retained occurrence across requests.
+message IssueHistoryEvent {
+    // "open" (including reopenings), "reported", or "closed".
+    string event = 1;
+    // Opaque source build identity.
+    string build_id = 2;
+    // Original occurrence timestamp in Unix milliseconds, not request ingest order.
+    int64 timestamp_ms = 3;
+    // Opening build for this occurrence; empty on legacy lifecycle records.
+    string first_seen_build_id = 4;
+    // Source request from the acceptance mapping; source-build retention is not required.
+    string request_id = 5;
+    // Validation task that identifies the issue.
+    string task_id = 6;
+    // Validation unit; empty identifies a task-wide issue.
+    string unit_id = 7;
+}
+
+message ListIssueHistoryRequest {
+    // Required configured queue.
+    string queue = 1;
+    // Optional validation task. Empty selects all issues in the queue and requires an empty unit_id.
+    string task_id = 2;
+    // Exact validation unit when task_id is supplied; empty selects that task's task-wide issue.
+    string unit_id = 3;
+    // Maximum events to return. Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 4;
+    // Opaque continuation bound to the issue filter and resolved acceptance-time window.
+    string page_token = 5;
+    oneof accepted_lower_bound {
+        // Inclusive request-acceptance timestamp in Unix milliseconds; omitted defaults to zero.
+        int64 accepted_at_or_after_ms = 6;
+    }
+    oneof accepted_upper_bound {
+        // Exclusive request-acceptance timestamp in Unix milliseconds; omitted defaults to server now.
+        int64 accepted_before_ms = 7;
+    }
+}
+
+// History covers projected issue builds in the request window, not the complete retained log.
+// Missing acceptance mappings or issue projections can leave gaps; empty does not prove no history.
+message ListIssueHistoryResponse {
+    // Descending request-acceptance order, then ascending bytewise task/unit order.
+    // Each request contributes at most one event per issue.
+    // Original event timestamps are preserved; events are not sorted chronologically.
+    repeated IssueHistoryEvent events = 1;
+    // Continues after the last examined request/issue; pages can be empty with a continuation.
+    // Each call examines at most 200 requests and 200 issue summaries. Empty ends the observed request window.
+    string next_page_token = 2;
+    // Resolved inclusive request-acceptance window bound in Unix milliseconds.
+    int64 accepted_at_or_after_ms = 3;
+    // Resolved exclusive request-acceptance window bound in Unix milliseconds.
+    int64 accepted_before_ms = 4;
+}
+
 // RequestIssueSummary describes one accepted issue update, not the queue's open-issue set.
 message RequestIssueSummary {
     // Logical validation task.
@@ -532,6 +587,8 @@ service Stovepipe {
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
     // ListOpenIssues returns current open issues validated against their summaries.
     rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
+    // ListIssueHistory returns retained issue occurrences across requests, optionally filtered to one issue.
+    rpc ListIssueHistory(ListIssueHistoryRequest) returns (ListIssueHistoryResponse) {}
     // GetIssuesByRequestID returns accepted issue results for one request.
     rpc GetIssuesByRequestID(GetIssuesByRequestIDRequest) returns (GetIssuesByRequestIDResponse) {}
     // ListRequestProjectsByIssue returns the projects affected by one request's issue.
