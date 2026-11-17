@@ -20,6 +20,11 @@ export class StovepipePaths {
     if (page) search.set("page", page);
     return `${this.queue(queue)}?${search}`;
   }
+  issueHistory(queue: string, taskId: string, unitId: string, page = ""): string {
+    const search = new URLSearchParams({ view: "issue-history", task: taskId, unit: unitId });
+    if (page) search.set("page", page);
+    return `${this.queue(queue)}?${search}`;
+  }
   requestIssues(queue: string, requestId: string, page = ""): string {
     const search = new URLSearchParams({ view: "issues" });
     if (page) search.set("issues", page);

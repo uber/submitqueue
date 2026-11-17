@@ -1,6 +1,6 @@
 import type { StovepipeService } from "../extension/service/index.js";
 import type { StovepipePaths } from "../core/paths.js";
-import type { OpenIssuesModel, RequestIssuesModel, IssueProjectsModel } from "../entity/index.js";
+import type { OpenIssuesModel, RequestIssuesModel, IssueProjectsModel, IssueHistoryModel } from "../entity/index.js";
 
 export async function loadOpenIssues(
   service: StovepipeService,
@@ -20,6 +20,7 @@ export async function loadOpenIssues(
       firstSeenAtMs: issue.changedAtMs.toString(),
       requestId: issue.requestId,
       requestHref: paths.request(queue, issue.requestId),
+      historyHref: paths.issueHistory(queue, issue.taskId, issue.unitId),
     })),
     nextHref: result.nextPageToken ? paths.openIssues(queue, result.nextPageToken) : null,
   };
@@ -39,6 +40,7 @@ export async function loadRequestIssues(
   return {
     issues: result.issues.map(issue => ({
       ...issue,
+      historyHref: paths.issueHistory(queue, issue.taskId, issue.unitId),
       projectsHref: issue.unitId && (issue.kind === "new" || issue.kind === "existing")
         ? paths.issueProjects(queue, requestId, issue.taskId, issue.unitId, pageToken) : null,
     })),
@@ -68,5 +70,28 @@ export async function loadIssueProjects(
     projects: result.attributions.map(entry => entry.project), complete: result.attributionComplete,
     firstHref: pageToken ? paths.issueProjects(queue, requestId, taskId, unitId, issuesPage) : null,
     nextHref: result.nextPageToken ? paths.issueProjects(queue, requestId, taskId, unitId, issuesPage, result.nextPageToken) : null,
+  };
+}
+
+export async function loadIssueHistory(
+  service: StovepipeService,
+  paths: StovepipePaths,
+  queue: string,
+  taskId: string,
+  unitId: string,
+  pageToken: string,
+  signal?: AbortSignal,
+): Promise<IssueHistoryModel> {
+  const result = await service.listIssueHistory(
+    { queue, taskId, unitId, pageSize: 50, pageToken }, signal ? { signal } : {},
+  );
+  return {
+    taskId, unitId,
+    events: result.events.map(event => ({
+      ...event, timestampMs: event.timestampMs.toString(),
+      requestHref: event.requestId ? paths.requestIssues(queue, event.requestId) : null,
+    })),
+    firstHref: pageToken ? paths.issueHistory(queue, taskId, unitId) : null,
+    nextHref: result.nextPageToken ? paths.issueHistory(queue, taskId, unitId, result.nextPageToken) : null,
   };
 }
