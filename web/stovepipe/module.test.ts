@@ -22,6 +22,7 @@ const summary: RequestSummary = {
 };
 function createPageTestContext(options: Pick<StovepipeWebOptions, "resolveBuildUrl"> = {}) {
   const service: StovepipeService = {
+    listIssueHistory: vi.fn().mockResolvedValue({ events: [], nextPageToken: "" }),
     listRequestIssuesByProject: vi.fn().mockResolvedValue({ attributions: [], attributionComplete: true, nextPageToken: "" }),
     listRequestProjectsByIssue: vi.fn().mockResolvedValue({ attributions: [], attributionComplete: true, nextPageToken: "" }),
     getIssuesByRequestID: vi.fn().mockResolvedValue({ issues: [], status: "complete", nextPageToken: "" }),
@@ -89,6 +90,7 @@ describe("Stovepipe page loading", () => {
           issues: [{
             taskId: "build/test", unitId: "", firstSeenAtMs: "9007199254740993",
             requestId: summary.requestId, requestHref: paths.request("repo/main", summary.requestId),
+            historyHref: paths.issueHistory("repo/main", "build/test", ""),
           }],
           nextHref: paths.openIssues("repo/main", "next+/="),
         } },
@@ -584,7 +586,7 @@ it("loads request issues only for their tab and preserves opaque continuation to
   expect(result).toMatchObject({ kind: "render", model: { kind: "request", requestIssues: { ok: true, data: {
     status: "in_progress", firstHref: paths.requestIssues("repo/main", summary.requestId),
     nextHref: paths.requestIssues("repo/main", summary.requestId, "next+/="),
-    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind: "new" }],
+    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind: "new", historyHref: paths.issueHistory("repo/main", "build/test", "//pkg:a") }],
   } } } });
 });
 
@@ -663,4 +665,48 @@ it("rejects another project's association without hiding its recorded statuses",
   });
   const result = await app.handle({ path: paths.request("repo/main", summary.requestId), search: new URLSearchParams({ project: "p" }) });
   expect(result).toMatchObject({ kind: "render", model: { projectStatus: { ok: true }, projectIssues: { result: { ok: false } } } });
+});
+
+it.each(["", "//pkg:a/b?x=1#hash+%"])("loads retained history for the exact issue (%s) without unrelated reads", async unitId => {
+  const { app, service, paths } = createPageTestContext();
+  const taskId = "build/test?variant=1";
+  vi.mocked(service.listIssueHistory).mockResolvedValue({ events: [
+    { event: "reported", buildId: "runner/7", timestampMs: 9007199254740993n, firstSeenBuildId: "runner/1", requestId: "7" },
+    { event: "future", buildId: "expired", timestampMs: 1000n, firstSeenBuildId: "", requestId: "" },
+  ], nextPageToken: "next+/=" });
+  const url = new URL(paths.issueHistory("repo/main", taskId, unitId, "opaque+/="), "https://example.test");
+  const signal = new AbortController().signal;
+  const result = await app.handle({ path: url.pathname, search: url.searchParams, signal });
+  expect(service.listIssueHistory).toHaveBeenCalledWith(
+    { queue: "repo/main", taskId, unitId, pageSize: 50, pageToken: "opaque+/=" }, { signal },
+  );
+  expect(service.list).not.toHaveBeenCalled();
+  expect(service.listOpenIssues).not.toHaveBeenCalled();
+  expect(service.getRequestHistoryByID).not.toHaveBeenCalled();
+  expect(service.getProjectStatusByID).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ kind: "render", model: { kind: "issue-history", issueHistory: { ok: true, data: {
+    taskId, unitId, firstHref: paths.issueHistory("repo/main", taskId, unitId),
+    nextHref: paths.issueHistory("repo/main", taskId, unitId, "next+/="), events: [
+      { timestampMs: "9007199254740993", requestHref: paths.requestIssues("repo/main", "7") },
+      { event: "future", requestHref: null },
+    ],
+  } } } });
+  expect(() => JSON.stringify(result)).not.toThrow();
+});
+
+it("sanitizes issue history failures", async () => {
+  const { app, service, paths } = createPageTestContext();
+  vi.mocked(service.listIssueHistory).mockRejectedValue(new Error("private history failure"));
+  const url = new URL(paths.issueHistory("repo/main", "task", ""), "https://example.test");
+  const result = await app.handle({ path: url.pathname, search: url.searchParams });
+  expect(result).toMatchObject({ kind: "render", model: { kind: "issue-history", issueHistory: { ok: false, error: expect.stringContaining("Unable to load issue history") } } });
+  expect(JSON.stringify(result)).not.toContain("private history failure");
+});
+
+it("requires a history task and authorizes the queue before reading history", async () => {
+  const { app, service, paths } = createPageTestContext();
+  expect(await app.handle({ path: paths.queue("repo/main"), search: new URLSearchParams({ view: "issue-history" }) })).toEqual({ kind: "not-found" });
+  const denied = createStovepipeWeb({ service, paths, queues: [{ name: "repo/main" }], authorize: () => false });
+  expect(await denied.handle({ path: paths.queue("repo/main"), search: new URLSearchParams({ view: "issue-history", task: "task" }) })).toEqual({ kind: "forbidden" });
+  expect(service.listIssueHistory).not.toHaveBeenCalled();
 });

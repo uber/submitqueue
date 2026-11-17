@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../platform/test/rtl.js";
 import { afterEach, expect, it, vi } from "vitest";
-import { OpenIssuePagesProvider, OpenIssues, RequestIssues } from "./issues.js";
+import { OpenIssuePagesProvider, OpenIssues, RequestIssues, IssueHistory } from "./issues.js";
 import type { OpenIssueModel } from "../entity/index.js";
 
 afterEach(cleanup);
 
 const taskWide: OpenIssueModel = {
   taskId: "buildtest", unitId: "", firstSeenAtMs: "1000",
-  requestId: "7", requestHref: "/queue/request/7",
+  requestId: "7", requestHref: "/queue/request/7", historyHref: "/history",
 };
 const target = { ...taskWide, unitId: "//pkg:go_default_test" };
 
@@ -18,6 +18,7 @@ it("groups units under their task and distinguishes task-wide failures", () => {
   expect(rows[1]).toHaveTextContent("Task-wide failure");
   expect(rows[2]).toHaveTextContent("//pkg:go_default_test");
   expect(within(rows[2]!).getByRole("link", { name: "7" })).toHaveAttribute("href", "/queue/request/7");
+  expect(within(rows[1]!).getByRole("link", { name: "View history" })).toHaveAttribute("href", "/history");
   expect(screen.getByRole("status")).toHaveTextContent("3 issues loaded");
 });
 
@@ -189,14 +190,15 @@ it("does not loop when a continuation repeats", async () => {
 
 it("groups request updates into new, existing and resolved without hiding unknown kinds", () => {
   render(<RequestIssues model={{ status: "complete", firstHref: null, nextHref: "/next", issues: [
-    { taskId: "buildtest", unitId: "//pkg:new", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects" },
-    { taskId: "buildtest", unitId: "//pkg:existing", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/1", projectsHref: "/projects" },
-    { taskId: "entrypoint", unitId: "", kind: "closed", buildId: "build/7", firstSeenBuildId: "build/2", projectsHref: null },
-    { taskId: "future", unitId: "//pkg:unknown", kind: "future", buildId: "", firstSeenBuildId: "", projectsHref: null },
+    { taskId: "buildtest", unitId: "//pkg:new", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects", historyHref: "/history" },
+    { taskId: "buildtest", unitId: "//pkg:existing", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/1", projectsHref: "/projects", historyHref: "/history" },
+    { taskId: "entrypoint", unitId: "", kind: "closed", buildId: "build/7", firstSeenBuildId: "build/2", projectsHref: null, historyHref: "/history" },
+    { taskId: "future", unitId: "//pkg:unknown", kind: "future", buildId: "", firstSeenBuildId: "", projectsHref: null, historyHref: "/history" },
   ] }} />);
   expect(screen.getByRole("table", { name: "New Issues" })).toHaveTextContent("//pkg:new");
   expect(screen.getByRole("table", { name: "Existing Issues" })).toHaveTextContent("//pkg:existing");
   expect(screen.getByRole("table", { name: "Resolved Issues" })).toHaveTextContent("Task-wide failure");
+  expect(within(screen.getByRole("table", { name: "Resolved Issues" })).getByRole("link", { name: "View history" })).toHaveAttribute("href", "/history");
   expect(screen.getByRole("table", { name: "Other Issues" })).toHaveTextContent("//pkg:unknown");
   expect(screen.getByRole("link", { name: "Next issues →" })).toHaveAttribute("href", "/next");
 });
@@ -216,7 +218,7 @@ it.each([
 
 it.each([false, true])("distinguishes incomplete attribution from an empty completed project list (%s)", complete => {
   render(<RequestIssues model={{ status: "complete", firstHref: null, nextHref: null, issues: [
-    { taskId: "test", unitId: "unit", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects" },
+    { taskId: "test", unitId: "unit", kind: "new", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects", historyHref: "/history" },
   ] }} projects={{ taskId: "test", unitId: "unit", key: "selection", closeHref: "/issues", result: { ok: true, data: {
     projects: [], complete, firstHref: null, nextHref: null,
   } } }} />);
@@ -226,7 +228,7 @@ it.each([false, true])("distinguishes incomplete attribution from an empty compl
 
 it("shows paginated affected projects and keeps the collapse action on failure", () => {
   const model = { status: "complete", firstHref: null, nextHref: null, issues: [
-    { taskId: "test", unitId: "unit", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects" },
+    { taskId: "test", unitId: "unit", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/7", projectsHref: "/projects", historyHref: "/history" },
   ] };
   const selection = { taskId: "test", unitId: "unit", key: "selection", closeHref: "/issues" };
   const { rerender } = render(<RequestIssues model={model} projects={{ ...selection, result: { ok: true, data: {
@@ -238,4 +240,35 @@ it("shows paginated affected projects and keeps the collapse action on failure",
   expect(screen.queryByText("project-1")).toBeNull();
   expect(screen.getByRole("alert")).toHaveTextContent("Projects unavailable");
   expect(screen.getByRole("link", { name: "Hide projects" })).toHaveAttribute("href", "/issues");
+});
+
+it("shows openings, repeat reports, closures and future events with provenance", () => {
+  render(<IssueHistory model={{ taskId: "test", unitId: "//pkg:unit", firstHref: "/first", nextHref: "/next", events:
+    ["open", "reported", "closed", "open", "future"].map((event, index) => ({
+      event, buildId: `build/${index}`, timestampMs: "1000", firstSeenBuildId: index ? "build/0" : "",
+      requestId: index ? "7" : "", requestHref: index ? "/request/7?view=issues" : null,
+    })),
+  }} />);
+  const table = screen.getByRole("table", { name: "Issue history events" });
+  const rows = within(table).getAllByRole("row");
+  expect(rows).toHaveLength(6);
+  expect(rows[1]).toHaveTextContent("Opened / reopened");
+  expect(rows[1]).toHaveTextContent("Unknown");
+  expect(rows[1]).toHaveTextContent("Not retained");
+  expect(rows[2]).toHaveTextContent("Reported again");
+  expect(within(rows[2]!).getByRole("link", { name: "7" })).toHaveAttribute("href", "/request/7?view=issues");
+  expect(rows[3]).toHaveTextContent("Closed");
+  expect(rows[4]).toHaveTextContent("Opened / reopened");
+  expect(rows[5]).toHaveTextContent("future");
+  expect(screen.getByRole("link", { name: "First events" })).toHaveAttribute("href", "/first");
+  expect(screen.getByRole("link", { name: "Next events →" })).toHaveAttribute("href", "/next");
+  expect(screen.getByText(/Older history may be incomplete/)).toBeVisible();
+});
+
+it("does not mistake empty retained task-wide history for absence of an issue", () => {
+  render(<IssueHistory model={{ taskId: "test", unitId: "", firstHref: null, nextHref: null, events: [] }} />);
+  expect(screen.getByText("Task-wide failure")).toBeVisible();
+  expect(screen.getByText(/This does not establish that the issue never existed/)).toBeVisible();
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
 });

@@ -6,12 +6,13 @@ import { instrumentStovepipeWeb } from "./instrumentation";
 function createHostFixture() {
   const list = vi.fn().mockResolvedValue({ requests: [], nextPageToken: "" });
   const listOpenIssues = vi.fn().mockResolvedValue({ issues: [], nextPageToken: "" });
+  const listIssueHistory = vi.fn().mockResolvedValue({ events: [], nextPageToken: "" });
   const getRequestHistoryByID = vi.fn().mockRejectedValue(new Error("private failure"));
   const getProjectStatusByID = vi.fn().mockRejectedValue(new Error("private failure"));
   const getIssuesByRequestID = vi.fn().mockRejectedValue(new Error("private failure"));
   const listRequestProjectsByIssue = vi.fn().mockRejectedValue(new Error("private failure"));
   const listRequestIssuesByProject = vi.fn().mockRejectedValue(new Error("private failure"));
-  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listOpenIssues, getRequestHistoryByID, getProjectStatusByID, getIssuesByRequestID, listRequestProjectsByIssue, listRequestIssuesByProject } });
+  const web = createStovepipeWeb({ queues: [{ name: "demo" }], service: { list, listOpenIssues, listIssueHistory, getRequestHistoryByID, getProjectStatusByID, getIssuesByRequestID, listRequestProjectsByIssue, listRequestIssuesByProject } });
   const record = vi.fn();
   const add = vi.fn();
   const span = { setAttribute: vi.fn(), setStatus: vi.fn(), recordException: vi.fn(), end: vi.fn() };
@@ -20,7 +21,7 @@ function createHostFixture() {
   const host = instrumentStovepipeWeb(web,
     { createHistogram, createCounter } as unknown as Meter,
     { startSpan: () => span } as unknown as Tracer);
-  return { host, list, listOpenIssues, web, record, add, span, createHistogram, createCounter };
+  return { host, list, listOpenIssues, listIssueHistory, web, record, add, span, createHistogram, createCounter };
 }
 
 describe("Stovepipe host instrumentation", () => {
@@ -72,4 +73,14 @@ describe("Stovepipe host instrumentation", () => {
     expect(handle).toHaveBeenCalledOnce();
     expect(fixture.record).toHaveBeenCalledWith(expect.any(Number), { outcome: "exception" });
   });
+});
+
+it("records a failed issue-history section as a failed page load", async () => {
+  const fixture = createHostFixture();
+  fixture.listIssueHistory.mockRejectedValue(new Error("private history failure"));
+  const result = await fixture.host.handle({ path: "/demo", search: new URLSearchParams({ view: "issue-history", task: "test", unit: "" }) });
+  expect(result).toMatchObject({ kind: "render", model: { kind: "issue-history", issueHistory: { ok: false } } });
+  expect(fixture.add).toHaveBeenCalledWith(1, { outcome: "error" });
+  expect(fixture.span.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR });
+  expect(JSON.stringify(result)).not.toContain("private history failure");
 });

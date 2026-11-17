@@ -121,6 +121,19 @@ def _pagination_fixture_sql() -> str:
                 f"INSERT INTO {table} (queue,request_id,task_id,unit_id,project) "
                 f"VALUES ('web/pagination','51','expensive','//packages/extra-{i:02d}:test','project-01');"
             )
+    for i in range(53):
+        statements.append(
+            "INSERT INTO build (queue,id,request_id,status,version) "
+            f"VALUES ('web/pagination','history/build/{i:02d}','{51 if i % 2 == 0 else 50}','failed',1);"
+        )
+    for unit, count in (("", 53), ("//packages/test-01:go_default_test", 4)):
+        for i in range(count):
+            event = "open" if i in (0, count - 1) else "closed" if i == count - 2 else "reported"
+            opening = i if event == "open" else 0
+            statements.append(
+                "INSERT INTO issue_log (queue,task_id,unit_id,build_id,event,timestamp_ms,first_seen_build_id) "
+                f"VALUES ('web/pagination','buildtest','{unit}','history/build/{i:02d}','{event}',{4000+i},'history/build/{opening:02d}');"
+            )
     closed_issue_count = 500
     for i in range(closed_issue_count + 1):
         closed = i < closed_issue_count
