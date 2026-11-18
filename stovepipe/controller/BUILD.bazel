@@ -40,6 +40,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "active_request_test.go",
         "get_issues_by_request_id_test.go",
         "get_queue_status_test.go",
         "ingest_test.go",

@@ -50,6 +50,8 @@ const (
 
 // ingestMocks bundles the mocks an Ingest test case wires expectations on.
 type ingestMocks struct {
+	activeRequests *storagemock.MockActiveRequestStore
+
 	queueEnablementController *queuestatemock.MockTransitionController
 	counter                   *countermock.MockCounter
 	factory                   *scmock.MockFactory
@@ -78,6 +80,7 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	t.Helper()
 
 	m := ingestMocks{
+		activeRequests:            storagemock.NewMockActiveRequestStore(ctrl),
 		queueEnablementController: queuestatemock.NewMockTransitionController(ctrl),
 		counter:                   countermock.NewMockCounter(ctrl),
 		factory:                   scmock.NewMockFactory(ctrl),
@@ -91,6 +94,8 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 
 	store := storagemock.NewMockStorage(ctrl)
 	m.store = store
+	store.EXPECT().GetActiveRequestStore().Return(m.activeRequests).AnyTimes()
+	m.activeRequests.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(m.uriStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
