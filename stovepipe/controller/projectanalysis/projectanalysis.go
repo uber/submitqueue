@@ -43,6 +43,8 @@ import (
 	"go.uber.org/zap"
 )
 
+type Option func(*Controller)
+
 type Controller struct {
 	logger                   *zap.SugaredLogger
 	scope                    tally.Scope
@@ -54,6 +56,7 @@ type Controller struct {
 	registry                 consumer.TopicRegistry
 	topicKey                 consumer.TopicKey
 	consumerGroup            string
+	isEnabled                func(context.Context, string) (bool, error)
 }
 
 func NewController(
@@ -66,8 +69,9 @@ func NewController(
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
+	options ...Option,
 ) *Controller {
-	return &Controller{
+	controller := &Controller{
 		logger:                   logger.Named("projectanalysis_controller"),
 		scope:                    scope.SubScope("projectanalysis_controller"),
 		stores:                   stores,
@@ -79,6 +83,16 @@ func NewController(
 		topicKey:                 topicKey,
 		consumerGroup:            consumerGroup,
 	}
+	for _, option := range options {
+		option(controller)
+	}
+	return controller
+}
+
+// WithEnabled checks enablement once per processing attempt before either project operation.
+// False skips both operations and completes the stage; an error stops processing.
+func WithEnabled(isEnabled func(context.Context, string) (bool, error)) Option {
+	return func(c *Controller) { c.isEnabled = isEnabled }
 }
 
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
@@ -148,11 +162,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("require completed terminal build analysis: %w", err)
 	}
 
-	if err := c.recordIssueAttribution(ctx, store, request); err != nil {
-		return err
+	enabled := true
+	if c.isEnabled != nil {
+		enabled, err = c.isEnabled(ctx, request.Queue)
+		if err != nil {
+			return fmt.Errorf("check project analysis enablement: %w", err)
+		}
 	}
-	if err := c.recordProjectStatuses(ctx, store, request); err != nil {
-		return err
+	if enabled {
+		if err := c.recordIssueAttribution(ctx, store, request); err != nil {
+			return err
+		}
+		if err := c.recordProjectStatuses(ctx, store, request); err != nil {
+			return err
+		}
 	}
 	if err := c.requestLogMaterializer.PersistLog(ctx, store, projectAnalysisCompletedLog); err != nil {
 		return fmt.Errorf("record project analysis completion: %w", err)

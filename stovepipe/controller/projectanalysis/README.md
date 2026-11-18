@@ -6,6 +6,8 @@ The controller materializes both directions of each issue/project association an
 
 Retries adopt immutable facts and repair missing lookup entries. A completed request skips provider calls, repairs its summary if needed, and retries hook publication followed by the recording handoff. Empty results still record completion. Cancelled requests bypass project analysis; superseded requests require no work.
 
+An optional queue-specific enablement check gates both operations with one decision per processing attempt. Disabled attempts skip both providers but still record stage completion and hand off to repository recording; check failures stop processing before project writes. Completed replays use their retained outcome without rechecking enablement.
+
 ## Completion hook
 
 The `project.analysis.completed` payload contains only `queue` and `request_id`. Consumers resolve project counts from the request summary and project details from the retained facts and associations. Completion is published even when no projects are affected. Cancelled, superseded, abandoned, and incomplete analyses do not publish this hook.
