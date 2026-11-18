@@ -30,6 +30,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
+	projectanalysismock "github.com/uber/submitqueue/stovepipe/controller/projectanalysis/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
@@ -937,19 +938,11 @@ func TestProcessChecksProjectAnalysisEnablementOnce(t *testing.T) {
 		{name: "check fails", enabled: true, err: assert.AnError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			checks := 0
-			f := newFixture(t, WithEnabled(func(ctx context.Context, queue string) (bool, error) {
-				assert.Equal(t, testQueue, queue)
-				assert.NoError(t, ctx.Err())
-				checks++
-				if checks > 1 {
-					return !test.enabled, nil
-				}
-				return test.enabled, test.err
-			}))
+			enablement := projectanalysismock.NewMockEnablement(gomock.NewController(t))
+			enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(test.enabled, test.err).Times(1)
+			f := newFixture(t, WithEnablement(enablement))
 			f.analysisEnabled = test.enabled
 			err := f.deliver(context.Background(), f.message(t))
-			require.Equal(t, 1, checks)
 			if test.err != nil {
 				require.ErrorIs(t, err, test.err)
 				require.Empty(t, f.records)
@@ -979,37 +972,28 @@ func TestProcessChecksProjectAnalysisEnablementOnce(t *testing.T) {
 }
 
 func TestProcessRetriesEnablementFailure(t *testing.T) {
-	checks := 0
-	f := newFixture(t, WithEnabled(func(context.Context, string) (bool, error) {
-		checks++
-		if checks == 1 {
-			return false, assert.AnError
-		}
-		return true, nil
-	}))
+	enablement := projectanalysismock.NewMockEnablement(gomock.NewController(t))
+	gomock.InOrder(
+		enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(false, assert.AnError),
+		enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(true, nil),
+	)
+	f := newFixture(t, WithEnablement(enablement))
 	require.ErrorIs(t, f.deliver(context.Background(), f.message(t)), assert.AnError)
 	require.Empty(t, f.facts)
 	require.Empty(t, f.source)
 	require.Empty(t, f.records)
 	require.NoError(t, f.deliver(context.Background(), f.message(t)))
-	require.Equal(t, 2, checks)
 	require.Equal(t, 1, f.attributerCalls)
 	require.Equal(t, 1, f.resolverCalls)
 	require.Len(t, f.records, 1)
 }
 
 func TestProcessCompletedReplayDoesNotRecheckEnablement(t *testing.T) {
-	checks := 0
-	f := newFixture(t, WithEnabled(func(context.Context, string) (bool, error) {
-		checks++
-		if checks > 1 {
-			return false, assert.AnError
-		}
-		return true, nil
-	}))
+	enablement := projectanalysismock.NewMockEnablement(gomock.NewController(t))
+	enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(true, nil).Times(1)
+	f := newFixture(t, WithEnablement(enablement))
 	require.NoError(t, f.deliver(context.Background(), f.message(t)))
 	require.NoError(t, f.deliver(context.Background(), f.message(t)))
-	require.Equal(t, 1, checks)
 	require.Equal(t, 1, f.attributerCalls)
 	require.Equal(t, 1, f.resolverCalls)
 	require.Len(t, f.records, 2)

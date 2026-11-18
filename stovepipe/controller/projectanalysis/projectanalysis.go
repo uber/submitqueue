@@ -15,6 +15,8 @@
 // Package projectanalysis records project statuses and issue attribution after build analysis.
 package projectanalysis
 
+//go:generate mockgen -source=projectanalysis.go -destination=mock/projectanalysis_mock.go -package=mock
+
 import (
 	"context"
 	"errors"
@@ -45,6 +47,12 @@ import (
 
 type Option func(*Controller)
 
+// Enablement controls whether a queue records project analysis.
+// Calls must be concurrency-safe.
+type Enablement interface {
+	IsProjectAnalysisEnabled(ctx context.Context, queue string) (bool, error)
+}
+
 type Controller struct {
 	logger                   *zap.SugaredLogger
 	scope                    tally.Scope
@@ -56,7 +64,7 @@ type Controller struct {
 	registry                 consumer.TopicRegistry
 	topicKey                 consumer.TopicKey
 	consumerGroup            string
-	isEnabled                func(context.Context, string) (bool, error)
+	enablement               Enablement
 }
 
 func NewController(
@@ -89,10 +97,10 @@ func NewController(
 	return controller
 }
 
-// WithEnabled checks enablement once per processing attempt before either project operation.
-// False skips both operations and completes the stage; an error stops processing.
-func WithEnabled(isEnabled func(context.Context, string) (bool, error)) Option {
-	return func(c *Controller) { c.isEnabled = isEnabled }
+// WithEnablement gates both project operations with one check per processing attempt.
+// False completes the stage without project writes; errors stop processing. Nil enables analysis.
+func WithEnablement(enablement Enablement) Option {
+	return func(c *Controller) { c.enablement = enablement }
 }
 
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
@@ -163,8 +171,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	enabled := true
-	if c.isEnabled != nil {
-		enabled, err = c.isEnabled(ctx, request.Queue)
+	if c.enablement != nil {
+		enabled, err = c.enablement.IsProjectAnalysisEnabled(ctx, request.Queue)
 		if err != nil {
 			return fmt.Errorf("check project analysis enablement: %w", err)
 		}
