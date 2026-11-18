@@ -15,6 +15,8 @@
 // Package queuehealth samples durable pipeline state without changing scheduling decisions.
 package queuehealth
 
+//go:generate mockgen -source=queuehealth.go -destination=mock/queuehealth_mock.go -package=mock
+
 import (
 	"context"
 	"errors"
@@ -39,8 +41,8 @@ type Observation struct {
 	PendingWithCapacity bool
 	// HeadNotIngested means the source-control head has no latest request yet.
 	HeadNotIngested bool
-	// DispatchAgeMs is the oldest processing age among requests with no retained build trigger.
-	DispatchAgeMs int64
+	// Dispatches describes processing requests with no retained build trigger.
+	Dispatches []PendingDispatch
 	// BuildAgeMs is the oldest trigger age among nonterminal builds, including runner queue time.
 	BuildAgeMs int64
 	// FinalizationAgeMs is the oldest time awaiting request finalization after all builds ended.
@@ -49,6 +51,14 @@ type Observation struct {
 	ActiveBuildCount int
 	// UnaccountedSlots is the positive excess of occupied slots over observed processing requests.
 	UnaccountedSlots int32
+}
+
+// PendingDispatch identifies a request awaiting its build handoff.
+type PendingDispatch struct {
+	// RequestID is the queue-local identity and the dispatch partition key.
+	RequestID string
+	// AgeMs is the elapsed time since retained admission, in milliseconds.
+	AgeMs int64
 }
 
 // Controller reads queue health. Failed or incomplete reads never return a healthy observation.
@@ -251,7 +261,7 @@ func observeProcessing(ctx context.Context, store storage.Storage, request entit
 		return fmt.Errorf("processing request has no admission timestamp")
 	}
 	if !hasBuild {
-		result.DispatchAgeMs = max(result.DispatchAgeMs, now-processingAt)
+		result.Dispatches = append(result.Dispatches, PendingDispatch{RequestID: request.ID, AgeMs: now - processingAt})
 	}
 	if hasBuild && activeBuilds == 0 {
 		if finishedAt == 0 {

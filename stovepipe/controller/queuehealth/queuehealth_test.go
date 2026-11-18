@@ -165,7 +165,7 @@ func TestObserve(t *testing.T) {
 			f.ids = []string{"2"}
 			f.requests["2"] = request("2", entity.RequestStateProcessing)
 			f.logs["2"] = []entity.RequestLog{admission("2")}
-		}, want: Observation{DispatchAgeMs: 180000}},
+		}, want: Observation{Dispatches: []PendingDispatch{{RequestID: "2", AgeMs: 180000}}}},
 		{name: "queued build counts as active", configure: func(f *fixture) {
 			f.ids = []string{"1"}
 			f.requests["1"] = request("1", entity.RequestStateProcessing)
