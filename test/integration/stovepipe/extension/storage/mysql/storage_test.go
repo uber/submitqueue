@@ -58,6 +58,30 @@ func TestMySQLStorage(t *testing.T) {
 	require.NoError(t, err, "failed to create storage")
 	factory := mysqlFactory{backend: backend}
 
+	t.Run("ActiveRequestStore", func(t *testing.T) {
+		first, err := backend.For("active/first")
+		require.NoError(t, err)
+		other, err := backend.For("active/other")
+		require.NoError(t, err)
+		index := first.GetActiveRequestStore()
+		for _, id := range []string{"10", "2", "42"} {
+			require.NoError(t, index.Create(ctx, id))
+		}
+		require.ErrorIs(t, index.Create(ctx, "2"), storage.ErrAlreadyExists)
+		require.NoError(t, other.GetActiveRequestStore().Create(ctx, "other"))
+		ids, err := index.List(ctx, "", 2)
+		require.NoError(t, err)
+		require.Equal(t, []string{"10", "2"}, ids)
+		ids, err = index.List(ctx, "2", 2)
+		require.NoError(t, err)
+		require.Equal(t, []string{"42"}, ids)
+		require.NoError(t, index.Delete(ctx, "2"))
+		require.NoError(t, index.Delete(ctx, "2"))
+		ids, err = index.List(ctx, "", 10)
+		require.NoError(t, err)
+		require.Equal(t, []string{"10", "42"}, ids)
+	})
+
 	t.Run("QueueStateTransitions", func(t *testing.T) {
 		resetStorage(t, db)
 		testQueueStateTransitions(t, ctx, db, backend)

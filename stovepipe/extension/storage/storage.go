@@ -69,6 +69,9 @@ type Factory interface {
 // to that queue: entity arguments whose queue disagrees with the binding are
 // rejected, and reads never surface another queue's records.
 type Storage interface {
+	// GetActiveRequestStore returns the active-request identity index.
+	GetActiveRequestStore() ActiveRequestStore
+
 	// GetIssueRepairStore returns per-executor repair dispositions.
 	GetIssueRepairStore() IssueRepairStore
 

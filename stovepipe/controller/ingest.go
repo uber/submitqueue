@@ -153,6 +153,10 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 		return entity.IngestResult{}, err
 	}
 
+	if err := trackActiveRequest(ctx, store, request); err != nil {
+		return entity.IngestResult{}, err
+	}
+
 	if request.State == entity.RequestStateAccepted {
 		log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
 		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
@@ -346,6 +350,17 @@ func (c *IngestController) publishProcess(ctx context.Context, id, queue string)
 		PartitionKey: queue,
 	}); err != nil {
 		return fmt.Errorf("failed to publish process request: %w", err)
+	}
+	return nil
+}
+
+func trackActiveRequest(ctx context.Context, store storage.Storage, request entity.Request) error {
+	if request.State.IsTerminal() {
+		return nil
+	}
+	err := store.GetActiveRequestStore().Create(ctx, request.ID)
+	if err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		return fmt.Errorf("track active request %s: %w", request.ID, err)
 	}
 	return nil
 }
