@@ -128,6 +128,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
+	// A result is only the request's outcome while validation still owns it.
+	// Validated is let through because a retry lands there after the state write
+	// succeeded and the hand-off to batch did not; past that the batch owns the
+	// request, and a replayed result must neither rewind nor terminate it.
+	if request.State != entity.RequestStateStarted && request.State != entity.RequestStateValidated {
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_stale", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Infow("skipping landconflict signal for request past validation",
+			"request_id", request.ID,
+			"state", string(request.State),
+		)
+		return nil
+	}
+
 	if result.Outcome != runwaypb.Outcome_SUCCEEDED {
 		metrics.NamedCounter(c.metricsScope, opName, "not_landable", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("request not landable",

@@ -345,28 +345,6 @@ func (s *E2EIntegrationSuite) redeliverLandConflictSignal(req request, outcome r
 	}), "failed to publish %s message", topic)
 }
 
-// queueMessageIDs returns the IDs of every row the queue still holds for the
-// topic, in offset order. A publish that deduplicated wrote no row, so the list
-// shows whether a republish reached the topic.
-func (s *E2EIntegrationSuite) queueMessageIDs(queueName string, topic consumer.TopicKey) []string {
-	t := s.T()
-	t.Helper()
-
-	rows, err := s.queueDB.QueryContext(s.ctx,
-		"SELECT id FROM queue_messages WHERE tenant = ? AND topic = ? ORDER BY `offset`", queueName, topic.String())
-	require.NoError(t, err, "failed to read queue rows for %s", topic)
-	defer rows.Close()
-
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		require.NoError(t, rows.Scan(&id))
-		ids = append(ids, id)
-	}
-	require.NoError(t, rows.Err())
-	return ids
-}
-
 // batchState reads a batch's current state from the operating store.
 func (s *E2EIntegrationSuite) batchState(queue, batchID string) entity.BatchState {
 	t := s.T()

@@ -892,42 +892,15 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	assert.ErrorContains(t, err, "failed to terminate rejected request")
 }
 
-// A validate message redelivered after the request has moved past validation.
-// The expectations record what the controller does today: it reports
-// "validating" again, re-runs the validator, and then either fails the request
-// out from under its batch or asks runway for the land-conflict check again.
-func TestController_Process_RedeliveryForAdvancedRequest(t *testing.T) {
-	tests := []struct {
-		name               string
-		state              entity.RequestState
-		validatorErr       error
-		wantWrittenStates  []entity.RequestState
-		wantLogStatuses    []entity.RequestStatus
-		wantCheckPublishes int
-	}{
-		{
-			name:              "batched, validator rejects",
-			state:             entity.RequestStateBatched,
-			validatorErr:      fmt.Errorf("%w: policy changed", validator.ErrRejected),
-			wantWrittenStates: []entity.RequestState{entity.RequestStateError},
-			wantLogStatuses:   []entity.RequestStatus{entity.RequestStatusValidating, entity.RequestStatusError},
-		},
-		{
-			name:               "batched, validator passes",
-			state:              entity.RequestStateBatched,
-			wantLogStatuses:    []entity.RequestStatus{entity.RequestStatusValidating},
-			wantCheckPublishes: 1,
-		},
-		{
-			name:               "validated, validator passes",
-			state:              entity.RequestStateValidated,
-			wantLogStatuses:    []entity.RequestStatus{entity.RequestStatusValidating},
-			wantCheckPublishes: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+// A validate message redelivered after the request has moved past validation
+// is acked without touching it: no "validating" log, no validator call, no
+// state write, and no second land-conflict check.
+func TestController_Process_RedeliveryForAdvancedRequestIsSkipped(t *testing.T) {
+	for _, state := range []entity.RequestState{
+		entity.RequestStateValidated,
+		entity.RequestStateBatched,
+	} {
+		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
 			request := entity.Request{
@@ -935,34 +908,15 @@ func TestController_Process_RedeliveryForAdvancedRequest(t *testing.T) {
 				Queue:        "test-queue",
 				Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 				LandStrategy: mergestrategy.MergeStrategyRebase,
-				State:        tt.state,
+				State:        state,
 				Version:      3,
 			}
-			store, mockReqStore := newMockStorage(ctrl, request)
-			store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
-			var writtenStates []entity.RequestState
-			mockReqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(3), int32(4)).DoAndReturn(
-				func(_ context.Context, updated entity.Request, _, _ int32) error {
-					writtenStates = append(writtenStates, updated.State)
-					return nil
-				},
-			).AnyTimes()
+			// No Update expectation: gomock fails the test on any state write.
+			store, _ := newMockStorage(ctrl, request)
+			// No EXPECTs on the change store, publisher, or validator either.
+			store.EXPECT().GetChangeStore().Return(storagemock.NewMockChangeStore(ctrl)).AnyTimes()
 
-			var logStatuses []entity.RequestStatus
-			checkPublishes := 0
 			mockPub := queuemock.NewMockPublisher(ctrl)
-			mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-				func(_ context.Context, topic string, msg entityqueue.Message) error {
-					if topic == "merge-conflict-check" {
-						checkPublishes++
-						return nil
-					}
-					entry, err := sqmq.UnmarshalRequestLog(msg.Payload)
-					require.NoError(t, err)
-					logStatuses = append(logStatuses, entry.Status)
-					return nil
-				},
-			).AnyTimes()
 			mockQ := queuemock.NewMockQueue(ctrl)
 			mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 			registry, err := consumer.NewTopicRegistry(
@@ -975,17 +929,8 @@ func TestController_Process_RedeliveryForAdvancedRequest(t *testing.T) {
 
 			cpFactory := changeprovidermock.NewMockFactory(ctrl)
 			cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
-
-			validatorCalls := 0
-			mockValidator := validatormock.NewMockValidator(ctrl)
-			mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).DoAndReturn(
-				func(context.Context, entity.Request) error {
-					validatorCalls++
-					return tt.validatorErr
-				},
-			).AnyTimes()
 			mockValidatorFactory := validatormock.NewMockFactory(ctrl)
-			mockValidatorFactory.EXPECT().For(gomock.Any()).Return(mockValidator, nil).AnyTimes()
+			mockValidatorFactory.EXPECT().For(gomock.Any()).Return(validatormock.NewMockValidator(ctrl), nil).AnyTimes()
 
 			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
@@ -996,11 +941,6 @@ func TestController_Process_RedeliveryForAdvancedRequest(t *testing.T) {
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 			require.NoError(t, controller.Process(context.Background(), delivery))
-
-			assert.Equal(t, 1, validatorCalls)
-			assert.Equal(t, tt.wantWrittenStates, writtenStates)
-			assert.Equal(t, tt.wantLogStatuses, logStatuses)
-			assert.Equal(t, tt.wantCheckPublishes, checkPublishes)
 		})
 	}
 }
