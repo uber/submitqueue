@@ -72,6 +72,8 @@ Summary is the default request view, and `?view=history` makes History shareable
 
 **Theme.** Views use BaseUI components with host-supplied `BaseProvider` and Styletron `Provider`. BaseUI owns layout, responsive grids, colors and typography; the stylesheet only enables wrapping long identifiers. There is no independent library theme or styling engine. Hosts choose light, dark, custom, or system-driven themes and own SSR extraction and client hydration. The reference Next.js hosts share a request-scoped Styletron registry that streams new styles and hydrates them in the browser. BaseUI and Styletron React are peers alongside React and React DOM; React 18 and 19 are both supported.
 
+**Appearance.** The shared header control follows the system until the viewer toggles it, then remembers an explicit light or dark choice in a site-wide cookie. Its preference provider supplies state only and does not install a BaseUI theme, styling provider, or document styles. Hosts opt in and map the selected and resolved modes to their own themes; without that provider the control is hidden. The reference hosts choose BaseUI's light and dark themes and use an optional shared theme helper with native system-responsive colors so the first paint matches the system before JavaScript loads.
+
 **Packaging.** Hosts process the ESM UI entries with their bundler for SSR and the browser. BaseUI imports use package entry points, such as `baseui/block`, so the host can supply its own BaseUI package layout. The separate `/server` entries run directly in Node and do not load BaseUI. Package consumer tests exercise direct Node page loading and UI rendering and hydration through Vite.
 
 ## Observability and identity

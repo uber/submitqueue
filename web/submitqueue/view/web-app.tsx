@@ -59,15 +59,15 @@ export function WebApp({ model, children }: WebAppProps) {
   return <AppContext.Provider value={controls}>{children}</AppContext.Provider>;
 }
 
-/** BaseUI link in the theme accent; extend it with `withStyle` so overrides take precedence. */
+/** BaseUI link foreground remains readable on primary and secondary surfaces. */
 export const AccentLink = styled(StyledLink, ({ $theme }) => ({
-  color: $theme.colors.accent500,
-  textDecoration: "none",
-  ":visited": { color: $theme.colors.accent500 },
-  ":hover": { color: $theme.colors.accent500, textDecoration: "underline" },
+  color: $theme.colors.linkText,
+  textDecoration: "underline",
+  ":visited": { color: $theme.colors.linkText },
+  ":hover": { color: $theme.colors.linkText, textDecoration: "underline" },
 }));
 
-/** An in-app link in the theme's accent color, underlined on hover, using the host's router when supplied. */
+/** An underlined in-app link using the host's router when supplied. */
 export function WebLink({ className = "", ...props }: WebLinkProps) {
   const { Link } = useWebNavigation();
   return <AccentLink $as={Link ?? "a"} className={className} {...props} />;

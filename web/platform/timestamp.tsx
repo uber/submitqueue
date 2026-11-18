@@ -2,7 +2,11 @@
 
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { styled, withStyle, type Theme } from "baseui";
-import { Popover, PLACEMENT } from "baseui/popover";
+import { Block } from "baseui/block";
+import { Delete } from "baseui/icon";
+import { Popover, PLACEMENT, type PopoverOverrides } from "baseui/popover";
+import { ALIGN, Radio, RadioGroup, type RadioOverrides } from "baseui/radio";
+import { LabelMedium } from "baseui/typography";
 
 const utcFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium", timeStyle: "long", timeZone: "UTC",
@@ -46,6 +50,47 @@ export function TimeZoneProvider({ children }: { children: ReactNode }) {
   return <TimeZoneContext.Provider value={value}>{children}</TimeZoneContext.Provider>;
 }
 
+const timeZoneRadioOverrides: RadioOverrides = {
+  Label: { style: ({ $theme }: { $theme: Theme }) => $theme.typography.ParagraphSmall },
+  RadioMarkOuter: { style: ({ $theme }: { $theme: Theme }) => ({
+    width: $theme.sizing.scale600, height: $theme.sizing.scale600,
+  }) },
+  Root: { style: ({ $theme, $align }: { $theme: Theme; $align?: string }) => ({
+    marginTop: 0, marginBottom: 0,
+    marginRight: $align === "horizontal" ? $theme.sizing.scale600 : 0,
+    minHeight: $theme.sizing.scale850,
+    "@media (pointer: coarse)": { minHeight: "44px" },
+  }) },
+};
+
+const timestampPopoverCorners = {
+  borderTopLeftRadius: "10px", borderTopRightRadius: "10px",
+  borderBottomLeftRadius: "10px", borderBottomRightRadius: "10px",
+};
+
+const timestampPopoverOverrides: PopoverOverrides = {
+  Body: { style: { zIndex: 1000, backgroundColor: "transparent", ...timestampPopoverCorners } },
+  Inner: { style: ({ $theme }: { $theme: Theme }) => ({
+    backgroundColor: $theme.colors.backgroundPrimary,
+    color: $theme.colors.contentPrimary,
+    // Portaled controls cannot inherit the appearance provider's color scheme.
+    colorScheme: $theme.name?.includes("dark") ? "dark" : "light",
+    ...timestampPopoverCorners,
+    border: `1px solid ${$theme.colors.borderOpaque}`,
+    maxHeight: "calc(100dvh - 24px)", overflowY: "auto",
+  }) },
+};
+
+const IconButton = styled("button", ({ $theme }) => ({
+  display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+  boxSizing: "border-box", width: "28px", height: "28px", padding: 0, border: 0,
+  borderRadius: "4px", backgroundColor: "transparent", color: $theme.colors.contentSecondary,
+  cursor: "pointer",
+  ":hover": { color: $theme.colors.contentPrimary },
+  ":focus-visible": { outline: `2px solid ${$theme.colors.borderSelected}`, outlineOffset: "2px" },
+  "@media (pointer: coarse)": { width: "44px", height: "44px" },
+}));
+
 const TimestampButton = styled("button", ({ $theme }) => ({
   display: "inline", border: 0, borderRadius: "2px", padding: 0, backgroundColor: "transparent",
   color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit",
@@ -59,21 +104,6 @@ const TimestampButton = styled("button", ({ $theme }) => ({
 const Panel = styled("div", ({ $theme }) => ({
   ...$theme.typography.ParagraphSmall, boxSizing: "border-box",
   width: "min(340px, calc(100vw - 24px))", padding: "12px", color: $theme.colors.contentPrimary,
-}));
-const PanelHeading = styled("div", {
-  display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px",
-});
-const Title = styled("h2", ({ $theme }) => ({
-  ...$theme.typography.LabelMedium, margin: 0,
-}));
-const IconButton = styled("button", ({ $theme }) => ({
-  display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-  boxSizing: "border-box", width: "28px", height: "28px", padding: "5px", border: 0,
-  borderRadius: "4px", backgroundColor: "transparent", color: $theme.colors.contentSecondary,
-  cursor: "pointer", fontFamily: "inherit", fontSize: "20px", lineHeight: "inherit",
-  ":hover": { color: $theme.colors.contentPrimary },
-  ":focus-visible": { outline: `2px solid ${$theme.colors.borderSelected}`, outlineOffset: "2px" },
-  "@media (pointer: coarse)": { width: "44px", height: "44px" },
 }));
 const Values = styled("dl", { margin: "10px 0" });
 const ValueGroup = styled("div", ({ $theme }) => ({
@@ -91,15 +121,10 @@ const IsoText = styled("code", ({ $theme }) => ({
 const Divider = styled("hr", ({ $theme }) => ({
   margin: "10px 0 8px", border: 0, borderTop: `1px solid ${$theme.colors.borderOpaque}`,
 }));
-const TimeZoneOptions = styled("fieldset", { margin: 0, padding: 0, border: 0, minWidth: 0 });
-const TimeZoneLabel = styled("legend", ({ $theme }) => ({
+const TimeZoneLabel = styled("div", ({ $theme }) => ({
   ...$theme.typography.ParagraphXSmall, padding: "0 0 4px",
   color: $theme.colors.contentSecondary, fontWeight: 500,
 }));
-const TimeZoneChoice = styled("label", {
-  display: "inline-flex", alignItems: "center", gap: "7px", marginRight: "20px", cursor: "pointer",
-  "@media (pointer: coarse)": { minHeight: "44px" },
-});
 const ScopeNote = styled("p", ({ $theme }) => ({
   margin: "6px 0 0", color: $theme.colors.contentSecondary, fontSize: "11px", lineHeight: "16px",
 }));
@@ -161,25 +186,18 @@ function TimestampPopover({ date, context }: {
       // A wide table can scroll the anchor offscreen; keep the popover in the viewport.
       keepTogether: { enabled: false },
     } }}
-    overrides={{
-      Body: { style: { zIndex: 1000 } },
-      Inner: { style: ({ $theme }: { $theme: Theme }) => ({
-        backgroundColor: $theme.colors.backgroundPrimary,
-        borderTopLeftRadius: "10px", borderTopRightRadius: "10px",
-        borderBottomLeftRadius: "10px", borderBottomRightRadius: "10px",
-        border: `1px solid ${$theme.colors.borderOpaque}`, boxShadow: $theme.lighting.shadow600,
-        maxHeight: "calc(100dvh - 24px)", overflowY: "auto",
-      }) },
-    }}
+    overrides={timestampPopoverOverrides}
     content={<Panel id={panelId} role="dialog" aria-modal="false" aria-labelledby={`${panelId}-title`}
       aria-describedby={`${panelId}-scope`} onBlur={event => {
         const next = event.relatedTarget;
         if (next instanceof Node && !event.currentTarget.contains(next) && !trigger.current?.contains(next)) closePopover();
       }}>
-      <PanelHeading>
-        <Title id={`${panelId}-title`}>Timestamp</Title>
-        <IconButton type="button" aria-label="Close timestamp options" onClick={() => closePopover(true)}>×</IconButton>
-      </PanelHeading>
+      <Block display="flex" alignItems="center" justifyContent="space-between" gridGap="scale500">
+        <LabelMedium as="h2" id={`${panelId}-title`} margin="0">Timestamp</LabelMedium>
+        <IconButton type="button" aria-label="Close timestamp options" onClick={() => closePopover(true)}>
+          <Delete size={28} title="" aria-hidden="true" />
+        </IconButton>
+      </Block>
       <Values>
         <ValueGroup><ValueLabel>Local · {context.browserTimeZone}</ValueLabel><Value>{context.browserFormatter.format(date)}</Value></ValueGroup>
         <ValueGroup><ValueLabel>UTC</ValueLabel><Value>{utcFormatter.format(date)}</Value></ValueGroup>
@@ -200,13 +218,12 @@ function TimestampPopover({ date, context }: {
       </Values>
       <CopyStatus $error={Boolean(copyStatus && copyStatus !== "Copied")} role="status">{copyStatus}</CopyStatus>
       <Divider />
-      <TimeZoneOptions>
-        <TimeZoneLabel>Display timezone</TimeZoneLabel>
-        <TimeZoneChoice><input type="radio" name={`${panelId}-timezone`} checked={context.selection === "browser"}
-          onChange={() => context.selectTimeZone("browser")} />Local</TimeZoneChoice>
-        <TimeZoneChoice><input type="radio" name={`${panelId}-timezone`} checked={context.selection === "utc"}
-          onChange={() => context.selectTimeZone("utc")} />UTC</TimeZoneChoice>
-      </TimeZoneOptions>
+      <TimeZoneLabel id={`${panelId}-timezone-label`}>Display timezone</TimeZoneLabel>
+      <RadioGroup name={`${panelId}-timezone`} aria-labelledby={`${panelId}-timezone-label`} align={ALIGN.horizontal}
+        value={context.selection} onChange={event => context.selectTimeZone(event.currentTarget.value as "browser" | "utc")}>
+        <Radio value="browser" overrides={timeZoneRadioOverrides}>Local</Radio>
+        <Radio value="utc" overrides={timeZoneRadioOverrides}>UTC</Radio>
+      </RadioGroup>
       <ScopeNote id={`${panelId}-scope`}>Applies to all timestamps.</ScopeNote>
     </Panel>}
   >
