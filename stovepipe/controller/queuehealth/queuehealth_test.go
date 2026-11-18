@@ -202,7 +202,7 @@ func TestObserve(t *testing.T) {
 		{name: "finalization stalled", configure: func(f *fixture) {
 			f.ids = []string{"1"}
 			f.requests["1"] = request("1", entity.RequestStateProcessing)
-			f.logs["1"] = []entity.RequestLog{admission("1"), trigger("1", "b", 120000), {Queue: "q", RequestID: "1", Event: entity.RequestEventBuildFinished, TimestampMs: sampleTimeMs - 30000}}
+			f.logs["1"] = []entity.RequestLog{admission("1"), trigger("1", "b", 120000), {Queue: "q", RequestID: "1", Event: entity.RequestEventBuildFinished, TimestampMs: sampleTimeMs - 30000, Metadata: map[string]string{requestlog.MetadataKeyBuildID: "b"}}}
 			b := f.builds["b"]
 			b.Status = entity.BuildStatusSucceeded
 			f.builds["b"] = b
