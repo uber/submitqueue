@@ -166,7 +166,7 @@ func (c *controller) observeQueue(ctx context.Context, queue string) (Observatio
 			}
 			switch request.State {
 			case entity.RequestStateAccepted:
-				pending = true
+				pending = pending || request.ID == row.LatestRequestID
 			case entity.RequestStateProcessing:
 				processing++
 				if err := observeProcessing(ctx, store, request, now, &result); err != nil {

@@ -152,6 +152,7 @@ func TestObserve(t *testing.T) {
 		{name: "healthy idle"},
 		{name: "new head awaits ingestion", configure: func(f *fixture) { r := f.requests["2"]; r.URI = "old"; f.requests["2"] = r }, want: Observation{HeadNotIngested: true}},
 		{name: "cold start", configure: func(f *fixture) { f.failure = "missing queue" }, want: Observation{HeadNotIngested: true}},
+		{name: "obsolete accepted request needs no build", configure: func(f *fixture) { f.ids = []string{"1"}; f.requests["1"] = request("1", entity.RequestStateAccepted) }},
 		{name: "pending with capacity", configure: func(f *fixture) { f.ids = []string{"2"}; f.requests["2"] = request("2", entity.RequestStateAccepted) }, want: Observation{PendingWithCapacity: true}},
 		{name: "normal active build blocks pending work", configure: func(f *fixture) {
 			f.queue.InFlightCount = 1
@@ -215,6 +216,8 @@ func TestObserve(t *testing.T) {
 			f.builds["b"] = b
 		}, want: Observation{FinalizationAgeMs: 180000}},
 		{name: "pagination", configure: func(f *fixture) {
+			f.requests["2"] = request("2", entity.RequestStateAccepted)
+			f.ids = []string{"2"}
 			for i := 0; i < pageSize+1; i++ {
 				id := fmt.Sprintf("%05d", i)
 				f.ids = append(f.ids, id)
