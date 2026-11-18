@@ -207,14 +207,14 @@ func TestObserve(t *testing.T) {
 			b.Status = entity.BuildStatusSucceeded
 			f.builds["b"] = b
 		}, want: Observation{FinalizationAgeMs: 30000}},
-		{name: "terminal build without completion log stays visible", configure: func(f *fixture) {
+		{name: "terminal build without completion timestamp is unknown", configure: func(f *fixture) {
 			f.ids = []string{"1"}
 			f.requests["1"] = request("1", entity.RequestStateProcessing)
 			f.logs["1"] = []entity.RequestLog{admission("1"), trigger("1", "b", 120000)}
 			b := f.builds["b"]
 			b.Status = entity.BuildStatusSucceeded
 			f.builds["b"] = b
-		}, want: Observation{FinalizationAgeMs: 180000}},
+		}, wantErr: true},
 		{name: "pagination", configure: func(f *fixture) {
 			f.requests["2"] = request("2", entity.RequestStateAccepted)
 			f.ids = []string{"2"}

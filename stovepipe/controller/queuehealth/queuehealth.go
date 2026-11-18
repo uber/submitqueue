@@ -45,7 +45,7 @@ type Observation struct {
 	Dispatches []PendingDispatch
 	// BuildAgeMs is the oldest trigger age among nonterminal builds, including runner queue time.
 	BuildAgeMs int64
-	// FinalizationAgeMs is the oldest time awaiting request finalization after all builds ended.
+	// FinalizationAgeMs is the oldest age since all retained builds finished, in milliseconds.
 	FinalizationAgeMs int64
 	// ActiveBuildCount counts nonterminal builds attached to processing requests.
 	ActiveBuildCount int
@@ -214,7 +214,7 @@ func observeProcessing(ctx context.Context, store storage.Storage, request entit
 	hasBuild := false
 	seenBuilds := make(map[string]struct{})
 	activeBuilds := 0
-	var finishedAt int64
+	finishedAt := make(map[string]int64)
 	for _, log := range logs {
 		if log.RequestID != request.ID || log.Queue != request.Queue {
 			return fmt.Errorf("processing history identity mismatch")
@@ -226,7 +226,7 @@ func observeProcessing(ctx context.Context, store storage.Storage, request entit
 			processingAt = log.TimestampMs
 		}
 		if log.Event == entity.RequestEventBuildFinished {
-			finishedAt = max(finishedAt, log.TimestampMs)
+			finishedAt[log.Metadata[requestlog.MetadataKeyBuildID]] = log.TimestampMs
 		}
 		if log.Event != entity.RequestEventBuildTriggered {
 			continue
@@ -264,10 +264,14 @@ func observeProcessing(ctx context.Context, store storage.Storage, request entit
 		result.Dispatches = append(result.Dispatches, PendingDispatch{RequestID: request.ID, AgeMs: now - processingAt})
 	}
 	if hasBuild && activeBuilds == 0 {
-		if finishedAt == 0 {
-			finishedAt = processingAt
+		var lastFinishedAt int64
+		for id := range seenBuilds {
+			if finishedAt[id] == 0 {
+				return fmt.Errorf("terminal build has no completion timestamp")
+			}
+			lastFinishedAt = max(lastFinishedAt, finishedAt[id])
 		}
-		result.FinalizationAgeMs = max(result.FinalizationAgeMs, now-finishedAt)
+		result.FinalizationAgeMs = max(result.FinalizationAgeMs, now-lastFinishedAt)
 	}
 	return nil
 }
