@@ -239,3 +239,17 @@ it("shows paginated affected projects and keeps the collapse action on failure",
   expect(screen.getByRole("alert")).toHaveTextContent("Projects unavailable");
   expect(screen.getByRole("link", { name: "Hide projects" })).toHaveAttribute("href", "/issues");
 });
+
+it("removes stale affected projects when an issue becomes resolved", () => {
+  const issue = { taskId: "test", unitId: "unit", kind: "existing", buildId: "build/7", firstSeenBuildId: "build/1", projectsHref: "/projects" };
+  const model = { status: "complete", firstHref: null, nextHref: null, issues: [issue] };
+  const selection = { taskId: "test", unitId: "unit", key: "selection", closeHref: "/issues", result: { ok: true as const, data: {
+    projects: ["project-1"], complete: true, firstHref: null, nextHref: null,
+  } } };
+  const { rerender } = render(<RequestIssues model={model} projects={selection} />);
+  expect(screen.getByRole("region", { name: "Affected projects for test unit" })).toBeVisible();
+  rerender(<RequestIssues model={{ ...model, issues: [{ ...issue, kind: "closed", projectsHref: null }] }} projects={selection} />);
+  expect(screen.queryByRole("region", { name: "Affected projects for test unit" })).toBeNull();
+  expect(screen.queryByRole("link", { name: /projects/i })).toBeNull();
+  expect(screen.getByRole("table", { name: "Resolved Issues" })).toHaveTextContent("Not available");
+});

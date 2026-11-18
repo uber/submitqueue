@@ -473,9 +473,10 @@ describe("Stovepipe page loading", () => {
         repositoryBreakageDegree: 0,
         complete: false,
         projects: [
-          { project: "green", projectType: "service", breakageDegree: 0 },
-          { project: "broken", projectType: "future-type", breakageDegree: 0.25 },
-          { project: "unknown", projectType: "", breakageDegree: null },
+          { project: "green", projectType: "service", breakageDegree: 0, issuesHref: null },
+          { project: "broken", projectType: "future-type", breakageDegree: 0.25,
+            issuesHref: paths.projectIssues(summary.queue, summary.requestId, "broken", "opaque+/=", 50) },
+          { project: "unknown", projectType: "", breakageDegree: null, issuesHref: null },
         ],
         firstHref: paths.request(summary.queue, summary.requestId),
         nextHref: paths.request(summary.queue, summary.requestId, "next+/="),

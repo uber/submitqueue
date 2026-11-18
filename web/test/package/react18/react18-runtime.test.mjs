@@ -133,7 +133,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
         .find(entry => entry.textContent.includes("example-project"));
       assert.ok(row);
       assert.deepEqual([...row.querySelectorAll("td")].map(cell => cell.textContent),
-        ["example-project", "service", "Green", "Show issues"]);
+        ["example-project", "service", "Green", "No issues"]);
       assert.doesNotMatch(container.textContent, /%/u);
     }
     await act(async () => root.unmount());
