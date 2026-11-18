@@ -30,6 +30,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
+	projectanalysismock "github.com/uber/submitqueue/stovepipe/controller/projectanalysis/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
@@ -48,6 +49,7 @@ const testQueue = "validation/main"
 
 type fixture struct {
 	controller      *Controller
+	analysisEnabled bool
 	dlq             *DLQController
 	ctrl            *gomock.Controller
 	request         entity.Request
@@ -66,12 +68,13 @@ type fixture struct {
 	attributerCalls int
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T, options ...Option) *fixture {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	f := &fixture{
-		ctrl:    ctrl,
-		request: entity.Request{ID: "7", Queue: testQueue, URI: "git://repository/main/commit", State: entity.RequestStateFailed, TerminalBuildID: "build/7"},
+		analysisEnabled: true,
+		ctrl:            ctrl,
+		request:         entity.Request{ID: "7", Queue: testQueue, URI: "git://repository/main/commit", State: entity.RequestStateFailed, TerminalBuildID: "build/7"},
 		projectStatuses: []projectstatus.Result{
 			{ProjectInfo: projectstatus.ProjectInfo{Name: "a", ProjectType: "service"}, Degree: entity.DegreeBroken},
 			{ProjectInfo: projectstatus.ProjectInfo{Name: "b", ProjectType: "service"}, Degree: entity.DegreeGreen},
@@ -152,7 +155,7 @@ func newFixture(t *testing.T) *fixture {
 	reverse.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.reverse, "reverse/create")).AnyTimes()
 	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-		if log.Event == entity.RequestEventProjectFactsRecorded || log.Event == entity.RequestEventProjectAnalysisCompleted {
+		if log.Event == entity.RequestEventProjectFactsRecorded || (log.Event == entity.RequestEventProjectAnalysisCompleted && f.analysisEnabled) {
 			require.Len(t, f.facts, len(f.projectStatuses))
 			require.Len(t, f.indexes, len(f.projectStatuses))
 			projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
@@ -230,7 +233,7 @@ func newFixture(t *testing.T) *fixture {
 		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
 	})
 	require.NoError(t, err)
-	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
+	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis", options...)
 	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
 	return f
 }
@@ -922,4 +925,76 @@ func assertProjectStatusOperationMetrics(t *testing.T, scope tally.TestScope, op
 	finish, ok := snapshot.Histograms()["projectanalysis_controller."+operation+".finish+queue="+projectStatusTestQueue+",result="+outcome]
 	require.True(t, ok)
 	assert.EqualValues(t, 1, totalSamples(finish.Durations()))
+}
+
+func TestProcessChecksProjectAnalysisEnablementOnce(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		enabled bool
+		err     error
+	}{
+		{name: "enabled", enabled: true},
+		{name: "disabled"},
+		{name: "check fails", enabled: true, err: assert.AnError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			enablement := projectanalysismock.NewMockEnablement(gomock.NewController(t))
+			enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(test.enabled, test.err).Times(1)
+			f := newFixture(t, WithEnablement(enablement))
+			f.analysisEnabled = test.enabled
+			err := f.deliver(context.Background(), f.message(t))
+			if test.err != nil {
+				require.ErrorIs(t, err, test.err)
+				require.Empty(t, f.records)
+				require.NotContains(t, f.logs, f.completion().ID)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, f.records, 1)
+				require.Equal(t, f.completion(), f.logs[f.completion().ID])
+			}
+			if test.enabled && test.err == nil {
+				require.Equal(t, 1, f.attributerCalls)
+				require.Equal(t, 1, f.resolverCalls)
+			} else {
+				require.Zero(t, f.attributerCalls)
+				require.Zero(t, f.resolverCalls)
+				require.Empty(t, f.facts)
+				require.Empty(t, f.source)
+				require.Empty(t, f.reverse)
+				require.Empty(t, f.indexes)
+				facts := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
+				issues := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
+				require.NotContains(t, f.logs, facts.ID)
+				require.NotContains(t, f.logs, issues.ID)
+			}
+		})
+	}
+}
+
+func TestProcessRetriesEnablementFailure(t *testing.T) {
+	enablement := projectanalysismock.NewMockEnablement(gomock.NewController(t))
+	gomock.InOrder(
+		enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(false, assert.AnError),
+		enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(true, nil),
+	)
+	f := newFixture(t, WithEnablement(enablement))
+	require.ErrorIs(t, f.deliver(context.Background(), f.message(t)), assert.AnError)
+	require.Empty(t, f.facts)
+	require.Empty(t, f.source)
+	require.Empty(t, f.records)
+	require.NoError(t, f.deliver(context.Background(), f.message(t)))
+	require.Equal(t, 1, f.attributerCalls)
+	require.Equal(t, 1, f.resolverCalls)
+	require.Len(t, f.records, 1)
+}
+
+func TestProcessCompletedReplayDoesNotRecheckEnablement(t *testing.T) {
+	enablement := projectanalysismock.NewMockEnablement(gomock.NewController(t))
+	enablement.EXPECT().IsProjectAnalysisEnabled(gomock.Any(), testQueue).Return(true, nil).Times(1)
+	f := newFixture(t, WithEnablement(enablement))
+	require.NoError(t, f.deliver(context.Background(), f.message(t)))
+	require.NoError(t, f.deliver(context.Background(), f.message(t)))
+	require.Equal(t, 1, f.attributerCalls)
+	require.Equal(t, 1, f.resolverCalls)
+	require.Len(t, f.records, 2)
 }

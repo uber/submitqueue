@@ -15,6 +15,8 @@
 // Package projectanalysis records project statuses and issue attribution after build analysis.
 package projectanalysis
 
+//go:generate mockgen -source=projectanalysis.go -destination=mock/projectanalysis_mock.go -package=mock
+
 import (
 	"context"
 	"errors"
@@ -43,6 +45,14 @@ import (
 	"go.uber.org/zap"
 )
 
+type Option func(*Controller)
+
+// Enablement controls whether a queue records project analysis.
+// Calls must be concurrency-safe.
+type Enablement interface {
+	IsProjectAnalysisEnabled(ctx context.Context, queue string) (bool, error)
+}
+
 type Controller struct {
 	logger                   *zap.SugaredLogger
 	scope                    tally.Scope
@@ -54,6 +64,7 @@ type Controller struct {
 	registry                 consumer.TopicRegistry
 	topicKey                 consumer.TopicKey
 	consumerGroup            string
+	enablement               Enablement
 }
 
 func NewController(
@@ -66,8 +77,9 @@ func NewController(
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
+	options ...Option,
 ) *Controller {
-	return &Controller{
+	controller := &Controller{
 		logger:                   logger.Named("projectanalysis_controller"),
 		scope:                    scope.SubScope("projectanalysis_controller"),
 		stores:                   stores,
@@ -79,6 +91,16 @@ func NewController(
 		topicKey:                 topicKey,
 		consumerGroup:            consumerGroup,
 	}
+	for _, option := range options {
+		option(controller)
+	}
+	return controller
+}
+
+// WithEnablement gates both project operations with one check per processing attempt.
+// False completes the stage without project writes; errors stop processing. Nil enables analysis.
+func WithEnablement(enablement Enablement) Option {
+	return func(c *Controller) { c.enablement = enablement }
 }
 
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
@@ -148,11 +170,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("require completed terminal build analysis: %w", err)
 	}
 
-	if err := c.recordIssueAttribution(ctx, store, request); err != nil {
-		return err
+	enabled := true
+	if c.enablement != nil {
+		enabled, err = c.enablement.IsProjectAnalysisEnabled(ctx, request.Queue)
+		if err != nil {
+			return fmt.Errorf("check project analysis enablement: %w", err)
+		}
 	}
-	if err := c.recordProjectStatuses(ctx, store, request); err != nil {
-		return err
+	if enabled {
+		if err := c.recordIssueAttribution(ctx, store, request); err != nil {
+			return err
+		}
+		if err := c.recordProjectStatuses(ctx, store, request); err != nil {
+			return err
+		}
 	}
 	if err := c.requestLogMaterializer.PersistLog(ctx, store, projectAnalysisCompletedLog); err != nil {
 		return fmt.Errorf("record project analysis completion: %w", err)
