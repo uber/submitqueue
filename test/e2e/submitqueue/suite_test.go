@@ -39,10 +39,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
@@ -778,6 +782,136 @@ func (s *E2EIntegrationSuite) TestBatchRedelivery_DoesNotEnrolTheRequestTwice() 
 	s.openGate(queue, gateGroup, heldBatch)
 	s.awaitStatus(req, entity.RequestStatusLanded)
 	s.awaitStatus(settle, entity.RequestStatusLanded)
+}
+
+// A validate message and a SUCCEEDED land-conflict result replayed after the
+// request has been claimed by a batch. The expectations record what the
+// pipeline does today: the replayed result writes Validated over Batched while
+// the batch that owns the request is still running.
+//
+// The build gate holds the request in Batched for the replays, as in
+// TestBatchRedelivery_DoesNotEnrolTheRequestTwice. The second request is the
+// settle signal for the replayed validate: validate, the conflict check and its
+// signal are each consumed in order per queue, so its batch existing proves
+// anything the replay set off for the first request has already been handled.
+func (s *E2EIntegrationSuite) TestStaleValidationMessages_RewindABatchedRequest() {
+	t := s.T()
+
+	const queue = "e2e-stale-validation-queue"
+	const gateGroup = "orchestrator"
+	const heldBatch = "1"
+
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the request stays batched for the replays")
+	defer s.openGate(queue, gateGroup, heldBatch)
+
+	req := s.land(queue, "github://github.example.com/uber/e2e-stale-validation/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
+	s.awaitStatus(req, entity.RequestStatusSpeculating)
+	require.Equal(t, entity.RequestStateBatched, s.terminalState(req))
+
+	s.publishIDMessage(queue, topickey.TopicKeyValidate, req.sqid)
+	settle := s.land(queue, "github://github.example.com/uber/e2e-stale-validation/pull/2/1234567890abcdef1234567890abcdef12345678")
+	s.awaitBatchID(settle)
+	s.log.Logf("STALE-REPRO after replayed validate: request %s is %q", req.sqid, s.terminalState(req))
+
+	s.redeliverLandConflictSignal(req, runwaypb.Outcome_SUCCEEDED, "")
+	pollUntil(persistPollInterval, func() bool {
+		got := s.terminalState(req)
+		s.log.Logf("STALE-REPRO after replayed signal: request %s is %q", req.sqid, got)
+		return got == entity.RequestStateValidated
+	})
+	assert.Equal(t, entity.BatchStateSpeculating, s.batchState(queue, heldBatch),
+		"the batch that owns the request is still running")
+	s.log.Logf("STALE-REPRO batches for request %s: %v", req.sqid, s.batchIDsFor(req))
+	// The request ID is the message ID on both topics, so one row per request
+	// means the republish from each replay deduplicated.
+	batchRows := s.queueMessageIDs(queue, topickey.TopicKeyBatch)
+	checkRows := s.queueMessageIDs(queue, runwaymq.TopicKeyMergeConflictCheck)
+	s.log.Logf("STALE-REPRO queue rows: batch=%v merge-conflict-check=%v signal=%v validate=%v", batchRows, checkRows,
+		s.queueMessageIDs(queue, runwaymq.TopicKeyMergeConflictCheckSignal), s.queueMessageIDs(queue, topickey.TopicKeyValidate))
+	assert.Equal(t, []string{req.sqid, settle.sqid}, batchRows, "the republished batch message deduplicated")
+	assert.Equal(t, []string{req.sqid, settle.sqid}, checkRows, "the republished land-conflict check deduplicated")
+
+	s.openGate(queue, gateGroup, heldBatch)
+	s.awaitStatus(req, entity.RequestStatusLanded)
+	s.awaitStatus(settle, entity.RequestStatusLanded)
+	s.log.Logf("STALE-REPRO timeline for request %s: %v", req.sqid, s.timeline(req))
+}
+
+// A not-landable land-conflict result replayed after the request has been
+// claimed by a batch. The expectations record what the pipeline does today: the
+// request is failed while its batch runs on, the batch still merges the change,
+// the user can no longer cancel it, and the same change is admitted again.
+//
+// The build gate holds the request in Batched for the replay, as in
+// TestBatchRedelivery_DoesNotEnrolTheRequestTwice.
+func (s *E2EIntegrationSuite) TestStaleNotLandableSignal_FailsABatchedRequest() {
+	t := s.T()
+
+	const queue = "e2e-stale-not-landable-queue"
+	const gateGroup = "orchestrator"
+	const heldBatch = "1"
+	const uri = "github://github.example.com/uber/e2e-stale-not-landable/pull/1/abcdef0123456789abcdef0123456789abcdef01"
+
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the request stays batched for the replay")
+	defer s.openGate(queue, gateGroup, heldBatch)
+
+	req := s.land(queue, uri)
+	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
+	s.awaitStatus(req, entity.RequestStatusSpeculating)
+	require.Equal(t, entity.RequestStateBatched, s.terminalState(req))
+
+	s.redeliverLandConflictSignal(req, runwaypb.Outcome_FAILED, "replayed conflict")
+	pollUntil(persistPollInterval, func() bool {
+		got := s.terminalState(req)
+		s.log.Logf("STALE-FAILED after replayed signal: request %s is %q", req.sqid, got)
+		return got == entity.RequestStateError
+	})
+	s.awaitStatus(req, entity.RequestStatusError)
+	s.log.Logf("STALE-FAILED request %s: status=%q last_error=%q batch %s is %q",
+		req.sqid, s.mustStatus(req), s.lastError(req), heldBatch, s.batchState(queue, heldBatch))
+	assert.Equal(t, entity.BatchStateSpeculating, s.batchState(queue, heldBatch),
+		"the batch that owns the request is still running")
+
+	cancelResp, cancelErr := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: req.sqid, Queue: queue, Reason: "e2e stale not-landable"})
+	s.log.Logf("STALE-FAILED cancel while batch %s is live: response=%v error=%v", heldBatch, cancelResp, cancelErr)
+
+	// The resubmission is behind the cancel on the wire, and its own batch
+	// serializes behind the held one, so it is observed while that is live.
+	resubmitResp, resubmitErr := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
+		Queue:    queue,
+		Change:   &changepb.Change{Uris: []string{uri}},
+		Strategy: mergestrategypb.Strategy_REBASE,
+	})
+	s.log.Logf("STALE-FAILED resubmission of the same URI: response=%v error=%v", resubmitResp, resubmitErr)
+	require.NoError(t, resubmitErr)
+	resubmit := request{queue: queue, sqid: resubmitResp.Sqid}
+	var resubmitStatus entity.RequestStatus
+	pollUntil(persistPollInterval, func() bool {
+		resubmitStatus, _ = s.currentStatus(resubmit)
+		s.log.Logf("STALE-FAILED resubmission %s is %q", resubmit.sqid, resubmitStatus)
+		switch resubmitStatus {
+		case entity.RequestStatusUnknown, entity.RequestStatusAccepted, entity.RequestStatusStarted,
+			entity.RequestStatusValidating, entity.RequestStatusValidated, entity.RequestStatusBatching:
+			return false
+		}
+		return true
+	})
+	s.log.Logf("STALE-FAILED resubmission %s: status=%q last_error=%q batches=%v; batch %s is %q after the cancel",
+		resubmit.sqid, resubmitStatus, s.lastError(resubmit), s.batchIDsFor(resubmit), heldBatch, s.batchState(queue, heldBatch))
+	assert.False(t, isTerminalStatus(resubmitStatus), "the same change is admitted while the first batch is live")
+	assert.Equal(t, entity.BatchStateSpeculating, s.batchState(queue, heldBatch), "the cancel did not reach the live batch")
+
+	s.openGate(queue, gateGroup, heldBatch)
+	pollUntil(persistPollInterval, func() bool { return s.batchState(queue, heldBatch).IsTerminal() })
+	assert.Equal(t, entity.BatchStateSucceeded, s.batchState(queue, heldBatch), "the batch merges the change of a request already failed")
+	resubmitFinal := s.awaitTerminal(resubmit)
+
+	s.log.Logf("STALE-FAILED final: request %s state=%q status=%q timeline=%v; batch %s is %q",
+		req.sqid, s.terminalState(req), s.mustStatus(req), s.timeline(req), heldBatch, s.batchState(queue, heldBatch))
+	s.log.Logf("STALE-FAILED final: resubmission %s state=%q status=%q timeline=%v batches=%v",
+		resubmit.sqid, s.terminalState(resubmit), resubmitFinal, s.timeline(resubmit), s.batchIDsFor(resubmit))
+	assert.Equal(t, entity.RequestStateError, s.terminalState(req), "the request stays failed although its batch merged")
 }
 
 // A batch left in Created is dependency-eligible, so everything created after

@@ -238,3 +238,91 @@ func TestProcess_HaltedRequestSkips(t *testing.T) {
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
 }
+
+// A result redelivered after the request has moved past validation. The
+// expectations record what the controller does today: a SUCCEEDED result writes
+// Validated over the later state and hands the request to the batch stage
+// again, and a FAILED one terminates the request out from under its batch.
+func TestProcess_SignalForAdvancedRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      entity.RequestState
+		outcome    runwaypb.Outcome
+		wantState  entity.RequestState
+		wantStatus entity.RequestStatus
+		wantTopics []string
+	}{
+		{
+			name:       "batched, landable",
+			state:      entity.RequestStateBatched,
+			outcome:    runwaypb.Outcome_SUCCEEDED,
+			wantState:  entity.RequestStateValidated,
+			wantStatus: entity.RequestStatusValidated,
+			wantTopics: []string{"log", "batch"},
+		},
+		{
+			name:       "batched, not landable",
+			state:      entity.RequestStateBatched,
+			outcome:    runwaypb.Outcome_FAILED,
+			wantState:  entity.RequestStateError,
+			wantStatus: entity.RequestStatusError,
+			wantTopics: []string{"log"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			request := entity.Request{ID: testRequestID, Queue: testQueue, State: tt.state, Version: 3}
+			var written []entity.Request
+			reqStore := storagemock.NewMockRequestStore(ctrl)
+			reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil).AnyTimes()
+			reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(3), int32(4)).DoAndReturn(
+				func(_ context.Context, updated entity.Request, _, _ int32) error {
+					written = append(written, updated)
+					return nil
+				},
+			).AnyTimes()
+
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
+
+			var gotTopics []string
+			var gotPayloads [][]byte
+			pub := queuemock.NewMockPublisher(ctrl)
+			pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, topic string, msg entityqueue.Message) error {
+					gotTopics = append(gotTopics, topic)
+					gotPayloads = append(gotPayloads, msg.Payload)
+					return nil
+				},
+			).AnyTimes()
+			q := queuemock.NewMockQueue(ctrl)
+			q.EXPECT().Publisher().Return(pub).AnyTimes()
+			registry, err := consumer.NewTopicRegistry(
+				[]consumer.TopicConfig{
+					{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q},
+					{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+				},
+			)
+			require.NoError(t, err)
+
+			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
+				runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
+
+			res := runwaymq.MergeResult{Id: testRequestID, Outcome: tt.outcome, Reason: "replayed"}
+			msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
+			require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
+
+			require.Len(t, written, 1)
+			assert.Equal(t, tt.wantState, written[0].State)
+
+			require.Equal(t, tt.wantTopics, gotTopics)
+			logEntry, err := sqmq.UnmarshalRequestLog(gotPayloads[0])
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, logEntry.Status)
+			assert.Equal(t, int32(4), logEntry.RequestVersion)
+		})
+	}
+}
