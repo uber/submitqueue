@@ -17,6 +17,8 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -233,4 +235,92 @@ func TestValidationFactStore_ListProjectsRejectsInvalidLimit(t *testing.T) {
 		mock.ExpectClose()
 		require.NoError(t, db.Close())
 	}
+}
+
+func TestValidationFactStore_CreateBatch(t *testing.T) {
+	first := entity.ValidationFact{
+		URI: testFactURI, Project: "first", ProjectType: "service",
+		Degree: 1, RequestID: "1", CreatedAt: 10,
+	}
+	second := entity.ValidationFact{
+		URI: testFactURI, Project: "second", ProjectType: "library",
+		Degree: 0, RequestID: "1", CreatedAt: 20,
+	}
+	writeErr := &mysql.MySQLError{Number: 1406, Message: "Data too long"}
+	tests := []struct {
+		name    string
+		input   []entity.ValidationFact
+		setup   func(sqlmock.Sqlmock)
+		wantErr error
+	}{
+		{name: "empty input"},
+		{
+			name:  "one insert without any reads",
+			input: []entity.ValidationFact{first, second},
+			setup: func(mock sqlmock.Sqlmock) {
+				expectFactBatchInsert(mock, []entity.ValidationFact{first, second}).WillReturnResult(sqlmock.NewResult(0, 2))
+			},
+		},
+		{
+			name:  "duplicate identities are successful no-ops without reads",
+			input: []entity.ValidationFact{first, second},
+			setup: func(mock sqlmock.Sqlmock) {
+				expectFactBatchInsert(mock, []entity.ValidationFact{first, second}).WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+		},
+		{
+			name:  "SQL errors other than duplicates are not ignored",
+			input: []entity.ValidationFact{first},
+			setup: func(mock sqlmock.Sqlmock) {
+				expectFactBatchInsert(mock, []entity.ValidationFact{first}).WillReturnError(writeErr)
+			},
+			wantErr: writeErr,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setupValidationFactStoreTest(t)
+			t.Cleanup(func() { _ = db.Close() })
+			if tt.setup != nil {
+				tt.setup(mock)
+			}
+			original := append([]entity.ValidationFact(nil), tt.input...)
+			err := store.CreateBatch(context.Background(), tt.input)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, original, tt.input)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestValidationFactStore_CreateBatchRetryAfterPartialWrite(t *testing.T) {
+	db, mock, store := setupValidationFactStoreTest(t)
+	t.Cleanup(func() { _ = db.Close() })
+	facts := make([]entity.ValidationFact, validationFactBatchSize+1)
+	for i := range facts {
+		facts[i] = entity.ValidationFact{URI: testFactURI, Project: fmt.Sprintf("project-%03d", i), RequestID: "1", CreatedAt: 10}
+	}
+	first, last := facts[:validationFactBatchSize], facts[validationFactBatchSize:]
+	writeErr := errors.New("connection lost")
+	expectFactBatchInsert(mock, first).WillReturnResult(sqlmock.NewResult(0, int64(len(first))))
+	expectFactBatchInsert(mock, last).WillReturnError(writeErr)
+	err := store.CreateBatch(context.Background(), facts)
+	require.ErrorIs(t, err, writeErr)
+
+	expectFactBatchInsert(mock, first).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectFactBatchInsert(mock, last).WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, store.CreateBatch(context.Background(), facts))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func expectFactBatchInsert(mock sqlmock.Sqlmock, facts []entity.ValidationFact) *sqlmock.ExpectedExec {
+	args := make([]driver.Value, 0, len(facts)*7)
+	for _, fact := range facts {
+		args = append(args, testFactQueue, fact.URI, fact.Project, fact.ProjectType, fact.Degree, fact.RequestID, fact.CreatedAt)
+	}
+	return mock.ExpectExec("INSERT INTO validation_fact").WithArgs(args...)
 }

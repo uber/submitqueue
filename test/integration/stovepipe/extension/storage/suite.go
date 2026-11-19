@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -679,6 +680,124 @@ func (s *ValidationFactStoreContractSuite) TestValidationFactStore_QueueIsolatio
 	gotA, err := s.storeFor(queueA).Get(s.ctx, uri, "")
 	require.NoError(t, err)
 	assert.Equal(t, factA, gotA)
+}
+
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateBatch() {
+	first := entity.ValidationFact{URI: "commit-a", Project: "service-a", ProjectType: "service", Degree: 0.25, RequestID: "1", CreatedAt: 10}
+	second := entity.ValidationFact{URI: "commit-a", Project: "library-b", ProjectType: "library", Degree: 1, RequestID: "1", CreatedAt: 20}
+	repository := entity.ValidationFact{URI: "commit-b", Degree: 0, RequestID: "2", CreatedAt: 30}
+	changed := first
+	changed.ProjectType = "different-type"
+	changed.Degree = 1
+	changed.RequestID = "other-request"
+	changed.CreatedAt = 999
+	tests := []struct {
+		name     string
+		existing []entity.ValidationFact
+		input    []entity.ValidationFact
+		want     []entity.ValidationFact
+	}{
+		{name: "empty"},
+		{
+			name:  "multiple commits and repository facts",
+			input: []entity.ValidationFact{first, second, repository},
+			want:  []entity.ValidationFact{first, second, repository},
+		},
+		{
+			name:     "mixed existing and new",
+			existing: []entity.ValidationFact{first},
+			input:    []entity.ValidationFact{changed, second},
+			want:     []entity.ValidationFact{first, second},
+		},
+		{
+			name:     "all existing",
+			existing: []entity.ValidationFact{first, second},
+			input:    []entity.ValidationFact{second, changed},
+			want:     []entity.ValidationFact{second, first},
+		},
+		{
+			name:  "repeated identities keep first input",
+			input: []entity.ValidationFact{first, second, changed},
+			want:  []entity.ValidationFact{first, second, first},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			t := s.T()
+			store := s.storeFor("contract/fact-batch/" + tt.name)
+			for _, fact := range tt.existing {
+				require.NoError(t, store.Create(s.ctx, fact))
+			}
+			inputCopy := append([]entity.ValidationFact(nil), tt.input...)
+			for range 2 {
+				require.NoError(t, store.CreateBatch(s.ctx, tt.input))
+				assert.Equal(t, inputCopy, tt.input)
+				for _, expected := range tt.want {
+					stored, err := store.Get(s.ctx, expected.URI, expected.Project)
+					require.NoError(t, err)
+					assert.Equal(t, expected, stored)
+				}
+			}
+		})
+	}
+}
+
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateBatchLargeAndIsolated() {
+	t := s.T()
+	facts := make([]entity.ValidationFact, 501)
+	for i := range facts {
+		facts[i] = entity.ValidationFact{
+			URI: "commit", Project: fmt.Sprintf("project-%03d", i), ProjectType: "service",
+			Degree: float64(i % 2), RequestID: "1", CreatedAt: int64(i + 1),
+		}
+	}
+	otherStore := s.storeFor("contract/fact-batch/other-queue")
+	other := facts[0]
+	other.RequestID = "other-request"
+	other.Degree = 1
+	require.NoError(t, otherStore.Create(s.ctx, other))
+
+	store := s.storeFor("contract/fact-batch/large")
+	for range 2 {
+		require.NoError(t, store.CreateBatch(s.ctx, facts))
+	}
+	got, err := store.ListProjects(s.ctx, facts[0].URI, "", len(facts)+1)
+	require.NoError(t, err)
+	assert.Equal(t, facts, got)
+	retained, err := otherStore.Get(s.ctx, other.URI, other.Project)
+	require.NoError(t, err)
+	assert.Equal(t, other, retained)
+}
+
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateBatchConcurrentWriters() {
+	t := s.T()
+	store := s.storeFor("contract/fact-batch/concurrent")
+	first := []entity.ValidationFact{
+		{URI: "commit", Project: "a", Degree: 0, RequestID: "1", CreatedAt: 10},
+		{URI: "commit", Project: "b", Degree: 1, RequestID: "1", CreatedAt: 10},
+	}
+	second := append([]entity.ValidationFact(nil), first...)
+	for i := range second {
+		second[i].RequestID = "2"
+		second[i].Degree = 0.5
+	}
+	start := make(chan struct{})
+	results := make(chan error, 1)
+	for _, input := range [][]entity.ValidationFact{first, second} {
+		go func() {
+			<-start
+			results <- store.CreateBatch(s.ctx, input)
+		}()
+	}
+	close(start)
+	for range 2 {
+		require.NoError(t, <-results)
+	}
+	for i, fact := range first {
+		retained, err := store.Get(s.ctx, fact.URI, fact.Project)
+		require.NoError(t, err)
+		assert.Contains(t, []entity.ValidationFact{first[i], second[i]}, retained)
+	}
 }
 
 func (s *ValidationFactStoreContractSuite) TestValidationFactStore_ListProjects() {
