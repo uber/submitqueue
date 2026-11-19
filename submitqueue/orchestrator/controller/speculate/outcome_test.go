@@ -473,3 +473,24 @@ func TestCancelAllPaths(t *testing.T) {
 
 	assert.False(t, cancelAllPaths(&set, 8, nil), "a second pass changes nothing")
 }
+
+func TestCancellationHelpersPreserveLiveBuilds(t *testing.T) {
+	for _, reason := range []string{"superseded", "user-cancelled"} {
+		t.Run(reason, func(t *testing.T) {
+			set := entity.SpeculationPathSet{Paths: []entity.SpeculationPathEntry{
+				{ID: "pending", Status: entity.SpeculationPathStatusPending},
+				{ID: "live", Status: entity.SpeculationPathStatusBuilding},
+				{ID: "winner", Status: entity.SpeculationPathStatusPassed},
+			}}
+			absent := map[string]bool{"pending": true}
+			if reason == "superseded" {
+				assert.True(t, supersede(&set, "winner", 99, absent))
+			} else {
+				assert.True(t, cancelAllPaths(&set, 99, absent))
+			}
+			assert.Equal(t, entity.SpeculationPathStatusCancelled, set.Paths[0].Status)
+			assert.Equal(t, entity.SpeculationPathStatusCancelling, set.Paths[1].Status)
+			assert.Equal(t, entity.SpeculationPathStatusPassed, set.Paths[2].Status)
+		})
+	}
+}

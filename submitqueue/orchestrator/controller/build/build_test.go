@@ -405,9 +405,9 @@ func TestProcess_RedeliveryRepublishesSignalsForLivePaths(t *testing.T) {
 	building.ID = "building-path"
 	cancelling := pathEntry(entity.SpeculationPathStatusCancelling, 1)
 	cancelling.ID = "cancelling-path"
-	neverDispatched := pathEntry(entity.SpeculationPathStatusCancelling, 1)
+	neverDispatched := pathEntry(entity.SpeculationPathStatusCancelled, 1)
 	neverDispatched.ID = "never-dispatched-path"
-	done := pathEntry(entity.SpeculationPathStatusCancelled, 1)
+	done := pathEntry(entity.SpeculationPathStatusPassed, 1)
 	done.ID = "done-path"
 
 	deps.pathSets.EXPECT().Get(gomock.Any(), headID).Return(entity.SpeculationPathSet{
@@ -525,4 +525,31 @@ func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, _ := newTestController(t, ctrl, headBatch(entity.BatchStateSpeculating))
 	var _ consumer.Controller = c
+}
+
+func TestProcess_RedeliveryRepairsSignalAfterConcurrentCancellation(t *testing.T) {
+	for _, status := range []entity.SpeculationPathStatus{entity.SpeculationPathStatusCancelling, entity.SpeculationPathStatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, deps := newTestController(t, ctrl, headBatch(entity.BatchStateSpeculating))
+			entry := pathEntry(entity.SpeculationPathStatusPending, 1)
+			deps.pathSets.EXPECT().Get(gomock.Any(), headID).DoAndReturn(func(context.Context, string) (entity.SpeculationPathSet, error) {
+				return entity.SpeculationPathSet{Head: headID, Paths: []entity.SpeculationPathEntry{entry}}, nil
+			}).Times(2)
+			deps.pathBuilds.EXPECT().Get(gomock.Any(), entry.ID, 1).Return(entity.PathBuild{}, storage.ErrNotFound)
+			deps.runner.EXPECT().Trigger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(context.Context, []entity.Batch, entity.Batch, map[string]string) (entity.BuildID, error) {
+					// Cancellation commits while Trigger is in flight, before its link exists.
+					entry.Status = status
+					return entity.BuildID{ID: "late-build"}, nil
+				})
+			deps.builds.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			deps.pathBuilds.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			deps.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(fmt.Errorf("publish unavailable"))
+			require.Error(t, processAttempt(t, ctrl, c, 1))
+			deps.pathBuilds.EXPECT().Get(gomock.Any(), entry.ID, 1).Return(entity.PathBuild{PathID: entry.ID, Attempt: 1, BuildID: "late-build"}, nil)
+			expectSignal(t, deps, "late-build")
+			require.NoError(t, processAttempt(t, ctrl, c, 2))
+		})
+	}
 }
