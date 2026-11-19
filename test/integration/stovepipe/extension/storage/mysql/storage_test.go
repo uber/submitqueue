@@ -214,6 +214,11 @@ func TestMySQLStorage(t *testing.T) {
 		testProjectFactByDegree(t, ctx, backend)
 	})
 
+	t.Run("ProjectFactByDegreeBatch", func(t *testing.T) {
+		resetStorage(t, db)
+		testProjectFactByDegreeBatch(t, ctx, backend)
+	})
+
 	t.Run("RequestLogStore", func(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLRequestLogStoreSuite)

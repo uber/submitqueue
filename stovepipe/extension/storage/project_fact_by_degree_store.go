@@ -27,6 +27,11 @@ type ProjectFactByDegreeStore interface {
 	// Create puts one mapping by (URI, degree, project); duplicates return ErrAlreadyExists.
 	Create(ctx context.Context, entry entity.ProjectFactByDegree) error
 
+	// CreateBatch puts mappings without replacing existing identities.
+	// Duplicates and empty input are no-ops. On error, some writes may be durable;
+	// retrying is safe.
+	CreateBatch(ctx context.Context, entries []entity.ProjectFactByDegree) error
+
 	// List scans a primary-key range by descending degree, then ascending bytewise project.
 	// after is exclusive; its zero value starts the range. limit must be positive.
 	List(ctx context.Context, uri string, after entity.ProjectFactByDegree, limit int) ([]entity.ProjectFactByDegree, error)

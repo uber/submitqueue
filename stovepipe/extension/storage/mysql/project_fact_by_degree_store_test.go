@@ -16,7 +16,9 @@ package mysql
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
 	"testing"
@@ -138,6 +140,9 @@ func TestProjectFactByDegreeStoreRejectsInvalidInput(t *testing.T) {
 		{URI: "commit", Project: "p", Degree: math.Inf(1)},
 	} {
 		require.Error(t, store.Create(context.Background(), entry))
+		require.Error(t, store.CreateBatch(context.Background(), []entity.ProjectFactByDegree{
+			{URI: "commit", Project: "valid", Degree: 0.5}, entry,
+		}))
 	}
 	for _, after := range []entity.ProjectFactByDegree{
 		{Degree: -1},
@@ -159,4 +164,77 @@ func TestProjectFactByDegreeStoreRejectsInvalidInput(t *testing.T) {
 	_, err = store.List(context.Background(), "", entity.ProjectFactByDegree{}, 3)
 	require.Error(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProjectFactByDegreeStoreCreateBatch(t *testing.T) {
+	entries := []entity.ProjectFactByDegree{
+		{URI: "commit", Degree: 0, Project: "green"},
+		{URI: "other-commit", Degree: 1, Project: "broken"},
+	}
+	writeErr := &mysql.MySQLError{Number: 1406, Message: "Data too long"}
+	tests := []struct {
+		name     string
+		input    []entity.ProjectFactByDegree
+		affected int64
+		dbErr    error
+	}{
+		{name: "empty"},
+		{name: "one insert without reads", input: entries, affected: 2},
+		{name: "duplicates are no-ops without reads", input: entries},
+		{name: "other SQL errors propagate", input: entries, dbErr: writeErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			if len(tt.input) > 0 {
+				query := expectProjectFactByDegreeBatchInsert(mock, tt.input)
+				if tt.dbErr != nil {
+					query.WillReturnError(tt.dbErr)
+				} else {
+					query.WillReturnResult(sqlmock.NewResult(0, tt.affected))
+				}
+			}
+			original := append([]entity.ProjectFactByDegree(nil), tt.input...)
+			store := NewProjectFactByDegreeStore(db, testMetrics(), "queue")
+			err = store.CreateBatch(context.Background(), tt.input)
+			if tt.dbErr != nil {
+				require.ErrorIs(t, err, tt.dbErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, original, tt.input)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestProjectFactByDegreeStoreCreateBatchRetryAfterPartialWrite(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	store := NewProjectFactByDegreeStore(db, testMetrics(), "queue")
+	entries := make([]entity.ProjectFactByDegree, projectFactByDegreeBatchSize+1)
+	for i := range entries {
+		entries[i] = entity.ProjectFactByDegree{URI: "commit", Degree: 0.5, Project: fmt.Sprintf("project-%03d", i)}
+	}
+	first, last := entries[:projectFactByDegreeBatchSize], entries[projectFactByDegreeBatchSize:]
+	writeErr := errors.New("connection lost")
+	expectProjectFactByDegreeBatchInsert(mock, first).WillReturnResult(sqlmock.NewResult(0, int64(len(first))))
+	expectProjectFactByDegreeBatchInsert(mock, last).WillReturnError(writeErr)
+	require.ErrorIs(t, store.CreateBatch(context.Background(), entries), writeErr)
+
+	expectProjectFactByDegreeBatchInsert(mock, first).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectProjectFactByDegreeBatchInsert(mock, last).WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, store.CreateBatch(context.Background(), entries))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func expectProjectFactByDegreeBatchInsert(mock sqlmock.Sqlmock, entries []entity.ProjectFactByDegree) *sqlmock.ExpectedExec {
+	args := make([]driver.Value, 0, len(entries)*4)
+	for _, entry := range entries {
+		args = append(args, "queue", entry.URI, entry.Degree, entry.Project)
+	}
+	return mock.ExpectExec("INSERT INTO project_fact_by_degree").WithArgs(args...)
 }
