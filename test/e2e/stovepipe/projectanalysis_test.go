@@ -15,18 +15,31 @@
 package e2e_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	queuemysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/publish"
+	"github.com/uber/submitqueue/stovepipe/controller/projectanalysis"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	projectissuesnoop "github.com/uber/submitqueue/stovepipe/extension/projectissues/noop"
+	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
+	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
+	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
@@ -34,6 +47,114 @@ const (
 	projectAnalysisQueue    = "e2e-stovepipe/project-analysis"
 	projectAnalysisDLQQueue = "e2e-stovepipe/project-analysis-dlq"
 )
+
+func (s *StovepipeE2ESuite) TestProjectAnalysisBatchRetryRetainsStoredResults() {
+	t := s.T()
+	ctrl := gomock.NewController(t)
+	request := entity.Request{
+		ID: "902", Queue: "e2e-stovepipe/project-analysis-batches", URI: "git://repository/batch/commit",
+		State: entity.RequestStateFailed, TerminalBuildID: "build/902", Version: 1,
+	}
+	stores, err := s.appStorage.For(request.Queue)
+	require.NoError(t, err)
+	require.NoError(t, stores.GetRequestStore().Create(s.ctx, request))
+	require.NoError(t, stores.GetRequestStore().Update(s.ctx, request, request.Version, request.Version+1))
+	request.Version++
+	history := requestlog.NewMaterializer(tally.NoopScope)
+	require.NoError(t, history.PersistLog(s.ctx, stores, requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildFailed)))
+	require.NoError(t, history.PersistLog(s.ctx, stores, requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, request.TerminalBuildID, nil)))
+
+	statuses := make([]projectstatus.Result, 501)
+	for i := range statuses {
+		statuses[i] = projectstatus.Result{ProjectInfo: projectstatus.ProjectInfo{Name: fmt.Sprintf("project-%03d", i), ProjectType: "service"}, Degree: 1}
+	}
+	original := entity.ValidationFact{URI: request.URI, Project: "Project-000", ProjectType: "original", Degree: 0, RequestID: request.ID, CreatedAt: 10}
+	require.NoError(t, stores.GetValidationFactStore().Create(s.ctx, original))
+	require.NoError(t, stores.GetValidationFactStore().Create(s.ctx, entity.ValidationFact{
+		URI: request.URI, Project: "unrelated", Degree: 1, RequestID: "another-request", CreatedAt: 5,
+	}))
+
+	aggregate := storagemock.NewMockStorage(ctrl)
+	aggregate.EXPECT().GetRequestStore().Return(stores.GetRequestStore()).AnyTimes()
+	aggregate.EXPECT().GetRequestLogStore().Return(stores.GetRequestLogStore()).AnyTimes()
+	aggregate.EXPECT().GetRequestSummaryStore().Return(stores.GetRequestSummaryStore()).AnyTimes()
+	aggregate.EXPECT().GetRequestAcceptanceStore().Return(stores.GetRequestAcceptanceStore()).AnyTimes()
+	aggregate.EXPECT().GetValidationFactStore().Return(stores.GetValidationFactStore()).AnyTimes()
+	index := storagemock.NewMockProjectFactByDegreeStore(ctrl)
+	aggregate.EXPECT().GetProjectFactByDegreeStore().Return(index).AnyTimes()
+	indexCalls := 0
+	writeErr := errors.New("batch index write failed")
+	index.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, entries []entity.ProjectFactByDegree) error {
+		indexCalls++
+		if indexCalls == 1 {
+			require.NoError(t, stores.GetProjectFactByDegreeStore().CreateBatch(ctx, entries[:200]))
+			return writeErr
+		}
+		return stores.GetProjectFactByDegreeStore().CreateBatch(ctx, entries)
+	}).AnyTimes()
+	factory := storagemock.NewMockFactory(ctrl)
+	factory.EXPECT().For(storage.Config{QueueName: request.Queue}).Return(aggregate, nil).AnyTimes()
+	resolvers := projectstatusmock.NewMockResolverFactory(ctrl)
+	resolver := projectstatusmock.NewMockResolver(ctrl)
+	resolvers.EXPECT().For(projectstatus.ResolverConfig{QueueName: request.Queue}).Return(resolver, nil).AnyTimes()
+	resolverCalls := 0
+	resolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, entity.Request) ([]projectstatus.Result, error) {
+		resolverCalls++
+		return statuses, nil
+	}).AnyTimes()
+
+	publisher := queuemock.NewMockPublisher(ctrl)
+	publications := 0
+	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, string, entityqueue.Message) error {
+		publications++
+		return nil
+	}).AnyTimes()
+	queue := queuemock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
+		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
+	})
+	require.NoError(t, err)
+	controller := projectanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope, factory, history, resolvers, projectissuesnoop.New(), registry, stovepipemq.TopicKeyProjectAnalysis, "batch-test")
+	payload, err := stovepipemq.Marshal(&stovepipemq.ProjectAnalysis{Id: request.ID, QueueName: request.Queue})
+	require.NoError(t, err)
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(entityqueue.Message{ID: request.ID, Tenant: request.Queue, PartitionKey: request.ID, Payload: payload}).AnyTimes()
+	require.ErrorIs(t, controller.Process(s.ctx, delivery), writeErr)
+	require.Zero(t, publications)
+	factsRecorded := requestlog.NewRequestEventLog(request, entity.RequestEventProjectFactsRecorded, "all", nil)
+	completed := requestlog.NewRequestEventLog(request, entity.RequestEventProjectAnalysisCompleted, request.TerminalBuildID, nil)
+	for _, event := range []entity.RequestLog{factsRecorded, completed} {
+		_, err := stores.GetRequestLogStore().Get(s.ctx, request.ID, event.ID)
+		require.ErrorIs(t, err, storage.ErrNotFound)
+	}
+	partial, err := stores.GetProjectFactByDegreeStore().List(s.ctx, request.URI, entity.ProjectFactByDegree{}, 1000)
+	require.NoError(t, err)
+	require.Len(t, partial, 200)
+	for i := range statuses {
+		statuses[i].Degree = 0
+	}
+	require.NoError(t, controller.Process(s.ctx, delivery))
+	require.Equal(t, 2, publications)
+	retained, err := stores.GetValidationFactStore().Get(s.ctx, request.URI, original.Project)
+	require.NoError(t, err)
+	require.Equal(t, original, retained)
+	entries, err := stores.GetProjectFactByDegreeStore().List(s.ctx, request.URI, entity.ProjectFactByDegree{}, 1000)
+	require.NoError(t, err)
+	require.Len(t, entries, len(statuses))
+	expectedEntry, err := entity.NewProjectFactByDegree(original)
+	require.NoError(t, err)
+	require.Contains(t, entries, expectedEntry)
+	summary, err := stores.GetRequestSummaryStore().Get(s.ctx, request.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 501, summary.ProjectCount)
+	require.EqualValues(t, 500, summary.BrokenProjectCount)
+	require.Positive(t, summary.ProjectResultsCompletedAtMs)
+	require.NoError(t, controller.Process(s.ctx, delivery))
+	require.Equal(t, 2, resolverCalls)
+	require.Equal(t, 2, indexCalls)
+}
 
 func (s *StovepipeE2ESuite) TestProjectAnalysisRecordsBeforeRepository() {
 	t := s.T()

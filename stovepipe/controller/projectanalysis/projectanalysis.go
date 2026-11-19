@@ -35,13 +35,14 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	projectissuescore "github.com/uber/submitqueue/stovepipe/core/projectissues"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
-	"github.com/uber/submitqueue/stovepipe/core/validationfact"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/projectissues"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
+
+const projectFactReadPageSize = 200
 
 type Controller struct {
 	logger                   *zap.SugaredLogger
@@ -192,32 +193,79 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 		metrics.TagsFromContext(ctx)...,
 	).RecordValue(float64(len(projectStatuses)))
 
-	brokenCount := 0
+	facts := make([]entity.ValidationFact, 0, len(projectStatuses))
+	requested := make(map[string]bool, len(projectStatuses))
+	recordedAt := time.Now().UnixMilli()
 	for _, status := range projectStatuses {
-		fact, _, err := validationfact.Persist(ctx, c.logger, c.scope, store.GetValidationFactStore(), entity.ValidationFact{
+		facts = append(facts, entity.ValidationFact{
 			URI:         request.URI,
 			Project:     status.ProjectInfo.Name,
 			ProjectType: status.ProjectInfo.ProjectType,
 			Degree:      status.Degree,
 			RequestID:   request.ID,
-			CreatedAt:   time.Now().UnixMilli(),
+			CreatedAt:   recordedAt,
 		})
-		if err != nil {
-			return err
-		}
-		if !fact.IsGreen() {
-			brokenCount++
+		requested[status.ProjectInfo.Name] = true
+	}
+
+	brokenCount := 0
+	if len(facts) > 0 {
+		factStore := store.GetValidationFactStore()
+		if err := factStore.CreateBatch(ctx, facts); err != nil {
+			return fmt.Errorf("create project facts for request %q: %w", request.ID, err)
 		}
 
-		entry, err := entity.NewProjectFactByDegree(fact)
-		if err != nil {
-			return err
+		retained := make(map[string]entity.ValidationFact, len(facts))
+		cursor := ""
+		for len(retained) < len(facts) {
+			page, err := factStore.ListProjects(ctx, request.URI, cursor, projectFactReadPageSize)
+			if err != nil {
+				return fmt.Errorf("read project facts for request %q: %w", request.ID, err)
+			}
+			if len(page) == 0 {
+				break
+			}
+
+			for _, fact := range page {
+				if requested[fact.Project] {
+					retained[fact.Project] = fact
+				}
+			}
+			cursor = page[len(page)-1].Project
 		}
 
-		if err := store.GetProjectFactByDegreeStore().Create(ctx, entry); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-			return fmt.Errorf("failed to index project fact for request %q and project %q: %w", request.ID, fact.Project, err)
+		entries := make([]entity.ProjectFactByDegree, 0, len(facts))
+		for _, candidate := range facts {
+			fact, found := retained[candidate.Project]
+			if !found {
+				// Key reads preserve backend identity matching, including collation aliases.
+				var err error
+				fact, err = factStore.Get(ctx, candidate.URI, candidate.Project)
+				if err != nil {
+					return fmt.Errorf("read project fact %q for request %q: %w", candidate.Project, request.ID, err)
+				}
+			}
+
+			if fact.RequestID != request.ID {
+				return fmt.Errorf("project fact %q is owned by request %q, not %q", fact.Project, fact.RequestID, request.ID)
+			}
+
+			if !fact.IsGreen() {
+				brokenCount++
+			}
+
+			entry, err := entity.NewProjectFactByDegree(fact)
+			if err != nil {
+				return err
+			}
+			entries = append(entries, entry)
+		}
+
+		if err := store.GetProjectFactByDegreeStore().CreateBatch(ctx, entries); err != nil {
+			return fmt.Errorf("index project facts for request %q: %w", request.ID, err)
 		}
 	}
+
 	projectFactsRecordedLog := requestlog.NewRequestEventLog(
 		request,
 		entity.RequestEventProjectFactsRecorded,
@@ -230,6 +278,10 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 	if err := c.requestLogMaterializer.PersistLog(ctx, store, projectFactsRecordedLog); err != nil {
 		return fmt.Errorf("failed to record project facts for request %s: %w", request.ID, err)
 	}
+
+	c.logger.Infow("recorded project validation facts",
+		"request_id", request.ID, "uri", request.URI,
+		"project_count", len(facts), "broken_project_count", brokenCount)
 	return nil
 }
 

@@ -20,7 +20,6 @@ go_library(
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/core/projectissues:go_default_library",
         "//stovepipe/core/requestlog:go_default_library",
-        "//stovepipe/core/validationfact:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/projectissues:go_default_library",
         "//stovepipe/extension/projectstatus:go_default_library",

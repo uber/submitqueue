@@ -17,7 +17,9 @@ package projectanalysis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
@@ -64,6 +66,10 @@ type fixture struct {
 	hookAttempts    []entityqueue.Message
 	resolverCalls   int
 	attributerCalls int
+	factBatchCalls  int
+	indexBatchCalls int
+	factListCalls   int
+	factGetCalls    int
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -125,27 +131,60 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return entity.RequestLog{}, storage.ErrNotFound
 	}).AnyTimes()
-	facts.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
+	facts.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, batch []entity.ValidationFact) error {
+		f.factBatchCalls++
 		if err := f.fail("fact/create"); err != nil {
 			return err
 		}
-		if _, exists := f.facts[fact.Project]; exists {
-			return storage.ErrAlreadyExists
+		for _, fact := range batch {
+			if err := f.fail("fact/create/" + fact.Project); err != nil {
+				return err
+			}
+			if _, exists := f.facts[fact.Project]; !exists {
+				f.facts[fact.Project] = fact
+			}
 		}
-		f.facts[fact.Project] = fact
 		return nil
 	}).AnyTimes()
-	facts.EXPECT().Get(gomock.Any(), f.request.URI, gomock.Any()).DoAndReturn(func(_ context.Context, _ string, project string) (entity.ValidationFact, error) {
-		return f.facts[project], nil
+	facts.EXPECT().ListProjects(gomock.Any(), f.request.URI, gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, uri, after string, limit int) ([]entity.ValidationFact, error) {
+		f.factListCalls++
+		if err := f.fail("fact/list"); err != nil {
+			return nil, err
+		}
+		if err := f.fail("fact/list/" + after); err != nil {
+			return nil, err
+		}
+		var page []entity.ValidationFact
+		for _, fact := range f.facts {
+			if fact.URI == uri && fact.Project > after {
+				page = append(page, fact)
+			}
+		}
+		sort.Slice(page, func(i, j int) bool { return page[i].Project < page[j].Project })
+		if len(page) > limit {
+			page = page[:limit]
+		}
+		return page, nil
 	}).AnyTimes()
-	indexes.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, entry entity.ProjectFactByDegree) error {
+	facts.EXPECT().Get(gomock.Any(), f.request.URI, gomock.Any()).DoAndReturn(func(_ context.Context, _ string, project string) (entity.ValidationFact, error) {
+		f.factGetCalls++
+		fact, exists := f.facts[project]
+		if !exists {
+			return entity.ValidationFact{}, storage.ErrNotFound
+		}
+		return fact, nil
+	}).AnyTimes()
+	indexes.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, batch []entity.ProjectFactByDegree) error {
+		f.indexBatchCalls++
 		if err := f.fail("index/create"); err != nil {
 			return err
 		}
-		if f.indexes[entry] {
-			return storage.ErrAlreadyExists
+		for _, entry := range batch {
+			if err := f.fail("index/create/" + entry.Project); err != nil {
+				return err
+			}
+			f.indexes[entry] = true
 		}
-		f.indexes[entry] = true
 		return nil
 	}).AnyTimes()
 	source.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.source, "source/create")).AnyTimes()
@@ -153,7 +192,10 @@ func newFixture(t *testing.T) *fixture {
 	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 	requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
 		if log.Event == entity.RequestEventProjectFactsRecorded || log.Event == entity.RequestEventProjectAnalysisCompleted {
-			require.Len(t, f.facts, len(f.projectStatuses))
+			for _, status := range f.projectStatuses {
+				_, exists := f.facts[status.ProjectInfo.Name]
+				require.True(t, exists)
+			}
 			require.Len(t, f.indexes, len(f.projectStatuses))
 			projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
 			require.Contains(t, f.logs, projectIssuesRecordedLog.ID)
@@ -343,7 +385,7 @@ func TestProcessRecordsProjectStatuses(t *testing.T) {
 func TestProcessRetriesPartialWork(t *testing.T) {
 	for _, operation := range []string{
 		"storage/for", "request/get", "abandonment/get", "completion/get", "analysis/get", "resolver/for", "resolve", "attributer/for", "attribute",
-		"source/create", "reverse/create", "fact/create", "index/create", "log/project_facts_recorded", "log/project_issues_recorded", "log/project_analysis_completed", "retained-completion/get", "hook/publish", "record/publish",
+		"source/create", "reverse/create", "fact/create", "fact/create/b", "fact/list", "index/create", "index/create/b", "log/project_facts_recorded", "log/project_issues_recorded", "log/project_analysis_completed", "retained-completion/get", "hook/publish", "record/publish",
 	} {
 		t.Run(operation, func(t *testing.T) {
 			f := newFixture(t)
@@ -356,7 +398,7 @@ func TestProcessRetriesPartialWork(t *testing.T) {
 				require.NotContains(t, f.logs, f.completion().ID)
 			}
 			switch operation {
-			case "resolver/for", "resolve", "fact/create", "index/create", "log/project_facts_recorded", "log/project_analysis_completed":
+			case "resolver/for", "resolve", "fact/create", "fact/create/b", "fact/list", "index/create", "index/create/b", "log/project_facts_recorded", "log/project_analysis_completed":
 				require.Len(t, f.source, 2)
 				require.Equal(t, f.source, f.reverse)
 				projectIssuesRecordedLog := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectIssuesRecorded, f.request.TerminalBuildID, nil)
@@ -401,6 +443,76 @@ func TestProcessRetriesPartialWork(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessBatchesLargeProjectResults(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retry=%t", retry), func(t *testing.T) {
+			f := newFixture(t)
+			f.attributions = nil
+			f.projectStatuses = make([]projectstatus.Result, 5190)
+			for i := range f.projectStatuses {
+				f.projectStatuses[i] = projectstatus.Result{
+					ProjectInfo: projectstatus.ProjectInfo{Name: fmt.Sprintf("project-%05d", i), ProjectType: "service"},
+					Degree:      float64(i % 2),
+				}
+			}
+			input := append([]projectstatus.Result(nil), f.projectStatuses...)
+			msg := f.message(t)
+			if retry {
+				cursor := fmt.Sprintf("project-%05d", projectFactReadPageSize-1)
+				f.failures["fact/list/"+cursor] = assert.AnError
+				require.ErrorIs(t, f.deliver(context.Background(), msg), assert.AnError)
+				require.Zero(t, f.indexBatchCalls)
+				require.Empty(t, f.records)
+				require.NotContains(t, f.logs, f.completion().ID)
+			}
+			require.NoError(t, f.deliver(context.Background(), msg))
+			require.Equal(t, input, f.projectStatuses)
+			require.Len(t, f.facts, len(input))
+			require.Len(t, f.indexes, len(input))
+			require.Equal(t, 1, f.indexBatchCalls)
+			require.Zero(t, f.factGetCalls)
+			reads := (len(input) + projectFactReadPageSize - 1) / projectFactReadPageSize
+			attempts := 1
+			if retry {
+				reads += 2
+				attempts++
+			}
+			require.Equal(t, attempts, f.factBatchCalls)
+			require.Equal(t, reads, f.factListCalls)
+			log := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
+			require.Equal(t, map[string]string{
+				requestlog.MetadataKeyProjectFactCount:       "5190",
+				requestlog.MetadataKeyBrokenProjectFactCount: "2595",
+			}, f.logs[log.ID].Metadata)
+		})
+	}
+}
+
+func TestProcessSkipsUnrequestedFactsAcrossPages(t *testing.T) {
+	f := newFixture(t)
+	for i := 0; i <= projectFactReadPageSize; i++ {
+		project := fmt.Sprintf("0-unrelated-%03d", i)
+		f.facts[project] = entity.ValidationFact{URI: f.request.URI, Project: project, Degree: 1, RequestID: "other"}
+	}
+	require.NoError(t, f.deliver(context.Background(), f.message(t)))
+	require.Equal(t, 2, f.factListCalls)
+	require.Zero(t, f.factGetCalls)
+	require.Len(t, f.indexes, len(f.projectStatuses))
+	log := requestlog.NewRequestEventLog(f.request, entity.RequestEventProjectFactsRecorded, "all", nil)
+	require.Equal(t, "2", f.logs[log.ID].Metadata[requestlog.MetadataKeyProjectFactCount])
+	require.Equal(t, "1", f.logs[log.ID].Metadata[requestlog.MetadataKeyBrokenProjectFactCount])
+}
+
+func TestProcessRejectsFactsOwnedByAnotherRequest(t *testing.T) {
+	f := newFixture(t)
+	f.facts["a"] = entity.ValidationFact{URI: f.request.URI, Project: "a", Degree: 1, RequestID: "other"}
+	require.Error(t, f.deliver(context.Background(), f.message(t)))
+	require.Empty(t, f.indexes)
+	require.Empty(t, f.records)
+	require.Empty(t, f.hookAttempts)
+	require.NotContains(t, f.logs, f.completion().ID)
 }
 
 func TestProcessRequiresFinalAnalysis(t *testing.T) {
@@ -684,8 +796,15 @@ func TestRecordProjectStatusesResolverMetrics(t *testing.T) {
 
 			requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
 			if tt.factoryErr == nil && tt.resolveErr == nil && !tt.invalid {
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).Times(len(tt.projectStatuses))
-				m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).Times(len(tt.projectStatuses))
+				if len(tt.projectStatuses) > 0 {
+					var retained []entity.ValidationFact
+					for _, status := range tt.projectStatuses {
+						retained = append(retained, entity.ValidationFact{URI: request.URI, Project: status.ProjectInfo.Name, Degree: status.Degree, RequestID: request.ID})
+					}
+					m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(nil)
+					m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, "", projectFactReadPageSize).Return(retained, nil)
+					m.indexStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(nil)
+				}
 				requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil)
 			}
 			c := &Controller{
@@ -729,7 +848,7 @@ func TestRecordProjectStatusesPersistenceMetrics(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
 		empty         bool
-		existing      bool
+		readErr       error
 		factErr       error
 		indexErr      error
 		completionErr error
@@ -737,7 +856,8 @@ func TestRecordProjectStatusesPersistenceMetrics(t *testing.T) {
 	}{
 		{name: "projects", wantResult: "success"},
 		{name: "empty project statuses", empty: true, wantResult: "success"},
-		{name: "existing facts and indexes", existing: true, wantResult: "success"},
+		{name: "fact read error", readErr: assert.AnError, wantResult: "error"},
+		{name: "fact read cancellation", readErr: context.Canceled, wantResult: "cancel"},
 		{name: "fact write error", factErr: assert.AnError, wantResult: "error"},
 		{name: "fact write cancellation", factErr: context.Canceled, wantResult: "cancel"},
 		{name: "index write error", indexErr: assert.AnError, wantResult: "error"},
@@ -768,29 +888,20 @@ func TestRecordProjectStatusesPersistenceMetrics(t *testing.T) {
 				requestLogMaterializer: requestLogMaterializer,
 				resolvers:              factory,
 			}
-			for _, status := range projectStatuses {
-				fact := entity.ValidationFact{URI: request.URI, Project: status.ProjectInfo.Name, Degree: status.Degree, RequestID: request.ID, CreatedAt: projectStatusTestChangeTime.UnixMilli()}
-				createErr := tt.factErr
-				if tt.existing {
-					createErr = storage.ErrAlreadyExists
-				}
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(createErr)
-				if tt.factErr != nil {
-					break
-				}
-				indexErr := tt.indexErr
-				if tt.existing {
-					m.factStore.EXPECT().Get(gomock.Any(), request.URI, status.ProjectInfo.Name).Return(fact, nil)
-					indexErr = storage.ErrAlreadyExists
-				}
-				entry, err := entity.NewProjectFactByDegree(fact)
-				require.NoError(t, err)
-				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(indexErr)
-				if tt.indexErr != nil {
-					break
+			if len(projectStatuses) > 0 {
+				m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(tt.factErr)
+				if tt.factErr == nil {
+					var retained []entity.ValidationFact
+					for _, status := range projectStatuses {
+						retained = append(retained, entity.ValidationFact{URI: request.URI, Project: status.ProjectInfo.Name, Degree: status.Degree, RequestID: request.ID, CreatedAt: projectStatusTestChangeTime.UnixMilli()})
+					}
+					m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, "", projectFactReadPageSize).Return(retained, tt.readErr)
+					if tt.readErr == nil {
+						m.indexStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(tt.indexErr)
+					}
 				}
 			}
-			if tt.factErr == nil && tt.indexErr == nil {
+			if tt.factErr == nil && tt.readErr == nil && tt.indexErr == nil {
 				requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
 					func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
 						assert.Equal(t, entity.RequestEventProjectFactsRecorded, log.Event)
@@ -803,6 +914,8 @@ func TestRecordProjectStatusesPersistenceMetrics(t *testing.T) {
 			switch {
 			case tt.factErr != nil:
 				require.ErrorIs(t, err, tt.factErr)
+			case tt.readErr != nil:
+				require.ErrorIs(t, err, tt.readErr)
 			case tt.indexErr != nil:
 				require.ErrorIs(t, err, tt.indexErr)
 			case tt.completionErr != nil:
@@ -816,53 +929,40 @@ func TestRecordProjectStatusesPersistenceMetrics(t *testing.T) {
 }
 
 func TestRecordProjectStatusesRepairsIndexOnRetry(t *testing.T) {
-	for _, retryErr := range []error{nil, storage.ErrAlreadyExists} {
-		name := "index repaired"
-		if retryErr != nil {
-			name = "index already repaired"
-		}
-		t.Run(name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			m := newProjectStatusFixture(ctrl)
-			request := projectStatusTestRequest()
-			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: 0.25, RequestID: request.ID, CreatedAt: 10}
-			entry, err := entity.NewProjectFactByDegree(stored)
-			require.NoError(t, err)
-			writeErr := errors.New("index write unavailable")
-			factory := projectstatusmock.NewMockResolverFactory(ctrl)
-			resolver := projectstatusmock.NewMockResolver(ctrl)
-			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: projectStatusTestQueue}).Return(resolver, nil).Times(2)
-			requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
-			c := &Controller{
-				logger:                 zap.NewNop().Sugar(),
-				scope:                  m.metricsScope.SubScope("projectanalysis_controller"),
-				requestLogMaterializer: requestLogMaterializer,
-				resolvers:              factory,
-			}
-
-			gomock.InOrder(
-				resolver.EXPECT().Resolve(gomock.Any(), request).Return([]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.25}}, nil),
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil),
-				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(writeErr),
-				resolver.EXPECT().Resolve(gomock.Any(), request).Return([]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.75}}, nil),
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists),
-				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil),
-				m.indexStore.EXPECT().Create(gomock.Any(), entry).Return(retryErr),
-				requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
-					assert.Equal(t, entity.RequestEventProjectFactsRecorded, log.Event)
-					return nil
-				}),
-			)
-			require.ErrorIs(t, c.recordProjectStatuses(projectStatusContext(), m.store, request), writeErr)
-			require.NoError(t, c.recordProjectStatuses(projectStatusContext(), m.store, request))
-			snapshot := m.metricsScope.Snapshot()
-			assert.EqualValues(t, 2, snapshot.Counters()["projectanalysis_controller.record_project_statuses.start+queue="+projectStatusTestQueue].Value())
-			for _, status := range []string{"success", "error"} {
-				finish, ok := snapshot.Histograms()["projectanalysis_controller.record_project_statuses.finish+queue="+projectStatusTestQueue+",result="+status]
-				require.True(t, ok)
-				assert.EqualValues(t, 1, totalSamples(finish.Durations()))
-			}
-		})
+	ctrl := gomock.NewController(t)
+	m := newProjectStatusFixture(ctrl)
+	request := projectStatusTestRequest()
+	stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: 0.25, RequestID: request.ID, CreatedAt: 10}
+	entry, err := entity.NewProjectFactByDegree(stored)
+	require.NoError(t, err)
+	writeErr := errors.New("index write unavailable")
+	factory := projectstatusmock.NewMockResolverFactory(ctrl)
+	resolver := projectstatusmock.NewMockResolver(ctrl)
+	factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: projectStatusTestQueue}).Return(resolver, nil).Times(2)
+	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
+	c := &Controller{
+		logger: zap.NewNop().Sugar(), scope: m.metricsScope.SubScope("projectanalysis_controller"),
+		requestLogMaterializer: requestLogMaterializer, resolvers: factory,
+	}
+	gomock.InOrder(
+		resolver.EXPECT().Resolve(gomock.Any(), request).Return([]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.25}}, nil),
+		m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(nil),
+		m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, "", projectFactReadPageSize).Return([]entity.ValidationFact{stored}, nil),
+		m.indexStore.EXPECT().CreateBatch(gomock.Any(), []entity.ProjectFactByDegree{entry}).Return(writeErr),
+		resolver.EXPECT().Resolve(gomock.Any(), request).Return([]projectstatus.Result{{ProjectInfo: projectstatus.ProjectInfo{Name: "p"}, Degree: 0.75}}, nil),
+		m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(nil),
+		m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, "", projectFactReadPageSize).Return([]entity.ValidationFact{stored}, nil),
+		m.indexStore.EXPECT().CreateBatch(gomock.Any(), []entity.ProjectFactByDegree{entry}).Return(nil),
+		requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil),
+	)
+	require.ErrorIs(t, c.recordProjectStatuses(projectStatusContext(), m.store, request), writeErr)
+	require.NoError(t, c.recordProjectStatuses(projectStatusContext(), m.store, request))
+	snapshot := m.metricsScope.Snapshot()
+	assert.EqualValues(t, 2, snapshot.Counters()["projectanalysis_controller.record_project_statuses.start+queue="+projectStatusTestQueue].Value())
+	for _, status := range []string{"success", "error"} {
+		finish, ok := snapshot.Histograms()["projectanalysis_controller.record_project_statuses.finish+queue="+projectStatusTestQueue+",result="+status]
+		require.True(t, ok)
+		assert.EqualValues(t, 1, totalSamples(finish.Durations()))
 	}
 }
 
@@ -883,13 +983,11 @@ func TestRecordProjectStatusesCountsPersistedOutcomes(t *testing.T) {
 			m := newProjectStatusFixture(ctrl)
 			request := projectStatusTestRequest()
 			stored := entity.ValidationFact{URI: request.URI, Project: "p", Degree: tt.storedDegree, RequestID: request.ID, CreatedAt: 10}
-			if tt.storedDegree != tt.resolvedDegree {
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
-				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "p").Return(stored, nil)
-			} else {
-				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-			}
-			m.indexStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+			m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(nil)
+			m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, "", projectFactReadPageSize).Return([]entity.ValidationFact{stored}, nil)
+			entry, err := entity.NewProjectFactByDegree(stored)
+			require.NoError(t, err)
+			m.indexStore.EXPECT().CreateBatch(gomock.Any(), []entity.ProjectFactByDegree{entry}).Return(nil)
 			factory := projectstatusmock.NewMockResolverFactory(ctrl)
 			resolver := projectstatusmock.NewMockResolver(ctrl)
 			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: projectStatusTestQueue}).Return(resolver, nil)
@@ -909,6 +1007,51 @@ func TestRecordProjectStatusesCountsPersistedOutcomes(t *testing.T) {
 				return nil
 			})
 			require.NoError(t, c.recordProjectStatuses(projectStatusContext(), m.store, request))
+		})
+	}
+}
+
+func TestRecordProjectStatusesReadsUnmatchedIdentities(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		getErr  error
+		wantErr bool
+	}{
+		{name: "backend canonicalizes the project name"},
+		{name: "missing fact", getErr: storage.ErrNotFound, wantErr: true},
+		{name: "key read fails", getErr: assert.AnError, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			m := newProjectStatusFixture(ctrl)
+			request := projectStatusTestRequest()
+			stored := entity.ValidationFact{URI: request.URI, Project: "PROJECT", Degree: 0.25, RequestID: request.ID, CreatedAt: 10}
+			factory := projectstatusmock.NewMockResolverFactory(ctrl)
+			resolver := projectstatusmock.NewMockResolver(ctrl)
+			factory.EXPECT().For(projectstatus.ResolverConfig{QueueName: request.Queue}).Return(resolver, nil)
+			resolver.EXPECT().Resolve(gomock.Any(), request).Return([]projectstatus.Result{
+				{ProjectInfo: projectstatus.ProjectInfo{Name: "project"}, Degree: 0},
+			}, nil)
+			m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(nil)
+			gomock.InOrder(
+				m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, "", projectFactReadPageSize).Return([]entity.ValidationFact{stored}, nil),
+				m.factStore.EXPECT().ListProjects(gomock.Any(), request.URI, stored.Project, projectFactReadPageSize).Return(nil, nil),
+				m.factStore.EXPECT().Get(gomock.Any(), request.URI, "project").Return(stored, tt.getErr),
+			)
+			materializer := requestlogmock.NewMockMaterializer(ctrl)
+			if !tt.wantErr {
+				entry, err := entity.NewProjectFactByDegree(stored)
+				require.NoError(t, err)
+				m.indexStore.EXPECT().CreateBatch(gomock.Any(), []entity.ProjectFactByDegree{entry}).Return(nil)
+				materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(nil)
+			}
+			c := &Controller{logger: zap.NewNop().Sugar(), scope: tally.NoopScope, resolvers: factory, requestLogMaterializer: materializer}
+			err := c.recordProjectStatuses(context.Background(), m.store, request)
+			if tt.wantErr {
+				require.ErrorIs(t, err, tt.getErr)
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }
