@@ -573,10 +573,8 @@ func TestRun_BrokenPathsAreVisibleToTheSpeculator(t *testing.T) {
 		"the Speculator must see the broken path as already cancelling")
 }
 
-// A funded path whose build was never dispatched has nothing to wait for once
-// it breaks. Left cancelling it would hold its budget slot until some later
-// run, and a quiet queue sends none: the stalled batch is the only thing that
-// could produce the next signal, and it is waiting on the slot.
+// An undispatched path must free its slot when it breaks: a quiet queue may
+// never send another signal to finish cancelling it.
 func TestRun_BrokenUndispatchedPathIsCancelledInTheSameRun(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
