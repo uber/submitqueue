@@ -55,6 +55,20 @@ func (mr *MockProjectFactByDegreeStoreMockRecorder) Create(ctx, entry any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockProjectFactByDegreeStore)(nil).Create), ctx, entry)
 }
 
+// CreateBatch mocks base method.
+func (m *MockProjectFactByDegreeStore) CreateBatch(ctx context.Context, entries []entity.ProjectFactByDegree) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBatch", ctx, entries)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateBatch indicates an expected call of CreateBatch.
+func (mr *MockProjectFactByDegreeStoreMockRecorder) CreateBatch(ctx, entries any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBatch", reflect.TypeOf((*MockProjectFactByDegreeStore)(nil).CreateBatch), ctx, entries)
+}
+
 // List mocks base method.
 func (m *MockProjectFactByDegreeStore) List(ctx context.Context, uri string, after entity.ProjectFactByDegree, limit int) ([]entity.ProjectFactByDegree, error) {
 	m.ctrl.T.Helper()
