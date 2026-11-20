@@ -261,9 +261,14 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 	repairExecutors := noopRepairExecutorFactory{}
 
+	delays, err := stageDelaysFromEnv(os.Getenv)
+	if err != nil {
+		return err
+	}
+
 	storageFty := storageFactory{backend: store}
 	materializer := requestlog.NewMaterializer(scope)
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory, repairExecutors)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory, repairExecutors, delays)
 	if err != nil {
 		return err
 	}
@@ -377,6 +382,38 @@ func run() error {
 	return err
 }
 
+// stageDelays are the queue-stage redelivery delays in milliseconds.
+type stageDelays struct {
+	buildAnalysisPollMs int64
+	issueTrack          issuetrack.HoldDelays
+}
+
+var defaultStageDelays = stageDelays{
+	buildAnalysisPollMs: buildanalysis.DefaultPollDelayMs,
+	issueTrack:          issuetrack.DefaultHoldDelays,
+}
+
+// stageDelaysFromEnv reads optional Go-duration overrides, keeping the production default for an unset variable.
+func stageDelaysFromEnv(getenv func(string) string) (stageDelays, error) {
+	delays := defaultStageDelays
+	for name, target := range map[string]*int64{
+		"BUILD_ANALYSIS_POLL_DELAY":  &delays.buildAnalysisPollMs,
+		"ISSUE_TRACK_ANALYSIS_WAIT":  &delays.issueTrack.AnalysisWaitMs,
+		"ISSUE_TRACK_RECOVERY_DELAY": &delays.issueTrack.RecoveryDelayMs,
+	} {
+		v := getenv(name)
+		if v == "" {
+			continue
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			return stageDelays{}, fmt.Errorf("%s must be a non-negative duration, got %q", name, v)
+		}
+		*target = d.Milliseconds()
+	}
+	return delays, nil
+}
+
 // registerPrimaryControllers creates the primary-pipeline queue controllers and
 // registers them with c, returning how many were registered.
 func registerPrimaryControllers(
@@ -391,6 +428,7 @@ func registerPrimaryControllers(
 	hooks hookext.Hooks,
 	detectorFactory buildissue.DetectorFactory,
 	repairExecutors fixer.Factory,
+	delays stageDelays,
 ) (int, error) {
 	var count int
 
@@ -422,13 +460,13 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, materializer, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(logger, scope, store, materializer, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis", delays.buildAnalysisPollMs)
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
 	}
 	count++
 
-	issueTrackController := issuetrack.NewController(logger, scope, store, materializer, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	issueTrackController := issuetrack.NewController(logger, scope, store, materializer, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack", delays.issueTrack)
 	if err := c.Register(issueTrackController); err != nil {
 		return count, fmt.Errorf("failed to register issuetrack controller: %w", err)
 	}

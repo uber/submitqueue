@@ -299,7 +299,7 @@ func TestPrimaryWaitsForRecoveryThenAdmitsANewerBuild(t *testing.T) {
 	newer := f.message("build/101", false)
 	delivery := consumermock.NewMockDelivery(f.mocks)
 	delivery.EXPECT().Message().Return(newer)
-	delivery.EXPECT().Hold(_recoveryDelayMs)
+	delivery.EXPECT().Hold(DefaultHoldDelays.RecoveryDelayMs)
 	require.NoError(t, f.controller.Process(context.Background(), delivery))
 	require.Empty(t, f.states)
 

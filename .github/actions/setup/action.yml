@@ -6,25 +6,46 @@ description: Setup Bazel caches for CI jobs
 #   - repo-cache:  downloaded external dependencies (avoids re-downloading Go modules, protobuf, etc.)
 #   - bazelisk:    the Bazel binary itself
 #
-# Cache key includes github.job so each CI job saves its own cache entry
-# (otherwise concurrent jobs race on the same key and only one wins).
-# github.run_id ensures the key never matches exactly, forcing actions/cache
-# to always save — so the disk cache accumulates entries across runs.
-# The restore-keys fallback restores from the most recent prior run of the
-# same job (preferred), then same deps, then any.
+# Every job shares one cache entry. A job that sets `save: true` restores and
+# saves it; every other job only restores. Saving from one job keeps the
+# repository under the Actions cache size limit: when each of ~17 jobs saved its
+# own entry, caches evicted each other and jobs routinely started cold. The
+# saving job must build a superset of what the other jobs build (`bazel build
+# //...` covers test binaries and the Linux service binaries the Docker tests
+# use). github.run_id ensures the key never matches exactly, forcing a save, so
+# the disk cache accumulates entries across runs. The restore-keys fallback
+# restores the most recent entry with the same deps, then any.
+
+inputs:
+  save:
+    description: Save the cache after the job ("true" or "false"). Exactly one job per workflow run should save.
+    default: "false"
 
 runs:
   using: composite
   steps:
-    - name: Setup Bazel cache
+    - name: Restore and save Bazel cache
+      if: ${{ inputs.save == 'true' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cache/bazel-disk-cache
           ~/.cache/bazel-repo-cache
           ~/.cache/bazelisk
-        key: bazel-${{ runner.os }}-${{ github.job }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-${{ github.run_id }}
+        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-${{ github.run_id }}
         restore-keys: |
-          bazel-${{ runner.os }}-${{ github.job }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-
-          bazel-${{ runner.os }}-${{ github.job }}-
+          bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-
+          bazel-${{ runner.os }}-
+
+    - name: Restore Bazel cache
+      if: ${{ inputs.save != 'true' }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/bazel-disk-cache
+          ~/.cache/bazel-repo-cache
+          ~/.cache/bazelisk
+        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-${{ github.run_id }}
+        restore-keys: |
+          bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-
           bazel-${{ runner.os }}-

@@ -81,7 +81,7 @@ func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 				}
 				d := m.delivery(t)
 				if waiting {
-					d.EXPECT().Hold(PollDelayMs).After(last)
+					d.EXPECT().Hold(DefaultPollDelayMs).After(last)
 				}
 				err := c.Process(context.Background(), d)
 				if historyFailure {

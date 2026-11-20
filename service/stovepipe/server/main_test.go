@@ -29,6 +29,7 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
+	"github.com/uber/submitqueue/stovepipe/controller/issuetrack"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -68,7 +69,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	deadLetter := &recordingConsumer{}
 
 	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
-		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{}, defaultStageDelays)
 	require.NoError(t, err)
 
 	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry, noopRepairExecutorFactory{})
@@ -216,7 +217,7 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	primary := &recordingConsumer{}
 	_, err = registerPrimaryControllers(primary, zaptest.NewLogger(t).Sugar(), tally.NoopScope, stores,
 		requestlog.NewMaterializer(tally.NoopScope), registry, fakeSourceControlFactory{}, fakeBuildRunnerFactory{},
-		hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+		hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{}, defaultStageDelays)
 	require.NoError(t, err)
 	var fixController consumer.Controller
 	for _, controller := range primary.controllers {
@@ -323,4 +324,33 @@ func TestBuildAnalysisRegistration(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, cfg.DLQ.Enabled)
 	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
+}
+
+func TestStageDelaysFromEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		want    stageDelays
+		wantErr bool
+	}{
+		{name: "unset keeps defaults", want: defaultStageDelays},
+		{
+			name: "overrides",
+			env:  map[string]string{"BUILD_ANALYSIS_POLL_DELAY": "2s", "ISSUE_TRACK_ANALYSIS_WAIT": "500ms", "ISSUE_TRACK_RECOVERY_DELAY": "1s"},
+			want: stageDelays{buildAnalysisPollMs: 2000, issueTrack: issuetrack.HoldDelays{AnalysisWaitMs: 500, RecoveryDelayMs: 1000}},
+		},
+		{name: "malformed", env: map[string]string{"ISSUE_TRACK_ANALYSIS_WAIT": "30000"}, wantErr: true},
+		{name: "negative", env: map[string]string{"BUILD_ANALYSIS_POLL_DELAY": "-1s"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := stageDelaysFromEnv(func(name string) string { return tt.env[name] })
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
