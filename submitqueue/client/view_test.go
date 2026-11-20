@@ -169,6 +169,34 @@ func TestDigest(t *testing.T) {
 			wantStatus: "speculating",
 			wantNote:   "runner unreachable",
 		},
+		{
+			name: "a late cancellation stays in the trail without reopening a landed request",
+			events: []*pb.HistoryEvent{
+				{Status: "landed"}, {Status: "cancelling"},
+			},
+			wantTrail:  []string{"landed", "cancelling"},
+			wantStatus: "landed",
+		},
+		{
+			name: "background work cannot replace a terminal failure reason",
+			events: []*pb.HistoryEvent{
+				{Status: "error", LastError: "merge conflict"},
+				{Event: "built", LastError: "unused build failed"},
+			},
+			wantTrail:  []string{"error [after: built]"},
+			wantStatus: "error",
+			wantNote:   "merge conflict",
+		},
+		{
+			name: "a repeated terminal status updates its diagnostic",
+			events: []*pb.HistoryEvent{
+				{Status: "error", LastError: "failed"}, {Status: "cancelling"},
+				{Status: "error", LastError: "merge conflict"},
+			},
+			wantTrail:  []string{"error", "cancelling", "error"},
+			wantStatus: "error",
+			wantNote:   "merge conflict",
+		},
 	}
 
 	for _, tt := range tests {

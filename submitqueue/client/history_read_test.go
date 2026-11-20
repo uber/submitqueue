@@ -44,6 +44,35 @@ func (f historySourceFunc) GetRequestHistoryByID(
 	return f(ctx, request)
 }
 
+func TestHistoryLateEventsPreserveTerminalOutcome(t *testing.T) {
+	for _, terminal := range []string{"landed", "cancelled", "error"} {
+		for _, late := range []*pb.HistoryEvent{{Status: "cancelling"}, {Event: "built"}} {
+			t.Run(terminal+"/"+late.Status+late.Event, func(t *testing.T) {
+				note := ""
+				if terminal == "error" {
+					note = "merge conflict"
+				}
+				row := &Row{SQID: "42"}
+				tracker := NewTracker([]*Row{row})
+				reader := historyReaderFunc(func(context.Context, string, string) ([]*pb.HistoryEvent, error) {
+					return []*pb.HistoryEvent{{Status: terminal, LastError: note}, late}, nil
+				})
+				captureStdout(t, func() {
+					tracker.Seal()
+					require.NoError(t, tracker.refreshHistory(context.Background(), reader, "queue", true))
+				})
+				assert.Equal(t, terminal, row.Status)
+				assert.Equal(t, note, row.Note)
+				assert.True(t, row.Done)
+				assert.True(t, isClosed(tracker.Settled()))
+				if terminal == "landed" {
+					assert.NoError(t, summarize([]*Row{row}))
+				}
+			})
+		}
+	}
+}
+
 func TestPollHistoryPermanentFailures(t *testing.T) {
 	for _, code := range []codes.Code{codes.PermissionDenied, codes.Unauthenticated, codes.InvalidArgument} {
 		t.Run(code.String(), func(t *testing.T) {
