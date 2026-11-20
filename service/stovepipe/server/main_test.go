@@ -30,15 +30,18 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
 	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	queueconfigyaml "github.com/uber/submitqueue/stovepipe/extension/queueconfig/yaml"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
+	"google.golang.org/protobuf/proto"
 )
 
 // recordingConsumer captures what the host registers instead of subscribing.
@@ -362,4 +365,60 @@ func TestBuildAnalysisRegistration(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, cfg.DLQ.Enabled)
 	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
+}
+
+func TestStageControllersUseHostConfiguration(t *testing.T) {
+	const queue = "configured-queue"
+
+	for _, tt := range []struct {
+		name         string
+		topic        consumer.TopicKey
+		notification proto.Message
+		partition    string
+	}{
+		{
+			"build signal",
+			stovepipemq.TopicKeyBuildSignal,
+			&stovepipemq.BuildSignal{Id: "build", QueueName: queue},
+			"build",
+		},
+		{
+			"build analysis",
+			stovepipemq.TopicKeyBuildAnalysis,
+			&stovepipemq.BuildAnalysis{Id: "build", QueueName: queue},
+			"build",
+		},
+		{
+			"issue tracking",
+			stovepipemq.TopicKeyIssueTrack,
+			&stovepipemq.IssueTrack{RequestId: "1", QueueName: queue},
+			queue,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			configs := queueconfigmock.NewMockStore(ctrl)
+			configs.EXPECT().Get(gomock.Any(), queue).Return(queueconfig.QueueConfig{}, assert.AnError)
+
+			_, controllers, _ := registeredControllersWithConfig(t, configs)
+
+			payload, err := stovepipemq.Marshal(tt.notification)
+			require.NoError(t, err)
+
+			message := entityqueue.NewMessage("notification", payload, tt.partition, nil)
+			message.Tenant = queue
+
+			delivery := consumermock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(message)
+
+			for _, controller := range controllers {
+				if controller.TopicKey() == tt.topic {
+					require.ErrorIs(t, controller.Process(context.Background(), delivery), assert.AnError)
+					return
+				}
+			}
+
+			require.Fail(t, "stage controller was not registered")
+		})
+	}
 }

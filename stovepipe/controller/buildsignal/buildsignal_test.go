@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/uber/submitqueue/platform/publish"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,7 @@ import (
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -43,6 +45,11 @@ import (
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+)
+
+const (
+	testRunningPollDelayMs  int64 = 139
+	testAcceptedPollDelayMs int64 = 149
 )
 
 const (
@@ -106,7 +113,26 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	configs := queueconfigmock.NewMockStore(ctrl)
+
+	cfg := queueconfig.QueueConfig{Name: testQueue}
+	cfg.Stages.BuildSignal.AcceptedPollDelayMs = testAcceptedPollDelayMs
+	cfg.Stages.BuildSignal.RunningPollDelayMs = testRunningPollDelayMs
+
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(cfg, nil).AnyTimes()
+
+	c := NewController(
+		zap.NewNop().Sugar(),
+		scope,
+		staticStorageFactory{store: m.store},
+		configs,
+		m.materializer,
+		m.runnerFactory,
+		registry,
+		stovepipemq.TopicKeyBuildSignal,
+		"stovepipe-buildsignal",
+	)
+
 	return c, m
 }
 
@@ -324,9 +350,20 @@ func TestProcess(t *testing.T) {
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatus(""), nil, errors.New("runner unavailable"))
 			},
 		},
+
+		{
+			name:       "accepted status uses its configured polling interval",
+			wantHoldMs: testAcceptedPollDelayMs,
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusAccepted, 1), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusAccepted, nil, nil)
+			},
+		},
 		{
 			name:       "unchanged status skips write and holds for next poll",
-			wantHoldMs: PollDelayRunningMs,
+			wantHoldMs: testRunningPollDelayMs,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
@@ -336,7 +373,7 @@ func TestProcess(t *testing.T) {
 		},
 		{
 			name:       "status transition persists and holds for next poll",
-			wantHoldMs: PollDelayRunningMs,
+			wantHoldMs: testRunningPollDelayMs,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusAccepted, 1), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
@@ -708,7 +745,7 @@ func TestNonterminalPollDoesNotPublishTerminalAnalysis(t *testing.T) {
 	m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusRunning, nil, nil)
 
 	d := delivery(t, ctrl, buildSignalPayload(t, testBuildID))
-	d.EXPECT().Hold(PollDelayRunningMs)
+	d.EXPECT().Hold(testRunningPollDelayMs)
 
 	require.NoError(t, c.Process(queueContext(), d))
 }
@@ -801,4 +838,17 @@ func TestProcessBookmarkUsesWinningRequestOutcome(t *testing.T) {
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
 		})
 	}
+}
+
+func TestProcessReturnsConfigurationError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+
+	configs := queueconfigmock.NewMockStore(ctrl)
+
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(queueconfig.QueueConfig{}, assert.AnError)
+
+	c.queueConfigs = configs
+
+	require.ErrorIs(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))), assert.AnError)
 }

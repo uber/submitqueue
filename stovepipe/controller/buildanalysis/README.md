@@ -18,7 +18,7 @@ All analysis deliveries for a build share its build-ID partition and consumer gr
 
 ## Polling and completion
 
-Every delivery reloads the Build and its Request before detection. After a successful pass, a nonterminal Build holds the delivery for two minutes; a terminal Build completes after persistence and completion history once its Request outcome is known, or the Request has ended without one. A pass that begins with a nonterminal Build always holds, even if the Build finishes during detection, so another delivery analyzes it after observing terminal status. More than one delivery may analyze the same terminal Build; build-issue persistence remains idempotent.
+Every delivery reloads the Build and its Request before detection. After a successful pass, a nonterminal Build holds the delivery for the configured polling interval (two minutes by default); a terminal Build completes after persistence and completion history once its Request outcome is known, or the Request has ended without one. A pass that begins with a nonterminal Build always holds, even if the Build finishes during detection, so another delivery analyzes it after observing terminal status. More than one delivery may analyze the same terminal Build; build-issue persistence remains idempotent.
 
 If the Request is terminal but the loaded Build is nonterminal, analysis reloads the Build before deciding to stop. The Build may have finished between the initial Build read and the Request read; reloading avoids skipping its final analysis. If it is still nonterminal, analysis retains abandonment and stops without detection or a hold. This can occur when the status-polling DLQ handler fails the Request without learning the actual build result, leaving the Build at its last observed status.
 
@@ -26,7 +26,7 @@ Status polling and updates remain the responsibility of buildsignal. Analysis ne
 
 ## Errors
 
-Detection, persistence, configuration, state-loading, and message-validation errors are returned to the consumer for its normal retry or DLQ policy, whether the Build is running or terminal. Analysis errors do not use the two-minute polling hold. The consumer classifies errors and applies its configured retry limits and backoff; a final analysis can still fail and dead-letter.
+Detection, persistence, configuration, state-loading, and message-validation errors are returned to the consumer for its normal retry or DLQ policy, whether the Build is running or terminal. Analysis errors do not use the configured polling hold. The consumer classifies errors and applies its configured retry limits and backoff; a final analysis can still fail and dead-letter.
 
 ## DLQ recovery
 

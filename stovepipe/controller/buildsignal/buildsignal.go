@@ -34,25 +34,13 @@ import (
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
-)
-
-// Poll delays for non-terminal statuses. Vars (not consts) so tests can
-// shorten them; the server always uses the defaults.
-//
-// TODO: move these behind a queueconfig-style extension so operators can
-// tune poll cadence per queue without a code change.
-var (
-	// PollDelayAcceptedMs is the delay before the next Status call while the
-	// build is queued by the runner but has not started executing.
-	PollDelayAcceptedMs int64 = 5000
-	// PollDelayRunningMs is the delay before the next Status call while the
-	// build is executing.
-	PollDelayRunningMs int64 = 2000
 )
 
 // Controller consumes BuildSignal messages, polls the build-runner toward a
@@ -61,6 +49,7 @@ var (
 // the request, and queues terminal analysis. Implements
 // consumer.Controller.
 type Controller struct {
+	queueConfigs  queueconfigprovider.Store
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
@@ -79,6 +68,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	queueConfigs queueconfigprovider.Store,
 	materializer requestlog.Materializer,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
@@ -86,6 +76,7 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
+		queueConfigs:  queueConfigs,
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		stores:        stores,
@@ -115,6 +106,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err := entityqueue.ValidatePayloadQueue(msg, sig.GetQueueName()); err != nil {
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
+
+	cfg, err := c.queueConfigs.Get(ctx, sig.GetQueueName())
+	if err != nil {
+		return fmt.Errorf("load queue configuration: %w", err)
+	}
+
 	store, err := c.stores.For(storage.Config{QueueName: sig.GetQueueName()})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
@@ -209,7 +206,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Not terminal yet: hold the delivery so this same message redelivers
 	// after the poll delay — the partition (keyed by build id) sleeps with it,
 	// and the redelivery does not count toward the retry limit.
-	delayMs := pollDelay(effective)
+	delayMs := pollDelay(effective, cfg.Stages.BuildSignal)
 	delivery.Hold(delayMs)
 	c.logger.Debugw("holding for next build status poll",
 		"build_id", build.ID,
@@ -458,13 +455,13 @@ func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id 
 }
 
 // pollDelay returns the delay before the next Status call for a non-terminal status.
-func pollDelay(status entity.BuildStatus) int64 {
+func pollDelay(status entity.BuildStatus, cfg queueconfig.BuildSignal) int64 {
 	switch status {
 	case entity.BuildStatusRunning:
-		return PollDelayRunningMs
+		return cfg.RunningPollDelayMs
 	default:
 		// Accepted and any unknown non-terminal status.
-		return PollDelayAcceptedMs
+		return cfg.AcceptedPollDelayMs
 	}
 }
 
