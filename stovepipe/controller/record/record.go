@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/id"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -195,23 +196,7 @@ func (c *Controller) applyFactToDerivedCaches(
 		return nil
 	}
 
-	queue, err := store.GetQueueStore().Get(ctx, request.Queue)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
-		return err
-	}
-	if queue.LastGreenRequestID != "" {
-		if _, err := entity.CompareRequestID(request.ID, queue.LastGreenRequestID); err != nil {
-			return err
-		}
-	}
-	if queue.LastGreenRequestID != request.ID || queue.LastGreenURI != request.URI {
-		// Only the current baseline owner can promote: promoting an older commit
-		// would move the ref backwards.
-		return nil
-	}
-	c.emitLastGreenTimestamp(ctx, request)
-	return c.promote(ctx, request)
+	return c.promote(ctx, store, request)
 }
 
 // reportFailureDetectionLatency records how long the break this build failed on went
@@ -345,16 +330,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 	)
 }
 
-// promote points the queue's promotion ref at the request's commit so downstream
-// systems can pull the latest green commit by name. Which ref that is — and whether
-// the queue has one at all — is source-control configuration, so this stage names
-// only the commit.
-//
-// The ref is a cache of the facts, so it moves only after the
-// green fact is durable. Promotion is idempotent, so a redelivery repeats it
-// harmlessly. A commit that a rewritten history dropped from the ref cannot be
-// promoted by any retry, so that case is counted and skipped rather than failed.
-func (c *Controller) promote(ctx context.Context, request entity.Request) error {
+func (c *Controller) promote(ctx context.Context, store storage.Storage, request entity.Request) error {
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
@@ -363,32 +339,74 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
 	}
 
-	if err := sc.Promote(ctx, request.URI); err != nil {
-		if sourcecontrol.IsNotFound(err) {
-			metrics.NamedCounter(c.metricsScope, _opName, "promotions_skipped", 1,
-				metrics.TagsFromContext(ctx, metrics.NewTag("reason", "unknown_uri"))...,
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Read the ref before the bookmark so a newer promotion invalidates this attempt.
+		currentURI, promotionRefErr := sc.PromotionRef(ctx)
+		if promotionRefErr != nil {
+			metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+				metrics.TagsFromContext(ctx, metrics.NewTag("stage", "read_promotion_ref"))...,
 			)
-			c.logger.Warnw("green commit is no longer on the queue's ref; skipping promotion",
-				"queue", request.Queue,
-				"request_id", request.ID,
-				"uri", request.URI,
-			)
+		}
+		queue, err := store.GetQueueStore().Get(ctx, request.Queue)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+			return err
+		}
+		if queue.LastGreenRequestID != "" {
+			if err := id.Validate(request.ID); err != nil {
+				return err
+			}
+			if err := id.Validate(queue.LastGreenRequestID); err != nil {
+				return err
+			}
+		}
+		if queue.LastGreenRequestID != request.ID || queue.LastGreenURI != request.URI {
+			return nil
+		}
+		if promotionRefErr != nil {
+			return fmt.Errorf("failed to read promotion ref for queue %s: %w", request.Queue, promotionRefErr)
+		}
+		c.emitLastGreenTimestamp(ctx, request)
+		if currentURI == request.URI {
 			return nil
 		}
 
-		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
-			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "promote"))...,
-		)
-		return fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err)
-	}
+		applied, err := sc.Promote(ctx, request.URI, currentURI)
+		if err != nil {
+			if sourcecontrol.IsNotFound(err) {
+				metrics.NamedCounter(c.metricsScope, _opName, "promotions_skipped", 1,
+					metrics.TagsFromContext(ctx, metrics.NewTag("reason", "unknown_uri"))...,
+				)
+				c.logger.Warnw("green commit is no longer on the queue's ref; skipping promotion",
+					"queue", request.Queue,
+					"request_id", request.ID,
+					"uri", request.URI,
+				)
+				return nil
+			}
 
-	metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1, metrics.TagsFromContext(ctx)...)
-	c.logger.Infow("promoted green commit",
-		"queue", request.Queue,
-		"request_id", request.ID,
-		"uri", request.URI,
-	)
-	return nil
+			metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+				metrics.TagsFromContext(ctx, metrics.NewTag("stage", "promote"))...,
+			)
+			return fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err)
+		}
+		if !applied {
+			metrics.NamedCounter(c.metricsScope, _opName, "promotion_conflicts", 1, metrics.TagsFromContext(ctx)...)
+			continue
+		}
+
+		metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1, metrics.TagsFromContext(ctx)...)
+		c.logger.Infow("promoted green commit",
+			"queue", request.Queue,
+			"request_id", request.ID,
+			"uri", request.URI,
+		)
+		return nil
+	}
 }
 
 // loadRequest loads the request by id.

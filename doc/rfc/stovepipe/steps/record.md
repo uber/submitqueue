@@ -55,10 +55,13 @@ For a delivery carrying a `Record` payload:
 
 9. If the persisted repository fact is not green, skip to step 11. Report how long
    the break went undetected only if step 7 created the fact (see "Observability").
-   Otherwise load the Queue and check that both LastGreenRequestID and LastGreenURI
-   still match R. If they do not, skip promotion and continue to step 11.
+   Otherwise read the promotion ref, then load the Queue and check that both
+   LastGreenRequestID and LastGreenURI still match R. If they do not, skip promotion
+   and continue to step 11. Otherwise return any promotion-ref read error.
 
-10. Ask SourceControl to point the promotion ref at R.URI.
+10. If the promotion ref already equals R.URI, skip the write and continue to step 11.
+    Otherwise conditionally promote R.URI using the observed URI as the expectation.
+    - conflict -> repeat step 9, including both reads and the ownership check.
     - ErrNotFound -> count and skip. A rewritten history dropped the commit from the
       ref, and no retry can promote it.
     - other error -> return raw.
@@ -138,9 +141,9 @@ A failed or cancelled build never moves the bookmark, and so never promotes eith
 
 A green commit is also promoted: `record` asks `SourceControl` to point the Queue's promotion ref, a stable branch name like `verified-main`, at that commit. This is the pull-shaped counterpart to the hook event's push, so a deploy gate or cache warmer can resolve a name and know nothing about Stovepipe, URIs, or degrees. See [Promotion ref](../workflow.md#promotion-ref--the-last-green-commit-by-name) in the pipeline overview. The stage names only the commit; which ref a Queue promotes to, and whether it has one at all, is integrator configuration injected into the `SourceControl` implementation alongside the endpoint and credentials, so a backend with no promotion target makes `Promote` a no-op.
 
-**Promotion is gated on holding the bookmark**, and only the holder promotes. Without that gate an older green commit recording late would drag the ref backwards: the ref has no version guard of its own, and `Promote` lands the URI it is given rather than refusing a non-descendant, so the caller has to enforce monotonicity. The stored Request id and URI must both match before promotion. The Queue read and external Git write remain separate operations.
+**Promotion is gated on holding the bookmark.** Read the promotion ref before checking that the stored Request id and URI both match, then conditionally promote against the observed ref URI. A conflict repeats both reads and the ownership check.
 
-The equal case matters as much as the newer one. A redelivery that finds its own id on the bookmark reports that it *holds* it rather than skipping, so the promotion behind it is retried. That is what makes a crash between the bookmark write and the promotion recoverable, and it is safe because `Promote` is idempotent. Promotion follows the durable fact for the same reason the bookmark does: the ref is a cache of the facts and must not lead them.
+A redelivery that still holds the bookmark skips the write if the promotion ref already matches its URI; otherwise it retries the conditional update. Promotion follows the durable fact: the ref is a cache of the facts and must not lead them.
 
 `ErrNotFound` from `Promote` means a rewritten history dropped the commit from the ref. It is counted and acked rather than retried, since no retry will put that commit back and the next green commit corrects the ref.
 
@@ -250,9 +253,10 @@ Partitioning by request id keeps completion bookkeeping single-writer per Reques
 | Request not found                                  | non-retryable        | the publish follows the committed outcome write, so a miss is a storage defect    |
 | Request carrying no build outcome                  | non-retryable        | producer/state-machine invariant violation                                        |
 | Existing fact owned by a different Request         | non-retryable        | ingest dedup invariant violated; the stored fact is immutable                     |
-| Malformed request id at bookmark comparison        | non-retryable        | re-parsing the same ids cannot succeed                                            |
-| Queue CAS version mismatch                         | absorbed, not raised | `storage.ErrVersionMismatch` is handled by the bookmark loop: reload and re-apply |
+| Malformed request id in promotion guard        | non-retryable        | re-parsing the same ids cannot succeed                                            |
+| Promotion ref conflict                            | absorbed, not raised | Reload the ref and Queue, then recheck ownership |
 | Promotion target unknown to the ref                | absorbed, not raised | `sourcecontrol.ErrNotFound` means a rewritten history dropped the commit          |
+| `PromotionRef` failure                             | skipped if obsolete; otherwise raw error | Check bookmark ownership before returning the error |
 | SourceControl resolution or `Promote` failure      | raw error            | backend classifier has the required failure knowledge                             |
 | Commit-timestamp lookup for a metric               | swallowed            | counted and logged; observability must not retry a recorded outcome               |
 | ValidationFactStore, QueueStore, RequestStore      | raw error            | backend classifier has the required failure knowledge                             |
@@ -273,7 +277,7 @@ Every effect is recognize-and-skip, so a redelivery after a complete run re-runs
 - **History rewrite while a build runs.** The Request keeps the strategy and URI pinned at admission, and record stores the fact about that immutable URI. A later head is handled independently by `process`. If the rewrite dropped the commit from the ref, the fact and the bookmark still stand, since they describe a commit and not a ref, and only the promotion is skipped.
 - **A fail-closed terminal outranks a build that passed.** The degree derives from `R.State`, so a Request forced to `failed` by DLQ reconciliation records `DegreeBroken` even when one of its builds reports success afterwards. Reachable today, and permanent once written; see [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
 - **Crash between the fact write and the bookmark advance.** Redelivery reloads the existing fact and re-applies the idempotent guard.
-- **Crash between the bookmark advance and the promotion.** Redelivery finds its own id on the bookmark, reports that it holds it, and retries the idempotent promotion.
+- **Crash between the bookmark advance and the promotion.** Redelivery rechecks bookmark ownership and retries the conditional update only if the ref still needs changing.
 
 
 

@@ -51,7 +51,7 @@ A **project** is a caller-defined slice of the repository. Whole-repo greenness 
 
 A Queue may have a **promotion ref**: a stable branch name (say `verified-main` for `monorepo/main`) that Stovepipe advances to each commit it establishes green. A deploy gate or cache warmer then fetches that name and needs to know nothing about Stovepipe, URIs, or greenness degrees. It is the pull-shaped counterpart to Hooks' push: the same fact, available to consumers that would rather resolve a ref than subscribe to an event.
 
-The ref is a *cache* of the last-green URI, not a second record of greenness. It only ever moves where the bookmark already points, so it inherits the same forward-only rule, and a commit that a history rewrite has dropped from the branch is skipped rather than retried — the next green commit corrects the ref. Which ref a Queue promotes to, and whether it has one at all, is `SourceControl` configuration resolved from the Queue name alongside the repo and credentials; the pipeline names only the commit, never a branch.
+The ref is a *cache* of the last-green URI, not a second record of greenness. Bookmark ownership checks and conditional ref updates prevent older requests from overwriting newer promotions. A commit that a history rewrite has dropped from the branch is skipped rather than retried — the next green commit corrects the ref. Which ref a Queue promotes to, and whether it has one at all, is `SourceControl` configuration resolved from the Queue name alongside the repo and credentials; the pipeline names only the commit, never a branch.
 
 ## Extensions
 
