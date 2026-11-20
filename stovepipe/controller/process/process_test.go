@@ -772,6 +772,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
+				updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 				loggedRequest := updated
 				loggedRequest.Version = 2
@@ -791,6 +792,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
+				updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 				request := entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
@@ -814,6 +816,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
+				updated.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 				reloaded := entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
@@ -938,6 +941,7 @@ func TestDelayedRegistrationDoesNotAdmitAnOlderRequest(t *testing.T) {
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, LatestRequestID: "8", Version: 2}, nil)
 	request := acceptedRequest(testID)
 	request.State = entity.RequestStateSuperseded
+	request.OutcomeReason = entity.RequestOutcomeReasonSupersededByNewerHead
 	m.reqStore.EXPECT().Update(gomock.Any(), request, int32(1), int32(2)).Return(nil)
 	request.Version = 2
 	expectStateLog(t, m, request, entity.RequestOutcomeReasonSupersededByNewerHead)

@@ -128,6 +128,7 @@ func failRequest(
 
 	updated := request
 	updated.State = entity.RequestStateFailed
+	updated.OutcomeReason = reason
 	newVersion := request.Version + 1
 	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
 		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
