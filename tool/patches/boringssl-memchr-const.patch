@@ -1,0 +1,23 @@
+diff --git a/crypto/internal.h b/crypto/internal.h
+--- a/crypto/internal.h
++++ b/crypto/internal.h
+@@ -1047,4 +1047,4 @@
+-static inline void *OPENSSL_memchr(const void *s, int c, size_t n) {
++static inline const void *OPENSSL_memchr(const void *s, int c, size_t n) {
+   if (n == 0) {
+     return NULL;
+   }
+diff --git a/crypto/fipsmodule/rsa/rsa_impl.c.inc b/crypto/fipsmodule/rsa/rsa_impl.c.inc
+--- a/crypto/fipsmodule/rsa/rsa_impl.c.inc
++++ b/crypto/fipsmodule/rsa/rsa_impl.c.inc
+@@ -345,8 +345,8 @@
+-  uint8_t *const free_inuse_flag =
++  const uint8_t *const free_inuse_flag =
+       OPENSSL_memchr(rsa->blindings_inuse, 0, rsa->num_blindings);
+   if (free_inuse_flag != NULL) {
+-    *free_inuse_flag = 1;
+     *index_used = free_inuse_flag - rsa->blindings_inuse;
++    rsa->blindings_inuse[*index_used] = 1;
+     ret = rsa->blindings[*index_used];
+     goto out;
+   }

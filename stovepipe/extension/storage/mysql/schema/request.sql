@@ -13,5 +13,6 @@ CREATE TABLE IF NOT EXISTS request (
     build_id          VARCHAR(255) NOT NULL DEFAULT '',
     outcome_reason    VARCHAR(64)  NOT NULL DEFAULT '',
     metadata          JSON         NULL,
+    outcome_reason    VARCHAR(64)  NOT NULL DEFAULT '',
     PRIMARY KEY (queue, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

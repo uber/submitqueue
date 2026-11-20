@@ -25,6 +25,13 @@ single_version_override(
     version = "2.55.0",
 )
 
+# C23 memchr preserves const; the older C wrapper must preserve it too.
+single_version_override(
+    module_name = "boringssl",
+    patch_strip = 1,
+    patches = ["//tool/patches:boringssl-memchr-const.patch"],
+)
+
 # Direct dep so the well-known type proto_library targets (e.g.
 # @protobuf//:descriptor_proto, needed by the message queue topics option that
 # extends google.protobuf.MessageOptions) are visible by apparent name.
