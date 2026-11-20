@@ -238,3 +238,90 @@ func TestProcess_HaltedRequestSkips(t *testing.T) {
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
 }
+
+// A result redelivered after the request has moved past validation is acked
+// without a state write or a publish: the batch owns the request by then.
+func TestProcess_SignalForAdvancedRequestIsSkipped(t *testing.T) {
+	tests := []struct {
+		name    string
+		state   entity.RequestState
+		outcome runwaypb.Outcome
+	}{
+		{name: "batched, landable", state: entity.RequestStateBatched, outcome: runwaypb.Outcome_SUCCEEDED},
+		{name: "batched, not landable", state: entity.RequestStateBatched, outcome: runwaypb.Outcome_FAILED},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			// No Update expectation: gomock fails the test on any state write.
+			request := entity.Request{ID: testRequestID, Queue: testQueue, State: tt.state, Version: 3}
+			reqStore := storagemock.NewMockRequestStore(ctrl)
+			reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil).AnyTimes()
+
+			store := orchstoragemock.NewMockStorage(ctrl)
+			store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
+
+			// No Publish expectation either.
+			pub := queuemock.NewMockPublisher(ctrl)
+			q := queuemock.NewMockQueue(ctrl)
+			q.EXPECT().Publisher().Return(pub).AnyTimes()
+			registry, err := consumer.NewTopicRegistry(
+				[]consumer.TopicConfig{
+					{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q},
+					{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+				},
+			)
+			require.NoError(t, err)
+
+			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
+				runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
+
+			res := runwaymq.MergeResult{Id: testRequestID, Outcome: tt.outcome, Reason: "replayed"}
+			msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
+			require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
+		})
+	}
+}
+
+// A retry after the Validated write succeeded and the hand-off failed finds the
+// request in Validated and must still reach the batch topic.
+func TestProcess_LandableRetryFromValidatedRepublishesToBatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateValidated, Version: 2}
+	reqStore := storagemock.NewMockRequestStore(ctrl)
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
+	reqStore.EXPECT().Update(gomock.Any(), request, int32(2), int32(3)).Return(nil)
+
+	store := orchstoragemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
+
+	var gotTopics []string
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, _ entityqueue.Message) error {
+			gotTopics = append(gotTopics, topic)
+			return nil
+		},
+	).AnyTimes()
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+		},
+	)
+	require.NoError(t, err)
+
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-landconflictsignal")
+
+	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
+	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
+	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
+
+	assert.Equal(t, []string{"log", "batch"}, gotTopics)
+}

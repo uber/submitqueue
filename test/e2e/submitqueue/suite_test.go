@@ -40,9 +40,11 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	storagemysql "github.com/uber/submitqueue/submitqueue/orchestrator/extension/storage/mysql"
@@ -778,6 +780,81 @@ func (s *E2EIntegrationSuite) TestBatchRedelivery_DoesNotEnrolTheRequestTwice() 
 	s.openGate(queue, gateGroup, heldBatch)
 	s.awaitStatus(req, entity.RequestStatusLanded)
 	s.awaitStatus(settle, entity.RequestStatusLanded)
+}
+
+// A validate message and a SUCCEEDED land-conflict result replayed after the
+// request has been claimed by a batch must leave it alone: from Batched onward
+// the batch owns the request, so neither replay may write its state.
+//
+// The build gate holds the request in Batched for the replays, as in
+// TestBatchRedelivery_DoesNotEnrolTheRequestTwice. A request landed after each
+// replay is its settle signal: validate, the conflict check and its signal are
+// each consumed in order per queue, so the later request reaching a batch
+// proves the replay ahead of it has already been handled.
+func (s *E2EIntegrationSuite) TestStaleValidationMessages_LeaveABatchedRequestAlone() {
+	t := s.T()
+
+	const queue = "e2e-stale-validation-queue"
+	const gateGroup = "orchestrator"
+	const heldBatch = "1"
+
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the request stays batched for the replays")
+	defer s.openGate(queue, gateGroup, heldBatch)
+
+	req := s.land(queue, "github://github.example.com/uber/e2e-stale-validation/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
+	s.awaitStatus(req, entity.RequestStatusSpeculating)
+	require.Equal(t, entity.RequestStateBatched, s.terminalState(req))
+
+	s.publishIDMessage(queue, topickey.TopicKeyValidate, req.sqid)
+	afterValidate := s.land(queue, "github://github.example.com/uber/e2e-stale-validation/pull/2/1234567890abcdef1234567890abcdef12345678")
+	s.awaitBatchID(afterValidate)
+	assert.Equal(t, entity.RequestStateBatched, s.terminalState(req), "a replayed validate must not move a batched request")
+
+	s.redeliverLandConflictSignal(req, runwaypb.Outcome_SUCCEEDED, "")
+	afterSignal := s.land(queue, "github://github.example.com/uber/e2e-stale-validation/pull/3/fedcba9876543210fedcba9876543210fedcba98")
+	s.awaitBatchID(afterSignal)
+	assert.Equal(t, entity.RequestStateBatched, s.terminalState(req), "a replayed result must not rewind a batched request")
+	assert.Equal(t, []string{heldBatch}, s.batchIDsFor(req))
+
+	s.openGate(queue, gateGroup, heldBatch)
+	s.awaitStatus(req, entity.RequestStatusLanded)
+	s.awaitStatus(afterValidate, entity.RequestStatusLanded)
+	s.awaitStatus(afterSignal, entity.RequestStatusLanded)
+	s.assertStatusCount(req, entity.RequestStatusValidated, 1)
+}
+
+// A not-landable land-conflict result replayed after the request has been
+// claimed by a batch must not fail it: the batch owns the outcome, and a
+// request failed underneath it would read as an error for a change that the
+// batch then merges.
+//
+// The gate and the settle request work as in the test above.
+func (s *E2EIntegrationSuite) TestStaleNotLandableSignal_LeavesABatchedRequestAlone() {
+	t := s.T()
+
+	const queue = "e2e-stale-not-landable-queue"
+	const gateGroup = "orchestrator"
+	const heldBatch = "1"
+
+	s.closeGate(queue, gateGroup, heldBatch, "e2e: hold the build so the request stays batched for the replay")
+	defer s.openGate(queue, gateGroup, heldBatch)
+
+	req := s.land(queue, "github://github.example.com/uber/e2e-stale-not-landable/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
+	s.awaitStatus(req, entity.RequestStatusSpeculating)
+	require.Equal(t, entity.RequestStateBatched, s.terminalState(req))
+
+	s.redeliverLandConflictSignal(req, runwaypb.Outcome_FAILED, "replayed conflict")
+	settle := s.land(queue, "github://github.example.com/uber/e2e-stale-not-landable/pull/2/1234567890abcdef1234567890abcdef12345678")
+	s.awaitBatchID(settle)
+	assert.Equal(t, entity.RequestStateBatched, s.terminalState(req), "a replayed not-landable result must not fail a batched request")
+
+	s.openGate(queue, gateGroup, heldBatch)
+	s.awaitStatus(req, entity.RequestStatusLanded)
+	s.awaitStatus(settle, entity.RequestStatusLanded)
+	assert.Equal(t, entity.RequestStateLanded, s.terminalState(req))
+	s.assertStatusesNever(req, entity.RequestStatusError)
 }
 
 // A batch left in Created is dependency-eligible, so everything created after

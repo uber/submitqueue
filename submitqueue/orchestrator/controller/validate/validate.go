@@ -148,6 +148,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
+	// Validation runs once, on a request nothing downstream has picked up yet.
+	// A redelivery that arrives after the conflict check came back would
+	// otherwise re-judge a request its batch now owns.
+	if request.State != entity.RequestStateStarted {
+		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_stale", 1, coremetrics.TagsFromContext(ctx)...)
+		c.logger.Infow("skipping validate for request past validation",
+			"request_id", request.ID,
+			"state", string(request.State),
+		)
+		return nil
+	}
+
 	// Report that validation has begun. This stage is not instantaneous — the
 	// land-conflict check below is an async round trip to runway — so without
 	// this the request reads "started" for the whole of it. No occurrence: a

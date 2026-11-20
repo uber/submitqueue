@@ -891,3 +891,56 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to terminate rejected request")
 }
+
+// A validate message redelivered after the request has moved past validation
+// is acked without touching it: no "validating" log, no validator call, no
+// state write, and no second land-conflict check.
+func TestController_Process_RedeliveryForAdvancedRequestIsSkipped(t *testing.T) {
+	for _, state := range []entity.RequestState{
+		entity.RequestStateValidated,
+		entity.RequestStateBatched,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			request := entity.Request{
+				ID:           "123",
+				Queue:        "test-queue",
+				Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+				LandStrategy: mergestrategy.MergeStrategyRebase,
+				State:        state,
+				Version:      3,
+			}
+			// No Update expectation: gomock fails the test on any state write.
+			store, _ := newMockStorage(ctrl, request)
+			// No EXPECTs on the change store, publisher, or validator either.
+			store.EXPECT().GetChangeStore().Return(storagemock.NewMockChangeStore(ctrl)).AnyTimes()
+
+			mockPub := queuemock.NewMockPublisher(ctrl)
+			mockQ := queuemock.NewMockQueue(ctrl)
+			mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+			registry, err := consumer.NewTopicRegistry(
+				[]consumer.TopicConfig{
+					{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+					{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+				},
+			)
+			require.NoError(t, err)
+
+			cpFactory := changeprovidermock.NewMockFactory(ctrl)
+			cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+			mockValidatorFactory := validatormock.NewMockFactory(ctrl)
+			mockValidatorFactory.EXPECT().For(gomock.Any()).Return(validatormock.NewMockValidator(ctrl), nil).AnyTimes()
+
+			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+
+			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			msg.Tenant = request.Queue
+			delivery := consumermock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+			require.NoError(t, controller.Process(context.Background(), delivery))
+		})
+	}
+}
