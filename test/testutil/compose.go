@@ -23,7 +23,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -393,58 +392,43 @@ func (s *ComposeStack) StopService(serviceName string, timeoutSec int) error {
 func (s *ComposeStack) ServiceExitCode(serviceName string) (int, error) {
 	s.t.Helper()
 
-	// Get container ID for the service
-	args := s.command(
-		"ps", "-a", "-q", serviceName)
+	args := s.command("ps", "-a", "--format", "{{.ExitCode}}", serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
 	output, err := cmd.Output()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get container ID for service %s: %w", serviceName, err)
+		return 0, fmt.Errorf("failed to list container for service %s: %w", serviceName, err)
 	}
 
-	containerID := strings.TrimSpace(string(output))
-	if containerID == "" {
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
 		return 0, fmt.Errorf("no container found for service %s", serviceName)
 	}
-
-	// Get exit code via docker inspect
-	inspectCmd := exec.CommandContext(s.ctx, "docker", "inspect",
-		"--format", "{{.State.ExitCode}}", containerID)
-	inspectOutput, err := inspectCmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("failed to inspect container %s: %w", containerID, err)
-	}
-
 	var exitCode int
-	_, err = fmt.Sscanf(strings.TrimSpace(string(inspectOutput)), "%d", &exitCode)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse exit code from %q: %w", string(inspectOutput), err)
+	if _, err := fmt.Sscanf(trimmed, "%d", &exitCode); err != nil {
+		return 0, fmt.Errorf("failed to parse exit code from %q: %w", trimmed, err)
 	}
 
 	s.log.Logf("Service %s exit code: %d", serviceName, exitCode)
 	return exitCode, nil
 }
 
-// setupDockerEnv configures the Docker CLI environment for compose commands.
+// setupDockerEnv gives every Docker and Compose command a private, empty
+// client config, so a test depends on nothing but the daemon endpoint (see
+// setActiveDockerContextHost). The invoking user's config is not used: its
+// credential helpers are not on the hermetic PATH, its plugin hooks run host
+// programs, and buildx writes builder state into it.
 func setupDockerEnv(t *testing.T) {
 	t.Helper()
 
-	// Ensure HOME is set for Docker config
+	setActiveDockerContextHost(t)
 	if os.Getenv("HOME") == "" {
 		t.Setenv("HOME", t.TempDir())
 	}
 
-	// Bazel's scratch HOME hides Docker contexts and credentials. Preserve
-	// the invoking user's Docker config unless one was supplied explicitly.
-	if os.Getenv("DOCKER_CONFIG") == "" {
-		if u, err := user.Current(); err == nil && u.HomeDir != "" {
-			dockerConfig := filepath.Join(u.HomeDir, ".docker")
-			if _, statErr := os.Stat(dockerConfig); statErr == nil {
-				t.Setenv("DOCKER_CONFIG", dockerConfig)
-			}
-		}
-	}
+	dockerConfig := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dockerConfig, "config.json"), []byte("{}\n"), 0o600))
+	t.Setenv("DOCKER_CONFIG", dockerConfig)
 }
 
 // stageBuildContext copies the given runfiles into a temporary directory that
