@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { readAppearanceMode } from "@submitqueue/web-platform/appearance-preference";
 import { createSubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
 import { createStovepipeWeb } from "@submitqueue/web-stovepipe/server";
+
+assert.equal(readAppearanceMode("submitqueue.appearance=dark"), "dark");
 
 const submitqueue = createSubmitQueueWeb({ gateway: createFakeGatewayReader() });
 const requests = await submitqueue.handle({ path: "/queue/demo-queue", search: {} });

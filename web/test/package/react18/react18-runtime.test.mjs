@@ -6,6 +6,7 @@ import { renderToString } from "react-dom/server";
 import { BaseProvider, createTheme, DarkTheme, LightTheme } from "baseui";
 import { Client, Server } from "styletron-engine-atomic";
 import { Provider } from "styletron-react";
+import { AppearanceProvider } from "@submitqueue/web-platform";
 import { SubmitQueueApp } from "@submitqueue/web-submitqueue";
 import { createSubmitQueueWeb } from "@submitqueue/web-submitqueue/server";
 import { createFakeGatewayReader } from "@submitqueue/web-submitqueue/extension/gateway/mock";
@@ -31,7 +32,8 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
     buttonPrimaryFill: "#123456", buttonPrimaryText: "#ffffff",
   } })];
   function withProviders(page, engine, theme) {
-    return createElement(Provider, { value: engine }, createElement(BaseProvider, { theme }, page));
+    return createElement(Provider, { value: engine },
+      createElement(BaseProvider, { theme }, page));
   }
   function addPage(route, page) {
     for (const theme of themes) {
@@ -39,6 +41,14 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
       const html = renderToString(withProviders(page, engine, theme));
       assert.ok(engine.getCss().length > 0);
       pages.push({ route, page, theme, html, stylesheets: engine.getStylesheets() });
+    }
+    if (route === "/" || route === "/repo%2Fmain") {
+      for (const theme of themes) {
+        const engine = new Server();
+        const themed = createElement(AppearanceProvider, { initialMode: "dark" }, page);
+        const html = renderToString(withProviders(themed, engine, theme));
+        pages.push({ route, page: themed, theme, html, stylesheets: engine.getStylesheets() });
+      }
     }
   }
   for (const route of routes) {
@@ -79,9 +89,9 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
   const reportError = console.error;
   console.error = (...values) => {
     const message = values.map(String).join(" ");
-    // BaseUI's Popover and StatefulTooltip still use defaultProps; React 18 hydrates correctly.
+    // These BaseUI components still use defaultProps; React 18 hydrates correctly.
     if (message.includes("Support for defaultProps will be removed from function components")
-      && /\b(?:Popover|StatefulTooltip)\b/u.test(String(values[1]))) {
+      && /\b(?:Popover|StatefulPopover|StatefulTooltip)\b/u.test(String(values[1]))) {
       reportError(...values);
     } else {
       errors.push(message);
@@ -118,7 +128,8 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
     document.body.append(expected);
     assert.equal(dom.window.getComputedStyle(container.querySelector(".sq-app")).backgroundColor,
       dom.window.getComputedStyle(expected).backgroundColor, "the page must inherit its host's background");
-    const timestamps = container.querySelectorAll('button[aria-haspopup="dialog"]');
+    const timestamps = [...container.querySelectorAll('button[aria-haspopup="dialog"]')]
+      .filter(button => button.querySelector("time"));
     assert.equal(timestamps.length, container.querySelectorAll("time[datetime]").length);
     for (const timestamp of timestamps) {
       assert.equal(textColor(timestamp), textColor(timestamp.parentElement),

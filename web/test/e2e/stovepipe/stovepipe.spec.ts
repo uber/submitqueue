@@ -12,12 +12,37 @@ const client = createClient(
 );
 test.describe("server-rendered styling", () => {
   test.use({ javaScriptEnabled: false });
-  test("styles the queue before hydration", async ({ page }) => {
+  for (const scheme of ["light", "dark"] as const) {
+    test(`follows a ${scheme} system on first visit before JavaScript`, async ({ page, context }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await context.addCookies([{ name: "submitqueue.appearance", value: scheme, url: process.env.STOVEPIPE_E2E_WEB_URL! }]);
+      await page.goto("/web%2Fpagination");
+      const expected = await page.locator(".sq-app").evaluate(element => ({
+        background: getComputedStyle(element).backgroundColor,
+        color: getComputedStyle(element).color,
+      }));
+      await context.clearCookies({ name: "submitqueue.appearance" });
+      await page.reload();
+      await expect(page.locator(".sq-app")).toHaveCSS("background-color", expected.background);
+      await expect(page.locator(".sq-app")).toHaveCSS("color", expected.color);
+      await expect(page.locator("html")).toHaveCSS("background-color", expected.background);
+      await expect(page.locator("html")).toHaveCSS("color-scheme", "light dark");
+    });
+  }
+  test("styles the queue and its saved appearance before hydration", async ({ page, context }) => {
     await page.goto("/web%2Fpagination");
     await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("font-size", "32px");
     await expect(page.getByRole("banner").getByRole("button", { name: /auto-refresh/i })).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("table", { name: "Requests", exact: true }).locator("tbody tr")).toHaveCount(50);
     await expect(page.getByRole("status")).toContainText("More requests available");
+    const app = page.locator(".sq-app");
+    const light = await app.evaluate(element => getComputedStyle(element).backgroundColor);
+    await context.addCookies([{ name: "submitqueue.appearance", value: "dark", url: page.url() }]);
+    await page.reload();
+    await expect(app).not.toHaveCSS("background-color", light);
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await expect(page.locator("html")).toHaveCSS("background-color",
+      await app.evaluate(element => getComputedStyle(element).backgroundColor));
   });
   test("renders grouped open issues and continuation links without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination?view=issues");
@@ -74,6 +99,65 @@ test.describe("server-rendered styling", () => {
     const table = await page.getByRole("table", { name: "Requests", exact: true }).boundingBox();
     expect(table?.width).toBeGreaterThan(1920 * 0.95);
   });
+});
+
+test("toggles and remembers appearance directly from the Stovepipe header", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/web%2Fpagination");
+  const app = page.locator(".sq-app");
+  const dark = await app.evaluate(element => getComputedStyle(element).backgroundColor);
+  const toggle = page.getByRole("banner").getByRole("button", { name: /^Switch to (light|dark) mode$/ });
+  await expect(toggle).toHaveAccessibleName("Switch to light mode");
+  await toggle.click();
+  await expect(toggle).toHaveAccessibleName("Switch to dark mode");
+  await expect(page.getByRole("dialog", { name: "Appearance" })).toHaveCount(0);
+  await expect(app).not.toHaveCSS("background-color", dark);
+  const light = await app.evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.reload();
+  await expect(app).toHaveCSS("background-color", light);
+  await expect(toggle).toHaveAccessibleName("Switch to dark mode");
+  await toggle.focus();
+  await toggle.press("Enter");
+  await expect(app).toHaveCSS("background-color", dark);
+  await expect(toggle).toHaveAccessibleName("Switch to light mode");
+});
+
+test("keeps the timestamp popover themed and aligned while toggling appearance", async ({ page }) => {
+  const closeIconVerticalOffset = (element: HTMLElement) => {
+    const heading = element.querySelector("h2")!.getBoundingClientRect();
+    const icon = element.querySelector("button svg")!.getBoundingClientRect();
+    return Math.abs(heading.y + heading.height / 2 - icon.y - icon.height / 2);
+  };
+  const countShadowLayers = (element: HTMLElement) => {
+    let count = 0;
+    for (let node: HTMLElement | null = element; node && node !== document.body; node = node.parentElement) {
+      if (getComputedStyle(node).boxShadow !== "none") count += 1;
+    }
+    return count;
+  };
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/web%2Fpagination/request/51");
+  const app = page.locator(".sq-app");
+  for (const mode of ["system", "light", "dark"] as const) {
+    if (mode !== "system") {
+      await page.getByRole("banner").getByRole("button", { name: `Switch to ${mode} mode`, exact: true }).click();
+    }
+    const background = await app.evaluate(element => getComputedStyle(element).backgroundColor);
+    const foreground = await app.evaluate(element => getComputedStyle(element).color);
+    // A host may not theme its document; portaled controls still need the correct scheme.
+    await page.evaluate(() => { document.documentElement.style.colorScheme = "light"; });
+    await page.getByRole("button", { name: /timestamp options$/ }).first().click();
+    const timestamp = page.getByRole("dialog", { name: "Timestamp", exact: true });
+    await expect(timestamp).toHaveCSS("color", foreground);
+    expect(await timestamp.evaluate(element => getComputedStyle(element.parentElement!).backgroundColor)).toBe(background);
+    expect(await timestamp.evaluate(countShadowLayers)).toBe(1);
+    expect(await timestamp.evaluate(closeIconVerticalOffset)).toBeLessThan(0.5);
+    await expect(timestamp.getByRole("radio", { name: "Local", exact: true }))
+      .toHaveCSS("color-scheme", mode === "light" ? "light" : "dark");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await timestamp.getByRole("button", { name: "Close timestamp options" }).click();
+  }
 });
 
 test("expands request issue projects with paginated links and browser history", async ({ page }) => {
@@ -398,7 +482,7 @@ test.describe("time zone selection", () => {
     await openTimeZones();
     await expect(timeZones.getByRole("radio", { name: "Local", exact: true })).toBeChecked();
     await expectTimeZone("America/Los_Angeles");
-    await timeZones.getByRole("radio", { name: "UTC", exact: true }).check();
+    await timeZones.getByRole("radiogroup", { name: "Display timezone" }).getByText("UTC", { exact: true }).click();
     await expectTimeZone("UTC");
     await closeTimeZones();
     await page.getByRole("link", { name: "51", exact: true }).click();
@@ -406,7 +490,7 @@ test.describe("time zone selection", () => {
     await openTimeZones();
     await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
-    await timeZones.getByRole("radio", { name: "Local", exact: true }).check();
+    await timeZones.getByRole("radiogroup", { name: "Display timezone" }).getByText("Local", { exact: true }).click();
     await expectTimeZone("America/Los_Angeles");
     const browser = timeZones.getByRole("radio", { name: "Local", exact: true });
     await browser.focus();
@@ -418,7 +502,7 @@ test.describe("time zone selection", () => {
     await openTimeZones();
     await expect(timeZones.getByRole("radio", { name: "UTC", exact: true })).toBeChecked();
     await expectTimeZone("UTC");
-    await browser.check();
+    await timeZones.getByRole("radiogroup", { name: "Display timezone" }).getByText("Local", { exact: true }).click();
     await page.reload();
     await openTimeZones();
     await expect(browser).toBeChecked();

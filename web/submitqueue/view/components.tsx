@@ -94,6 +94,7 @@ const QueueCard = styled("li", ({ $theme }) => ({
 // Stretched over its card so the whole card is clickable while the queue name stays the one link and tab stop.
 const QueueCardLink = withStyle(AccentLink, ({ $theme }) => ({
   color: $theme.colors.contentPrimary,
+  textDecoration: "none",
   ":visited": { color: $theme.colors.contentPrimary },
   ":hover": { color: $theme.colors.contentPrimary, textDecoration: "none" },
   "::after": { content: '""', position: "absolute", inset: 0, borderRadius: "8px" },
@@ -114,7 +115,7 @@ export function QueueDirectory({ queues, basePath }: { queues: readonly QueueMod
       <QueueGrid>{queues.map(queue => <QueueCard key={queue.name}>
         <HeadingXSmall as="h2" margin="0"><QueueCardLink $as={Link ?? "a"} href={paths.requests(queue.name)}>{queue.name}</QueueCardLink></HeadingXSmall>
         {queue.description ? <ParagraphSmall margin="0" color="contentSecondary">{queue.description}</ParagraphSmall> : null}
-        <Block as="span" aria-hidden="true" marginTop="auto" paddingTop="scale300" font="LabelXSmall" color="accent500">View requests →</Block>
+        <Block as="span" aria-hidden="true" marginTop="auto" paddingTop="scale300" font="LabelXSmall" color="contentAccent">View requests →</Block>
       </QueueCard>)}</QueueGrid>}
   </section>;
 }

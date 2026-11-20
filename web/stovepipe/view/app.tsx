@@ -1,6 +1,6 @@
 "use client";
 
-import { AppBrand, AppHeader, Timestamp, TimeZoneProvider } from "@submitqueue/web-platform";
+import { AppBrand, AppHeader, AppearanceControl, Timestamp, TimeZoneProvider } from "@submitqueue/web-platform";
 import { styled } from "baseui";
 import { Block } from "baseui/block";
 import { HeadingLarge, HeadingMedium, HeadingSmall, ParagraphSmall } from "baseui/typography";
@@ -63,6 +63,7 @@ function Page({ model }: { model: StovepipePageModel }) {
       <AppHeader>
         <AppBrand href={model.queueHref} homeLabel="Stovepipe queue" mark={<StovepipeLogo />}>Stovepipe</AppBrand>
         <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
+          <AppearanceControl />
           <RefreshControls {...(model.kind === "issues" && model.showLatestLink ? { href: model.latestHref } : {})} />
         </Block>
       </AppHeader>
