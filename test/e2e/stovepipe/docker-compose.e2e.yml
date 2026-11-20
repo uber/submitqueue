@@ -1,0 +1,8 @@
+services:
+  stovepipe-service:
+    command: ["./stovepipe", "-config", "/etc/stovepipe/queues.yaml"]
+    volumes:
+      - type: bind
+        source: ${REPO_ROOT}/test/e2e/stovepipe/queues.yaml
+        target: /etc/stovepipe/queues.yaml
+        read_only: true
