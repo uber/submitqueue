@@ -1,0 +1,10 @@
+filegroup(
+    name = "orchestrate-sdlc",
+    srcs = [
+        "SKILL.md",
+        "references/watch.md",
+        "references/workflow.md",
+        "//.agents/skills/orchestrate-sdlc/scripts:watch-control-source",
+    ],
+    visibility = ["//visibility:public"],
+)
