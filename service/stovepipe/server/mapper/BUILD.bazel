@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "get_issues_by_request_id.go",
         "ingest.go",
+        "issue_history.go",
         "list.go",
         "list_open_issues.go",
         "project_issues.go",
@@ -26,6 +27,7 @@ go_test(
     srcs = [
         "get_issues_by_request_id_test.go",
         "ingest_test.go",
+        "issue_history_test.go",
         "list_open_issues_test.go",
         "list_test.go",
         "project_issues_test.go",

@@ -22,12 +22,34 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
+// IssueLogCursor is an exclusive position in recorded-time, build, event order.
+type IssueLogCursor struct {
+	// TimestampMs is the original occurrence timestamp in Unix milliseconds.
+	TimestampMs int64
+	// BuildID is the opaque build identity used to break timestamp ties.
+	BuildID string
+	// Event breaks ties between occurrences from the same build.
+	Event entity.IssueEvent
+}
+
+// IssueLogRange bounds retained occurrences within one issue.
+type IssueLogRange struct {
+	// After excludes this occurrence and earlier positions; zero starts the range.
+	After IssueLogCursor
+	// Limit is the positive maximum number of occurrences to return.
+	Limit int
+}
+
 // IssueLogStore retains immutable issue events within the bound queue.
 // Task, unit, build, and event identify one occurrence.
 type IssueLogStore interface {
 	// Create returns ErrAlreadyExists for a previously recorded occurrence.
 	// A duplicate never replaces the original timestamp.
 	Create(ctx context.Context, log entity.IssueLog) error
+
+	// List returns at most Limit occurrences ordered by timestamp, build, event ascending.
+	// Concurrent late writes can precede the cursor; pages are not a snapshot.
+	List(ctx context.Context, taskID, unitID string, bounds IssueLogRange) ([]entity.IssueLog, error)
 
 	// Get returns ErrNotFound when the occurrence has not been recorded.
 	Get(ctx context.Context, taskID, unitID, buildID string, event entity.IssueEvent) (entity.IssueLog, error)

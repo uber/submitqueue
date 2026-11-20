@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"regexp"
 	"strings"
 	"testing"
@@ -171,5 +172,74 @@ func TestIssueLogRejectsInvalidValues(t *testing.T) {
 			mock.ExpectExec("INSERT INTO issue_log").WillReturnResult(sqlmock.NewResult(0, 1))
 			require.Error(t, store.Create(context.Background(), log))
 		})
+	}
+}
+
+func TestIssueLogList(t *testing.T) {
+	for _, kind := range []string{"first", "next", "empty", "query error", "scan error", "rows error"} {
+		t.Run(kind, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			store := NewIssueLogStore(db, testMetrics(), "queue")
+			bounds := storage.IssueLogRange{Limit: 2}
+			query := listIssueLogsQuery
+			args := []driver.Value{"queue", "task", "", 2}
+			if kind == "next" {
+				bounds.After = storage.IssueLogCursor{TimestampMs: 100, BuildID: "a", Event: entity.IssueEventClosed}
+				query += ` AND (timestamp_ms, build_id, event) > (?, ?, ?)`
+				args = []driver.Value{"queue", "task", "", int64(100), "a", entity.IssueEventClosed, 2}
+			}
+			expectation := mock.ExpectQuery(regexp.QuoteMeta(query + issueLogOrder)).WithArgs(args...)
+			rows := sqlmock.NewRows([]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms", "first_seen_build_id"})
+			switch kind {
+			case "query error":
+				expectation.WillReturnError(assert.AnError)
+			case "empty":
+				expectation.WillReturnRows(rows)
+			case "scan error":
+				expectation.WillReturnRows(rows.AddRow("task", "", "b", "open", "invalid", "b"))
+			case "rows error":
+				expectation.WillReturnRows(rows.AddRow("task", "", "b", "open", 100, "b").RowError(0, assert.AnError))
+			default:
+				expectation.WillReturnRows(rows.AddRow("task", "", "b", "open", 100, "b"))
+			}
+			got, err := store.List(context.Background(), "task", "", bounds)
+			switch kind {
+			case "query error", "rows error":
+				require.ErrorIs(t, err, assert.AnError)
+			case "scan error":
+				require.Error(t, err)
+			case "empty":
+				require.NoError(t, err)
+				require.Empty(t, got)
+			default:
+				require.NoError(t, err)
+				require.Equal(t, []entity.IssueLog{{TaskID: "task", BuildID: "b", Event: entity.IssueEventOpened, TimestampMs: 100, FirstSeenBuildID: "b"}}, got)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestIssueLogListInvalidRanges(t *testing.T) {
+	for _, tt := range []struct {
+		task, unit string
+		bounds     storage.IssueLogRange
+	}{
+		{"", "", storage.IssueLogRange{Limit: 2}},
+		{"task", "", storage.IssueLogRange{}},
+		{strings.Repeat("t", 256), "", storage.IssueLogRange{Limit: 2}},
+		{"task", strings.Repeat("u", 1025), storage.IssueLogRange{Limit: 2}},
+		{"task", "", storage.IssueLogRange{Limit: 2, After: storage.IssueLogCursor{BuildID: "b"}}},
+		{"task", "", storage.IssueLogRange{Limit: 2, After: storage.IssueLogCursor{TimestampMs: 1}}},
+		{"task", "", storage.IssueLogRange{Limit: 2, After: storage.IssueLogCursor{TimestampMs: 1, BuildID: "b", Event: "future"}}},
+	} {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		_, err = NewIssueLogStore(db, testMetrics(), "queue").List(context.Background(), tt.task, tt.unit, tt.bounds)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+		db.Close()
 	}
 }

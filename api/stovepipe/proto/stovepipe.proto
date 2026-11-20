@@ -421,6 +421,42 @@ message ListOpenIssuesResponse {
     string next_page_token = 2;
 }
 
+// IssueHistoryEvent is one immutable retained occurrence across requests.
+message IssueHistoryEvent {
+    // "open" (including reopenings), "reported", or "closed".
+    string event = 1;
+    // Opaque source build identity.
+    string build_id = 2;
+    // Original occurrence timestamp in Unix milliseconds, not request ingest order.
+    int64 timestamp_ms = 3;
+    // Opening build for this occurrence; empty on legacy lifecycle records.
+    string first_seen_build_id = 4;
+    // Source request; empty when its build is no longer retained.
+    string request_id = 5;
+}
+
+message ListIssueHistoryRequest {
+    // Required configured queue.
+    string queue = 1;
+    // Required validation task.
+    string task_id = 2;
+    // Validation unit; empty selects task-wide history.
+    string unit_id = 3;
+    // Maximum events to return. Zero selects 50; otherwise 1 through 200.
+    int32 page_size = 4;
+    // Opaque continuation bound to the queue, task, and unit.
+    string page_token = 5;
+}
+
+// History is retained coverage only, not a snapshot or proof of current issue status.
+// Late writes can precede a cursor; restart at the first page to refresh coverage.
+message ListIssueHistoryResponse {
+    // Ascending timestamp order with bytewise build ID and event tie-breakers.
+    repeated IssueHistoryEvent events = 1;
+    // Empty ends the currently observed range.
+    string next_page_token = 2;
+}
+
 // RequestIssueSummary describes one accepted issue update, not the queue's open-issue set.
 message RequestIssueSummary {
     // Logical validation task.
@@ -528,6 +564,8 @@ service Stovepipe {
     rpc GetQueueStatus(GetQueueStatusRequest) returns (GetQueueStatusResponse) {}
     // ListOpenIssues returns current open issues validated against their summaries.
     rpc ListOpenIssues(ListOpenIssuesRequest) returns (ListOpenIssuesResponse) {}
+    // ListIssueHistory returns retained occurrences of one issue across requests.
+    rpc ListIssueHistory(ListIssueHistoryRequest) returns (ListIssueHistoryResponse) {}
     // GetIssuesByRequestID returns accepted issue results for one request.
     rpc GetIssuesByRequestID(GetIssuesByRequestIDRequest) returns (GetIssuesByRequestIDResponse) {}
     // ListRequestProjectsByIssue returns the projects affected by one request's issue.

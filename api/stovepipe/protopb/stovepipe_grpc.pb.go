@@ -43,6 +43,7 @@ const (
 	Stovepipe_List_FullMethodName                       = "/uber.submitqueue.stovepipe.Stovepipe/List"
 	Stovepipe_GetQueueStatus_FullMethodName             = "/uber.submitqueue.stovepipe.Stovepipe/GetQueueStatus"
 	Stovepipe_ListOpenIssues_FullMethodName             = "/uber.submitqueue.stovepipe.Stovepipe/ListOpenIssues"
+	Stovepipe_ListIssueHistory_FullMethodName           = "/uber.submitqueue.stovepipe.Stovepipe/ListIssueHistory"
 	Stovepipe_GetIssuesByRequestID_FullMethodName       = "/uber.submitqueue.stovepipe.Stovepipe/GetIssuesByRequestID"
 	Stovepipe_ListRequestProjectsByIssue_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestProjectsByIssue"
 	Stovepipe_ListRequestIssuesByProject_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestIssuesByProject"
@@ -73,6 +74,8 @@ type StovepipeClient interface {
 	GetQueueStatus(ctx context.Context, in *GetQueueStatusRequest, opts ...grpc.CallOption) (*GetQueueStatusResponse, error)
 	// ListOpenIssues returns current open issues validated against their summaries.
 	ListOpenIssues(ctx context.Context, in *ListOpenIssuesRequest, opts ...grpc.CallOption) (*ListOpenIssuesResponse, error)
+	// ListIssueHistory returns retained occurrences of one issue across requests.
+	ListIssueHistory(ctx context.Context, in *ListIssueHistoryRequest, opts ...grpc.CallOption) (*ListIssueHistoryResponse, error)
 	// GetIssuesByRequestID returns accepted issue results for one request.
 	GetIssuesByRequestID(ctx context.Context, in *GetIssuesByRequestIDRequest, opts ...grpc.CallOption) (*GetIssuesByRequestIDResponse, error)
 	// ListRequestProjectsByIssue returns the projects affected by one request's issue.
@@ -179,6 +182,16 @@ func (c *stovepipeClient) ListOpenIssues(ctx context.Context, in *ListOpenIssues
 	return out, nil
 }
 
+func (c *stovepipeClient) ListIssueHistory(ctx context.Context, in *ListIssueHistoryRequest, opts ...grpc.CallOption) (*ListIssueHistoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListIssueHistoryResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_ListIssueHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stovepipeClient) GetIssuesByRequestID(ctx context.Context, in *GetIssuesByRequestIDRequest, opts ...grpc.CallOption) (*GetIssuesByRequestIDResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetIssuesByRequestIDResponse)
@@ -234,6 +247,8 @@ type StovepipeServer interface {
 	GetQueueStatus(context.Context, *GetQueueStatusRequest) (*GetQueueStatusResponse, error)
 	// ListOpenIssues returns current open issues validated against their summaries.
 	ListOpenIssues(context.Context, *ListOpenIssuesRequest) (*ListOpenIssuesResponse, error)
+	// ListIssueHistory returns retained occurrences of one issue across requests.
+	ListIssueHistory(context.Context, *ListIssueHistoryRequest) (*ListIssueHistoryResponse, error)
 	// GetIssuesByRequestID returns accepted issue results for one request.
 	GetIssuesByRequestID(context.Context, *GetIssuesByRequestIDRequest) (*GetIssuesByRequestIDResponse, error)
 	// ListRequestProjectsByIssue returns the projects affected by one request's issue.
@@ -276,6 +291,9 @@ func (UnimplementedStovepipeServer) GetQueueStatus(context.Context, *GetQueueSta
 }
 func (UnimplementedStovepipeServer) ListOpenIssues(context.Context, *ListOpenIssuesRequest) (*ListOpenIssuesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListOpenIssues not implemented")
+}
+func (UnimplementedStovepipeServer) ListIssueHistory(context.Context, *ListIssueHistoryRequest) (*ListIssueHistoryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListIssueHistory not implemented")
 }
 func (UnimplementedStovepipeServer) GetIssuesByRequestID(context.Context, *GetIssuesByRequestIDRequest) (*GetIssuesByRequestIDResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetIssuesByRequestID not implemented")
@@ -469,6 +487,24 @@ func _Stovepipe_ListOpenIssues_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_ListIssueHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListIssueHistoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).ListIssueHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_ListIssueHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).ListIssueHistory(ctx, req.(*ListIssueHistoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Stovepipe_GetIssuesByRequestID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetIssuesByRequestIDRequest)
 	if err := dec(in); err != nil {
@@ -565,6 +601,10 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListOpenIssues",
 			Handler:    _Stovepipe_ListOpenIssues_Handler,
+		},
+		{
+			MethodName: "ListIssueHistory",
+			Handler:    _Stovepipe_ListIssueHistory_Handler,
 		},
 		{
 			MethodName: "GetIssuesByRequestID",
