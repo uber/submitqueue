@@ -4,7 +4,7 @@ Fire-and-forget side effects for pipeline lifecycle events: one shared event con
 
 ## Status
 
-Implemented. The contract is `api/base/hook`, the dispatcher and DLQ reconciler are `platform/hook`, and the extension is `platform/extension/hook`. Stovepipe's `process` and `record` publish repository-scoped hook events, and `service/stovepipe/server` registers the stage. The SubmitQueue orchestrator pipeline registers a `submitqueue-hook` stage; no orchestrator controller publishes a hook event, and `service/submitqueue/orchestrator/server` resolves every event to noop. A deployment's real integrations are whatever its resolver returns.
+Implemented. The contract is `api/base/hook`, the dispatcher and DLQ reconciler are `platform/hook`, and the extension is `platform/extension/hook`. Stovepipe's `process` and `record` publish repository-scoped hook events, and `service/stovepipe/server` registers the stage. The SubmitQueue orchestrator pipeline registers a `submitqueue-hook` stage. The SubmitQueue gateway's request materializer publishes `request.received`, `request.landed`, and `request.failed` (`submitqueue/core/hookevent`) to it; no orchestrator controller publishes a hook event, and `service/submitqueue/orchestrator/server` resolves every event to noop. A deployment's real integrations are whatever its resolver returns.
 
 ## Problem
 
@@ -52,6 +52,7 @@ Delivery promise:
 - Partition key = subject id; per-subject order only.
 - Replay finding the target state already written → republish (idempotent). Beyond it → superseded; the event may be lost. Named, accepted gap.
 - RPC-caused transitions are at-most-once; needing the guarantee means publishing from the first queue-driven stage.
+- SubmitQueue request events follow the gateway's request summary, the status users see, rather than pipeline transitions, so a hook agrees with the UI even for a request whose start failed before the orchestrator saved it. Each status announces one event per change, so a hook retrying one change's failure never repeats another's. A finish is announced on every delivery of a log that restates it, which keeps the replay rule above: a failed publish fails the delivery and its redelivery republishes. `request.received` is published inside `Land`, which makes it RPC-caused and at-most-once; a later status standing in for a lost `accepted` log announces it instead. The events cross from the gateway to the orchestrator's hook stage, so their payload carries the change's URI, which never changes.
 - Opt-in per host via topic-key registration; a registered host never skips, so off and loss are distinguishable.
 
 ### Contract
