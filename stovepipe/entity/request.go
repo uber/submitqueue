@@ -26,8 +26,7 @@ const (
 	// structure is initialized and should never be seen in the system.
 	RequestStateUnknown RequestState = ""
 	// RequestStateAccepted is the initial state of a request: a new commit has been observed
-	// for the queue and the request has been admitted into the pipeline, but no validation
-	// strategy has been chosen yet.
+	// for the queue. Its strategy is either unspecified or explicitly full.
 	RequestStateAccepted RequestState = "accepted"
 	// RequestStateProcessing means process admitted the request, recorded build strategy and
 	// baseline, and published to build.
@@ -76,7 +75,7 @@ func (s RequestState) HasBuildOutcome() bool {
 type BuildStrategy string
 
 const (
-	// BuildStrategyUnknown is the zero value before process chooses a strategy.
+	// BuildStrategyUnknown leaves validation scope unspecified until admission.
 	BuildStrategyUnknown BuildStrategy = ""
 	// BuildStrategyIncrementalSinceGreen validates only the delta since the pinned baseline URI.
 	BuildStrategyIncrementalSinceGreen BuildStrategy = "incremental_since_green"
@@ -102,10 +101,10 @@ type Request struct {
 	URI string `json:"uri"`
 
 	// ****************
-	// Set once at process admit — empty until accepted→processing; never overwritten after
+	// Validation scope — immutable once processing
 	// ****************
 
-	// BuildStrategy is the validation scope process chose when admitting this request.
+	// BuildStrategy is the validation scope. Full on an accepted request is an explicit override.
 	BuildStrategy BuildStrategy `json:"build_strategy"`
 	// BaseURI is the base URI to be used for this request when the strategy is incremental.
 	// Empty for full builds and cold start.
