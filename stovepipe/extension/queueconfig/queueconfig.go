@@ -20,19 +20,19 @@ import (
 	"context"
 	"errors"
 
-	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 )
 
 // ErrNotFound is returned when the requested queue configuration does not exist.
 var ErrNotFound = errors.New("queue config not found")
 
-// Store loads and provides queue configurations.
+// Store supplies validated, immutable queue configuration snapshots.
 // Implementations may read from YAML files, databases, remote services, etc.
 type Store interface {
-	// Get returns the configuration for a named queue.
+	// Get returns a fully resolved and validated configuration for a named queue.
 	// Returns ErrNotFound if no configuration exists for the given name.
-	Get(ctx context.Context, name string) (entity.QueueConfig, error)
+	Get(ctx context.Context, name string) (queueconfig.QueueConfig, error)
 
 	// List returns all configured queues.
-	List(ctx context.Context) ([]entity.QueueConfig, error)
+	List(ctx context.Context) ([]queueconfig.QueueConfig, error)
 }

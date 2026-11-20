@@ -60,13 +60,13 @@ Strategy and baseline are **immutable once processing**: a redelivery sees `proc
 
 Validation is expensive and shares a baseline, so heads arriving while an earlier one runs `build → buildsignal → record` must not all start builds at once.
 
-**Runtime state** lives on the Queue row; the **concurrency cap** does not — it is deployment configuration, resolved at gate-check time the same way SubmitQueue separates `storage` from `queueconfig` (see [submitqueue/extension/queueconfig/README.md](../../../../submitqueue/extension/queueconfig/README.md)): pipeline stages read mutable state from the store and read knobs like `max_concurrent` from a config `Store` (or a wiring default for MVP). Config is not written by ingest/process/record and does not need optimistic locking.
+**Runtime state** lives on the Queue row; the **concurrency cap** does not — it is deployment configuration, resolved at gate-check time the same way SubmitQueue separates `storage` from `queueconfig` (see [submitqueue/extension/queueconfig/README.md](../../../../submitqueue/extension/queueconfig/README.md)): pipeline stages read mutable state from the store and read knobs like `max_concurrent` from a config `Store`. Config is not written by ingest/process/record and does not need optimistic locking.
 
 | Source | Field | Meaning |
 |---|---|---|
 | Queue row | `last_green_uri` | Bookmark `buildsignal` advances on a successful build; empty until first green. |
 | Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
-| Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
+| Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** in the shared stage configuration; optional shared and per-queue overrides live under the process stage configuration. |
 
 A slot is held from admit until the build goes terminal (`process → build → buildsignal`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `buildsignal` recording the build's outcome, success *or* failure, or the DLQ reconciler forcing a terminal `failed` (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
 
