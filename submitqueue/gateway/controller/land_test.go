@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -571,6 +572,37 @@ func TestLand_ReturnsErrorWhenPublishFails(t *testing.T) {
 	_, err := controller.Land(ctx, testLandRequest("test-queue"))
 
 	require.Error(t, err)
+}
+
+func TestLand_ReceiptHookPublishFailureLeavesTheLandIntact(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(999), nil)
+	fixture := newControllerStorageFixture(ctrl)
+	publisher := queuemock.NewMockPublisher(ctrl)
+	publisher.EXPECT().Publish(gomock.Any(), "start", gomock.Any()).Return(nil)
+	publisher.EXPECT().Publish(gomock.Any(), "hook", gomock.Any()).Return(fmt.Errorf("queue unavailable"))
+	queue := queuemock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyStart, Name: "start", Queue: queue},
+		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
+	})
+	require.NoError(t, err)
+	scope := tally.NewTestScope("", nil)
+	materializer := requestcore.NewMaterializer(fixture.newFactory(ctrl), requestcore.WithMetricsScope(scope), requestcore.WithHookPublishing(registry))
+	controller := NewLandController(zap.NewNop().Sugar(), scope, staticCounterFactory{counter: cnt}, fixture.newFactory(ctrl), materializer, noopQueueConfigStore(ctrl), queuepausenoop.New(), registry)
+
+	result, err := controller.Land(context.Background(), testLandRequest("test-queue"))
+
+	require.NoError(t, err)
+	assert.Equal(t, "999", result.ID)
+	assert.Equal(t, entity.RequestStatusAccepted, fixture.summaries["999"].Status)
+	counters := scope.Snapshot().Counters()
+	assert.Contains(t, counters, "request_hook.publish_errors+event_type=request.received,queue=test-queue")
+	for key := range counters {
+		assert.NotContains(t, key, "accepted_log_failure", "the accepted log was written; only the hook event was lost")
+	}
 }
 
 func TestLand_ReturnsSqidWhenAcceptedLogFailsAfterPublish(t *testing.T) {
