@@ -49,6 +49,9 @@ type snapshot struct {
 	// already reflect what each path's build actually did — see
 	// (*Controller).updatePathsFromBuilds.
 	pathSets map[string]entity.SpeculationPathSet
+	// undispatched identifies pending paths with no build for their current
+	// attempt at read time.
+	undispatched map[string]bool
 	// dirty marks heads whose in-memory set differs from what is stored.
 	// Always touch it through markDirty / markClean / isDirty so every step
 	// of the handshake is greppable; see those methods for the contract.

@@ -170,7 +170,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	recovering := delivery.Attempt() > 1
 
 	for _, entry := range set.Paths {
-		if entry.Status.IsTerminal() {
+		// Cancellation can precede an in-flight dispatch's link and signal writes.
+		if entry.Status.IsTerminal() && !(recovering && entry.Status == entity.SpeculationPathStatusCancelled) {
 			continue
 		}
 
@@ -310,7 +311,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 	return c.publishBuildSignal(ctx, buildID.ID, batch.Queue)
 }
 
-// ensureSignal re-publishes the build signal for a live path whose build is
+// ensureSignal re-publishes the build signal for a path whose build is
 // already linked. Called only on redeliveries.
 //
 // It closes the one crack in the "every linked build gets a signal" invariant:
@@ -318,7 +319,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 // leaves a build no poll chain will ever watch. The message it was processing
 // was never acked, so it comes back — but by then the entry may have moved on
 // to building (an observation found the link) or cancelling (the run called it
-// off), or its batch may have halted: states no start would touch. Without
+// off), cancelled before dispatch finished, or its batch may have halted. Without
 // this, such a build runs unobserved forever and its path never settles.
 //
 // The republish uses the build ID as the message ID, so it dedups against the

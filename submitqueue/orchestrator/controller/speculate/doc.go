@@ -83,11 +83,12 @@
 //
 // Cancelling is intent, not fact: the build keeps its slot until CI actually
 // stops it, and only an observation of that stop (or proof nothing was ever
-// dispatched) moves the path to cancelled. The intent needs no dispatch of its
-// own — the poll loop reads it off the set and asks the runner to stop the
-// build. Terminal paths cannot be rebuilt. Failed and cancelled attempts are
-// exhausted once dependencies settle; preempting a viable path consumes its
-// attempt too. The sticky allocator does not preempt.
+// dispatched) moves the path to cancelled. Pending paths with no build at read
+// time skip cancelling, freeing their slots in the same run. The intent needs
+// no dispatch of its own — the poll loop reads it off the set and asks the
+// runner to stop the build. Terminal paths cannot be rebuilt. Failed and
+// cancelled attempts are exhausted once dependencies settle; preempting a
+// viable path consumes its attempt too. The sticky allocator does not preempt.
 //
 // # The life of a batch, as seen from here
 //

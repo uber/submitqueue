@@ -124,11 +124,12 @@ func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue 
 	}
 
 	snap := snapshot{
-		store:    store,
-		batches:  make(map[string]entity.Batch, len(inFlight)),
-		inFlight: inFlight,
-		pathSets: make(map[string]entity.SpeculationPathSet, len(inFlight)),
-		dirty:    make(map[string]bool, len(inFlight)),
+		store:        store,
+		batches:      make(map[string]entity.Batch, len(inFlight)),
+		inFlight:     inFlight,
+		pathSets:     make(map[string]entity.SpeculationPathSet, len(inFlight)),
+		undispatched: make(map[string]bool),
+		dirty:        make(map[string]bool, len(inFlight)),
 	}
 
 	for _, batch := range inFlight {
@@ -167,7 +168,7 @@ func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue 
 			return snapshot{}, c.attributed(ctx, fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err),
 				entity.BatchSubject(batch.ID))
 		}
-		changed, err := c.updatePathsFromBuilds(ctx, store, &set)
+		changed, err := c.updatePathsFromBuilds(ctx, store, &set, snap.undispatched)
 		if err != nil {
 			return snapshot{}, err
 		}
@@ -194,7 +195,7 @@ func (c *Controller) read(ctx context.Context, store orchstorage.Storage, queue 
 // the run makes later, which keeps this controller the path set's single
 // writer: the build stages record what CI did on per-build records, and the
 // run alone decides when that becomes the path's status.
-func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorage.Storage, set *entity.SpeculationPathSet) (bool, error) {
+func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorage.Storage, set *entity.SpeculationPathSet, undispatched map[string]bool) (bool, error) {
 	changed := false
 	for i := range set.Paths {
 		entry := &set.Paths[i]
@@ -220,6 +221,10 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store orchstorag
 				entry.Status = entity.SpeculationPathStatusCancelled
 				changed = true
 				metrics.NamedCounter(c.metricsScope, opName, "path_cancelled_undispatched", 1, metrics.TagsFromContext(ctx)...)
+				continue
+			}
+			if entry.Status == entity.SpeculationPathStatusPending {
+				undispatched[entry.ID] = true
 			}
 			continue
 		}
