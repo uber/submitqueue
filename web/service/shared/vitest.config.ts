@@ -7,5 +7,8 @@ export default defineConfig({
       "server-only": path.resolve(import.meta.dirname, "test/server-only.ts"),
     },
   },
-  test: { environment: "node" },
+  test: {
+    environment: "node",
+    server: { deps: { inline: ["@submitqueue/web-platform"] } },
+  },
 });

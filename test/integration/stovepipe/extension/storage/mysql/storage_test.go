@@ -18,6 +18,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,6 +59,16 @@ func TestMySQLStorage(t *testing.T) {
 	backend, err := mysqlstorage.NewStorage(db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 	factory := mysqlFactory{backend: backend}
+
+	t.Run("ValidationFactBatchRetry", func(t *testing.T) {
+		resetStorage(t, db)
+		testValidationFactBatchRetry(t, ctx, backend)
+	})
+
+	t.Run("ValidationFactBatchCollation", func(t *testing.T) {
+		resetStorage(t, db)
+		testValidationFactBatchCollation(t, ctx, backend)
+	})
 
 	t.Run("QueueStateTransitions", func(t *testing.T) {
 		resetStorage(t, db)
@@ -200,6 +212,11 @@ func TestMySQLStorage(t *testing.T) {
 	t.Run("ProjectFactByDegree", func(t *testing.T) {
 		resetStorage(t, db)
 		testProjectFactByDegree(t, ctx, backend)
+	})
+
+	t.Run("ProjectFactByDegreeBatch", func(t *testing.T) {
+		resetStorage(t, db)
+		testProjectFactByDegreeBatch(t, ctx, backend)
 	})
 
 	t.Run("RequestLogStore", func(t *testing.T) {
@@ -548,4 +565,54 @@ func (s *MySQLRequestStoreSuite) TestMetadataLegacyNullAndConcurrentClaims() {
 	require.Equal(s.T(), req.Version+1, got.Version)
 	require.Equal(s.T(), req.State, got.State)
 	require.JSONEq(s.T(), `true`, string(got.Metadata["claim"]))
+}
+
+func testValidationFactBatchRetry(t *testing.T, ctx context.Context, backend *mysqlstorage.Storage) {
+	bound, err := backend.For("fact-batch-retry")
+	require.NoError(t, err)
+	store := bound.GetValidationFactStore()
+	facts := make([]entity.ValidationFact, 201)
+	for i := range facts {
+		facts[i] = entity.ValidationFact{URI: "commit", Project: fmt.Sprintf("project-%03d", i), RequestID: "1", CreatedAt: 10}
+	}
+	facts[200].Project = strings.Repeat("x", 256)
+	err = store.CreateBatch(ctx, facts)
+	require.Error(t, err)
+	retained, err := store.Get(ctx, facts[0].URI, facts[0].Project)
+	require.NoError(t, err)
+	assert.Equal(t, facts[0], retained)
+
+	facts[200].Project = "repaired"
+	for i := range facts {
+		facts[i].CreatedAt = 20
+	}
+	require.NoError(t, store.CreateBatch(ctx, facts))
+	got, err := store.ListProjects(ctx, facts[0].URI, "", len(facts)+1)
+	require.NoError(t, err)
+	require.Len(t, got, len(facts))
+	for i, fact := range got {
+		expected := facts[i]
+		if i < 200 {
+			expected.CreatedAt = 10
+		}
+		assert.Equal(t, expected, fact)
+	}
+}
+
+func testValidationFactBatchCollation(t *testing.T, ctx context.Context, backend *mysqlstorage.Storage) {
+	bound, err := backend.For("fact-batch-collation")
+	require.NoError(t, err)
+	store := bound.GetValidationFactStore()
+	first := entity.ValidationFact{URI: "commit", Project: "Project", Degree: 1, RequestID: "1", CreatedAt: 10}
+	require.NoError(t, store.Create(ctx, first))
+	alias := first
+	alias.Project = "project"
+	alias.Degree = 0
+	alias.RequestID = "2"
+	require.NoError(t, store.CreateBatch(ctx, []entity.ValidationFact{alias, first}))
+	for _, input := range []entity.ValidationFact{alias, first} {
+		retained, err := store.Get(ctx, input.URI, input.Project)
+		require.NoError(t, err)
+		assert.Equal(t, first, retained)
+	}
 }

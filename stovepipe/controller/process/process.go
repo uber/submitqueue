@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Package process holds the process-stage queue controller. It consumes request
-// ids from ingest, reloads the Request from storage, coalesces older heads, and
-// admits the latest head when a build slot is open, registers issue tracking,
+// ids from ingest, reloads the Request from storage, coalesces ordinary older heads, and
+// admits eligible requests when a build slot is open, registers issue tracking,
 // and dispatches the build.
 package process
 
@@ -44,7 +44,7 @@ import (
 )
 
 // Controller consumes ProcessRequest messages from the process stage, reloads the
-// referenced Request from storage, coalesces older heads, and admits the latest when
+// referenced Request from storage, coalesces ordinary older heads, and admits eligible requests when
 // a slot is open. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -159,9 +159,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 }
 
-// processAccepted coalesces older heads against queue.latest_request_id, then admits
-// the latest head when a build slot is available. The delivery is threaded down so a
-// closed gate can hold it.
+// processAccepted retains explicit full requests and coalesces ordinary heads before admission.
 func (c *Controller) processAccepted(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request) error {
 	queueRow, err := c.loadQueue(ctx, store, request.Queue)
 	if err != nil {
@@ -180,7 +178,7 @@ func (c *Controller) processAccepted(ctx context.Context, store storage.Storage,
 		return nil
 	}
 
-	superseded, err := c.coalesce(ctx, store, request, queueRow.LatestRequestID)
+	superseded, err := c.coalesce(ctx, store, &request, queueRow.LatestRequestID)
 	if err != nil || superseded {
 		return err
 	}
@@ -192,13 +190,15 @@ func (c *Controller) processAccepted(ctx context.Context, store storage.Storage,
 		return fmt.Errorf("failed to load queue config for %s: %w", request.Queue, err)
 	}
 
-	return c.admitLatestHead(ctx, store, delivery, request, queueRow, cfg)
+	return c.admitRequest(ctx, store, delivery, request, queueRow, cfg)
 }
 
-// coalesce supersedes request when a newer head exists (RFC process step 5), returning
-// true so the caller acks. It returns false when request is still the latest head and
-// should proceed to the gate. Superseding consumes no build slot.
-func (c *Controller) coalesce(ctx context.Context, store storage.Storage, request entity.Request, latestRequestID string) (bool, error) {
+// coalesce returns true when this delivery needs no admission. A full override that wins
+// a supersession CAS race is returned through request so admission honors it.
+func (c *Controller) coalesce(ctx context.Context, store storage.Storage, request *entity.Request, latestRequestID string) (bool, error) {
+	if request.BuildStrategy == entity.BuildStrategyFull {
+		return false, nil
+	}
 	cmp, err := entity.CompareRequestID(request.ID, latestRequestID)
 	if err != nil {
 		return false, fmt.Errorf("failed to compare request ids for queue %s: %w", request.Queue, err)
@@ -206,15 +206,15 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 	if cmp >= 0 {
 		return false, nil
 	}
-	request, err = c.supersedeRequest(ctx, store, request)
+	*request, err = c.supersedeRequest(ctx, store, *request)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return false, err
 	}
 	if request.State != entity.RequestStateSuperseded {
-		return true, nil
+		return request.State != entity.RequestStateAccepted, nil
 	}
-	if err := c.persistStateLog(ctx, store, request, entity.RequestOutcomeReasonSupersededByNewerHead); err != nil {
+	if err := c.persistStateLog(ctx, store, *request, entity.RequestOutcomeReasonSupersededByNewerHead); err != nil {
 		return false, err
 	}
 	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1, metrics.TagsFromContext(ctx)...)
@@ -226,9 +226,9 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 	return true, nil
 }
 
-// admitLatestHead holds the delivery while the build-slot gate is closed; otherwise it marks the
+// admitRequest holds the delivery while the build-slot gate is closed; otherwise it marks the
 // request processing, counts its build slot, and publishes it to build.
-func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
+func (c *Controller) admitRequest(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
 	if queueRow.InFlightCount >= cfg.MaxConcurrent {
 		return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
 	}
@@ -305,6 +305,9 @@ func (c *Controller) persistStateLog(ctx context.Context, store storage.Storage,
 
 // deriveBuildStrategy chooses the validation scope and baseline from the queue's last-known-good commit.
 func (c *Controller) deriveBuildStrategy(ctx context.Context, queueRow entity.Queue, request entity.Request) (strategy entity.BuildStrategy, baseURI string, err error) {
+	if request.BuildStrategy == entity.BuildStrategyFull {
+		return entity.BuildStrategyFull, "", nil
+	}
 	if queueRow.LastGreenURI == "" {
 		return entity.BuildStrategyFull, "", nil
 	}
@@ -378,8 +381,13 @@ func (c *Controller) markProcessing(ctx context.Context, store storage.Storage, 
 
 		updated := *request
 		updated.State = entity.RequestStateProcessing
-		updated.BuildStrategy = strategy
-		updated.BaseURI = baseURI
+		if request.BuildStrategy == entity.BuildStrategyFull {
+			updated.BuildStrategy = entity.BuildStrategyFull
+			updated.BaseURI = ""
+		} else {
+			updated.BuildStrategy = strategy
+			updated.BaseURI = baseURI
+		}
 		newVersion := request.Version + 1
 		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
@@ -404,6 +412,10 @@ func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage
 
 	for {
 		if request.State != entity.RequestStateAccepted {
+			return request, nil
+		}
+		// A force update can win the CAS while supersession is retrying.
+		if request.BuildStrategy == entity.BuildStrategyFull {
 			return request, nil
 		}
 
@@ -437,7 +449,7 @@ func (c *Controller) holdForBuildSlot(ctx context.Context, delivery consumer.Del
 	}
 
 	delivery.Hold(delayMs)
-	c.logger.Infow("holding latest head awaiting build slot",
+	c.logger.Infow("holding request awaiting build slot",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"uri", request.URI,

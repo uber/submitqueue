@@ -6,6 +6,8 @@
   "types": "./dist/index.d.ts",
   "typesVersions": {
     "*": {
+      "appearance-preference": ["dist/appearance-preference.d.ts"],
+      "appearance-theme": ["dist/appearance-theme.d.ts"],
       "path-segment": ["dist/path-segment.d.ts"],
       "logging": ["dist/logging.d.ts"]
     }
@@ -18,6 +20,14 @@
     "styles.css"
   ],
   "exports": {
+    "./appearance-theme": {
+      "types": "./dist/appearance-theme.d.ts",
+      "import": "./dist/appearance-theme.js"
+    },
+    "./appearance-preference": {
+      "types": "./dist/appearance-preference.d.ts",
+      "import": "./dist/appearance-preference.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"

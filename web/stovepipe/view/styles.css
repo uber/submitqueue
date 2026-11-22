@@ -25,7 +25,7 @@
 }
 
 .sq-stovepipe-request-view[aria-label="Project Results"] table[aria-label="Recorded project results"] > thead th:nth-child(2) {
-  width: 12rem;
+  width: 24rem;
 }
 
 .sq-stovepipe-request-view[aria-label="Project Results"] table[aria-label="Recorded project results"] > thead th:nth-child(3) {

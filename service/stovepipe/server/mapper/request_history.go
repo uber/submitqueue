@@ -86,7 +86,7 @@ func historyEventDataToProto(log entity.RequestLog) *pb.HistoryEventData {
 	}
 
 	switch log.Event {
-	case entity.RequestEventBuildTriggered, entity.RequestEventBuildFinished, entity.RequestEventBuildAnalysisAbandoned:
+	case entity.RequestEventBuildTriggered, entity.RequestEventBuildFinished, entity.RequestEventBuildAnalysisAbandoned, entity.RequestEventIssueTrackingAbandoned:
 		buildID := log.Metadata[requestlog.MetadataKeyBuildID]
 		if buildID == "" {
 			return nil
@@ -100,6 +100,8 @@ func historyEventDataToProto(log entity.RequestLog) *pb.HistoryEventData {
 			data.Payload = &pb.HistoryEventData_BuildFinished{BuildFinished: build}
 		case entity.RequestEventBuildAnalysisAbandoned:
 			data.Payload = &pb.HistoryEventData_BuildAnalysisAbandoned{BuildAnalysisAbandoned: build}
+		case entity.RequestEventIssueTrackingAbandoned:
+			data.Payload = &pb.HistoryEventData_IssueTrackingAbandoned{IssueTrackingAbandoned: build}
 		}
 		return data
 	case entity.RequestEventValidationFactRecorded:
@@ -115,9 +117,53 @@ func historyEventDataToProto(log entity.RequestLog) *pb.HistoryEventData {
 		if err != nil {
 			return nil
 		}
+		facts := &pb.HistoryProjectFactsData{ProjectFactCount: count}
+		if brokenCount, err := strconv.ParseUint(log.Metadata[requestlog.MetadataKeyBrokenProjectFactCount], 10, 64); err == nil {
+			facts.BrokenProjectFactCount = brokenCount
+		}
 		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_ProjectFactsRecorded{
-			ProjectFactsRecorded: &pb.HistoryProjectFactsData{ProjectFactCount: count},
+			ProjectFactsRecorded: facts,
 		}}
+	case entity.RequestEventBuildAnalysisCompleted:
+		analysis := &pb.HistoryBuildAnalysisData{BuildId: log.Metadata[requestlog.MetadataKeyBuildID]}
+		if analysis.BuildId == "" {
+			return nil
+		}
+		if count, err := strconv.ParseUint(log.Metadata[requestlog.MetadataKeyIssueCount], 10, 64); err == nil {
+			analysis.IssueCount = count
+		}
+		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_BuildAnalysisCompleted{BuildAnalysisCompleted: analysis}}
+	case entity.RequestEventIssuesReconciled:
+		reconciliation := &pb.HistoryIssuesReconciledData{
+			BuildId:     log.Metadata[requestlog.MetadataKeyBuildID],
+			ClosureMode: log.Metadata[requestlog.MetadataKeyClosureMode],
+		}
+		if reconciliation.BuildId == "" && reconciliation.ClosureMode == "" {
+			return nil
+		}
+		return &pb.HistoryEventData{Payload: &pb.HistoryEventData_IssuesReconciled{IssuesReconciled: reconciliation}}
+	case entity.RequestEventFixSubmitted, entity.RequestEventFixSubmissionSkipped, entity.RequestEventFixSubmissionAbandoned:
+		fix := &pb.HistoryFixData{
+			BuildId:    log.Metadata[requestlog.MetadataKeyBuildID],
+			TaskId:     log.Metadata[requestlog.MetadataKeyTaskID],
+			UnitId:     log.Metadata[requestlog.MetadataKeyUnitID],
+			ExecutorId: log.Metadata[requestlog.MetadataKeyExecutorID],
+			FixId:      log.Metadata[requestlog.MetadataKeyFixID],
+			Reason:     log.Metadata[requestlog.MetadataKeyReason],
+		}
+		if fix.BuildId == "" && fix.TaskId == "" && fix.UnitId == "" && fix.ExecutorId == "" && fix.FixId == "" && fix.Reason == "" {
+			return nil
+		}
+		data := &pb.HistoryEventData{}
+		switch log.Event {
+		case entity.RequestEventFixSubmitted:
+			data.Payload = &pb.HistoryEventData_FixSubmitted{FixSubmitted: fix}
+		case entity.RequestEventFixSubmissionSkipped:
+			data.Payload = &pb.HistoryEventData_FixSubmissionSkipped{FixSubmissionSkipped: fix}
+		case entity.RequestEventFixSubmissionAbandoned:
+			data.Payload = &pb.HistoryEventData_FixSubmissionAbandoned{FixSubmissionAbandoned: fix}
+		}
+		return data
 	default:
 		return nil
 	}

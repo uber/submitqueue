@@ -32,6 +32,11 @@ type ValidationFactStore interface {
 	// untouched — first writer wins.
 	Create(ctx context.Context, fact entity.ValidationFact) error
 
+	// CreateBatch writes missing facts without replacing existing identities.
+	// Duplicates and empty input are no-ops. On error, some writes may be durable;
+	// retrying is safe. Atomicity across facts is not guaranteed.
+	CreateBatch(ctx context.Context, facts []entity.ValidationFact) error
+
 	// Get returns the bound queue's fact for uri and project. Returns ErrNotFound if no
 	// fact exists, which means the scope was never validated rather than validated green.
 	Get(ctx context.Context, uri, project string) (entity.ValidationFact, error)

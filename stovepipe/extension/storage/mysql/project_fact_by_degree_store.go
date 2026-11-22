@@ -19,12 +19,15 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
+
+const projectFactByDegreeBatchSize = 200
 
 type projectFactByDegreeStore struct {
 	db    *sql.DB
@@ -57,6 +60,32 @@ func (s *projectFactByDegreeStore) Create(ctx context.Context, entry entity.Proj
 		return fmt.Errorf("failed to create project fact degree lookup uri=%q project=%q: %w", entry.URI, entry.Project, err)
 	}
 
+	return nil
+}
+
+func (s *projectFactByDegreeStore) CreateBatch(ctx context.Context, entries []entity.ProjectFactByDegree) (retErr error) {
+	op := metrics.Begin(s.scope, "create_batch", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	for start := 0; start < len(entries); start += projectFactByDegreeBatchSize {
+		end := min(start+projectFactByDegreeBatchSize, len(entries))
+		batch := entries[start:end]
+		values := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*4)
+		for _, entry := range batch {
+			if entry.URI == "" || entry.Project == "" || math.IsNaN(entry.Degree) || entry.Degree < entity.DegreeGreen || entry.Degree > entity.DegreeBroken {
+				return fmt.Errorf("project fact degree lookup requires a URI, project and degree in [0, 1]")
+			}
+			values = append(values, "(?, ?, ?, ?)")
+			args = append(args, s.queue, entry.URI, entry.Degree, entry.Project)
+		}
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO project_fact_by_degree (queue, uri, degree, project) VALUES `+
+				strings.Join(values, ", ")+` ON DUPLICATE KEY UPDATE project = project_fact_by_degree.project`, args...)
+		if err != nil {
+			return fmt.Errorf("failed to insert project fact degree lookup batch queue=%s: %w", s.queue, err)
+		}
+	}
 	return nil
 }
 

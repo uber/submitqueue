@@ -19,12 +19,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
+
+const validationFactBatchSize = 200
 
 type validationFactStore struct {
 	db    *sql.DB
@@ -64,6 +67,29 @@ func (v *validationFactStore) Create(ctx context.Context, fact entity.Validation
 		return fmt.Errorf("failed to insert validation fact queue=%s uri=%s project=%s: %w", queue, fact.URI, fact.Project, err)
 	}
 
+	return nil
+}
+
+func (v *validationFactStore) CreateBatch(ctx context.Context, facts []entity.ValidationFact) (retErr error) {
+	op := metrics.Begin(v.scope, "create_batch", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	for start := 0; start < len(facts); start += validationFactBatchSize {
+		end := min(start+validationFactBatchSize, len(facts))
+		batch := facts[start:end]
+		values := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*7)
+		for _, fact := range batch {
+			values = append(values, "(?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, v.queue, fact.URI, fact.Project, fact.ProjectType, fact.Degree, fact.RequestID, fact.CreatedAt)
+		}
+		_, err := v.db.ExecContext(ctx,
+			`INSERT INTO validation_fact (queue, uri, project, project_type, degree, request_id, created_at) VALUES `+
+				strings.Join(values, ", ")+` ON DUPLICATE KEY UPDATE created_at = validation_fact.created_at`, args...)
+		if err != nil {
+			return fmt.Errorf("failed to insert validation fact batch queue=%s: %w", v.queue, err)
+		}
+	}
 	return nil
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AppBrand, AppHeader, TimeZoneProvider } from "@submitqueue/web-platform";
+import { AppBrand, AppHeader, AppearanceControl, TimeZoneProvider } from "@submitqueue/web-platform";
 import { styled, withStyle } from "baseui";
 import { Block } from "baseui/block";
 import { LabelXSmall } from "baseui/typography";
@@ -46,6 +46,7 @@ export function WebShell({
       <AppBrand href={homeHref} {...(homeLabel ? { homeLabel } : {})} mark={brandMark}>{brand}</AppBrand>
       <Block display="flex" alignItems="center" flexWrap gridGap="scale600">
         {environmentLabel ? <LabelXSmall as="span" color="contentSecondary">{environmentLabel}</LabelXSmall> : null}
+        <AppearanceControl />
         {controls}
       </Block>
     </Header>

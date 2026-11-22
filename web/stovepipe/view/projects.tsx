@@ -113,13 +113,15 @@ export function ProjectResults({ model, pageKey, issues }: { model: ProjectStatu
         </Block>
       ) : <Table key={pageKey} label="Recorded project results" headers={["Project", "Project type", "Recorded result", "Issues"]} fill>
         {model.projects.map(entry => {
-          const selected = issues?.project === entry.project ? issues : null;
+          const selected = entry.issuesHref && issues?.project === entry.project ? issues : null;
           return <Fragment key={entry.project}>
             <StyledTableBodyRow>
               <StyledTableBodyCell>{entry.project}</StyledTableBodyCell>
               <StyledTableBodyCell>{entry.projectType || "Unknown"}</StyledTableBodyCell>
               <StyledTableBodyCell><RecordedResult degree={entry.breakageDegree} /></StyledTableBodyCell>
-              <StyledTableBodyCell><Link href={selected ? selected.closeHref : entry.issuesHref} scroll={false} aria-expanded={Boolean(selected)}>{selected ? "Hide issues" : "Show issues"}</Link></StyledTableBodyCell>
+              <StyledTableBodyCell>{entry.issuesHref
+                ? <Link href={selected ? selected.closeHref : entry.issuesHref} scroll={false} aria-expanded={Boolean(selected)}>{selected ? "Hide issues" : "Show issues"}</Link>
+                : entry.breakageDegree === 0 ? "No issues" : "Not available"}</StyledTableBodyCell>
             </StyledTableBodyRow>
             {selected && <StyledTableBodyRow><StyledTableBodyCell colSpan={4}>
               <Section cacheKey={selected.key} result={selected.result}>{page => page && <section aria-label={`Issue attribution for ${entry.project}`}>

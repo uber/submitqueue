@@ -55,6 +55,20 @@ func (mr *MockValidationFactStoreMockRecorder) Create(ctx, fact any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockValidationFactStore)(nil).Create), ctx, fact)
 }
 
+// CreateBatch mocks base method.
+func (m *MockValidationFactStore) CreateBatch(ctx context.Context, facts []entity.ValidationFact) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBatch", ctx, facts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateBatch indicates an expected call of CreateBatch.
+func (mr *MockValidationFactStoreMockRecorder) CreateBatch(ctx, facts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBatch", reflect.TypeOf((*MockValidationFactStore)(nil).CreateBatch), ctx, facts)
+}
+
 // Get mocks base method.
 func (m *MockValidationFactStore) Get(ctx context.Context, uri, project string) (entity.ValidationFact, error) {
 	m.ctrl.T.Helper()

@@ -16,7 +16,9 @@ package mysql
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,4 +87,71 @@ func testProjectFactByDegree(t *testing.T, ctx context.Context, backend *mysqlst
 	missing, err := index.List(ctx, "missing", entity.ProjectFactByDegree{}, 2)
 	require.NoError(t, err)
 	assert.Empty(t, missing)
+}
+
+func testProjectFactByDegreeBatch(t *testing.T, ctx context.Context, backend *mysqlstorage.Storage) {
+	t.Run("duplicates ordering and isolation", func(t *testing.T) {
+		bound, err := backend.For("batch-index")
+		require.NoError(t, err)
+		store := bound.GetProjectFactByDegreeStore()
+		existing := entity.ProjectFactByDegree{URI: "commit", Project: "a", Degree: 0.5}
+		require.NoError(t, store.Create(ctx, existing))
+		entries := []entity.ProjectFactByDegree{
+			{URI: "commit", Project: "z", Degree: 1},
+			{URI: "commit", Project: "Z", Degree: 1},
+			{URI: "commit", Project: "a", Degree: math.Nextafter(0.5, 1)},
+			existing,
+			existing,
+			{URI: "other-commit", Project: "z", Degree: 1},
+			{URI: "commit", Project: "green", Degree: 0},
+		}
+		other, err := backend.For("other-batch-index")
+		require.NoError(t, err)
+		require.NoError(t, other.GetProjectFactByDegreeStore().Create(ctx, existing))
+		original := append([]entity.ProjectFactByDegree(nil), entries...)
+		want := []entity.ProjectFactByDegree{entries[1], entries[0], entries[2], existing, entries[6]}
+		for range 2 {
+			require.NoError(t, store.CreateBatch(ctx, entries))
+			got, err := store.List(ctx, "commit", entity.ProjectFactByDegree{}, 10)
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+			assert.Equal(t, original, entries)
+		}
+		got, err := store.List(ctx, "other-commit", entity.ProjectFactByDegree{}, 10)
+		require.NoError(t, err)
+		assert.Equal(t, []entity.ProjectFactByDegree{entries[5]}, got)
+		got, err = other.GetProjectFactByDegreeStore().List(ctx, "commit", entity.ProjectFactByDegree{}, 10)
+		require.NoError(t, err)
+		assert.Equal(t, []entity.ProjectFactByDegree{existing}, got)
+	})
+
+	for _, failure := range []string{"invalid entry", "database error"} {
+		t.Run("retry after "+failure, func(t *testing.T) {
+			bound, err := backend.For("batch-index/" + failure)
+			require.NoError(t, err)
+			store := bound.GetProjectFactByDegreeStore()
+			entries := make([]entity.ProjectFactByDegree, 201)
+			for i := range entries {
+				entries[i] = entity.ProjectFactByDegree{URI: "commit", Project: fmt.Sprintf("project-%03d", i), Degree: 0.5}
+			}
+			last := entries[200]
+			if failure == "invalid entry" {
+				entries[200].Degree = math.NaN()
+			} else {
+				entries[200].Project = strings.Repeat("x", 256)
+			}
+			require.Error(t, store.CreateBatch(ctx, entries))
+			got, err := store.List(ctx, "commit", entity.ProjectFactByDegree{}, 1000)
+			require.NoError(t, err)
+			assert.Equal(t, entries[:200], got)
+
+			entries[200] = last
+			for range 2 {
+				require.NoError(t, store.CreateBatch(ctx, entries))
+				got, err = store.List(ctx, "commit", entity.ProjectFactByDegree{}, 1000)
+				require.NoError(t, err)
+				assert.Equal(t, entries, got)
+			}
+		})
+	}
 }

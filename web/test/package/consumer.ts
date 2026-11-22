@@ -1,5 +1,6 @@
 // Typechecks a host written only against the package's public entry points.
-import { WebNavigationProvider } from "@submitqueue/web-platform";
+import { AppearanceProvider, WebNavigationProvider } from "@submitqueue/web-platform";
+import { readAppearanceMode } from "@submitqueue/web-platform/appearance-preference";
 import { createLogCallback } from "@submitqueue/web-platform/logging";
 import { encodePathSegment } from "@submitqueue/web-platform/path-segment";
 import { StovepipeApp } from "@submitqueue/web-stovepipe";
@@ -19,7 +20,7 @@ export async function render() {
   if (result.kind !== "render") {
     return null;
   }
-  return [WebNavigationProvider, SubmitQueueShell, SubmitQueueApp, result.model] as const;
+  return [AppearanceProvider, readAppearanceMode(""), WebNavigationProvider, SubmitQueueShell, SubmitQueueApp, result.model] as const;
 }
 
 export async function renderStovepipe(service: StovepipeService) {
