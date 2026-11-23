@@ -1313,11 +1313,17 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 		msg.PublishedAt = row.PublishedAt
 		msg.Tenant = row.Tenant
 
-		// Calculate message age for metrics
-		messageAge := time.Duration(time.Now().UnixMilli()-row.PublishedAt) * time.Millisecond
+		// message_age includes deliberate waits (postpone, nack backoff);
+		// queueing_delay counts only the time the message sat deliverable.
+		deliveredAt := time.Now().UnixMilli()
+		messageAge := time.Duration(deliveredAt-row.PublishedAt) * time.Millisecond
 		metrics.NamedHistogram(s.scope, "poll", "message_age", metrics.LongLatencyBuckets,
 			metrics.NewTag("topic", sub.topic),
 		).RecordDuration(messageAge)
+		queueingDelay := time.Duration(deliveredAt-deliverableSince(row.PublishedAt, state, found)) * time.Millisecond
+		metrics.NamedHistogram(s.scope, "poll", "queueing_delay", metrics.LongLatencyBuckets,
+			metrics.NewTag("topic", sub.topic),
+		).RecordDuration(queueingDelay)
 
 		// Create delivery ID from offset
 		deliveryID := strconv.FormatInt(row.Offset, 10)
@@ -1792,6 +1798,15 @@ func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
 		return maxBackoffMs
 	}
 	return int64(backoff)
+}
+
+// deliverableSince returns when a message last became deliverable: its publish
+// time, or the end of its last invisibility window (postpone, nack, timeout).
+func deliverableSince(publishedAt int64, state DeliveryState, found bool) int64 {
+	if found && state.InvisibleUntil > publishedAt {
+		return state.InvisibleUntil
+	}
+	return publishedAt
 }
 
 func retryBudgetExhausted(maxAttempts, attempts int) bool {

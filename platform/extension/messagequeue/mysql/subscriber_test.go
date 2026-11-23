@@ -2232,6 +2232,45 @@ func TestReportedFairShareCap(t *testing.T) {
 	assert.LessOrEqual(t, owned, cap)
 }
 
+func TestDeliverableSince(t *testing.T) {
+	const publishedAt int64 = 1_000_000
+
+	tests := []struct {
+		name  string
+		state DeliveryState
+		found bool
+		want  int64
+	}{
+		{
+			name: "first delivery counts from publish",
+			want: publishedAt,
+		},
+		{
+			name:  "postponed redelivery counts from the end of the postpone",
+			state: DeliveryState{InvisibleUntil: publishedAt + 120_000, Postponed: true},
+			found: true,
+			want:  publishedAt + 120_000,
+		},
+		{
+			name:  "nacked redelivery counts from the end of the backoff",
+			state: DeliveryState{InvisibleUntil: publishedAt + 5_000, RetryCount: 1},
+			found: true,
+			want:  publishedAt + 5_000,
+		},
+		{
+			name:  "state without an invisibility window counts from publish",
+			found: true,
+			want:  publishedAt,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, deliverableSince(publishedAt, tt.state, tt.found))
+		})
+	}
+}
+
 // partitionKeysN generates n distinct partition keys.
 func partitionKeysN(n int) []string {
 	keys := make([]string, n)
