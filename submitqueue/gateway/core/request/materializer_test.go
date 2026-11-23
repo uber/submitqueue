@@ -394,6 +394,43 @@ func TestMaterializer_PublishesTheWinningTransitionAcrossAVersionConflict(t *tes
 	assert.Equal(t, want, published, "the concurrent writer already announced the receipt; this update only finishes the request")
 }
 
+func TestWithHookPublishing(t *testing.T) {
+	started := testRequestSummary()
+	started.Status, started.RequestVersion, started.StatusTimestampMs, started.Version = entity.RequestStatusStarted, 1, 15, 2
+	landed := entity.RequestLog{Queue: started.Queue, RequestID: started.RequestID, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 2, TimestampMs: 20}
+
+	tests := []struct {
+		name          string
+		hookTopic     bool
+		wantPublished int
+	}{
+		{name: "a registry with the hook topic publishes", hookTopic: true, wantPublished: len(started.ChangeURIs)},
+		{name: "a registry without the hook topic has not opted in", hookTopic: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			published := 0
+			registry := consumer.TopicRegistry{}
+			if tt.hookTopic {
+				registry = newHookRegistry(t, ctrl, func(entityqueue.Message) error {
+					published++
+					return nil
+				})
+			}
+			f := newMaterializerReceiptFixture(ctrl, WithHookPublishing(registry))
+			f.logs.EXPECT().Insert(gomock.Any(), landed).Return(nil)
+			f.summaries.EXPECT().Get(gomock.Any(), started.RequestID).Return(started, nil)
+			f.summaries.EXPECT().Update(gomock.Any(), gomock.Any(), started.Version, started.Version+1).Return(nil)
+			f.uris.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).Times(len(started.ChangeURIs))
+			f.receipts.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+			require.NoError(t, f.materializer.PersistLog(context.Background(), landed))
+			assert.Equal(t, tt.wantPublished, published)
+		})
+	}
+}
+
 // newHookRegistry binds the hook topic to a publisher that hands every message to publish.
 func newHookRegistry(t *testing.T, ctrl *gomock.Controller, publish func(entityqueue.Message) error) consumer.TopicRegistry {
 	publisher := queuemock.NewMockPublisher(ctrl)

@@ -53,11 +53,13 @@ func WithMetricsScope(scope tally.Scope) MaterializerOption {
 }
 
 // WithHookPublishing publishes request hook events (see submitqueue/core/hookevent)
-// to registry's hook topic. Without it the materializer publishes none.
+// to registry's hook topic. Registering that topic is how a host opts in, so a
+// registry without it, like a materializer without this option, publishes none.
 func WithHookPublishing(registry consumer.TopicRegistry) MaterializerOption {
 	return func(m *Materializer) {
+		_, registered := registry.Queue(basehook.TopicKeyHook)
 		m.hookRegistry = registry
-		m.publishesHooks = true
+		m.publishesHooks = registered
 	}
 }
 
