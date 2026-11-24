@@ -8,6 +8,7 @@ go_library(
         "buildsignal.pb.go",
         "fix.pb.go",
         "issuetrack.pb.go",
+        "periodicmetrics.pb.go",
         "process.pb.go",
         "projectanalysis.pb.go",
         "record.pb.go",

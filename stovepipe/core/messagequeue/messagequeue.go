@@ -38,6 +38,9 @@ import (
 // Wire payload types. These alias the generated protobuf bindings so callers
 // reference the contract through this curated package rather than protopb.
 type (
+	// PeriodicMetrics identifies the queue whose health is sampled.
+	PeriodicMetrics = protopb.PeriodicMetrics
+
 	// ProcessRequest is the payload ingest publishes to the process stage: the
 	// minted request id to validate.
 	ProcessRequest = protopb.ProcessRequest

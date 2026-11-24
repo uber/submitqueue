@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,10 +123,47 @@ func TestValidationStagesHaveRecovery(t *testing.T) {
 	_, primary, deadLetter := registeredControllers(t)
 	recoveryKeys := topicKeys(deadLetter)
 	for _, controller := range primary {
+		if controller.TopicKey() == stovepipemq.TopicKeyPeriodicMetrics {
+			continue
+		}
 		t.Run(controller.Name(), func(t *testing.T) {
 			assert.Contains(t, recoveryKeys, dlq.TopicKey(controller.TopicKey()))
 		})
 	}
+}
+
+func TestMetricsWorkersShareRecurringTask(t *testing.T) {
+	registry, primary, _ := registeredControllers(t)
+	assert.Contains(t, topicKeys(primary), stovepipemq.TopicKeyPeriodicMetrics)
+	first, ok := registry.SubscriptionConfig(stovepipemq.TopicKeyPeriodicMetrics, "stovepipe-periodicmetrics")
+	require.True(t, ok)
+	otherRegistry, err := newTopicRegistry(nil, "other-worker")
+	require.NoError(t, err)
+	second, ok := otherRegistry.SubscriptionConfig(stovepipemq.TopicKeyPeriodicMetrics, "stovepipe-periodicmetrics")
+	require.True(t, ok)
+	assert.Equal(t, first.ConsumerGroup, second.ConsumerGroup)
+	assert.NotEqual(t, first.SubscriberName, second.SubscriberName)
+	assert.Zero(t, first.Retry.MaxAttempts)
+	assert.False(t, first.DLQ.Enabled)
+	assert.Equal(t, 1, first.BatchSize)
+}
+
+func TestSeedPeriodicMetricsReturnsWhenQueuePublishStalls(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		queue := queuemock.NewMockQueue(ctrl)
+		publisher := queuemock.NewMockPublisher(ctrl)
+		queue.EXPECT().Publisher().Return(publisher)
+		publisher.EXPECT().Publish(gomock.Any(), "periodicmetrics", gomock.Any()).
+			DoAndReturn(func(ctx context.Context, _ string, _ entityqueue.Message) error {
+				<-ctx.Done()
+				return ctx.Err()
+			})
+		registry, err := newTopicRegistry(queue, "subscriber")
+		require.NoError(t, err)
+
+		require.ErrorIs(t, seedPeriodicMetrics(context.Background(), registry, []string{"monorepo/main"}), context.DeadlineExceeded)
+	})
 }
 
 func TestFixRegistration(t *testing.T) {

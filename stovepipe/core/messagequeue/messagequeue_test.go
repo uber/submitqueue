@@ -80,7 +80,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &FixRequest{}, &ProjectAnalysis{}, &Record{}} {
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &BuildAnalysis{}, &IssueTrack{}, &FixRequest{}, &ProjectAnalysis{}, &Record{}, &PeriodicMetrics{}} {
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -89,6 +89,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	}
 
 	keys := []TopicKey{
+		TopicKeyPeriodicMetrics,
 		TopicKeyProcess,
 		TopicKeyBuild,
 		TopicKeyBuildSignal,

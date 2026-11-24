@@ -5,6 +5,7 @@ exports_files(
         "buildsignal.proto",
         "fix.proto",
         "issuetrack.proto",
+        "periodicmetrics.proto",
         "process.proto",
         "projectanalysis.proto",
         "record.proto",

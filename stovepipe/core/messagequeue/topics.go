@@ -23,6 +23,9 @@ import "github.com/uber/submitqueue/platform/consumer"
 type TopicKey = consumer.TopicKey
 
 const (
+	// TopicKeyPeriodicMetrics carries recurring health observations, partitioned by queue.
+	TopicKeyPeriodicMetrics TopicKey = "periodicmetrics"
+
 	// TopicKeyProcess carries newly accepted requests from ingest to the process
 	// stage. ingest publishes a ProcessRequest (the request id) here; the process
 	// controller consumes it, reloads the Request, and decides the build strategy.
