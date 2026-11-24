@@ -53,7 +53,7 @@ func ConcludeBatchRequests(ctx context.Context, store orchstorage.Storage, regis
 
 		switch res.Outcome {
 		case corerequest.TerminationOutcomeSuccess:
-			logger.Infow("updated request state",
+			logger.Debugw("updated request state",
 				"batch_id", batch.ID,
 				"request_id", requestID,
 				"new_state", string(res.AfterState),
