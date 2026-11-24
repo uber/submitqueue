@@ -107,3 +107,34 @@ func (s *issueLogStore) validateKey(taskID, unitID, buildID string, event entity
 }
 
 var _ storage.IssueLogStore = (*issueLogStore)(nil)
+
+const listIssueLogsQuery = `SELECT task_id, unit_id, build_id, event, timestamp_ms, first_seen_build_id
+ FROM issue_log WHERE queue = ? AND task_id = ? AND unit_id = ? AND build_id = ? ORDER BY event ASC`
+
+func (s *issueLogStore) List(ctx context.Context, taskID, unitID, buildID string) (ret []entity.IssueLog, retErr error) {
+	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+	if taskID == "" || buildID == "" {
+		return nil, fmt.Errorf("issue history requires task and build identities")
+	}
+	if err := validateBuildIssueKey(s.queue, buildID, taskID, unitID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, listIssueLogsQuery, s.queue, taskID, unitID, buildID)
+	if err != nil {
+		return nil, fmt.Errorf("list issue history: %w", err)
+	}
+	defer rows.Close()
+	logs := make([]entity.IssueLog, 0)
+	for rows.Next() {
+		var log entity.IssueLog
+		if err := rows.Scan(&log.TaskID, &log.UnitID, &log.BuildID, &log.Event, &log.TimestampMs, &log.FirstSeenBuildID); err != nil {
+			return nil, fmt.Errorf("scan issue history: %w", err)
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate issue history: %w", err)
+	}
+	return logs, nil
+}

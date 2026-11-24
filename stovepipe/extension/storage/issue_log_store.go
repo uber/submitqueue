@@ -29,6 +29,10 @@ type IssueLogStore interface {
 	// A duplicate never replaces the original timestamp.
 	Create(ctx context.Context, log entity.IssueLog) error
 
+	// List returns the original events under one task/unit/build primary-key prefix in bytewise event order.
+	// A build has at most one occurrence of each supported event; missing prefixes return an empty slice.
+	List(ctx context.Context, taskID, unitID, buildID string) ([]entity.IssueLog, error)
+
 	// Get returns ErrNotFound when the occurrence has not been recorded.
 	Get(ctx context.Context, taskID, unitID, buildID string, event entity.IssueEvent) (entity.IssueLog, error)
 }

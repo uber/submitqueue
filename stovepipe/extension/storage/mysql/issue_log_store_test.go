@@ -173,3 +173,57 @@ func TestIssueLogRejectsInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestIssueLogList(t *testing.T) {
+	for _, kind := range []string{"events", "empty", "query error", "scan error", "rows error"} {
+		t.Run(kind, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			store := NewIssueLogStore(db, testMetrics(), "queue")
+			expectation := mock.ExpectQuery(regexp.QuoteMeta(listIssueLogsQuery)).WithArgs("queue", "task", "", "b")
+			rows := sqlmock.NewRows([]string{"task_id", "unit_id", "build_id", "event", "timestamp_ms", "first_seen_build_id"})
+			switch kind {
+			case "query error":
+				expectation.WillReturnError(assert.AnError)
+			case "empty":
+				expectation.WillReturnRows(rows)
+			case "scan error":
+				expectation.WillReturnRows(rows.AddRow("task", "", "b", "open", "invalid", "b"))
+			case "rows error":
+				expectation.WillReturnRows(rows.AddRow("task", "", "b", "open", 100, "b").RowError(0, assert.AnError))
+			default:
+				expectation.WillReturnRows(rows.AddRow("task", "", "b", "open", 100, "b"))
+			}
+			got, err := store.List(context.Background(), "task", "", "b")
+			switch kind {
+			case "query error", "rows error":
+				require.ErrorIs(t, err, assert.AnError)
+			case "scan error":
+				require.Error(t, err)
+			case "empty":
+				require.NoError(t, err)
+				require.Empty(t, got)
+			default:
+				require.NoError(t, err)
+				require.Equal(t, []entity.IssueLog{{TaskID: "task", BuildID: "b", Event: entity.IssueEventOpened, TimestampMs: 100, FirstSeenBuildID: "b"}}, got)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestIssueLogListInvalidIdentities(t *testing.T) {
+	for _, tt := range []struct{ task, unit, build string }{
+		{"", "", "b"}, {"task", "", ""},
+		{strings.Repeat("t", 256), "", "b"}, {"task", strings.Repeat("u", 1025), "b"},
+		{"task", "", strings.Repeat("b", 1021)},
+	} {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		_, err = NewIssueLogStore(db, testMetrics(), "queue").List(context.Background(), tt.task, tt.unit, tt.build)
+		require.Error(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+		db.Close()
+	}
+}

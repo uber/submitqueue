@@ -69,3 +69,18 @@ func (mr *MockIssueLogStoreMockRecorder) Get(ctx, taskID, unitID, buildID, event
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockIssueLogStore)(nil).Get), ctx, taskID, unitID, buildID, event)
 }
+
+// List mocks base method.
+func (m *MockIssueLogStore) List(ctx context.Context, taskID, unitID, buildID string) ([]entity.IssueLog, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "List", ctx, taskID, unitID, buildID)
+	ret0, _ := ret[0].([]entity.IssueLog)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// List indicates an expected call of List.
+func (mr *MockIssueLogStoreMockRecorder) List(ctx, taskID, unitID, buildID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockIssueLogStore)(nil).List), ctx, taskID, unitID, buildID)
+}

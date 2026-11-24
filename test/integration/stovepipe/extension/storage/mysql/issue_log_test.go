@@ -34,6 +34,45 @@ func testIssueLogStore(t *testing.T, ctx context.Context, factory storage.Factor
 	opened := entity.IssueLog{TaskID: "validation", UnitID: "unit",
 		Event: entity.IssueEventOpened, BuildID: "build/1", TimestampMs: 1000}
 
+	t.Run("build-prefix history keeps original values and exact identity", func(t *testing.T) {
+		rows := []entity.IssueLog{
+			{TaskID: "timeline", Event: entity.IssueEventOpened, BuildID: "z", TimestampMs: 100},
+			{TaskID: "timeline", Event: entity.IssueEventClosed, BuildID: "A", TimestampMs: 200},
+			{TaskID: "timeline", Event: entity.IssueEventOpened, BuildID: "A", TimestampMs: 200},
+			{TaskID: "timeline", Event: entity.IssueEventReported, BuildID: "a", TimestampMs: 200, FirstSeenBuildID: "A"},
+			{TaskID: "timeline", Event: entity.IssueEventClosed, BuildID: "a ", TimestampMs: 200},
+			{TaskID: "timeline", Event: entity.IssueEventOpened, BuildID: "b", TimestampMs: 300},
+		}
+		for i := len(rows) - 1; i >= 0; i-- {
+			require.NoError(t, store.Create(ctx, rows[i]))
+		}
+		for _, identity := range [][2]string{{"Timeline", ""}, {"timeline ", ""}, {"timeline", "unit"}} {
+			log := rows[0]
+			log.TaskID, log.UnitID = identity[0], identity[1]
+			require.NoError(t, store.Create(ctx, log))
+		}
+		other, err := factory.For(storage.Config{QueueName: "other-timeline"})
+		require.NoError(t, err)
+		log := rows[0]
+		log.TimestampMs = 99
+		require.NoError(t, other.GetIssueLogStore().Create(ctx, log))
+		for _, buildID := range []string{"z", "A", "a", "a ", "b"} {
+			var want []entity.IssueLog
+			for _, log := range rows {
+				if log.BuildID == buildID {
+					want = append(want, log)
+				}
+			}
+			got, err := store.List(ctx, "timeline", "", buildID)
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+		}
+		missing, err := store.List(ctx, "timeline", "", "missing")
+		require.NoError(t, err)
+		require.Empty(t, missing)
+
+	})
+
 	t.Run("history survives closure and reopening", func(t *testing.T) {
 		issue := entity.IssueState{TaskID: opened.TaskID, UnitID: opened.UnitID, FirstSeenBuildID: opened.BuildID, Status: entity.IssueStatusOpen, Version: 1, LastProcessedBuildID: opened.BuildID, LastChangedBuildID: opened.BuildID, ChangedAtMs: 1000}
 		require.NoError(t, bound.GetIssueStateStore().Create(ctx, issue))
