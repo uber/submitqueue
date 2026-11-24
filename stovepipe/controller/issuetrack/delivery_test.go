@@ -94,6 +94,48 @@ func TestFinalizationOpensKeepsAndClosesIssues(t *testing.T) {
 	require.Contains(t, f.logs, logKey{issueKey{"c", "unit"}, "build", entity.IssueEventOpened})
 }
 
+func TestFinalizationRequiresCompleteValidationToCloseAbsentIssues(t *testing.T) {
+	for _, coverage := range []string{"true", "false", "", "invalid"} {
+		t.Run("validation_complete="+coverage, func(t *testing.T) {
+			f := newFixture(t)
+			f.source("build", "10", entity.BuildStatusFailed)
+			f.seedIssue("validation-b", "unit-b", entity.IssueStatusOpen)
+			f.reportIssue("build", "validation-a", "unit-a")
+			msg := f.message("build", true)
+			log := f.requestHistory["10:event/build_analysis_completed/build"]
+			if coverage == "" {
+				delete(log.Metadata, requestlog.MetadataKeyValidationComplete)
+			} else {
+				log.Metadata[requestlog.MetadataKeyValidationComplete] = coverage
+			}
+			f.requestHistory["10:"+log.ID] = log
+
+			complete := coverage == "true"
+			require.NoError(t, f.deliver(msg, complete))
+			if complete {
+				require.NoError(t, f.deliver(msg, false))
+			}
+
+			require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+			require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"validation-a", "unit-a"}].Status)
+			expectedStatus, mode := entity.IssueStatusOpen, "suppressed_incomplete_validation"
+			if complete {
+				expectedStatus, mode = entity.IssueStatusClosed, "reconciled"
+			}
+			require.Equal(t, expectedStatus, f.states[issueKey{"validation-b", "unit-b"}].Status)
+			require.Equal(t, mode, f.requestHistory["10:event/issues_reconciled/build"].Metadata[requestlog.MetadataKeyClosureMode])
+
+			f.source("next", "11", entity.BuildStatusSucceeded)
+			next := f.message("next", true)
+			require.NoError(t, f.deliver(next, true))
+			require.NoError(t, f.deliver(next, false))
+			require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
+			require.Equal(t, "11", f.progress.RequestID)
+			require.Equal(t, entity.IssueStatusClosed, f.states[issueKey{"validation-b", "unit-b"}].Status)
+		})
+	}
+}
+
 func TestEmptyFinalBuildClosesIssuesButRetainsTheirRows(t *testing.T) {
 	f := newFixture(t)
 	f.source("build", "10", entity.BuildStatusSucceeded)
@@ -551,12 +593,13 @@ func TestTaskWideFlagSurvivesNoOpOpeningBatchAndRetry(t *testing.T) {
 	}
 }
 
-func TestResumedPassRetainsTheSavedTerminalIntent(t *testing.T) {
+func TestResumedTerminalPassWithoutCoverageKeepsAbsentIssuesOpen(t *testing.T) {
 	f := newFixture(t)
 	f.source("build/100", "100", entity.BuildStatusFailed)
 	f.source("build/101", "101", entity.BuildStatusRunning)
 	f.reportIssue("build/100", "task/a", "unit")
 	f.reportIssue("build/100", "task/b", "unit")
+	f.seedIssue("old", "unit", entity.IssueStatusOpen)
 	progress := currentCursor()
 	progress.CursorTaskID, progress.CursorUnitID = "task/a", "unit"
 	progress.Finalize = true
@@ -565,11 +608,11 @@ func TestResumedPassRetainsTheSavedTerminalIntent(t *testing.T) {
 	require.NoError(t, f.deliverRequest(msg, _analysisWaitMs))
 	older := f.message("build/100", false)
 
-	require.NoError(t, f.deliver(older, true))
+	require.NoError(t, f.deliver(older, false))
 	require.Equal(t, "build/100", f.progress.BuildID)
-	require.Equal(t, entity.IssueTrackingPhaseFinalizing, f.progress.Phase)
+	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.True(t, f.progress.Finalize)
-	require.Empty(t, f.progress.CursorTaskID)
+	require.Equal(t, entity.IssueStatusOpen, f.states[issueKey{"old", "unit"}].Status)
 	require.NoError(t, f.deliver(older, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.NoError(t, f.deliver(msg, false))
@@ -655,6 +698,9 @@ func (f *fixture) analysisEvent(buildID string, event entity.RequestEvent) {
 	f.t.Helper()
 	request := f.requests[f.builds[buildID].RequestID]
 	log := requestlog.NewRequestEventLog(request, event, buildID, map[string]string{requestlog.MetadataKeyBuildID: buildID})
+	if event == entity.RequestEventBuildAnalysisCompleted {
+		log.Metadata[requestlog.MetadataKeyValidationComplete] = "true"
+	}
 	log.TimestampMs = 1000
 	f.requestHistory[request.ID+":"+log.ID] = log
 }

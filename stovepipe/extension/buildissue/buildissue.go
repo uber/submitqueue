@@ -24,15 +24,22 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 )
 
-// Detector discovers issues retained in a build's accumulated results.
-// Nonterminal calls may repeat or omit issues returned earlier.
-// A successful terminal call must return the complete cumulative issue set
-// for the build, including issues returned by earlier calls.
-// Return an error if that set cannot be determined.
-// Implementations must be concurrency-safe and must not consume evidence.
-// Return plain dependency errors; issue results returned with an error must not be used.
+// Detector discovers retained issues; nonterminal calls may repeat or omit earlier reports.
+// A successful terminal result includes the cumulative issue set, including earlier reports.
+// Return an error if that set cannot be determined; incomplete validation coverage is not an error.
+// Implementations must be concurrency-safe, must not consume evidence, and return plain dependency errors.
+// Results returned with an error must not be used.
 type Detector interface {
-	Detect(ctx context.Context, buildID entity.BuildID) ([]entity.BuildIssue, error)
+	Detect(ctx context.Context, buildID entity.BuildID) (Detection, error)
+}
+
+// Detection contains reported failures and the evidence available for absent failures.
+type Detection struct {
+	// Issues contains confirmed failures within the queue's validation scope.
+	Issues []entity.BuildIssue
+	// ValidationComplete confirms usable outcomes for all required validation work.
+	// False includes unknown coverage and cannot establish that an absent issue was resolved.
+	ValidationComplete bool
 }
 
 // DetectorConfig identifies the queue whose issue detector is requested.

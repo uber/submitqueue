@@ -43,10 +43,10 @@ func (m *MockDetector) EXPECT() *MockDetectorMockRecorder {
 }
 
 // Detect mocks base method.
-func (m *MockDetector) Detect(ctx context.Context, buildID entity.BuildID) ([]entity.BuildIssue, error) {
+func (m *MockDetector) Detect(ctx context.Context, buildID entity.BuildID) (buildissue.Detection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Detect", ctx, buildID)
-	ret0, _ := ret[0].([]entity.BuildIssue)
+	ret0, _ := ret[0].(buildissue.Detection)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

@@ -136,10 +136,10 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	detector := buildissuemock.NewMockDetector(ctrl)
 	detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(detector, nil).Times(4)
 	gomock.InOrder(
-		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{a}, nil),
-		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{b}, nil),
-		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{a, b}, nil),
-		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{a, b}, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{a}, ValidationComplete: true}, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{b}, ValidationComplete: true}, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{a, b}, ValidationComplete: true}, nil),
+		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{a, b}, ValidationComplete: true}, nil),
 	)
 
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,

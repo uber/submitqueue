@@ -151,13 +151,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to resolve issue detector for queue %q: %w", analysis.GetQueueName(), err)
 	}
 
-	issues, err := detector.Detect(ctx, entity.BuildID{ID: build.ID})
+	detection, err := detector.Detect(ctx, entity.BuildID{ID: build.ID})
 	if err != nil {
 		return fmt.Errorf("failed to detect issues for build %q: %w", build.ID, err)
 	}
 
 	issueStore := store.GetBuildIssueStore()
-	for _, issue := range issues {
+	for _, issue := range detection.Issues {
 		if err := issueStore.Create(ctx, build.ID, issue); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 			return fmt.Errorf("failed to persist build issue build=%q task=%q unit=%q: %w", build.ID, issue.TaskID, issue.UnitID, err)
 		}
@@ -182,7 +182,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	if complete {
-		if err := c.retainCompletedAnalysis(ctx, store, request, build.ID, len(issues)); err != nil {
+		if err := c.retainCompletedAnalysis(ctx, store, request, build.ID, detection); err != nil {
 			return fmt.Errorf("retain completed analysis for build %q: %w", build.ID, err)
 		}
 		switch request.State {
@@ -197,7 +197,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 				return err
 			}
 		}
-		c.logger.Infow("terminal issue analysis ready", "queue", request.Queue, "request_id", request.ID, "build_id", build.ID, "issue_count", len(issues))
+		c.logger.Infow("terminal issue analysis ready", "queue", request.Queue, "request_id", request.ID, "build_id", build.ID, "issue_count", len(detection.Issues))
 	}
 
 	if !complete && request.State.IsTerminal() {
@@ -214,17 +214,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"queue", analysis.GetQueueName(),
 		"build_id", build.ID,
 		"status", string(build.Status),
-		"observed_issue_count", len(issues),
+		"observed_issue_count", len(detection.Issues),
 	)
 
 	return nil
 }
 
-func (c *Controller) retainCompletedAnalysis(ctx context.Context, store storage.Storage, request entity.Request, buildID string, issueCount int) error {
+func (c *Controller) retainCompletedAnalysis(ctx context.Context, store storage.Storage, request entity.Request, buildID string, detection buildissue.Detection) error {
 	log := requestlog.NewRequestEventLog(request, entity.RequestEventBuildAnalysisCompleted, buildID,
 		map[string]string{
-			requestlog.MetadataKeyBuildID:    buildID,
-			requestlog.MetadataKeyIssueCount: strconv.Itoa(issueCount),
+			requestlog.MetadataKeyBuildID:            buildID,
+			requestlog.MetadataKeyIssueCount:         strconv.Itoa(len(detection.Issues)),
+			requestlog.MetadataKeyValidationComplete: strconv.FormatBool(detection.ValidationComplete),
 		})
 	history := store.GetRequestLogStore()
 	retained, err := history.Get(ctx, request.ID, log.ID)
@@ -249,11 +250,15 @@ func (c *Controller) retainCompletedAnalysis(ctx context.Context, store storage.
 		if retainedCount != log.Metadata[requestlog.MetadataKeyIssueCount] {
 			c.logger.Warnw("terminal analysis issue count differs from retained completion",
 				"queue", request.Queue, "request_id", request.ID, "build_id", buildID,
-				"retained_issue_count", retainedCount, "observed_issue_count", issueCount)
+				"retained_issue_count", retainedCount, "observed_issue_count", len(detection.Issues))
 		}
-		log.Metadata[requestlog.MetadataKeyIssueCount] = retainedCount
-	} else {
-		delete(log.Metadata, requestlog.MetadataKeyIssueCount)
+	}
+	for _, key := range []string{requestlog.MetadataKeyIssueCount, requestlog.MetadataKeyValidationComplete} {
+		if value, ok := retained.Metadata[key]; ok {
+			log.Metadata[key] = value
+		} else {
+			delete(log.Metadata, key)
+		}
 	}
 	return c.materializer.PersistLog(ctx, store, log)
 }

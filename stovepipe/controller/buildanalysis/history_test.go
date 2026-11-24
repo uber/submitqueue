@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/mock/gomock"
 )
@@ -97,8 +98,9 @@ func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 				log := m.history["event/build_analysis_completed/"+testBuildID]
 				require.Equal(t, entity.RequestEventBuildAnalysisCompleted, log.Event)
 				require.Equal(t, map[string]string{
-					requestlog.MetadataKeyBuildID:    testBuildID,
-					requestlog.MetadataKeyIssueCount: strconv.Itoa(tt.wantCount),
+					requestlog.MetadataKeyBuildID:            testBuildID,
+					requestlog.MetadataKeyIssueCount:         strconv.Itoa(tt.wantCount),
+					requestlog.MetadataKeyValidationComplete: "true",
 				}, log.Metadata)
 				require.Equal(t, m.request.ID, log.RequestID)
 				if retainedTimestamp == 0 {
@@ -108,6 +110,51 @@ func TestCompletedAnalysisHistoryRepairsOnRetry(t *testing.T) {
 				require.Equal(t, retainedTimestamp, log.TimestampMs)
 			}
 			require.Len(t, persistedIssues, max(tt.firstCount, tt.retryCount))
+		})
+	}
+}
+
+func TestTerminalAnalysisRetainsIssuesWithValidationCompleteness(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(strconv.FormatBool(complete), func(t *testing.T) {
+			c, m := newTestController(t)
+			issue := entity.BuildIssue{TaskID: "validation", UnitID: "failed-unit"}
+			m.expectPass(entity.BuildStatusFailed, []entity.BuildIssue{issue}, nil).
+				Return(buildissue.Detection{Issues: []entity.BuildIssue{issue}, ValidationComplete: complete}, nil)
+			m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil)
+
+			require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+
+			log := m.history["event/build_analysis_completed/"+testBuildID]
+			require.Equal(t, strconv.FormatBool(complete), log.Metadata[requestlog.MetadataKeyValidationComplete])
+			require.Equal(t, "1", log.Metadata[requestlog.MetadataKeyIssueCount])
+			require.Len(t, *m.published, 1)
+		})
+	}
+}
+
+func TestTerminalAnalysisReplayPreservesValidationCompleteness(t *testing.T) {
+	for _, retained := range []string{"", "false", "true"} {
+		t.Run("retained="+retained, func(t *testing.T) {
+			c, m := newTestController(t)
+			metadata := map[string]string{requestlog.MetadataKeyBuildID: testBuildID, requestlog.MetadataKeyIssueCount: "0"}
+			if retained != "" {
+				metadata[requestlog.MetadataKeyValidationComplete] = retained
+			}
+			log := requestlog.NewRequestEventLog(*m.request, entity.RequestEventBuildAnalysisCompleted, testBuildID, metadata)
+			log.TimestampMs = 123
+			m.history[log.ID] = log
+			m.expectPass(entity.BuildStatusFailed, nil, nil).
+				Return(buildissue.Detection{ValidationComplete: retained != "true"}, nil)
+
+			require.NoError(t, c.Process(context.Background(), m.delivery(t)))
+
+			require.Equal(t, log, m.history[log.ID])
+			if retained == "" {
+				require.NotContains(t, m.history[log.ID].Metadata, requestlog.MetadataKeyValidationComplete)
+			} else {
+				require.Equal(t, retained, m.history[log.ID].Metadata[requestlog.MetadataKeyValidationComplete])
+			}
 		})
 	}
 }
