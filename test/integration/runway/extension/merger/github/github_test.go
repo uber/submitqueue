@@ -153,7 +153,14 @@ func TestGitHubMergerLive(t *testing.T) {
 		req := mergeRequest(repo, mergestrategypb.Strategy_DEFAULT, p)
 		repo.AwaitPullHead(p.Number, repo.CommitFile(p.Branch, repo.FilePath("stale-followup"), "followup"))
 
+		// A fresh head on one GitHub read does not make subsequent reads fresh.
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
 		_, err := m.CheckMergeability(ctx, req)
+		for err == nil {
+			<-ticker.C
+			_, err = m.CheckMergeability(ctx, req)
+		}
 		require.ErrorIs(t, err, merger.ErrInvalidRequest)
 		_, err = m.Merge(ctx, req)
 		require.ErrorIs(t, err, merger.ErrInvalidRequest)

@@ -336,6 +336,9 @@ func (m *githubMerger) checkPullMergeable(ctx context.Context, step *runwaymq.Me
 		if err != nil {
 			return err
 		}
+		if pr.Head.SHA != p.ref.SHA {
+			return fmt.Errorf("%w: step %q: %s head moved from %s to %s", merger.ErrInvalidRequest, step.GetStepId(), p.ref.Label, p.ref.SHA, pr.Head.SHA)
+		}
 	}
 	if !*pr.Mergeable || pr.MergeableState == mergeableStateDirty {
 		return fmt.Errorf("%w: step %q: %s conflicts with %s", merger.ErrConflict, step.GetStepId(), p.ref.Label, pr.Base.Ref)
