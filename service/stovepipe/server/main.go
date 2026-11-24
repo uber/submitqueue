@@ -558,7 +558,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 	metricsSubscription.Retry.MaxAttempts = 0
 	metricsSubscription.DLQ.Enabled = false
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: stovepipemq.TopicKeyPeriodicMetrics, Name: "periodicmetrics", Queue: q, Subscription: metricsSubscription},
+		{
+			Key:          stovepipemq.TopicKeyPeriodicMetrics,
+			Name:         "periodicmetrics",
+			Queue:        q,
+			Subscription: metricsSubscription,
+		},
 		{
 			Key:   stovepipemq.TopicKeyProcess,
 			Name:  "process",
