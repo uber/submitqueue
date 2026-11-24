@@ -76,16 +76,24 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-// fakeSourceControlFactory is the example SourceControl factory. It seeds each queue with a
-// deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting
-// the same queue exercises the dedup path). It has no ref to promote onto, so a promotion
-// only succeeds or reports the commit as gone, and the local stack shows it in the record
-// consumer's log. A real deployment supplies a VCS-backed factory, which is also where the
-// promotion ref is resolved from the queue name, alongside the repo and credentials.
-type fakeSourceControlFactory struct{}
+// fakeSourceControlFactory shares a single-commit history and promotion state per queue.
+type fakeSourceControlFactory struct {
+	mu      sync.Mutex
+	sources map[string]sourcecontrol.SourceControl
+}
 
-func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
-	return sourcecontrolfake.New(cfg, []string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
+func (f *fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sources == nil {
+		f.sources = make(map[string]sourcecontrol.SourceControl)
+	}
+	if source, ok := f.sources[cfg.QueueName]; ok {
+		return source, nil
+	}
+	source := sourcecontrolfake.New(cfg, []string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)})
+	f.sources[cfg.QueueName] = source
+	return source, nil
 }
 
 // fakeBuildRunnerFactory is the example BuildRunner factory: every queue gets a stateless fake
@@ -257,7 +265,7 @@ func run() error {
 	// Each factory is constructed once and threaded through every consumer of
 	// it, so a real (stateful) backend introduced later is shared rather than
 	// silently duplicated across controllers.
-	sourceControl := fakeSourceControlFactory{}
+	sourceControl := &fakeSourceControlFactory{}
 	brf := fakeBuildRunnerFactory{}
 	repairExecutors := noopRepairExecutorFactory{}
 

@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//api/base/hook:go_default_library",
+        "//platform/base/id:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/hook:go_default_library",
@@ -49,6 +50,7 @@ go_test(
         "//stovepipe/core/requestlog/mock:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/sourcecontrol/fake:go_default_library",
         "//stovepipe/extension/sourcecontrol/mock:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mock:go_default_library",

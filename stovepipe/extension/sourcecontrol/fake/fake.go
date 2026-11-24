@@ -21,6 +21,7 @@ package fake
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/uber/submitqueue/platform/base/page"
@@ -39,6 +40,8 @@ type sourceControlFake struct {
 	// latestCreatedAt is the millisecond timestamp assigned to history[0]; older
 	// ancestors are spaced changeInterval apart behind it.
 	latestCreatedAt int64
+	mu              sync.Mutex
+	promotionURI    string
 }
 
 // New returns a sourcecontrol.SourceControl bound to the queue named in cfg,
@@ -48,7 +51,7 @@ type sourceControlFake struct {
 func New(cfg sourcecontrol.Config, history []string) sourcecontrol.SourceControl {
 	cp := make([]string, len(history))
 	copy(cp, history)
-	return sourceControlFake{
+	return &sourceControlFake{
 		cfg:             cfg,
 		history:         cp,
 		latestCreatedAt: time.Now().UnixMilli(),
@@ -56,30 +59,39 @@ func New(cfg sourcecontrol.Config, history []string) sourcecontrol.SourceControl
 }
 
 // Latest returns the newest commit URI, or ErrNotFound when the history is empty.
-func (s sourceControlFake) Latest(_ context.Context) (string, error) {
+func (s *sourceControlFake) Latest(_ context.Context) (string, error) {
 	if len(s.history) == 0 {
 		return "", sourcecontrol.ErrNotFound
 	}
 	return s.history[0], nil
 }
 
-// Promote accepts a commit that is on the history and returns ErrNotFound for one
-// that is not — the answer a real backend gives once a rewrite drops the commit
-// from the ref. Nothing is recorded: the fake holds no ref to move, and a promotion
-// is observable only through the caller's own logs and metrics, so keeping it
-// stateless lets any instance answer for any other.
-func (s sourceControlFake) Promote(_ context.Context, uri string) error {
-	if s.indexOf(uri) < 0 {
-		return sourcecontrol.ErrNotFound
+// PromotionRef returns the current promotion URI, initially empty.
+func (s *sourceControlFake) PromotionRef(_ context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.promotionURI, nil
+}
+
+// Promote conditionally updates the in-memory promotion ref.
+func (s *sourceControlFake) Promote(_ context.Context, uri, expectedURI string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.promotionURI != expectedURI {
+		return false, nil
 	}
-	return nil
+	if s.indexOf(uri) < 0 {
+		return false, sourcecontrol.ErrNotFound
+	}
+	s.promotionURI = uri
+	return true, nil
 }
 
 // IsAncestor reports whether ancestor is an ancestor of descendant. Both URIs
 // must be on the ref; an unknown URI yields ErrNotFound. Since the history is
 // newest-first, ancestor is an ancestor of descendant when its index is greater
 // than or equal to descendant's (older-or-equal commit).
-func (s sourceControlFake) IsAncestor(_ context.Context, ancestor, descendant string) (bool, error) {
+func (s *sourceControlFake) IsAncestor(_ context.Context, ancestor, descendant string) (bool, error) {
 	ai := s.indexOf(ancestor)
 	di := s.indexOf(descendant)
 	if ai < 0 || di < 0 {
@@ -93,7 +105,7 @@ func (s sourceControlFake) IsAncestor(_ context.Context, ancestor, descendant st
 // commit. A limit of zero or less returns the rest of the history from the cursor
 // in a single page. The returned NextCursor is the URI of the next, older commit,
 // or empty when the page reaches the end of the history.
-func (s sourceControlFake) History(_ context.Context, cursor string, limit int) (page.Page[string], error) {
+func (s *sourceControlFake) History(_ context.Context, cursor string, limit int) (page.Page[string], error) {
 	start := 0
 	if cursor != "" {
 		start = s.indexOf(cursor)
@@ -118,7 +130,7 @@ func (s sourceControlFake) History(_ context.Context, cursor string, limit int) 
 }
 
 // ChangeInfo returns immutable metadata for a change on the fake's ref.
-func (s sourceControlFake) ChangeInfo(_ context.Context, uri string) (sourcecontrol.ChangeInfo, error) {
+func (s *sourceControlFake) ChangeInfo(_ context.Context, uri string) (sourcecontrol.ChangeInfo, error) {
 	index := s.indexOf(uri)
 	if index < 0 {
 		return sourcecontrol.ChangeInfo{}, sourcecontrol.ErrNotFound
@@ -129,7 +141,7 @@ func (s sourceControlFake) ChangeInfo(_ context.Context, uri string) (sourcecont
 }
 
 // indexOf returns the index of uri in the history, or -1 if absent.
-func (s sourceControlFake) indexOf(uri string) int {
+func (s *sourceControlFake) indexOf(uri string) int {
 	for i, u := range s.history {
 		if u == uri {
 			return i

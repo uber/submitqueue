@@ -73,17 +73,13 @@ type SourceControl interface {
 	// incremental one. Returns ErrNotFound if either URI is unknown to the ref.
 	IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)
 
-	// Promote points the queue's promotion ref at uri — a stable name (e.g. a
-	// "verified" branch) that downstream systems pull to get the latest commit
-	// the caller has established as green. The ref is integrator configuration
-	// injected at construction, like the endpoint and credentials, so callers
-	// name only the commit; a backend with no promotion target configured makes
-	// this a no-op. It is idempotent: promoting the URI the ref already points
-	// at changes nothing. Callers promote monotonically, but a history rewrite
-	// can leave the ref somewhere unrelated to uri, and implementations must
-	// still land it on uri rather than refusing. Returns ErrNotFound when uri is
-	// no longer on the queue's ref, which a rewritten history can cause.
-	Promote(ctx context.Context, uri string) error
+	// PromotionRef returns the current promotion URI, or empty if absent or disabled.
+	PromotionRef(ctx context.Context) (string, error)
+
+	// Promote atomically updates the ref if its URI matches expectedURI.
+	// Empty expectedURI requires an absent ref. False reports a conflict.
+	// Disabled promotion succeeds without a write.
+	Promote(ctx context.Context, uri, expectedURI string) (bool, error)
 
 	// History returns a bounded page of the queue's commit URIs, newest first.
 	// It is paginated with an opaque cursor so a remote backend stays cheap:

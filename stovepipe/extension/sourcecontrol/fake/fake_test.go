@@ -86,29 +86,83 @@ func TestIsAncestor(t *testing.T) {
 
 func TestPromote(t *testing.T) {
 	tests := []struct {
-		name    string
-		uri     string
-		wantErr bool
+		name        string
+		current     string
+		uri         string
+		expected    string
+		wantApplied bool
+		wantErr     bool
 	}{
-		{name: "latest commit", uri: "git://repo/ref/c"},
-		{name: "older commit on the ref", uri: "git://repo/ref/a"},
-		{name: "commit not on the ref", uri: "git://repo/ref/x", wantErr: true},
+		{name: "initialize absent ref", uri: history[0], wantApplied: true},
+		{name: "matching ref advances", current: history[2], uri: history[0], expected: history[2], wantApplied: true},
+		{name: "stale writer cannot roll back", current: history[0], uri: history[2], expected: history[1]},
+		{name: "absent expectation cannot replace existing ref", current: history[0], uri: history[2]},
+		{name: "existing expectation cannot create absent ref", uri: history[0], expected: history[2]},
+		{name: "same commit is idempotent", current: history[0], uri: history[0], expected: history[0], wantApplied: true},
+		{name: "unknown candidate leaves ref unchanged", current: history[2], uri: "git://repo/ref/missing", expected: history[2], wantErr: true},
+		{name: "rewrite can replace unrelated history", current: "git://repo/ref/dropped", uri: history[0], expected: "git://repo/ref/dropped", wantApplied: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sc := New(testCfg, history)
-			err := sc.Promote(context.Background(), tt.uri)
+			sc := New(testCfg, history).(*sourceControlFake)
+			sc.promotionURI = tt.current
+			current, err := sc.PromotionRef(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tt.current, current)
+
+			applied, err := sc.Promote(context.Background(), tt.uri, tt.expected)
 			if tt.wantErr {
 				require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
-				return
+			} else {
+				require.NoError(t, err)
 			}
+			assert.Equal(t, tt.wantApplied, applied)
+			current, err = sc.PromotionRef(context.Background())
 			require.NoError(t, err)
-
-			// Promotion is idempotent, so a caller retrying after a lost
-			// response gets the same answer.
-			require.NoError(t, sc.Promote(context.Background(), tt.uri))
+			want := tt.current
+			if tt.wantApplied {
+				want = tt.uri
+			}
+			assert.Equal(t, want, current)
 		})
 	}
+}
+
+func TestPromote_ConcurrentWritersHaveOneWinner(t *testing.T) {
+	ctx := context.Background()
+	sc := New(testCfg, history)
+	applied, err := sc.Promote(ctx, history[1], "")
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	type result struct {
+		uri     string
+		applied bool
+		err     error
+	}
+	results := make(chan result, 2)
+	start := make(chan struct{})
+	for _, uri := range []string{history[0], history[2]} {
+		go func() {
+			<-start
+			applied, err := sc.Promote(ctx, uri, history[1])
+			results <- result{uri, applied, err}
+		}()
+	}
+	close(start)
+	var winner string
+	for range 2 {
+		got := <-results
+		require.NoError(t, got.err)
+		if got.applied {
+			require.Empty(t, winner)
+			winner = got.uri
+		}
+	}
+	require.NotEmpty(t, winner)
+	current, err := sc.PromotionRef(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, winner, current)
 }
 
 func TestHistory(t *testing.T) {
