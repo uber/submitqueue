@@ -73,6 +73,10 @@ services:
       - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
       - MQ_TENANTS=${MQ_TENANTS:-monorepo/main,monorepo/release,monorepo/slow?buildrunner-fake=build-slow}
       - HOSTNAME=stovepipe-dev
+      # Queue-stage redelivery delays as Go durations; empty keeps the production defaults.
+      - BUILD_ANALYSIS_POLL_DELAY=${BUILD_ANALYSIS_POLL_DELAY:-}
+      - ISSUE_TRACK_ANALYSIS_WAIT=${ISSUE_TRACK_ANALYSIS_WAIT:-}
+      - ISSUE_TRACK_RECOVERY_DELAY=${ISSUE_TRACK_RECOVERY_DELAY:-}
     depends_on:
       mysql-app:
         condition: service_healthy

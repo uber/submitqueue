@@ -143,7 +143,7 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	)
 
 	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
+		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis", buildanalysis.DefaultPollDelayMs)
 	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
 		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
 		stovepipemq.TopicKeyBuildSignal, "signal")
@@ -159,13 +159,13 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	require.Len(t, published["buildsignal"], 1)
 
 	firstPoll := delivered(published["buildanalysis"][0])
-	firstPoll.EXPECT().Hold(buildanalysis.PollDelayMs)
+	firstPoll.EXPECT().Hold(buildanalysis.DefaultPollDelayMs)
 	require.NoError(t, analysisController.Process(ctx, firstPoll))
 	assert.True(t, persisted[a])
 	assert.False(t, persisted[b])
 
 	secondPoll := delivered(published["buildanalysis"][0])
-	secondPoll.EXPECT().Hold(buildanalysis.PollDelayMs)
+	secondPoll.EXPECT().Hold(buildanalysis.DefaultPollDelayMs)
 	require.NoError(t, analysisController.Process(ctx, secondPoll))
 	assert.True(t, persisted[b])
 

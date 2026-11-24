@@ -40,11 +40,19 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// Each delivery processes at most this many issue keys, including a revisited cursor and closed records.
-	_issueBatchSize       = 100
-	_analysisWaitMs int64 = 30000
-)
+// Each delivery processes at most this many issue keys, including a revisited cursor and closed records.
+const _issueBatchSize = 100
+
+// HoldDelays are the redelivery delays, in milliseconds, of the issue tracking controller.
+type HoldDelays struct {
+	// AnalysisWaitMs is how long to wait for a request's build analysis before checking again.
+	AnalysisWaitMs int64
+	// RecoveryDelayMs is how long to wait while DLQ recovery abandons a pass, so the consumer does not spin.
+	RecoveryDelayMs int64
+}
+
+// DefaultHoldDelays are the production redelivery delays.
+var DefaultHoldDelays = HoldDelays{AnalysisWaitMs: 30000, RecoveryDelayMs: 30000}
 
 type issueKey struct{ task, unit string }
 
@@ -58,10 +66,11 @@ type Controller struct {
 	requestMaterializer requestlog.Materializer
 	topicKey            consumer.TopicKey
 	consumerGroup       string
+	holdDelays          HoldDelays
 	nowMs               func() int64
 }
 
-func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string) *Controller {
+func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer requestlog.Materializer, registry consumer.TopicRegistry, topicKey consumer.TopicKey, consumerGroup string, holdDelays HoldDelays) *Controller {
 	return &Controller{
 		logger:              logger.Named("issuetrack_controller"),
 		metricsScope:        scope.SubScope("issuetrack_controller"),
@@ -71,6 +80,7 @@ func NewController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.
 		requestMaterializer: materializer,
 		topicKey:            topicKey,
 		consumerGroup:       consumerGroup,
+		holdDelays:          holdDelays,
 		nowMs:               func() int64 { return time.Now().UnixMilli() },
 	}
 }
@@ -138,7 +148,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 			}
 			switch progress.Phase {
 			case entity.IssueTrackingPhaseAbandoning:
-				delivery.Hold(_recoveryDelayMs)
+				delivery.Hold(c.holdDelays.RecoveryDelayMs)
 				return nil
 			case entity.IssueTrackingPhaseFinalized, entity.IssueTrackingPhaseAbandoned:
 				if order == 0 {
@@ -146,7 +156,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				}
 			default:
 				if order > 0 {
-					delivery.Hold(_analysisWaitMs)
+					delivery.Hold(c.holdDelays.AnalysisWaitMs)
 					return nil
 				}
 			}
@@ -161,7 +171,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				return nil
 			}
 			if !request.State.IsTerminal() {
-				delivery.Hold(_analysisWaitMs)
+				delivery.Hold(c.holdDelays.AnalysisWaitMs)
 				return nil
 			}
 		}
@@ -247,7 +257,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 		case entity.IssueTrackingPhaseRefreshing, entity.IssueTrackingPhaseFinalizing:
 			delivery.Hold(0)
 		case entity.IssueTrackingPhaseRefreshed:
-			delivery.Hold(_analysisWaitMs)
+			delivery.Hold(c.holdDelays.AnalysisWaitMs)
 		}
 		return nil
 	}

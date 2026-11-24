@@ -133,7 +133,7 @@ func newTestController(t *testing.T) (*Controller, analysisMocks) {
 	m.historyRead = history.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(readHistory).AnyTimes()
 
 	c := NewController(zap.NewNop().Sugar(), m.scope, m.stores, m.materializer, m.detectorFactory, m.registry,
-		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+		stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis", DefaultPollDelayMs)
 
 	return c, m
 }
@@ -200,7 +200,7 @@ func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
 				if status.IsTerminal() {
 					m.historyCreate.After(last)
 				} else {
-					d.EXPECT().Hold(PollDelayMs).After(last)
+					d.EXPECT().Hold(DefaultPollDelayMs).After(last)
 				}
 
 				require.NoError(t, c.Process(context.Background(), d))
@@ -224,7 +224,7 @@ func TestProcessAcceptsRepeatedAndTaskWideObservations(t *testing.T) {
 		Return(fmt.Errorf("already recorded: %w", storage.ErrAlreadyExists)).After(last)
 
 	d := m.delivery(t)
-	d.EXPECT().Hold(PollDelayMs).After(last)
+	d.EXPECT().Hold(DefaultPollDelayMs).After(last)
 
 	require.NoError(t, c.Process(context.Background(), d))
 }
@@ -256,7 +256,7 @@ func TestProcessRetriesPartialPersistenceAndReloadsStatus(t *testing.T) {
 			assert.True(t, errs.IsRetryable(err))
 		} else {
 			if !pass.status.IsTerminal() {
-				d.EXPECT().Hold(PollDelayMs).After(last)
+				d.EXPECT().Hold(DefaultPollDelayMs).After(last)
 			}
 
 			require.NoError(t, c.Process(context.Background(), d))
@@ -284,7 +284,7 @@ func TestProcessRunsAgainWhenBuildCompletesDuringDetection(t *testing.T) {
 	)
 
 	first := m.delivery(t)
-	first.EXPECT().Hold(PollDelayMs)
+	first.EXPECT().Hold(DefaultPollDelayMs)
 
 	require.NoError(t, c.Process(context.Background(), first))
 
@@ -568,7 +568,7 @@ func TestProcessWaitsForWinningBuildBeforeFinalizing(t *testing.T) {
 			d := m.delivery(t)
 			if outcome != "another build wins" {
 				if outcome == "pending" {
-					d.EXPECT().Hold(PollDelayMs).After(detected)
+					d.EXPECT().Hold(DefaultPollDelayMs).After(detected)
 				}
 			}
 
