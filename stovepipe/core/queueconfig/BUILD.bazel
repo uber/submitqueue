@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "build_analysis.go",
+        "build_signal.go",
+        "issue_track.go",
+        "process.go",
+        "stages.go",
+    ],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/queueconfig",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "build_analysis_test.go",
+        "build_signal_test.go",
+        "issue_track_test.go",
+        "process_test.go",
+        "stages_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = ["@com_github_stretchr_testify//require:go_default_library"],
+)
