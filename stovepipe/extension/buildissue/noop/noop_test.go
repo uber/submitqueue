@@ -29,8 +29,9 @@ func TestDetectReturnsNoObservations(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, buildID := range []string{"build/1", "build/2"} {
-		issues, err := detector.Detect(context.Background(), entity.BuildID{ID: buildID})
+		result, err := detector.Detect(context.Background(), entity.BuildID{ID: buildID})
 		require.NoError(t, err)
-		require.Empty(t, issues)
+		require.Empty(t, result.Issues)
+		require.False(t, result.ValidationComplete)
 	}
 }

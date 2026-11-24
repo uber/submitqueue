@@ -168,14 +168,14 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 		if request.State.IsTerminal() && request.TerminalBuildID == "" {
 			return fmt.Errorf("cannot track request %s: request ended without a build outcome", request.ID)
 		}
-		event, err := terminalAnalysisEvent(ctx, store, request, buildID)
+		analysis, err := terminalAnalysisLog(ctx, store, request, buildID)
 		if err != nil {
 			return err
 		}
-		if event == entity.RequestEventBuildAnalysisAbandoned {
+		if analysis.Event == entity.RequestEventBuildAnalysisAbandoned {
 			return fmt.Errorf("cannot track request %s: build analysis was abandoned", request.ID)
 		}
-		finalize := event == entity.RequestEventBuildAnalysisCompleted
+		finalize := analysis.Event == entity.RequestEventBuildAnalysisCompleted
 		// Completion may have been recorded after the request read above.
 		if finalize && request.TerminalBuildID != buildID {
 			request, err = loader.ByID(ctx, request.ID, store.GetRequestStore().Get, "completed request")
@@ -236,7 +236,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				c.logger.Infow("starting issue finalization", "queue", queue, "request_id", request.ID, "build_id", build.ID)
 			}
 		}
-		checkpoint, err := c.reconcileBatch(ctx, store, queue, progress)
+		checkpoint, err := c.reconcileBatch(ctx, store, queue, progress, analysis.Metadata[requestlog.MetadataKeyValidationComplete] == "true")
 		if err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 	}
 }
 
-func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState) (checkpoint entity.IssueTrackingState, retErr error) {
+func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, queue string, progress entity.IssueTrackingState, validationComplete bool) (checkpoint entity.IssueTrackingState, retErr error) {
 	op := metrics.Begin(c.metricsScope, "batch", metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
 
@@ -284,6 +284,9 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 
 	if finalizing && build.Status == entity.BuildStatusCancelled {
 		return entity.IssueTrackingState{}, fmt.Errorf("canceled builds cannot close missing issues")
+	}
+	if finalizing && !validationComplete {
+		return entity.IssueTrackingState{}, fmt.Errorf("incomplete validation cannot close missing issues")
 	}
 
 	if progress.CursorTaskID != "" {
@@ -347,7 +350,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 			next.Phase = entity.IssueTrackingPhaseFinalized
 		case !progress.Finalize:
 			next.Phase = entity.IssueTrackingPhaseRefreshed
-		case progress.HasTaskWideIssues || build.Status == entity.BuildStatusCancelled:
+		case progress.HasTaskWideIssues || build.Status == entity.BuildStatusCancelled || !validationComplete:
 			next.Phase = entity.IssueTrackingPhaseFinalized
 		default:
 			next.Phase = entity.IssueTrackingPhaseFinalizing

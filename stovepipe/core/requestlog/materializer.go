@@ -48,6 +48,9 @@ const (
 	MetadataKeyBaseURI = "base_uri"
 	// MetadataKeyIssueCount records the issue count at the first retained analysis completion.
 	MetadataKeyIssueCount = "issue_count"
+	// MetadataKeyValidationComplete confirms usable outcomes for all required validation work.
+	// Missing or non-true values do not establish coverage.
+	MetadataKeyValidationComplete = "validation_complete"
 	// MetadataKeyClosureMode records whether absent issues were reconciled or why closure was suppressed.
 	MetadataKeyClosureMode = "closure_mode"
 	// MetadataKeyFixID identifies an opaque repair attempt.

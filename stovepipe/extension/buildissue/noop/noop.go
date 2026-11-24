@@ -34,8 +34,8 @@ func (DetectorFactory) For(buildissue.DetectorConfig) (buildissue.Detector, erro
 
 type detector struct{}
 
-func (detector) Detect(context.Context, entity.BuildID) ([]entity.BuildIssue, error) {
-	return nil, nil
+func (detector) Detect(context.Context, entity.BuildID) (buildissue.Detection, error) {
+	return buildissue.Detection{}, nil
 }
 
 var _ buildissue.DetectorFactory = DetectorFactory{}
