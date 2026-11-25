@@ -7,7 +7,7 @@ import { Button, SIZE } from "baseui/button";
 import { StyledTableBodyCell, StyledTableBodyRow } from "baseui/table-semantic";
 import { Tag } from "baseui/tag";
 import { HeadingSmall, ParagraphSmall } from "baseui/typography";
-import type { OpenIssueModel, OpenIssuesModel, RequestIssuesModel, IssueProjectsSelection } from "../entity/index.js";
+import type { OpenIssueModel, OpenIssuesModel, RequestIssuesModel, IssueProjectsSelection, IssueHistoryModel } from "../entity/index.js";
 import { Link, Table, Section } from "./components.js";
 
 export type OpenIssuePageLoader = (href: string, signal: AbortSignal) => Promise<OpenIssuesModel>;
@@ -19,6 +19,12 @@ export function OpenIssuePagesProvider({ loadPage, children }: { loadPage: OpenI
 }
 
 const issueKey = (issue: OpenIssueModel) => JSON.stringify([issue.taskId, issue.unitId]);
+
+const issueEventLabels = new Map([
+  ["open", "Opened"],
+  ["reported", "Reported"],
+  ["closed", "Closed"],
+]);
 
 export function OpenIssues({ initial }: { initial: OpenIssuesModel }) {
   const loadPage = useContext(OpenIssuePagesContext);
@@ -67,13 +73,14 @@ export function OpenIssues({ initial }: { initial: OpenIssuesModel }) {
       </ParagraphSmall>}
       {[...tasks].map(([task, issues]) => <Block as="section" key={task} aria-label={`Task ${task}`} marginBottom="scale600">
         <HeadingSmall as="h2" marginTop="0" marginBottom="scale300">{task}</HeadingSmall>
-        <Table label={`Issues for ${task}`} headers={["Unit", "First seen", "Opening request"]}>
+        <Table label={`Issues for ${task}`} headers={["Unit", "First seen", "Opening request", "History"]}>
           {issues.map(issue => <StyledTableBodyRow key={issueKey(issue)}>
             <StyledTableBodyCell>{issue.unitId
               ? <Block as="code" font="MonoParagraphXSmall">{issue.unitId}</Block>
               : <Tag closeable={false} kind="neutral" size="small">Task-wide failure</Tag>}</StyledTableBodyCell>
             <StyledTableBodyCell>{issue.firstSeenAtMs === "0" ? "Unknown" : <Timestamp value={issue.firstSeenAtMs} />}</StyledTableBodyCell>
             <StyledTableBodyCell><Link href={issue.requestHref}>{issue.requestId}</Link></StyledTableBodyCell>
+            <StyledTableBodyCell><Link href={issue.historyHref}>View history</Link></StyledTableBodyCell>
           </StyledTableBodyRow>)}
         </Table>
       </Block>)}
@@ -96,22 +103,18 @@ export function RequestIssues({ model, projects }: { model: RequestIssuesModel; 
       : model.status === "incomplete" ? "Issue recording was abandoned. These results may be incomplete."
         : model.status === "unavailable" ? "Issue results are not available. Recording may not have started, or this request predates retained coverage."
           : "Issue recording status is unknown.";
-  const groups = [
-    { kind: "open", label: "Opened Issues" },
-    { kind: "reported", label: "Reported Issues" },
-    { kind: "closed", label: "Closed Issues" },
-  ];
-  if (model.issues.some(issue => !groups.some(group => group.kind === issue.kind)))
+  const groups = [...issueEventLabels].map(([kind, label]) => ({ kind, label: `${label} Issues` }));
+  if (model.issues.some(issue => !issueEventLabels.has(issue.kind)))
     groups.push({ kind: "unknown", label: "Other Issues" });
   return <Block className="sq-stovepipe-request-issues">
     <ParagraphSmall role="status" marginTop="0">{status}</ParagraphSmall>
     <ParagraphSmall color="contentSecondary">Project attribution is available for reported unit-level issues, not task-wide or resolved updates.</ParagraphSmall>
     {groups.map(group => {
       const issues = model.issues.filter(issue => group.kind === "unknown"
-        ? !["open", "reported", "closed"].includes(issue.kind) : issue.kind === group.kind);
+        ? !issueEventLabels.has(issue.kind) : issue.kind === group.kind);
       return <Block as="section" key={group.kind} aria-label={group.label} marginBottom="scale500">
         <HeadingSmall as="h3" marginTop="0" marginBottom="scale300">{group.label}</HeadingSmall>
-        {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build", "Affected projects"]}>
+        {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build", "Affected projects", "History"]}>
           {issues.map(issue => {
             const selected = issue.projectsHref && projects?.taskId === issue.taskId && projects.unitId === issue.unitId ? projects : null;
             return <Fragment key={JSON.stringify([issue.taskId, issue.unitId])}>
@@ -122,8 +125,9 @@ export function RequestIssues({ model, projects }: { model: RequestIssuesModel; 
                 <StyledTableBodyCell>{issue.firstSeenBuildId || "Unknown"}</StyledTableBodyCell>
                 <StyledTableBodyCell>{issue.buildId || "Unknown"}</StyledTableBodyCell>
                 <StyledTableBodyCell>{issue.projectsHref ? <Link href={selected ? selected.closeHref : issue.projectsHref} scroll={false} aria-expanded={Boolean(selected)}>{selected ? "Hide projects" : "Show projects"}</Link> : "Not available"}</StyledTableBodyCell>
+                <StyledTableBodyCell><Link href={issue.historyHref}>View history</Link></StyledTableBodyCell>
               </StyledTableBodyRow>
-              {selected && <StyledTableBodyRow><StyledTableBodyCell colSpan={5}>
+              {selected && <StyledTableBodyRow><StyledTableBodyCell colSpan={6}>
                 <Section cacheKey={selected.key} result={selected.result}>{page => page && <section aria-label={`Affected projects for ${issue.taskId} ${issue.unitId}`}>
                   {!page.complete ? <ParagraphSmall>Project attribution is not available yet or did not complete.</ParagraphSmall>
                     : page.projects.length ? <ul>{page.projects.map(project => <li key={project}>{project}</li>)}</ul>
@@ -144,4 +148,56 @@ export function RequestIssues({ model, projects }: { model: RequestIssuesModel; 
       {model.nextHref && <Link href={model.nextHref} scroll={false}>Next issues →</Link>}
     </Block>
   </Block>;
+}
+
+export function IssueHistory({ model }: { model: IssueHistoryModel }) {
+  return (
+    <section aria-label="Issue history" className="sq-stovepipe-issue-history">
+      <HeadingSmall as="h2" marginTop="0">Issue history</HeadingSmall>
+      <Block as="dl" margin="0" display="grid" gridTemplateColumns="auto minmax(0, 1fr)" gridGap="scale300">
+        <dt>Task</dt>
+        <Block as="dd" margin="0" $style={{ overflowWrap: "anywhere" }}>{model.taskId}</Block>
+        <dt>Unit</dt>
+        <Block as="dd" margin="0" $style={{ overflowWrap: "anywhere" }}>
+          {model.unitId
+            ? <code>{model.unitId}</code>
+            : <Tag closeable={false} kind="neutral" size="small">Task-wide failure</Tag>}
+        </Block>
+      </Block>
+
+      <ParagraphSmall color="contentSecondary">
+        Retained events ordered by request acceptance, newest first. Event timestamps are preserved, not used for ordering.
+      </ParagraphSmall>
+      <ParagraphSmall color="contentSecondary">
+        Older history may be incomplete. Late events can appear on earlier pages; return to the first page to refresh coverage.
+      </ParagraphSmall>
+
+      {model.events.length ? (
+        <Table label="Issue history events" headers={["Time", "Event", "Build", "Opening build", "Request"]}>
+          {model.events.map(event => (
+            <StyledTableBodyRow key={JSON.stringify([event.requestId, event.buildId, event.event])}>
+              <StyledTableBodyCell><Timestamp value={event.timestampMs} /></StyledTableBodyCell>
+              <StyledTableBodyCell>{issueEventLabels.get(event.event) ?? event.event}</StyledTableBodyCell>
+              <StyledTableBodyCell>{event.buildId}</StyledTableBodyCell>
+              <StyledTableBodyCell>{event.firstSeenBuildId || "Unknown"}</StyledTableBodyCell>
+              <StyledTableBodyCell>
+                {event.requestHref
+                  ? <Link href={event.requestHref}>{event.requestId}</Link>
+                  : "Not retained"}
+              </StyledTableBodyCell>
+            </StyledTableBodyRow>
+          ))}
+        </Table>
+      ) : (
+        <ParagraphSmall>
+          No retained issue events on this page. This does not establish that the issue never existed.
+        </ParagraphSmall>
+      )}
+
+      <Block as="nav" aria-label="Issue history pages" display="flex" flexWrap gridGap="scale500" paddingTop="scale400">
+        {model.firstHref && <Link href={model.firstHref}>First events</Link>}
+        {model.nextHref && <Link href={model.nextHref}>Next events →</Link>}
+      </Block>
+    </section>
+  );
 }

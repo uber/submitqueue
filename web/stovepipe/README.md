@@ -1,6 +1,6 @@
 # Stovepipe web UI
 
-A framework-neutral React UI for queue requests, open issues, and request details. The host supplies authentication, backend transport, routing adapters, and styling.
+A framework-neutral React UI for queue requests, open issues, issue history, and request details. The host supplies authentication, backend transport, routing adapters, and styling.
 
 ## Host integration
 
@@ -15,3 +15,4 @@ See the [shared package contract](../README.md#layers) for bundling requirements
 
 - Missing results are unknown, not green. Recording completion does not imply validation success.
 - Paginated listings are live, not snapshots.
+- Issue history shows retained openings, repeat reports, and closures across requests, in newest-first request-acceptance order, preserving original event timestamps. Older coverage may be incomplete.

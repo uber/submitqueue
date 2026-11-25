@@ -59,6 +59,9 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
   }
 
   const stovepipe = createStovepipeWeb({ queues: [{ name: "repo/main" }], service: {
+    listIssueHistory: async () => ({ events: [
+      { event: "reported", buildId: "build/2", timestampMs: 200n, firstSeenBuildId: "build/1", requestId: "1" },
+    ], nextPageToken: "" }),
     getIssuesByRequestID: async () => ({ issues: [
       { taskId: "buildtest", unitId: "unit-1", kind: "open", buildId: "build/1", firstSeenBuildId: "build/1" },
     ], status: "complete", nextPageToken: "" }),
@@ -73,7 +76,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
     }),
     getRequestHistoryByID: async () => ({ requestSummary: { requestId: "1", queue: "repo/main", changeUri: "git://repo/main/sha", baseUri: "", requestState: "accepted", stateUpdatedAtMs: 100n, acceptedAtMs: 100n, outcomeReason: "", projectCount: 0, brokenProjectCount: 0 }, events: [] }),
   } });
-  for (const href of ["/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history", "/repo%2Fmain/request/1?view=issues", "/repo%2Fmain/request/1?view=issues&issueTask=buildtest&issueUnit=unit-1", "/repo%2Fmain/request/1?project=example-project"]) {
+  for (const href of ["/repo%2Fmain?view=issue-history&task=buildtest&unit=unit-1", "/repo%2Fmain", "/repo%2Fmain/request/1", "/repo%2Fmain/request/1?view=history", "/repo%2Fmain/request/1?view=issues", "/repo%2Fmain/request/1?view=issues&issueTask=buildtest&issueUnit=unit-1", "/repo%2Fmain/request/1?project=example-project"]) {
     const url = new URL(href, "https://submitqueue.test");
     const result = await stovepipe.handle({ path: url.pathname, search: url.searchParams });
     assert.equal(result.kind, "render");

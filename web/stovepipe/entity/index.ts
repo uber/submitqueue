@@ -38,6 +38,8 @@ export interface OpenIssueModel {
   taskId: string;
   /** Validation unit; empty identifies a task-wide failure. */
   unitId: string;
+  /** Retained cross-request history for this task and unit. */
+  historyHref: string;
   /** Opening time in Unix milliseconds as a decimal string. */
   firstSeenAtMs: string;
   /** Request that established this opening. */
@@ -51,9 +53,36 @@ export interface OpenIssuesModel {
   /** Opaque continuation URL; null when no further row was observed. */
   nextHref: string | null;
 }
+export interface IssueHistoryModel {
+  /** Exact validation task selected for this history. */
+  taskId: string;
+  /** Exact unit; empty means a task-wide issue. */
+  unitId: string;
+  /** Retained occurrences in newest-first request-acceptance order. */
+  events: {
+    event: string;
+    buildId: string;
+    timestampMs: string;
+    firstSeenBuildId: string;
+    requestId: string;
+    requestHref: string | null;
+  }[];
+  /** First retained event page; null when already on it. */
+  firstHref: string | null;
+  /** Opaque continuation URL; null on the final page. */
+  nextHref: string | null;
+}
 export interface RequestIssuesModel {
   /** Accepted issue updates on this page, not the queue's open-issue set. */
-  issues: { taskId: string; unitId: string; kind: string; buildId: string; firstSeenBuildId: string; projectsHref: string | null }[];
+  issues: {
+    taskId: string;
+    unitId: string;
+    kind: string;
+    buildId: string;
+    firstSeenBuildId: string;
+    projectsHref: string | null;
+    historyHref: string;
+  }[];
   /** Backend reconciliation status; completion does not imply a green build. */
   status: string;
   /** First issue page for this request; null when already on it. */
@@ -168,6 +197,10 @@ export type StovepipePageModel = PageBase &
     | {
         kind: "issues";
         issues: ReadResult<OpenIssuesModel>;
+      }
+    | {
+        kind: "issue-history";
+        issueHistory: ReadResult<IssueHistoryModel>;
       }
     | {
         kind: "request";

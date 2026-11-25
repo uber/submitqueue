@@ -55,6 +55,24 @@ test.describe("server-rendered styling", () => {
     await expect(page.getByRole("heading", { name: "expensive", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "First page", exact: true })).toHaveAttribute("href", "/web%2Fpagination?view=issues");
   });
+  test("browses issue history across requests without JavaScript", async ({ page }) => {
+    await page.goto("/web%2Fpagination?view=issues");
+    await page.getByRole("table", { name: "Issues for buildtest" }).locator("tbody tr").first().getByRole("link", { name: "View history" }).click();
+    const table = page.getByRole("table", { name: "Issue history events" });
+    await expect(table.locator("tbody tr")).toHaveCount(50);
+    await expect(table).toContainText("Reported");
+    await expect(table).toContainText("Closed");
+    await expect(page.getByText("Task-wide failure", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Next events →" }).click();
+    await expect(table.locator("tbody tr")).toHaveCount(1);
+    await expect(table).toContainText("Opened");
+    await page.reload();
+    await expect(table.locator("tbody tr")).toHaveCount(1);
+    await page.getByRole("link", { name: "First events", exact: true }).click();
+    await expect(table.locator("tbody tr")).toHaveCount(50);
+    await table.getByRole("link", { name: "51", exact: true }).first().click();
+    await expect(page.getByRole("table", { name: "Reported Issues" })).toBeVisible();
+  });
   test("renders request status and views without JavaScript", async ({ page }) => {
     await page.goto("/web%2Fpagination/request/51");
     const status = page.getByRole("region", { name: "Request status" });
@@ -776,4 +794,29 @@ test("retains project paging across views and resets the cursor when page size c
   await page.reload();
   await expect(rows).toHaveCount(51);
   expect(new URL(page.url()).searchParams.get("projectPageSize")).toBe("100");
+});
+
+
+test("opens unit history from request issues with shareable URLs and accessible tables", async ({ page }) => {
+  await page.goto("/web%2Fpagination/request/51?view=issues");
+  const row = page.getByRole("table", { name: "Reported Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+  await row.getByRole("link", { name: "View history" }).click();
+  await expect(page).toHaveURL(/view=issue-history/);
+  const url = new URL(page.url());
+  expect(url.searchParams.get("task")).toBe("buildtest");
+  expect(url.searchParams.get("unit")).toBe("//packages/test-01:go_default_test");
+  const table = page.getByRole("table", { name: "Issue history events" });
+  await expect(table.locator("tbody tr")).toHaveCount(4);
+  await expect(table).toContainText("Closed");
+  await expect(table).toContainText("Reported");
+  await expect(page.getByRole("link", { name: "Next events →" })).toHaveCount(0);
+  const accessibility = await new AxeBuilder({ page }).analyze();
+  expect(accessibility.violations).toEqual([]);
+  await page.screenshot({ path: test.info().outputPath("issue-history-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(table).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("issue-history-mobile.png") });
+  await page.goBack();
+  await expect(row).toBeVisible();
 });
