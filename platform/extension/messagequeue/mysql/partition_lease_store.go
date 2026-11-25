@@ -79,11 +79,6 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, tenant str
 	acquired := owner == subscriberName
 	if acquired {
 		metrics.NamedCounter(s.scope, "try_acquire_lease", "acquired", 1, metrics.NewTag("topic", topic))
-		s.logger.Debugw("acquired lease",
-			logTenant, tenant,
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-		)
 	} else {
 		metrics.NamedCounter(s.scope, "try_acquire_lease", "not_acquired", 1, metrics.NewTag("topic", topic))
 	}
@@ -118,14 +113,6 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, tenant string
 		)
 		return 0, nil
 	}
-	if rows > 0 {
-		s.logger.Debugw("released lease",
-			logTenant, tenant,
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-		)
-	}
-
 	return rows, nil
 }
 

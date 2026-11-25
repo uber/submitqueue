@@ -1998,7 +1998,7 @@ func TestPartitionWorker_RunPollErrorLogging(t *testing.T) {
 		expectedLogError string
 	}{
 		{
-			name: "worker cancellation is informational",
+			name: "worker cancellation during stop is not an error",
 			pollError: func(ctx context.Context) error {
 				<-ctx.Done()
 				return ctx.Err()
@@ -2040,7 +2040,7 @@ func TestPartitionWorker_RunPollErrorLogging(t *testing.T) {
 				},
 			).AnyTimes()
 
-			core, logs := observer.New(zap.InfoLevel)
+			core, logs := observer.New(zap.DebugLevel)
 			s := NewSubscriber(
 				zap.New(core).Sugar(),
 				tally.NoopScope,
@@ -2091,7 +2091,7 @@ func TestPartitionWorker_RunPollErrorLogging(t *testing.T) {
 			} else {
 				assert.Empty(t, pollFailures)
 				require.Len(t, stoppedPolls, 1)
-				assert.Equal(t, zap.InfoLevel, stoppedPolls[0].Level)
+				assert.Equal(t, zap.DebugLevel, stoppedPolls[0].Level)
 			}
 		})
 	}
