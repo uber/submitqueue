@@ -22,7 +22,11 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
+	"github.com/uber/submitqueue/platform/consumer"
+	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/hookevent"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	basestorage "github.com/uber/submitqueue/submitqueue/extension/storage"
 	gwstorage "github.com/uber/submitqueue/submitqueue/gateway/extension/storage"
@@ -33,8 +37,10 @@ import (
 // Every store it touches is queue-scoped, so each call resolves the aggregate once
 // from the queue carried on the log being persisted.
 type Materializer struct {
-	stores       gwstorage.Factory
-	metricsScope tally.Scope
+	stores         gwstorage.Factory
+	metricsScope   tally.Scope
+	hookRegistry   consumer.TopicRegistry
+	publishesHooks bool
 }
 
 // MaterializerOption configures a Materializer.
@@ -44,6 +50,17 @@ type MaterializerOption func(*Materializer)
 // materializer emits none.
 func WithMetricsScope(scope tally.Scope) MaterializerOption {
 	return func(m *Materializer) { m.metricsScope = scope }
+}
+
+// WithHookPublishing publishes request hook events (see submitqueue/core/hookevent)
+// to registry's hook topic. Registering that topic is how a host opts in, so a
+// registry without it, like a materializer without this option, publishes none.
+func WithHookPublishing(registry consumer.TopicRegistry) MaterializerOption {
+	return func(m *Materializer) {
+		_, registered := registry.Queue(basehook.TopicKeyHook)
+		m.hookRegistry = registry
+		m.publishesHooks = registered
+	}
 }
 
 // NewMaterializer creates a request read-model materializer.
@@ -76,6 +93,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			return fmt.Errorf("failed to get request summary request_id=%s: %w", log.RequestID, err)
 		}
 
+		beforeUpdate, updatedSummary := summary, false
 		if logWins(log, summary) {
 			oldVersion := summary.Version
 			newVersion := oldVersion + 1
@@ -94,7 +112,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			}
 			updated.Version = newVersion
 			m.recordLifecycleTransition(summary, updated)
-			summary = updated
+			summary, updatedSummary = updated, true
 		}
 
 		if summary.Status == entity.RequestStatusAccepting {
@@ -106,7 +124,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 		if err := ensureRequestReceiptMapping(ctx, stores.GetRequestReceiptStore(), summary); err != nil {
 			return err
 		}
-		return nil
+		return m.publishRequestHookEvents(ctx, log, beforeUpdate, summary, updatedSummary)
 	}
 }
 
@@ -136,6 +154,50 @@ func (m *Materializer) recordLifecycleTransition(before, after entity.RequestSum
 	elapsed := max(time.Duration(after.StatusTimestampMs-before.ReceivedAtMs)*time.Millisecond, 0)
 	metrics.NamedHistogram(m.metricsScope, "request_lifecycle", "end_to_end_latency", metrics.LandLatencyBuckets,
 		queueTag, statusTag).RecordDuration(elapsed)
+}
+
+// publishRequestHookEvents announces what log did to the request: the receipt
+// when this delivery's update took the summary out of accepting, and the finish
+// whenever log restates a finished summary.
+//
+// The receipt is announced once. Nothing redelivers the accepting step, so a
+// failed receipt publish is only counted: returning it would retry nothing, and
+// on Land it would read as a failed accepted log. The finish is announced on
+// every delivery of its log, so a failed publish is returned and the log's
+// redelivery repairs it.
+func (m *Materializer) publishRequestHookEvents(ctx context.Context, log entity.RequestLog, before, after entity.RequestSummary, updated bool) error {
+	if !m.publishesHooks {
+		return nil
+	}
+	if updated && before.Status == entity.RequestStatusAccepting && after.Status != entity.RequestStatusAccepting {
+		for _, event := range hookevent.NewRequestReceived(after) {
+			_ = m.publishRequestHookEvent(ctx, after, event)
+		}
+	}
+	if !logRestatesSummary(log, after) {
+		return nil
+	}
+	for _, event := range hookevent.NewRequestFinished(after) {
+		if err := m.publishRequestHookEvent(ctx, after, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Materializer) publishRequestHookEvent(ctx context.Context, summary entity.RequestSummary, event *basehook.HookEvent) error {
+	if err := platformhook.Publish(ctx, m.hookRegistry, summary.Queue, event, summary.RequestID); err != nil {
+		metrics.NamedCounter(m.metricsScope, "request_hook", "publish_errors", 1,
+			metrics.NewTag("queue", summary.Queue), metrics.NewTag("event_type", event.GetType()))
+		return fmt.Errorf("failed to publish %s hook event request_id=%s: %w", event.GetType(), summary.RequestID, err)
+	}
+	return nil
+}
+
+// logRestatesSummary reports whether log carries the status and request version
+// summary shows, whether log just set them or repeats them.
+func logRestatesSummary(log entity.RequestLog, summary entity.RequestSummary) bool {
+	return log.Type == entity.RequestLogTypeStatus && log.Status == summary.Status && log.RequestVersion == summary.RequestVersion
 }
 
 func isTerminalStatus(status entity.RequestStatus) bool {

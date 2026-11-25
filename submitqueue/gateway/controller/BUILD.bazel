@@ -51,6 +51,7 @@ go_test(
     ],
     embed = [":go_default_library"],
     deps = [
+        "//api/base/hook:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//platform/base/change:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
