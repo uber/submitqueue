@@ -46,7 +46,7 @@ func testRequestIssueSummaryMaterializer(t *testing.T, ctx context.Context, db *
 		require.NoError(t, m.PersistLog(ctx, bound, log, "b/12"))
 	}
 	results := bound.GetRequestIssueSummaryStore()
-	for request, kind := range map[string]entity.RequestIssueKind{"12": entity.RequestIssueKindNew, "13": entity.RequestIssueKindExisting, "14": entity.RequestIssueKindClosed} {
+	for request, kind := range map[string]entity.RequestIssueKind{"12": entity.RequestIssueKindOpened, "13": entity.RequestIssueKindReported, "14": entity.RequestIssueKindClosed} {
 		got, err := results.Get(ctx, request, "test", "")
 		require.NoError(t, err)
 		require.Equal(t, kind, got.Kind)
@@ -59,7 +59,7 @@ func testRequestIssueSummaryMaterializer(t *testing.T, ctx context.Context, db *
 	require.NoError(t, m.PersistLog(ctx, bound, retained, retained.FirstSeenBuildID))
 	rebuilt, err := results.Get(ctx, "13", "test", "")
 	require.NoError(t, err)
-	require.Equal(t, entity.RequestIssueKindExisting, rebuilt.Kind)
+	require.Equal(t, entity.RequestIssueKindReported, rebuilt.Kind)
 	global, err := bound.GetIssueSummaryStore().Get(ctx, "test", "")
 	require.NoError(t, err)
 	require.Equal(t, entity.IssueStatusClosed, global.Status)

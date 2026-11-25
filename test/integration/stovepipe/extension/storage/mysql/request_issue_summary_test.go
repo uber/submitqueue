@@ -29,8 +29,8 @@ func testRequestIssueSummaryStore(t *testing.T, ctx context.Context, factory sto
 	store := bound.GetRequestIssueSummaryStore()
 	for _, issue := range []entity.RequestIssueSummary{
 		{RequestID: "12", TaskID: "test", UnitID: "z", Kind: entity.RequestIssueKindClosed, BuildID: "b/12", FirstSeenBuildID: "b/10"},
-		{RequestID: "12", TaskID: "test", Kind: entity.RequestIssueKindNew, BuildID: "b/12", FirstSeenBuildID: "b/12"},
-		{RequestID: "12", TaskID: "test", UnitID: "a", Kind: entity.RequestIssueKindExisting, BuildID: "b/12", FirstSeenBuildID: "b/10"},
+		{RequestID: "12", TaskID: "test", Kind: entity.RequestIssueKindOpened, BuildID: "b/12", FirstSeenBuildID: "b/12"},
+		{RequestID: "12", TaskID: "test", UnitID: "a", Kind: entity.RequestIssueKindReported, BuildID: "b/12", FirstSeenBuildID: "b/10"},
 	} {
 		require.NoError(t, store.Create(ctx, issue))
 	}
@@ -44,7 +44,7 @@ func testRequestIssueSummaryStore(t *testing.T, ctx context.Context, factory sto
 	require.Len(t, last, 1)
 	require.Equal(t, "z", last[0].UnitID)
 	duplicate := first[0]
-	duplicate.Kind = entity.RequestIssueKindExisting
+	duplicate.Kind = entity.RequestIssueKindReported
 	require.ErrorIs(t, store.Create(ctx, duplicate), storage.ErrAlreadyExists)
 	retained, err := store.Get(ctx, "12", "test", "")
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func testRequestIssueSummaryStore(t *testing.T, ctx context.Context, factory sto
 	empty, err := store.List(ctx, "13", storage.RequestIssueSummaryRange{Limit: 2})
 	require.NoError(t, err)
 	require.Empty(t, empty)
-	require.NoError(t, store.Create(ctx, entity.RequestIssueSummary{RequestID: "13", TaskID: "test", Kind: entity.RequestIssueKindExisting, BuildID: "b/13", FirstSeenBuildID: "b/12"}))
+	require.NoError(t, store.Create(ctx, entity.RequestIssueSummary{RequestID: "13", TaskID: "test", Kind: entity.RequestIssueKindReported, BuildID: "b/13", FirstSeenBuildID: "b/12"}))
 	retained, err = store.Get(ctx, "12", "test", "")
 	require.NoError(t, err)
 	require.Equal(t, first[0], retained)

@@ -21,8 +21,8 @@ import (
 )
 
 func TestRequestIssueValidate(t *testing.T) {
-	valid := RequestIssueSummary{RequestID: "12", TaskID: "test", BuildID: "build/12", FirstSeenBuildID: "build/10", Kind: RequestIssueKindExisting}
-	for _, kind := range []RequestIssueKind{RequestIssueKindNew, RequestIssueKindExisting, RequestIssueKindClosed} {
+	valid := RequestIssueSummary{RequestID: "12", TaskID: "test", BuildID: "build/12", FirstSeenBuildID: "build/10", Kind: RequestIssueKindReported}
+	for _, kind := range []RequestIssueKind{RequestIssueKindOpened, RequestIssueKindReported, RequestIssueKindClosed} {
 		issue := valid
 		issue.Kind = kind
 		require.NoError(t, issue.Validate())
@@ -30,7 +30,9 @@ func TestRequestIssueValidate(t *testing.T) {
 	for _, change := range []func(*RequestIssueSummary){
 		func(i *RequestIssueSummary) { i.RequestID = "" }, func(i *RequestIssueSummary) { i.TaskID = "" },
 		func(i *RequestIssueSummary) { i.BuildID = "" }, func(i *RequestIssueSummary) { i.FirstSeenBuildID = "" },
-		func(i *RequestIssueSummary) { i.Kind = "open" },
+		func(i *RequestIssueSummary) { i.Kind = "invalid" },
+		func(i *RequestIssueSummary) { i.Kind = "new" },
+		func(i *RequestIssueSummary) { i.Kind = "existing" },
 	} {
 		issue := valid
 		change(&issue)

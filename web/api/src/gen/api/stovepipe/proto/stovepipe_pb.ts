@@ -1418,7 +1418,7 @@ export type RequestIssueSummary = Message<"uber.submitqueue.stovepipe.RequestIss
   unitId: string;
 
   /**
-   * "new" (including reopened), "existing" (reported and already open), or "closed".
+   * "open" (including reopened), "reported" (already open), or "closed".
    *
    * @generated from field: string kind = 3;
    */
@@ -1493,7 +1493,7 @@ export const GetIssuesByRequestIDRequestSchema: GenMessage<GetIssuesByRequestIDR
  */
 export type GetIssuesByRequestIDResponse = Message<"uber.submitqueue.stovepipe.GetIssuesByRequestIDResponse"> & {
   /**
-   * Results in ascending bytewise task/unit order, classified as new, existing, or closed.
+   * Results in ascending bytewise task/unit order, classified as open, reported, or closed.
    *
    * @generated from field: repeated uber.submitqueue.stovepipe.RequestIssueSummary issues = 1;
    */

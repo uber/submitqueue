@@ -43,8 +43,8 @@ func TestGetIssuesByRequestIDPagination(t *testing.T) {
 	history.EXPECT().List(gomock.Any(), "12").Return([]entity.RequestLog{{Event: entity.RequestEventIssueTrackingStarted}, {Event: entity.RequestEventIssuesReconciled}}, nil).Times(2)
 	store.EXPECT().GetRequestIssueSummaryStore().Return(issues).Times(2)
 	rows := []entity.RequestIssueSummary{
-		{RequestID: "12", TaskID: "a", Kind: entity.RequestIssueKindNew},
-		{RequestID: "12", TaskID: "a", UnitID: "unit", Kind: entity.RequestIssueKindExisting},
+		{RequestID: "12", TaskID: "a", Kind: entity.RequestIssueKindOpened},
+		{RequestID: "12", TaskID: "a", UnitID: "unit", Kind: entity.RequestIssueKindReported},
 		{RequestID: "12", TaskID: "b", UnitID: "unit", Kind: entity.RequestIssueKindClosed},
 	}
 	issues.EXPECT().List(gomock.Any(), "12", storage.RequestIssueSummaryRange{Limit: 3}).Return(rows, nil)
