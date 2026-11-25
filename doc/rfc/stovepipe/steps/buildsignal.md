@@ -115,10 +115,10 @@ Two-tier cadence, matching SubmitQueue:
 
 | Status | Delay | Rationale |
 |---|---|---|
-| `accepted` | `PollDelayAcceptedMs` (default 5000ms) | Queued by the runner, not started — poll infrequently. |
-| `running` | `PollDelayRunningMs` (default 2000ms) | Actively executing — poll more often. |
+| `accepted` | `BuildSignal.AcceptedPollDelayMs` (default 5000ms) | Queued by the runner, not started — poll infrequently. |
+| `running` | `BuildSignal.RunningPollDelayMs` (default 2000ms) | Actively executing — poll more often. |
 
-Package-level `var`s (not `const`s) so tests can shorten them; the server always uses the defaults. Future: move these behind a `queueconfig`-style extension so operators can tune cadence per queue without a code change (the same TODO SubmitQueue's buildsignal carries).
+Each delivery resolves these settings through the queue configuration provider. The example server uses a single YAML file containing shared stage defaults and per-queue overrides; other hosts can supply resolved settings through the same interface. See the [configuration guide](../../../../service/stovepipe/README.md#queue-and-stage-configuration).
 
 ## Error classification
 

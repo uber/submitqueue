@@ -465,19 +465,48 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	buildSignalController := buildsignal.NewController(logger, scope, store, materializer, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	buildSignalController := buildsignal.NewController(
+		logger,
+		scope,
+		store,
+		configs,
+		materializer,
+		brf,
+		registry,
+		stovepipemq.TopicKeyBuildSignal,
+		"stovepipe-buildsignal",
+	)
 	if err := c.Register(buildSignalController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, materializer, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(
+		logger,
+		scope,
+		store,
+		configs,
+		materializer,
+		detectorFactory,
+		registry,
+		stovepipemq.TopicKeyBuildAnalysis,
+		"stovepipe-buildanalysis",
+	)
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
 	}
 	count++
 
-	issueTrackController := issuetrack.NewController(logger, scope, store, materializer, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	issueTrackController := issuetrack.NewController(
+		logger,
+		scope,
+		store,
+		configs,
+		materializer,
+		registry,
+		stovepipemq.TopicKeyIssueTrack,
+		"stovepipe-issuetrack",
+	)
 	if err := c.Register(issueTrackController); err != nil {
 		return count, fmt.Errorf("failed to register issuetrack controller: %w", err)
 	}

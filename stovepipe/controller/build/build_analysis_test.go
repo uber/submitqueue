@@ -26,11 +26,13 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/buildanalysis"
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildissue"
 	buildissuemock "github.com/uber/submitqueue/stovepipe/extension/buildissue/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	queueconfigmock "github.com/uber/submitqueue/stovepipe/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -142,11 +144,33 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 		detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{a, b}, ValidationComplete: true}, nil),
 	)
 
-	analysisController := buildanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, requestlog.NewMaterializer(tally.NoopScope), detectorFactory, buildController.registry, stovepipemq.TopicKeyBuildAnalysis, "analysis")
-	statusController := buildsignal.NewController(zap.NewNop().Sugar(), tally.NoopScope,
-		staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, buildController.registry,
-		stovepipemq.TopicKeyBuildSignal, "signal")
+	configs := queueconfigmock.NewMockStore(ctrl)
+	cfg := queueconfig.QueueConfig{Name: testQueue}
+	cfg.Stages.BuildAnalysis.PollDelayMs = 137
+	configs.EXPECT().Get(gomock.Any(), testQueue).Return(cfg, nil).AnyTimes()
+
+	analysisController := buildanalysis.NewController(
+		zap.NewNop().Sugar(),
+		tally.NoopScope,
+		staticStorageFactory{store: m.store},
+		configs,
+		requestlog.NewMaterializer(tally.NoopScope),
+		detectorFactory,
+		buildController.registry,
+		stovepipemq.TopicKeyBuildAnalysis,
+		"analysis",
+	)
+	statusController := buildsignal.NewController(
+		zap.NewNop().Sugar(),
+		tally.NoopScope,
+		staticStorageFactory{store: m.store},
+		configs,
+		m.materializer,
+		m.runnerFactory,
+		buildController.registry,
+		stovepipemq.TopicKeyBuildSignal,
+		"signal",
+	)
 
 	delivered := func(msg entityqueue.Message) *consumermock.MockDelivery {
 		d := consumermock.NewMockDelivery(ctrl)
@@ -159,13 +183,13 @@ func TestBuildAnalysisPipeline(t *testing.T) {
 	require.Len(t, published["buildsignal"], 1)
 
 	firstPoll := delivered(published["buildanalysis"][0])
-	firstPoll.EXPECT().Hold(buildanalysis.PollDelayMs)
+	firstPoll.EXPECT().Hold(cfg.Stages.BuildAnalysis.PollDelayMs)
 	require.NoError(t, analysisController.Process(ctx, firstPoll))
 	assert.True(t, persisted[a])
 	assert.False(t, persisted[b])
 
 	secondPoll := delivered(published["buildanalysis"][0])
-	secondPoll.EXPECT().Hold(buildanalysis.PollDelayMs)
+	secondPoll.EXPECT().Hold(cfg.Stages.BuildAnalysis.PollDelayMs)
 	require.NoError(t, analysisController.Process(ctx, secondPoll))
 	assert.True(t, persisted[b])
 
