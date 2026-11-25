@@ -300,7 +300,7 @@ e2e-test: ## Run end-to-end tests (hermetic; Bazel builds all inputs; runs in pa
 
 fmt: ## Format Go and YAML code
 	@echo "Formatting Go code..."
-	@find . -name '*.go' -not -path './pkg/*' -not -path './bazel-*' | xargs $(BAZEL) run @rules_go//go -- run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w
+	@find . -name '*.go' -not -path './pkg/*' -not -path './bazel-*' -not -path './.sdlc/*' | xargs $(BAZEL) run @rules_go//go -- run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w
 	@echo "Formatting YAML files..."
 	@$(BAZEL) run @rules_go//go -- run github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
 	@echo "Formatting complete!"

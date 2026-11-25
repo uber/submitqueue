@@ -39,3 +39,4 @@ __pycache__/
 /web/**/playwright-report/
 /web/**/test-results/
 /web/**/*.tsbuildinfo
+/.sdlc/

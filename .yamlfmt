@@ -5,3 +5,4 @@ formatter:
   include_document_start: false
 exclude:
   - tool/docsite/build
+  - .sdlc
