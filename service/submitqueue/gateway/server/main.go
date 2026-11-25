@@ -296,8 +296,8 @@ func run() error {
 	defer mysqlQueue.Close()
 
 	logger.Info("initialized dependencies",
-		zap.String("app_dsn", appDSN),
-		zap.String("queue_dsn", queueDSN),
+		zap.String("app_db", core.DescribeDSN(appDSN)),
+		zap.String("queue_db", core.DescribeDSN(queueDSN)),
 	)
 
 	// Subscriber name for the log-topic consumer. It must be unique per running
