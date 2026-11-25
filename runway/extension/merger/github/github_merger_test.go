@@ -71,6 +71,8 @@ type fakeGitHub struct {
 	finalStatus string
 	// mergeableNullReads is how many pull reads report mergeable as null.
 	mergeableNullReads int
+	// pullHeadSHAs overrides successive pull reads to model head changes.
+	pullHeadSHAs []string
 	// unmergeable names pull requests reported as conflicting.
 	unmergeable map[int]bool
 	// pullErrStatus makes every pull read fail with this code.
@@ -207,6 +209,10 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out := *pr
+		if len(f.pullHeadSHAs) > 0 {
+			out.Head.SHA = f.pullHeadSHAs[0]
+			f.pullHeadSHAs = f.pullHeadSHAs[1:]
+		}
 		if !out.Merged {
 			if f.mergeableNullReads > 0 {
 				f.mergeableNullReads--
@@ -661,6 +667,26 @@ func TestCheckMergeability(t *testing.T) {
 				f.mergeableNullReads = 3
 			},
 			req: request(step("s1", mergestrategypb.Strategy_REBASE, uri(1))),
+		},
+		{
+			name: "head moved when mergeability becomes ready",
+			setup: func(f *fakeGitHub) {
+				f.addPull(1, testTarget)
+				f.mergeableNullReads = 1
+				f.pullHeadSHAs = []string{headSHA(1), headSHA(99)}
+			},
+			req:     request(step("s1", mergestrategypb.Strategy_REBASE, uri(1))),
+			wantErr: merger.ErrInvalidRequest,
+		},
+		{
+			name: "head moved while mergeability is pending",
+			setup: func(f *fakeGitHub) {
+				f.addPull(1, testTarget)
+				f.mergeableNullReads = 2
+				f.pullHeadSHAs = []string{headSHA(1), headSHA(99), headSHA(1)}
+			},
+			req:     request(step("s1", mergestrategypb.Strategy_REBASE, uri(1))),
+			wantErr: merger.ErrInvalidRequest,
 		},
 		{
 			name: "conflicting pull request is a conflict",
