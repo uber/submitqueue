@@ -29,9 +29,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -182,10 +180,7 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 func dockerContainerUser(t *testing.T) string {
 	t.Helper()
 
-	cmd := exec.Command("docker", "info", "--format", "{{json .SecurityOptions}}")
-	output, err := cmd.Output()
-	require.NoError(t, err, "failed to inspect Docker security options")
-	if strings.Contains(string(output), "name=rootless") {
+	if testutil.DockerIsRootless(t) {
 		return "0:0"
 	}
 	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
