@@ -152,9 +152,6 @@ func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.B
 		return entity.BuildID{}, fmt.Errorf("buildkite: create build: %w", err)
 	}
 
-	r.logger.Debugw("triggered Buildkite build",
-		"buildkite_number", resp.Number,
-	)
 	return entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(resp.Number)}, nil
 }
 
@@ -187,9 +184,6 @@ func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
 	if err := r.client.CancelBuild(ctx, number); err != nil {
 		return fmt.Errorf("buildkite: cancel build: %w", err)
 	}
-	r.logger.Debugw("cancelled Buildkite build",
-		"buildkite_number", number,
-	)
 	return nil
 }
 

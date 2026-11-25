@@ -85,12 +85,6 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 		return fmt.Errorf("Cancel invalid queue: %w", err)
 	}
 
-	c.logger.Debugw("cancel request received",
-		"sqid", req.ID,
-		"queue", req.Queue,
-		"reason", req.Reason,
-	)
-
 	// Verify the sqid exists before recording intent or publishing. The lookup is scoped
 	// to the caller's queue, so a sqid from another queue is simply not found.
 	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
@@ -121,8 +115,10 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 		return fmt.Errorf("failed to publish cancel request to queue: %w", err)
 	}
 
-	c.logger.Infow("cancel request published to queue",
+	c.logger.Debugw("cancel request published to queue",
 		"sqid", req.ID,
+		"queue", req.Queue,
+		"reason", req.Reason,
 		"topic_key", topickey.TopicKeyCancel,
 	)
 

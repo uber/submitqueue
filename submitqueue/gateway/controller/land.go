@@ -208,7 +208,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 		// the accepting projection even if this accepted log is not persisted. If
 		// the client retries after losing the response, the orchestrator rejects
 		// the new sqid as a duplicate while the original request continues.
-		c.logger.Errorw("failed to record accepted status after publishing request",
+		c.logger.Warnw("failed to record accepted status after publishing request",
 			"queue", req.Queue,
 			"sqid", req.ID,
 			"error", err,
@@ -216,17 +216,12 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 		metrics.NamedCounter(c.metricsScope, opName, "accepted_log_failure", 1)
 	}
 
-	c.logger.Debugw("land request created",
+	c.logger.Debugw("request published to queue",
 		"queue", req.Queue,
 		"sqid", req.ID,
 		"change_uris", req.Change.URIs,
 		"change_count", len(req.Change.URIs),
 		"strategy", string(req.LandStrategy),
-	)
-
-	c.logger.Infow("request published to queue",
-		"queue", req.Queue,
-		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyStart,
 	)
 

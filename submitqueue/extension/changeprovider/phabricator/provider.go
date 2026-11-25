@@ -66,11 +66,6 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 		changeIDs = append(changeIDs, parsed)
 	}
 
-	p.logger.Debugw("fetching diff data from Phabricator",
-		"diff_count", len(changeIDs),
-		"uris", change.URIs,
-	)
-
 	diffs, err := p.fetchAllDiffs(ctx, changeIDs)
 	if err != nil {
 		return nil, err
@@ -88,10 +83,6 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 			"files_count", len(changeInfo.Details.ChangedFiles),
 		)
 	}
-
-	p.logger.Debugw("successfully fetched diff data",
-		"diff_count", len(changeIDs),
-	)
 
 	return changeInfos, nil
 }

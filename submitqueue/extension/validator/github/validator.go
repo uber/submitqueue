@@ -99,13 +99,6 @@ func (v *githubValidator) Validate(ctx context.Context, request entity.Request) 
 	}
 
 	coremetrics.NamedCounter(v.metricsScope, "validate", "rejections", 1, coremetrics.NewTag("reason", string(rej.reason)))
-	v.logger.Infow("rejecting request",
-		"queue", v.cfg.QueueName,
-		"request_id", request.ID,
-		"uri", rej.uri,
-		"reason", string(rej.reason),
-		"detail", rej.detail,
-	)
 	return rej
 }
 

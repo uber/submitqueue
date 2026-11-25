@@ -146,13 +146,6 @@ func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.B
 		return entity.BuildID{}, fmt.Errorf("github actions: dispatch workflow: response missing workflow_run_id (requires X-GitHub-Api-Version and return_run_details support)")
 	}
 
-	r.logger.Debugw("dispatched GitHub Actions workflow",
-		"owner", r.client.Owner(),
-		"repo", r.client.Repo(),
-		"workflow_id", r.client.WorkflowID(),
-		"ref", r.ref,
-		"github_run_id", resp.WorkflowRunID,
-	)
 	return entity.BuildID{ID: platformgithubactions.EncodeRunID(resp.WorkflowRunID)}, nil
 }
 
@@ -207,9 +200,6 @@ func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
 	if err := r.client.CancelRun(ctx, runID); err != nil {
 		return fmt.Errorf("github actions: cancel run: %w", err)
 	}
-	r.logger.Debugw("cancelled GitHub Actions workflow run",
-		"github_run_id", runID,
-	)
 	return nil
 }
 
