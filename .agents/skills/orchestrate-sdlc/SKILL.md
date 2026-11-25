@@ -53,7 +53,7 @@ Persist later user customizations to the command, columns, scope, or archive dis
 
 ## Close a work cycle
 
-An owner reports the issue/event, result (`fixed`, `no_fix_needed`, `fix_failed`, or `fixer_error`), exact published head, verification, reply IDs, preserved PR state, and remaining blockers. Arrange independent review of first code publication and substantive updates, including a smaller/lower-complexity alternative check.
+An owner reports the issue/event, result (`fixed`, `no_fix_needed`, `fix_failed`, or `fixer_error`), exact published head, verification, reply IDs and conversation-resolution outcomes, preserved PR state, and remaining blockers. Arrange independent review of first code publication and substantive updates, including a smaller/lower-complexity alternative check.
 
 Archive completed review agents after their report is consolidated, retaining evidence. Keep ordinary dormant owners and non-PR agents in the registry and dashboard until eligible for the merged-owner archival rule above. Never delete history, dirty worktrees, or ongoing work merely to free concurrency.
 
