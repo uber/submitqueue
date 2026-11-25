@@ -26,7 +26,9 @@ bin/
 
 # Documentation site build output
 /tool/docsite/build/
-/tool/docsite/hooks/__pycache__/
+
+# Python bytecode caches
+__pycache__/
 
 # Web workspace build output
 /web/node_modules/
