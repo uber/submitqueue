@@ -91,7 +91,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	c.logger.Infow("received merge request",
+	c.logger.Debugw("received merge request",
 		"id", request.Id,
 		"queue_name", request.QueueName,
 		"step_count", len(request.Steps),

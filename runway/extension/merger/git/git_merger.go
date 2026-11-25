@@ -240,14 +240,6 @@ func (m *gitMerger) process(ctx context.Context, req *runwaymq.MergeRequest, com
 		}
 	}()
 
-	m.logger.Debugw("starting merge",
-		"id", req.GetId(),
-		"target", m.target,
-		"remote", m.remote,
-		"step_count", len(steps),
-		"commit", commit,
-	)
-
 	// PROMOTE is exclusive: validated to be the entire request (one step).
 	if steps[0].strategy == mergestrategypb.Strategy_PROMOTE {
 		return m.promote(ctx, req, steps[0], commit)

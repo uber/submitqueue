@@ -91,7 +91,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("invalid message identity: %w", err)
 	}
 
-	c.logger.Infow("received merge-conflict-check request",
+	c.logger.Debugw("received merge-conflict-check request",
 		"id", request.Id,
 		"queue_name", request.QueueName,
 		"step_count", len(request.Steps),
@@ -120,7 +120,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			)
 		} else {
 			metrics.NamedCounter(c.metricsScope, opName, "merge_conflicts", 1)
-			c.logger.Infow("merge conflict detected",
+			c.logger.Debugw("merge conflict detected",
 				"id", request.GetId(),
 				"queue_name", request.GetQueueName(),
 			)
