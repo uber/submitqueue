@@ -41,7 +41,7 @@ def control_watch(state: dict, command: str, now: datetime, maximum: str | None 
     result = copy.deepcopy(state)
     watch = result.get("watch")
     if command == "STARTWATCH":
-        duration = parse_duration(maximum or "48h")
+        duration = parse_duration("48h" if maximum is None else maximum)
         try:
             deadline = now + duration
         except OverflowError as error:

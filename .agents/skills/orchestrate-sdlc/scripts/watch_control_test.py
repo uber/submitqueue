@@ -86,6 +86,9 @@ class WatchControlTest(unittest.TestCase):
             run_id = json.loads(path.read_text())["watch"]["run_id"]
             args = ["--state", str(path), "--run-id", run_id]
             self.assertEqual(main(args + ["ARM"]), 0)
+            saved = path.read_bytes()
+            self.assertEqual(main(["--state", str(path), "STARTWATCH", ""]), 1)
+            self.assertEqual(path.read_bytes(), saved)
             before = path.stat().st_mtime_ns
             self.assertEqual(main(args + ["CHECK"]), 0)
             self.assertEqual(path.stat().st_mtime_ns, before)
