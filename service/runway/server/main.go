@@ -25,7 +25,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -57,6 +56,7 @@ import (
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 	githubmerger "github.com/uber/submitqueue/runway/extension/merger/github"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
+	"github.com/uber/submitqueue/service/logging"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -101,41 +101,13 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	logger, err := zap.NewDevelopment()
+	logger, err := logging.New()
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 	defer logger.Sync()
 
 	scope := tally.NewTestScope("runway", nil)
-	metricsStopCh := make(chan interface{}, 1)
-	metricsWgDone := sync.WaitGroup{}
-	metricsWgDone.Add(1)
-	go func() {
-		defer metricsWgDone.Done()
-
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-metricsStopCh:
-				return
-			case <-ticker.C:
-				snapshot := scope.Snapshot()
-				logger.Info("metrics snapshot",
-					zap.Any("counters", snapshot.Counters()),
-					zap.Any("gauges", snapshot.Gauges()),
-					zap.Any("timers", snapshot.Timers()),
-				)
-			}
-		}
-	}()
-
-	defer func() {
-		close(metricsStopCh)
-		metricsWgDone.Wait()
-	}()
 
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
 	if queueDSN == "" {

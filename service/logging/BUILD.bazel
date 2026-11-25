@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["logging.go"],
+    importpath = "github.com/uber/submitqueue/service/logging",
+    visibility = ["//service:__subpackages__"],
+    deps = [
+        "@org_uber_go_zap//:go_default_library",
+        "@org_uber_go_zap//zapcore:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["logging_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)

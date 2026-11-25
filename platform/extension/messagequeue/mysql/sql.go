@@ -84,7 +84,14 @@ func NewQueue(params Params) (extqueue.Queue, error) {
 		level = parsed
 	}
 
-	logger := params.Logger.WithOptions(zap.IncreaseLevel(level)).Sugar().Named("queue_mysql")
+	// zap.IncreaseLevel cannot lower a level and reports an error to stderr when asked to.
+	baseLogger := params.Logger
+	if current := zapcore.LevelOf(baseLogger.Core()); level > current {
+		baseLogger = baseLogger.WithOptions(zap.IncreaseLevel(level))
+	} else {
+		level = current
+	}
+	logger := baseLogger.Sugar().Named("queue_mysql")
 	logger.Infow("created SQL queue", "log_level", level.String())
 
 	// Create stores

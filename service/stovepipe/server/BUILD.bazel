@@ -22,6 +22,7 @@ go_library(
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/hook:go_default_library",
+        "//service/logging:go_default_library",
         "//service/messagequeue:go_default_library",
         "//service/stovepipe/server/handler:go_default_library",
         "//stovepipe/controller:go_default_library",
