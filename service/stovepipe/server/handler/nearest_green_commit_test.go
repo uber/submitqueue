@@ -44,7 +44,6 @@ func TestNearestGreenCommitThatIncludes(t *testing.T) {
 		{name: "no match"},
 		{name: "invalid selectors", err: controller.ErrInvalidRequest, code: codes.InvalidArgument},
 		{name: "off trunk", err: sourcecontrol.ErrNotFound, code: codes.NotFound},
-		{name: "lineage rebuilding", err: controller.ErrGreenProjectionNotReady, code: codes.Unavailable},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := &StovepipeServer{nearestGreenController: nearestGreenLookupFunc(func(_ context.Context, req entity.NearestGreenCommitRequest) (entity.NearestGreenCommitResult, error) {

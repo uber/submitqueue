@@ -3230,8 +3230,8 @@ func (x *NearestGreenCommitThatIncludesRequest) GetProject() string {
 // NearestGreenCommitThatIncludesResponse contains the first known green head, if any.
 type NearestGreenCommitThatIncludesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Earliest head at or after the desired commit with a recorded project green.
-	// Empty when there is no recorded match in the available projection.
+	// Earliest indexed head at or after the desired commit with an explicit project pass.
+	// Empty if none match. The index is populated by new validations, not by scanning history.
 	ClosestContainingCommitUri string `protobuf:"bytes,1,opt,name=closest_containing_commit_uri,json=closestContainingCommitUri,proto3" json:"closest_containing_commit_uri,omitempty"`
 	// Validation request for the matching head. Empty when there is no match.
 	RequestId     string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`

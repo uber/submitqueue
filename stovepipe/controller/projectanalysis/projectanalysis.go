@@ -272,7 +272,7 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 		if err := store.GetProjectFactByDegreeStore().CreateBatch(ctx, entries); err != nil {
 			return fmt.Errorf("index project facts for request %q: %w", request.ID, err)
 		}
-		if err := greenproject.IndexCommit(ctx, c.sourceControl, store, request.Queue, request.URI, greenProjects); err != nil {
+		if err := greenproject.IndexGreenProjectsForCommit(ctx, c.sourceControl, store, request.Queue, request.URI, greenProjects); err != nil {
 			return fmt.Errorf("index project greens for request %q: %w", request.ID, err)
 		}
 	}

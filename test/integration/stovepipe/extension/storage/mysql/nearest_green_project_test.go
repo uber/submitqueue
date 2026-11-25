@@ -53,10 +53,14 @@ func testNearestGreenProject(t *testing.T, ctx context.Context, factory mysqlFac
 	find := func(desired, project string) (entity.NearestGreenCommitResult, error) {
 		return lookup.NearestGreenCommitThatIncludes(ctx, entity.NearestGreenCommitRequest{Queue: queue, DesiredCommitURI: desired, Project: project})
 	}
-	_, err = find("A", "payments")
-	require.ErrorIs(t, err, controller.ErrGreenProjectionNotReady)
-	require.NoError(t, greenproject.Backfill(ctx, factory, sources, queue))
-	require.NoError(t, greenproject.Backfill(ctx, factory, sources, queue)) // Rebuild is idempotent.
+	// Historical facts alone don't make the forward-only lookup return a match.
+	result, err := find("A", "payments")
+	require.NoError(t, err)
+	require.Empty(t, result)
+	// Index later heads first to exercise trunk order rather than write order.
+	require.NoError(t, greenproject.IndexGreenProjectsForCommit(ctx, sources, bound, queue, "C", []string{"payments", "search"}))
+	require.NoError(t, greenproject.IndexGreenProjectsForCommit(ctx, sources, bound, queue, "B", []string{"payments"}))
+	require.NoError(t, greenproject.IndexGreenProjectsForCommit(ctx, sources, bound, queue, "B", []string{"payments"}))
 
 	for _, tc := range []struct{ desired, project, head, requestID string }{
 		{"A", "payments", "B", "1"},
@@ -74,24 +78,26 @@ func testNearestGreenProject(t *testing.T, ctx context.Context, factory mysqlFac
 	other, err := factory.For(storage.Config{QueueName: "another/main"})
 	require.NoError(t, err)
 	otherProjection := other.GetGreenProjectStore()
-	ready, err := otherProjection.IsLineageReady(ctx, position.Lineage)
-	require.NoError(t, err)
-	require.False(t, ready)
 	uri, err := otherProjection.FindAtOrAfter(ctx, position.Lineage, "payments", position.Position)
 	require.NoError(t, err)
 	require.Empty(t, uri)
 
-	// B survives, but C does not. Never serve the previous lineage's rows.
+	// A rewrite starts an empty index, even for commits in the retained prefix.
 	active = fake.New(config, []string{"D", "B", "A"})
-	_, err = find("A", "search")
-	require.ErrorIs(t, err, controller.ErrGreenProjectionNotReady)
-	require.NoError(t, greenproject.Backfill(ctx, factory, sources, queue))
-	result, err := find("A", "search")
-	require.NoError(t, err)
-	require.Empty(t, result)
-	result, err = find("A", "payments")
-	require.NoError(t, err)
-	require.Equal(t, "B", result.CommitURI)
+	for _, project := range []string{"payments", "search"} {
+		result, err := find("A", project)
+		require.NoError(t, err)
+		require.Empty(t, result)
+	}
 	_, err = find("C", "search")
 	require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
+
+	// A new validation on the rewritten trunk becomes queryable immediately.
+	require.NoError(t, bound.GetValidationFactStore().Create(ctx, entity.ValidationFact{
+		URI: "D", Project: "search", Degree: entity.DegreeGreen, RequestID: "3", CreatedAt: 2,
+	}))
+	require.NoError(t, greenproject.IndexGreenProjectsForCommit(ctx, sources, bound, queue, "D", []string{"search"}))
+	result, err = find("A", "search")
+	require.NoError(t, err)
+	require.Equal(t, entity.NearestGreenCommitResult{CommitURI: "D", RequestID: "3"}, result)
 }

@@ -275,7 +275,6 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE validation_fact",
 		"TRUNCATE TABLE project_fact_by_degree",
 		"TRUNCATE TABLE green_project_by_position",
-		"TRUNCATE TABLE green_project_lineage",
 		"TRUNCATE TABLE request_projects_by_issue",
 		"TRUNCATE TABLE request_issues_by_project",
 	} {

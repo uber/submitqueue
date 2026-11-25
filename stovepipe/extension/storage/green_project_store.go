@@ -28,10 +28,4 @@ type GreenProjectStore interface {
 	// FindAtOrAfter seeks to the first entry at or above position in the
 	// (lineage, project) primary-key range. An empty URI means no match.
 	FindAtOrAfter(ctx context.Context, lineage, project string, position int64) (string, error)
-
-	// IsLineageReady reports whether initial backfill was completed for the lineage.
-	IsLineageReady(ctx context.Context, lineage string) (bool, error)
-
-	// MarkLineageReady creates the lineage's completion marker if absent.
-	MarkLineageReady(ctx context.Context, lineage string) error
 }

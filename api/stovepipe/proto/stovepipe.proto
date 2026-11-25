@@ -523,8 +523,8 @@ message NearestGreenCommitThatIncludesRequest {
 
 // NearestGreenCommitThatIncludesResponse contains the first known green head, if any.
 message NearestGreenCommitThatIncludesResponse {
-    // Earliest head at or after the desired commit with a recorded project green.
-    // Empty when there is no recorded match in the available projection.
+    // Earliest indexed head at or after the desired commit with an explicit project pass.
+    // Empty if none match. The index is populated by new validations, not by scanning history.
     string closest_containing_commit_uri = 1;
     // Validation request for the matching head. Empty when there is no match.
     string request_id = 2;

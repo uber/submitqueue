@@ -73,26 +73,3 @@ func (s *greenProjectStore) FindAtOrAfter(ctx context.Context, lineage, project 
 	}
 	return uri, nil
 }
-
-func (s *greenProjectStore) IsLineageReady(ctx context.Context, lineage string) (ready bool, retErr error) {
-	op := metrics.Begin(s.scope, "is_lineage_ready", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM green_project_lineage WHERE queue = ? AND lineage = ?`, s.queue, lineage).Scan(&ready)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read green project lineage %q: %w", lineage, err)
-	}
-	return ready, nil
-}
-
-func (s *greenProjectStore) MarkLineageReady(ctx context.Context, lineage string) (retErr error) {
-	op := metrics.Begin(s.scope, "mark_lineage_ready", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO green_project_lineage (queue, lineage) VALUES (?, ?)`, s.queue, lineage)
-	if err != nil && !isDuplicateEntry(err) {
-		return fmt.Errorf("mark green project lineage %q ready: %w", lineage, err)
-	}
-	return nil
-}

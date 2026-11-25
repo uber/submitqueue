@@ -16,21 +16,16 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/base/id"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/greenproject"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
-
-// ErrGreenProjectionNotReady means the current lineage has not finished backfill.
-var ErrGreenProjectionNotReady = errors.New("green project projection is not ready")
 
 // NearestGreenCommitController finds a recorded green project result on trunk.
 type NearestGreenCommitController interface {
@@ -73,15 +68,7 @@ func (c *nearestGreenCommitController) NearestGreenCommitThatIncludes(ctx contex
 	if err != nil {
 		return result, fmt.Errorf("resolve green project storage for queue %q: %w", req.Queue, err)
 	}
-	projection := store.GetGreenProjectStore()
-	ready, err := projection.IsLineageReady(ctx, position.Lineage)
-	if err != nil {
-		return result, err
-	}
-	if !ready {
-		return result, errs.NewRetryableError(ErrGreenProjectionNotReady)
-	}
-	uri, err := projection.FindAtOrAfter(ctx, position.Lineage, req.Project, position.Position)
+	uri, err := store.GetGreenProjectStore().FindAtOrAfter(ctx, position.Lineage, req.Project, position.Position)
 	if err != nil || uri == "" {
 		return result, err
 	}

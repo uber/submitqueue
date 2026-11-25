@@ -68,32 +68,3 @@ func (mr *MockGreenProjectStoreMockRecorder) FindAtOrAfter(ctx, lineage, project
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindAtOrAfter", reflect.TypeOf((*MockGreenProjectStore)(nil).FindAtOrAfter), ctx, lineage, project, position)
 }
-
-// IsLineageReady mocks base method.
-func (m *MockGreenProjectStore) IsLineageReady(ctx context.Context, lineage string) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsLineageReady", ctx, lineage)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// IsLineageReady indicates an expected call of IsLineageReady.
-func (mr *MockGreenProjectStoreMockRecorder) IsLineageReady(ctx, lineage any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsLineageReady", reflect.TypeOf((*MockGreenProjectStore)(nil).IsLineageReady), ctx, lineage)
-}
-
-// MarkLineageReady mocks base method.
-func (m *MockGreenProjectStore) MarkLineageReady(ctx context.Context, lineage string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkLineageReady", ctx, lineage)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkLineageReady indicates an expected call of MarkLineageReady.
-func (mr *MockGreenProjectStoreMockRecorder) MarkLineageReady(ctx, lineage any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkLineageReady", reflect.TypeOf((*MockGreenProjectStore)(nil).MarkLineageReady), ctx, lineage)
-}

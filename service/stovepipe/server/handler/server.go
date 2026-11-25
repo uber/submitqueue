@@ -119,8 +119,6 @@ func (s *StovepipeServer) NearestGreenCommitThatIncludes(ctx context.Context, re
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		case sourcecontrol.IsNotFound(err):
 			return nil, status.Error(codes.NotFound, err.Error())
-		case errors.Is(err, controller.ErrGreenProjectionNotReady):
-			return nil, status.Error(codes.Unavailable, err.Error())
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return nil, status.FromContextError(err).Err()
 		default:

@@ -90,7 +90,7 @@ type SourceControl interface {
 	// Disabled promotion succeeds without a write.
 	Promote(ctx context.Context, uri, expectedURI string) (bool, error)
 
-	// History returns a bounded page of the queue's ordered trunk commit URIs, newest first.
+	// History returns a bounded page of the queue's commit URIs, newest first.
 	// It is paginated with an opaque cursor so a remote backend stays cheap:
 	// callers pass an empty cursor for the first (newest) page and the page's
 	// NextCursor to walk further back, stopping when NextCursor is empty. limit
