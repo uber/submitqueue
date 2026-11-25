@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Behavioral tests for watch deadlines, stop handshakes, and stale-run fences."""
 
+import copy
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -22,16 +23,31 @@ class WatchControlTest(unittest.TestCase):
         state = control_watch({}, "STARTWATCH", self.now)
         self.assertEqual(parse_timestamp(state["watch"]["deadline_at"]), self.now + timedelta(hours=48))
 
-    def test_active_start_keeps_run_deadline_and_campaign_data(self):
-        original = {"agents": {"owner": {"phase": "dormant"}}, "cursors": {"events": 17}, "attempts": {"issue": 2}}
+    def test_active_start_replaces_explicit_deadline_and_preserves_run(self):
+        original = {
+            "agents": {"owner": {"phase": "dormant"}},
+            "prs": {"1": {"owner": "owner"}},
+            "cursors": {"events": 17},
+            "budgets": {"issue": 2},
+            "epochs": {"feedback": 3},
+        }
         state = control_watch(original, "STARTWATCH", self.now)
         later = self.now + timedelta(hours=1)
-        self.assertEqual(control_watch(state, "STARTWATCH", later, "48h"), state)
-        shortened = control_watch(state, "STARTWATCH", later, "1h")
-        self.assertEqual(shortened["watch"]["run_id"], state["watch"]["run_id"])
-        self.assertEqual(parse_timestamp(shortened["watch"]["deadline_at"]), self.now + timedelta(hours=2))
-        for key in original:
-            self.assertEqual(shortened[key], original[key])
+        for phase in ("starting", "watching"):
+            if phase == "watching":
+                state = control_watch(state, "ARM", self.now, run_id=state["watch"]["run_id"])
+            state["watch"]["runtime"] = {"receiver": "existing-watcher"}
+            self.assertEqual(control_watch(state, "STARTWATCH", later), state)
+            for maximum, hours in (("48h", 48), ("1h", 1)):
+                with self.subTest(phase=phase, maximum=maximum):
+                    expected = copy.deepcopy(state)
+                    updated = control_watch(state, "STARTWATCH", later, maximum)
+                    self.assertEqual(parse_timestamp(updated["watch"]["deadline_at"]), later + timedelta(hours=hours))
+                    self.assertEqual(state, expected)
+                    expected["watch"]["deadline_at"] = updated["watch"]["deadline_at"]
+                    self.assertEqual(updated, expected)
+                    state = updated
+            self.assertEqual(control_watch(state, "STARTWATCH", later), state)
         self.assertNotIn("watch", original)
 
     def test_stop_handshake_and_stale_actions_after_new_user_start(self):
@@ -57,9 +73,9 @@ class WatchControlTest(unittest.TestCase):
     def test_deadline_cannot_be_revived_by_arm_or_handoff(self):
         state = control_watch({}, "STARTWATCH", self.now, "1h")
         run_id = state["watch"]["run_id"]
-        for command in ("ARM", "CHECK", "STARTWATCH"):
-            with self.subTest(command=command), self.assertRaises(ValueError):
-                control_watch(state, command, self.now + timedelta(hours=1), run_id=run_id)
+        for command, maximum in (("ARM", None), ("CHECK", None), ("STARTWATCH", None), ("STARTWATCH", "48h")):
+            with self.subTest(command=command, maximum=maximum), self.assertRaises(ValueError):
+                control_watch(state, command, self.now + timedelta(hours=1), maximum, run_id=run_id)
         stopped = control_watch(state, "STOPWATCH", self.now + timedelta(hours=2))
         self.assertEqual(control_watch(stopped, "CONFIRMSTOP", self.now + timedelta(hours=2), run_id=run_id)["watch"]["phase"], "stopped")
 

@@ -50,7 +50,7 @@ def control_watch(state: dict, command: str, now: datetime, maximum: str | None 
             if watch["phase"] not in ("starting", "watching") or now >= parse_timestamp(watch["deadline_at"]):
                 raise ValueError("stop and confirm the previous run is quiescent before starting another")
             if maximum is not None:
-                watch["deadline_at"] = format_timestamp(min(parse_timestamp(watch["deadline_at"]), deadline))
+                watch["deadline_at"] = format_timestamp(deadline)
             return result
         if watch:
             result.setdefault("watch_history", []).append(watch)
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", help="required for internal ARM, CHECK, CONFIRMSTOP")
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("STARTWATCH")
-    start.add_argument("maximum", nargs="?")
+    start.add_argument("maximum", nargs="?", help="duration from now; replaces an active deadline, new runs default to 48h")
     for command in ("STOPWATCH", "ARM", "CHECK", "CONFIRMSTOP"):
         commands.add_parser(command)
     args = parser.parse_args(argv)
