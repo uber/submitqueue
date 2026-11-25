@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/errs"
+	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -36,6 +37,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -629,63 +631,96 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestConsumer_ProcessDelivery_LogsLeasedBy(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	core, logs := observer.New(zap.DebugLevel)
-	logger := zap.New(core).Sugar()
-
-	deliveryChan := make(chan extqueue.Delivery, 1)
-	mockSub := queuemock.NewMockSubscriber(ctrl)
-	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
-
-	mockQ := queuemock.NewMockQueue(ctrl)
-	mockQ.EXPECT().Subscriber().Return(mockSub)
-
-	reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
-	c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
-
-	handler := &testController{}
-	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
-		func(ctx context.Context, delivery Delivery) error {
-			return fmt.Errorf("bad payload")
+func TestConsumer_ProcessDelivery_OutcomeLine(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantMsg   string
+		wantLevel zapcore.Level
+	}{
+		{
+			name:      "success keeps owner fields",
+			wantMsg:   "message processed successfully",
+			wantLevel: zap.DebugLevel,
 		},
-	)
-	require.NoError(t, c.Register(handler))
+		{
+			name:      "non-retryable user error",
+			err:       errs.NewUserError(fmt.Errorf("bad input")),
+			wantMsg:   "non-retryable controller error, rejecting message",
+			wantLevel: zap.WarnLevel,
+		},
+		{
+			name:      "non-retryable infra error",
+			err:       fmt.Errorf("broken"),
+			wantMsg:   "non-retryable controller error, rejecting message",
+			wantLevel: zap.ErrorLevel,
+		},
+		{
+			name:      "retryable error",
+			err:       errs.NewRetryableError(fmt.Errorf("flaky")),
+			wantMsg:   "controller error or cancel, nacking message",
+			wantLevel: zap.WarnLevel,
+		},
+		{
+			name:      "context canceled",
+			err:       fmt.Errorf("query: %w", context.Canceled),
+			wantMsg:   "controller error or cancel, nacking message",
+			wantLevel: zap.DebugLevel,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			core, logs := observer.New(zap.DebugLevel)
+			logger := zap.New(core).Sugar()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	require.NoError(t, c.Start(ctx))
+			deliveryChan := make(chan extqueue.Delivery, 1)
+			mockSub := queuemock.NewMockSubscriber(ctrl)
+			mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+			mockQ := queuemock.NewMockQueue(ctrl)
+			mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	msg := entityqueue.NewMessage("poison-msg", []byte("bad"), "partition1", nil)
-	msg.Tenant = testTenant
-	done := make(chan struct{})
-	mockDel := queuemock.NewMockDelivery(ctrl)
-	mockDel.EXPECT().Message().Return(msg).AnyTimes()
-	mockDel.EXPECT().Attempt().Return(1).AnyTimes()
-	mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
-	mockDel.EXPECT().Metadata().Return(map[string]string{
-		"leased_by":      "host-1",
-		"consumer_group": "test-group",
-	}).AnyTimes()
-	mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
-	mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
-		close(done)
-		return nil
-	})
+			reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+			c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(genericerrs.Classifier), consumergatenoop.New())
+			handler := &testController{}
+			setupController(handler, "test-handler", testTopicKeyStart, "test-group",
+				func(ctx context.Context, delivery Delivery) error { return tt.err },
+			)
+			require.NoError(t, c.Register(handler))
 
-	deliveryChan <- mockDel
-	<-done
-	require.NoError(t, c.Stop(30000))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			require.NoError(t, c.Start(ctx))
 
-	processLogs := logs.FilterMessage("processing delivery").All()
-	require.NotEmpty(t, processLogs)
-	assert.Equal(t, "host-1", processLogs[0].ContextMap()["leased_by"])
-	assert.Equal(t, "test-group", processLogs[0].ContextMap()["consumer_group"])
+			msg := entityqueue.NewMessage("msg", []byte("p"), "partition1", nil)
+			msg.Tenant = testTenant
+			done := make(chan struct{})
+			mockDel := queuemock.NewMockDelivery(ctrl)
+			mockDel.EXPECT().Message().Return(msg).AnyTimes()
+			mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+			mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+			mockDel.EXPECT().Metadata().Return(map[string]string{
+				"leased_by":      "host-1",
+				"consumer_group": "test-group",
+			}).AnyTimes()
+			mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+			finish := func() { close(done) }
+			mockDel.EXPECT().Ack(gomock.Any()).DoAndReturn(func(context.Context) error { finish(); return nil }).MaxTimes(1)
+			mockDel.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, failure.Failure) error { finish(); return nil }).MaxTimes(1)
+			mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, failure.Failure) error { finish(); return nil }).MaxTimes(1)
 
-	rejectLogs := logs.FilterMessage("non-retryable controller error, rejecting message").All()
-	require.NotEmpty(t, rejectLogs)
-	assert.Equal(t, "host-1", rejectLogs[0].ContextMap()["leased_by"])
-	assert.Equal(t, "partition1", rejectLogs[0].ContextMap()["partition_key"])
+			deliveryChan <- mockDel
+			<-done
+			require.NoError(t, c.Stop(30000))
+
+			outcome := logs.FilterMessage(tt.wantMsg).All()
+			require.Len(t, outcome, 1)
+			assert.Equal(t, tt.wantLevel, outcome[0].Level)
+			assert.Equal(t, "host-1", outcome[0].ContextMap()["leased_by"])
+			assert.Equal(t, "test-group", outcome[0].ContextMap()["consumer_group"])
+			assert.Equal(t, "partition1", outcome[0].ContextMap()["partition_key"])
+		})
+	}
 }
 
 func TestConsumer_ProcessDelivery_HoldIgnoredLogsLeasedBy(t *testing.T) {

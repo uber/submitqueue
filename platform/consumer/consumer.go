@@ -139,12 +139,6 @@ func (m *consumer) Register(controller Controller) error {
 
 	m.controllers = append(m.controllers, controller)
 
-	m.logger.Infow("registered controller",
-		"controller", controller.Name(),
-		"topic_key", controller.TopicKey(),
-		"consumer_group", controller.ConsumerGroup(),
-	)
-
 	return nil
 }
 
@@ -419,16 +413,6 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	topicKey := controller.TopicKey()
 	ownerLogFields := deliveryOwnerLogFields(delivery)
 
-	m.logger.Debugw("processing delivery",
-		append([]any{
-			"controller", controller.Name(),
-			"topic_key", topicKey,
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-		}, ownerLogFields...)...,
-	)
-
 	// Wrap delivery to hide Ack/Nack from controller
 	wrapped := &deliveryWrapper{delivery: delivery}
 
@@ -480,7 +464,11 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 		// Check if the error is non-retryable (poison pill message)
 		if !errs.IsRetryable(err) {
-			m.logger.Errorw("non-retryable controller error, rejecting message",
+			rejectLog := m.logger.Errorw
+			if errs.IsUserError(err) {
+				rejectLog = m.logger.Warnw
+			}
+			rejectLog("non-retryable controller error, rejecting message",
 				append([]any{
 					"controller", controller.Name(),
 					"topic_key", controller.TopicKey(),
@@ -515,7 +503,11 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		if isCanceled {
 			what = "cancel"
 		}
-		m.logger.Errorw("controller error or cancel, nacking message",
+		nackLog := m.logger.Warnw
+		if isCanceled {
+			nackLog = m.logger.Debugw
+		}
+		nackLog("controller error or cancel, nacking message",
 			append([]any{
 				"what", what,
 				"controller", controller.Name(),
@@ -589,12 +581,14 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	}
 
 	m.logger.Debugw("message processed successfully",
-		"controller", controller.Name(),
-		"topic_key", topicKey,
-		"message_id", msg.ID,
-		"partition_key", msg.PartitionKey,
-		"attempt", delivery.Attempt(),
-		"elapsed_ms", elapsed.Milliseconds(),
+		append([]any{
+			"controller", controller.Name(),
+			"topic_key", topicKey,
+			"message_id", msg.ID,
+			"partition_key", msg.PartitionKey,
+			"attempt", delivery.Attempt(),
+			"elapsed_ms", elapsed.Milliseconds(),
+		}, ownerLogFields...)...,
 	)
 }
 
