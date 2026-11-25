@@ -137,7 +137,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", cancelReq.Queue, request.Queue, request.ID)
 	}
 
-	c.logger.Infow("received cancel event",
+	c.logger.Debugw("received cancel event",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"state", string(request.State),
@@ -174,7 +174,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Return the first failure so the existing linear error-classification chain remains intact.
-	// Matches are sorted by ID below, making the selected error deterministic while every failure is still logged and counted.
+	// FindByRequestID sorts by ID, so the selected error is deterministic. The consumer logs the returned failure, later failures are logged here, and every failure is counted.
 	var firstErr error
 	foundApplicableBatch := false
 	for _, batch := range batches {
@@ -183,13 +183,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			foundApplicableBatch = true
 			if err := c.cancelBatch(ctx, store, batch); err != nil {
 				metrics.NamedCounter(c.metricsScope, opName, "batch_cancel_errors", 1, metrics.TagsFromContext(ctx)...)
-				c.logger.Errorw("failed to cancel batch",
-					"batch_id", batch.ID,
-					"batch_state", string(batch.State),
-					"error", err,
-				)
 				if firstErr == nil {
 					firstErr = err
+				} else {
+					c.logger.Warnw("failed to cancel batch",
+						"batch_id", batch.ID,
+						"batch_state", string(batch.State),
+						"error", err,
+					)
 				}
 			}
 		case batch.State == entity.BatchStateLanding:
@@ -275,7 +276,7 @@ func (c *Controller) cancelRequest(ctx context.Context, store orchstorage.Storag
 
 	switch res.Outcome {
 	case corerequest.TerminationOutcomeSuccess, corerequest.TerminationOutcomeAlreadyInTargetState:
-		c.logger.Infow("request cancelled (not batched)",
+		c.logger.Debugw("request cancelled (not batched)",
 			"request_id", request.ID,
 			"queue", request.Queue,
 		)
@@ -311,7 +312,7 @@ func (c *Controller) cancelRequest(ctx context.Context, store orchstorage.Storag
 // intent CAS is skipped and we just re-publish — speculate absorbs the
 // duplicate as a cheap no-op nudge.
 func (c *Controller) cancelBatch(ctx context.Context, store orchstorage.Storage, batch entity.Batch) error {
-	c.logger.Infow("handing batch cancellation off to speculate",
+	c.logger.Debugw("handing batch cancellation off to speculate",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"batch_state", string(batch.State),

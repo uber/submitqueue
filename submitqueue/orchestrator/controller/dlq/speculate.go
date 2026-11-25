@@ -113,7 +113,7 @@ func (c *speculateController) Process(ctx context.Context, delivery consumer.Del
 	culprits, attribution := c.blame(delivery, bid.ID)
 	failureMeta["dlq.attribution"] = attribution
 
-	c.logger.Warnw("dlq message received",
+	c.logger.Debugw("dlq message received",
 		"batch_id", bid.ID,
 		"queue", bid.Queue,
 		"attempt", delivery.Attempt(),

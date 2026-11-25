@@ -127,7 +127,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
-	c.logger.Infow("received land event",
+	c.logger.Debugw("received land event",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"state", string(batch.State),
@@ -143,7 +143,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// at this stage simply acks.
 	if entity.IsBatchStateHalted(batch.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("skipping land for halted batch",
+		c.logger.Debugw("skipping land for halted batch",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
 		)
@@ -173,12 +173,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to runway merge: %w", err)
 	}
-
-	c.logger.Infow("published merge request to Runway",
-		"batch_id", batch.ID,
-		"steps", len(req.Steps),
-		"topic_key", c.runwayTopicKey,
-	)
 
 	return nil // Success - message will be acked
 }

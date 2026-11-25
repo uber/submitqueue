@@ -124,7 +124,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
 	}
 
-	c.logger.Infow("received validate event",
+	c.logger.Debugw("received validate event",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"state", string(request.State),
@@ -141,7 +141,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Cancellation intent halts forward progress even before the terminal outcome.
 	if entity.IsRequestStateHalted(request.State) {
 		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_halted", 1, coremetrics.TagsFromContext(ctx)...)
-		c.logger.Infow("skipping validate for halted request",
+		c.logger.Debugw("skipping validate for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
 		)
@@ -186,7 +186,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to fetch change information for request %s: %w", request.ID, err)
 	}
 
-	c.logger.Infow("fetched change information",
+	c.logger.Debugw("fetched change information",
 		"request_id", request.ID,
 		"change_count", len(changeInfos),
 		"total_files", totalFiles(changeInfos),
@@ -212,7 +212,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 					return fmt.Errorf("failed to validate request %s: %w", request.ID, err)
 				}
 				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1, coremetrics.TagsFromContext(ctx)...)
-				c.logger.Infow("custom validation rejected request",
+				c.logger.Debugw("custom validation rejected request",
 					"request_id", request.ID,
 					"queue", request.Queue,
 					"error", err.Error(),
@@ -252,11 +252,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1, coremetrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to runway merge-conflict-check: %w", err)
 	}
-
-	c.logger.Infow("published merge conflict check to Runway",
-		"request_id", request.ID,
-		"topic_key", c.runwayTopicKey,
-	)
 
 	return nil // Success - message will be acked
 }

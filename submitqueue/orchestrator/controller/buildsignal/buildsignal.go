@@ -166,13 +166,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get build %s: %w", buildID.ID, err)
 	}
 
-	c.logger.Debugw("polling build status",
-		"build_id", build.ID,
-		"batch_id", build.BatchID,
-		"attempt", delivery.Attempt(),
-		"partition_key", msg.PartitionKey,
-	)
-
 	// Load the batch first: it gives us the queue (needed to build the right
 	// BuildRunner) and lets us short-circuit halted batches before polling.
 	batch, err := store.GetBatchStore().Get(ctx, build.BatchID)
@@ -219,7 +212,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				)
 			} else {
 				metrics.NamedCounter(c.metricsScope, opName, "build_cancelled", 1, metrics.TagsFromContext(ctx)...)
-				c.logger.Infow("requested cancellation of a build nothing wants running",
+				c.logger.Debugw("requested cancellation of a build nothing wants running",
 					"build_id", build.ID,
 					"batch_id", build.BatchID,
 					"path_id", build.PathID,
@@ -264,7 +257,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	if status.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "terminal", 1, metrics.TagsFromContext(ctx, metrics.NewTag("status", string(status)))...)
-		c.logger.Infow("build reached terminal status",
+		c.logger.Debugw("build reached terminal status",
 			"build_id", build.ID,
 			"batch_id", build.BatchID,
 			"status", string(status),
@@ -280,6 +273,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	c.logger.Debugw("holding for next build status poll",
 		"build_id", build.ID,
+		"attempt", delivery.Attempt(),
 		"status", string(status),
 		"delay_ms", delayMs,
 	)

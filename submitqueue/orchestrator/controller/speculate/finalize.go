@@ -220,7 +220,7 @@ func (c *Controller) finalizeCancellations(ctx context.Context, snap *snapshot, 
 		// read folded that in — so a path still reading as unstopped really is.
 		if exists && !allPathsStopped(set) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_awaiting_paths", 1, metrics.TagsFromContext(ctx)...)
-			c.logger.Infow("cancelling batch; waiting for its builds to stop",
+			c.logger.Debugw("cancelling batch; waiting for its builds to stop",
 				"batch_id", batch.ID,
 				"queue", batch.Queue,
 			)
@@ -346,7 +346,7 @@ func (c *Controller) applyOutcome(ctx context.Context, store orchstorage.Storage
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "outcome", 1, metrics.TagsFromContext(ctx, metrics.NewTag("outcome", string(decision)))...)
-	c.logger.Infow("batch outcome",
+	c.logger.Debugw("batch outcome",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"outcome", string(decision),

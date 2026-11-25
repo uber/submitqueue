@@ -89,7 +89,7 @@ func (c *landSignalController) Process(ctx context.Context, delivery consumer.De
 
 	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
-	c.logger.Warnw("dlq message received",
+	c.logger.Debugw("dlq message received",
 		"batch_id", result.Id,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", dmeta["dlq.original_topic"],

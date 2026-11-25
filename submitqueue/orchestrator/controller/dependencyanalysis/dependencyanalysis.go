@@ -141,7 +141,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
-	c.logger.Infow("received dependency-analysis event",
+	c.logger.Debugw("received dependency-analysis event",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"state", string(batch.State),
@@ -177,7 +177,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			// Nothing has claimed the request yet, so cancel owned it outright and
 			// has already written its outcome.
 			metrics.NamedCounter(c.metricsScope, opName, "skipped_halted_request", 1, metrics.TagsFromContext(ctx)...)
-			c.logger.Infow("abandoning batch; contained request is halted",
+			c.logger.Debugw("abandoning batch; contained request is halted",
 				"batch_id", batch.ID,
 				"request_id", halted,
 			)
@@ -220,7 +220,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			RecordValue(float64(len(batch.Contains)))
 		metrics.NamedHistogram(c.metricsScope, "batch_shape", "dependencies", metrics.CountBuckets, metrics.TagsFromContext(ctx)...).
 			RecordValue(float64(len(batch.Dependencies)))
-		c.logger.Infow("batch created",
+		c.logger.Debugw("batch created",
 			"batch_id", batch.ID,
 			"queue", batch.Queue,
 			"dependency_count", len(batch.Dependencies),
@@ -467,11 +467,6 @@ func (c *Controller) publishToSpeculate(ctx context.Context, batch entity.Batch)
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish batch ID to speculate topic: %w", err)
 	}
-
-	c.logger.Infow("published batch to speculate topic",
-		"batch_id", batch.ID,
-		"topic_key", topickey.TopicKeySpeculate,
-	)
 	return nil
 }
 

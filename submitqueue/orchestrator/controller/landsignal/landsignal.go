@@ -109,7 +109,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get batch %s: %w", result.Id, err)
 	}
 
-	c.logger.Infow("received land signal",
+	c.logger.Debugw("received land signal",
 		"batch_id", batch.ID,
 		"landed", result.Outcome == runwaypb.Outcome_SUCCEEDED,
 		"state", string(batch.State),
@@ -155,7 +155,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	var newState entity.BatchState
 	if result.Outcome == runwaypb.Outcome_SUCCEEDED {
 		newState = entity.BatchStateSucceeded
-		c.logger.Infow("landed batch",
+		c.logger.Debugw("landed batch",
 			"batch_id", batch.ID,
 			"steps", result.Steps,
 		)
