@@ -76,6 +76,14 @@ Both endpoints return durable lifecycle summaries, the whole-repository fact whe
 
 A dedicated ordering mapping makes listing a bounded primary-key range read, not a sort over all facts. Listing reads at most `page_size + 1` ordering mappings and hydrates only the returned facts, plus the cursor fact on continuations. The continuation token identifies the last project; its immutable fact supplies the degree needed to resume this ordering.
 
+## Nearest Green Commit
+
+`NearestGreenCommitThatIncludes` accepts `queue`, `desired_commit_uri`, and `project`. It returns the earliest validated head at or after that commit on the queue's ordered trunk with an explicit zero-degree fact for the named project, plus its validation `request_id`. The desired commit need not have been ingested. The repository verdict is independent: a project can be green in a failed batch. A project without a fact is unknown, not green. The API does not carry forward a previous result or translate off-trunk commits such as pre-squash SHAs.
+
+After persisting the immutable project fact, `projectanalysis` indexes its green result in `green_project_by_position`, keyed by `(queue, lineage, project, position)`. This is a create-only projection; replay repairs missing rows before project completion, even when the underlying fact already exists. The lookup resolves the desired URI through source control, checks the lineage's backfill marker, then seeks to the first row at or above the position and reads its fact. It does not scan builds or write a row for each covered commit. An empty successful response means there is no indexed match yet; live writes can add an earlier match later. Unknown/off-trunk URIs return `NotFound`; a lineage whose backfill has not finished returns `Unavailable`.
+
+Deploy live projection writers before backfilling. `greenproject.Backfill` walks the active trunk's retained facts and marks that lineage ready only after all pages succeed. It is safe to rerun to repair an incomplete projection without calling the build integration again. An incompatible trunk rewrite creates a new lineage, so reads cannot reuse the old marker and rebuild includes any retained common prefix. Historical validations without explicit project greens cannot be reconstructed from the repository verdict.
+
 ## Errors and Authorization
 
 - Invalid selectors, an invalid project ID, duplicate project IDs, or malformed page tokens are user errors.

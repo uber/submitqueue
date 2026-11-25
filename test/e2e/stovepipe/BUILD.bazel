@@ -49,6 +49,7 @@ go_test(
         "//stovepipe/extension/projectstatus/mock:go_default_library",
         "//stovepipe/extension/sourcecontrol:go_default_library",
         "//stovepipe/extension/sourcecontrol/fake:go_default_library",
+        "//stovepipe/extension/sourcecontrol/mock:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mock:go_default_library",
         "//stovepipe/extension/storage/mysql:go_default_library",

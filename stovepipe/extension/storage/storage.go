@@ -123,6 +123,9 @@ type Storage interface {
 
 	GetProjectFactByDegreeStore() ProjectFactByDegreeStore
 
+	// GetGreenProjectStore returns the ordered green project projection.
+	GetGreenProjectStore() GreenProjectStore
+
 	GetRequestProjectsByIssueStore() RequestProjectsByIssueStore
 
 	GetRequestIssuesByProjectStore() RequestIssuesByProjectStore

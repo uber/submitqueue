@@ -37,6 +37,9 @@ import (
 	projectissuesnoop "github.com/uber/submitqueue/stovepipe/extension/projectissues/noop"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcefake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
+	sourcemock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -80,6 +83,7 @@ func (s *StovepipeE2ESuite) TestProjectAnalysisBatchRetryRetainsStoredResults() 
 	aggregate.EXPECT().GetRequestSummaryStore().Return(stores.GetRequestSummaryStore()).AnyTimes()
 	aggregate.EXPECT().GetRequestAcceptanceStore().Return(stores.GetRequestAcceptanceStore()).AnyTimes()
 	aggregate.EXPECT().GetValidationFactStore().Return(stores.GetValidationFactStore()).AnyTimes()
+	aggregate.EXPECT().GetGreenProjectStore().Return(stores.GetGreenProjectStore()).AnyTimes()
 	index := storagemock.NewMockProjectFactByDegreeStore(ctrl)
 	aggregate.EXPECT().GetProjectFactByDegreeStore().Return(index).AnyTimes()
 	indexCalls := 0
@@ -116,7 +120,11 @@ func (s *StovepipeE2ESuite) TestProjectAnalysisBatchRetryRetainsStoredResults() 
 		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
 	})
 	require.NoError(t, err)
-	controller := projectanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope, factory, history, resolvers, projectissuesnoop.New(), registry, stovepipemq.TopicKeyProjectAnalysis, "batch-test")
+	trunkConfig := sourcecontrol.Config{QueueName: request.Queue}
+	trunk := sourcefake.New(trunkConfig, []string{request.URI})
+	sourceFactory := sourcemock.NewMockFactory(ctrl)
+	sourceFactory.EXPECT().For(trunkConfig).Return(trunk, nil)
+	controller := projectanalysis.NewController(zap.NewNop().Sugar(), tally.NoopScope, factory, history, resolvers, projectissuesnoop.New(), sourceFactory, registry, stovepipemq.TopicKeyProjectAnalysis, "batch-test")
 	payload, err := stovepipemq.Marshal(&stovepipemq.ProjectAnalysis{Id: request.ID, QueueName: request.Queue})
 	require.NoError(t, err)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -140,6 +148,14 @@ func (s *StovepipeE2ESuite) TestProjectAnalysisBatchRetryRetainsStoredResults() 
 	retained, err := stores.GetValidationFactStore().Get(s.ctx, request.URI, original.Project)
 	require.NoError(t, err)
 	require.Equal(t, original, retained)
+	position, err := trunk.TrunkPosition(s.ctx, request.URI)
+	require.NoError(t, err)
+	greenHead, err := stores.GetGreenProjectStore().FindAtOrAfter(s.ctx, position.Lineage, original.Project, position.Position)
+	require.NoError(t, err)
+	require.Equal(t, request.URI, greenHead)
+	greenHead, err = stores.GetGreenProjectStore().FindAtOrAfter(s.ctx, position.Lineage, statuses[1].ProjectInfo.Name, position.Position)
+	require.NoError(t, err)
+	require.Empty(t, greenHead)
 	entries, err := stores.GetProjectFactByDegreeStore().List(s.ctx, request.URI, entity.ProjectFactByDegree{}, 1000)
 	require.NoError(t, err)
 	require.Len(t, entries, len(statuses))

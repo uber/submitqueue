@@ -511,6 +511,25 @@ message ListRequestProjectIssuesResponse {
     string next_page_token = 3;
 }
 
+// NearestGreenCommitThatIncludesRequest searches one queue's trunk for a project green.
+message NearestGreenCommitThatIncludesRequest {
+    // Logical queue whose trunk is searched.
+    string queue = 1;
+    // Commit URI on the queue's trunk. The commit need not have been ingested.
+    string desired_commit_uri = 2;
+    // Stable project ID as used by the project status APIs.
+    string project = 3;
+}
+
+// NearestGreenCommitThatIncludesResponse contains the first known green head, if any.
+message NearestGreenCommitThatIncludesResponse {
+    // Earliest head at or after the desired commit with a recorded project green.
+    // Empty when there is no recorded match in the available projection.
+    string closest_containing_commit_uri = 1;
+    // Validation request for the matching head. Empty when there is no match.
+    string request_id = 2;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -538,4 +557,7 @@ service Stovepipe {
     rpc ListRequestProjectsByIssue(ListRequestProjectsByIssueRequest) returns (ListRequestProjectIssuesResponse) {}
     // ListRequestIssuesByProject returns the issues affecting one request's project.
     rpc ListRequestIssuesByProject(ListRequestIssuesByProjectRequest) returns (ListRequestProjectIssuesResponse) {}
+    // NearestGreenCommitThatIncludes finds the first validated head containing the desired
+    // commit with a recorded green result for the requested project, regardless of repository verdict.
+    rpc NearestGreenCommitThatIncludes(NearestGreenCommitThatIncludesRequest) returns (NearestGreenCommitThatIncludesResponse) {}
 }

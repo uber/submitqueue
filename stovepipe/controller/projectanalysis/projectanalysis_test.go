@@ -40,6 +40,8 @@ import (
 	projectissuesmock "github.com/uber/submitqueue/stovepipe/extension/projectissues/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
 	projectstatusmock "github.com/uber/submitqueue/stovepipe/extension/projectstatus/mock"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcemock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -57,6 +59,7 @@ type fixture struct {
 	attributions    []projectissues.Attribution
 	facts           map[string]entity.ValidationFact
 	indexes         map[entity.ProjectFactByDegree]bool
+	greenProjects   map[string]bool
 	source          map[entity.ProjectIssueAttribution]bool
 	reverse         map[entity.ProjectIssueAttribution]bool
 	logs            map[string]entity.RequestLog
@@ -82,13 +85,14 @@ func newFixture(t *testing.T) *fixture {
 			{ProjectInfo: projectstatus.ProjectInfo{Name: "a", ProjectType: "service"}, Degree: entity.DegreeBroken},
 			{ProjectInfo: projectstatus.ProjectInfo{Name: "b", ProjectType: "service"}, Degree: entity.DegreeGreen},
 		},
-		attributions: []projectissues.Attribution{{TaskID: "test", UnitID: "unit", Projects: []string{"a", "b"}}},
-		facts:        map[string]entity.ValidationFact{},
-		indexes:      map[entity.ProjectFactByDegree]bool{},
-		source:       map[entity.ProjectIssueAttribution]bool{},
-		reverse:      map[entity.ProjectIssueAttribution]bool{},
-		logs:         map[string]entity.RequestLog{},
-		failures:     map[string]error{},
+		attributions:  []projectissues.Attribution{{TaskID: "test", UnitID: "unit", Projects: []string{"a", "b"}}},
+		facts:         map[string]entity.ValidationFact{},
+		indexes:       map[entity.ProjectFactByDegree]bool{},
+		greenProjects: map[string]bool{},
+		source:        map[entity.ProjectIssueAttribution]bool{},
+		reverse:       map[entity.ProjectIssueAttribution]bool{},
+		logs:          map[string]entity.RequestLog{},
+		failures:      map[string]error{},
 	}
 	analysis := requestlog.NewRequestEventLog(f.request, entity.RequestEventBuildAnalysisCompleted, f.request.TerminalBuildID, nil)
 	f.logs[analysis.ID] = analysis
@@ -187,6 +191,21 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return nil
 	}).AnyTimes()
+	trunkFactory := sourcemock.NewMockFactory(ctrl)
+	trunk := sourcemock.NewMockSourceControl(ctrl)
+	trunkFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(trunk, nil).AnyTimes()
+	trunk.EXPECT().TrunkPosition(gomock.Any(), f.request.URI).Return(sourcecontrol.TrunkPosition{Lineage: "lineage", Position: 2}, nil).AnyTimes()
+	green := storagemock.NewMockGreenProjectStore(ctrl)
+	store.EXPECT().GetGreenProjectStore().Return(green).AnyTimes()
+	green.EXPECT().CreateForCommit(gomock.Any(), "lineage", int64(2), f.request.URI, gomock.Any()).DoAndReturn(func(_ context.Context, _ string, _ int64, _ string, projects []string) error {
+		if err := f.fail("green/create"); err != nil {
+			return err
+		}
+		for _, project := range projects {
+			f.greenProjects[project] = true
+		}
+		return nil
+	}).AnyTimes()
 	source.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.source, "source/create")).AnyTimes()
 	reverse.EXPECT().Create(gomock.Any(), "7", gomock.Any()).DoAndReturn(f.retainAttribution(f.reverse, "reverse/create")).AnyTimes()
 	requestLogMaterializer := requestlogmock.NewMockMaterializer(ctrl)
@@ -272,9 +291,27 @@ func newFixture(t *testing.T) *fixture {
 		{Key: basehook.TopicKeyHook, Name: "hook", Queue: queue},
 	})
 	require.NoError(t, err)
-	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
+	f.controller = NewController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, resolvers, attributers, trunkFactory, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
 	f.dlq = NewDLQController(zap.NewNop().Sugar(), tally.NoopScope, stores, requestLogMaterializer, "projectanalysis_dlq", "stovepipe-projectanalysis-dlq")
 	return f
+}
+
+func TestProjectAnalysisRepairsGreenProjectionBeforeCompletion(t *testing.T) {
+	f := newFixture(t)
+	writeErr := errors.New("green projection temporarily unavailable")
+	f.failures["green/create"] = writeErr
+	require.ErrorIs(t, f.deliver(context.Background(), f.message(t)), writeErr)
+	require.Len(t, f.facts, 2)
+	require.Empty(t, f.greenProjects)
+	require.Empty(t, f.publishAttempts)
+	require.NotContains(t, f.logs, f.completion().ID)
+	delete(f.failures, "green/create")
+	// The durable fact wins over a different result returned on redelivery.
+	f.projectStatuses[1].Degree = entity.DegreeBroken
+	require.NoError(t, f.deliver(context.Background(), f.message(t)))
+	require.Equal(t, map[string]bool{"b": true}, f.greenProjects)
+	require.Contains(t, f.logs, f.completion().ID)
+	require.Len(t, f.records, 1)
 }
 
 func (f *fixture) completion() entity.RequestLog {
@@ -686,6 +723,7 @@ type projectStatusFixture struct {
 	store        *storagemock.MockStorage
 	factStore    *storagemock.MockValidationFactStore
 	indexStore   *storagemock.MockProjectFactByDegreeStore
+	trunkFactory *sourcemock.MockFactory
 	metricsScope tally.TestScope
 }
 
@@ -694,10 +732,17 @@ func newProjectStatusFixture(ctrl *gomock.Controller) projectStatusFixture {
 		store:        storagemock.NewMockStorage(ctrl),
 		factStore:    storagemock.NewMockValidationFactStore(ctrl),
 		indexStore:   storagemock.NewMockProjectFactByDegreeStore(ctrl),
+		trunkFactory: sourcemock.NewMockFactory(ctrl),
 		metricsScope: tally.NewTestScope("", nil),
 	}
 	f.store.EXPECT().GetValidationFactStore().Return(f.factStore).AnyTimes()
 	f.store.EXPECT().GetProjectFactByDegreeStore().Return(f.indexStore).AnyTimes()
+	trunk := sourcemock.NewMockSourceControl(ctrl)
+	f.trunkFactory.EXPECT().For(sourcecontrol.Config{QueueName: projectStatusTestQueue}).Return(trunk, nil).AnyTimes()
+	trunk.EXPECT().TrunkPosition(gomock.Any(), projectStatusTestRequest().URI).Return(sourcecontrol.TrunkPosition{Lineage: "lineage", Position: 2}, nil).AnyTimes()
+	green := storagemock.NewMockGreenProjectStore(ctrl)
+	f.store.EXPECT().GetGreenProjectStore().Return(green).AnyTimes()
+	green.EXPECT().CreateForCommit(gomock.Any(), "lineage", int64(2), projectStatusTestRequest().URI, gomock.Any()).Return(nil).AnyTimes()
 	return f
 }
 
@@ -749,6 +794,7 @@ func TestRecordProjectStatusesPassesRequestBuildContext(t *testing.T) {
 				logger:                 zap.NewNop().Sugar(),
 				scope:                  m.metricsScope.SubScope("projectanalysis_controller"),
 				resolvers:              factory,
+				sourceControl:          m.trunkFactory,
 				requestLogMaterializer: requestLogMaterializer,
 			}
 			err := c.recordProjectStatuses(projectStatusContext(), m.store, request)
@@ -811,6 +857,7 @@ func TestRecordProjectStatusesResolverMetrics(t *testing.T) {
 				logger:                 zap.NewNop().Sugar(),
 				scope:                  m.metricsScope.SubScope("projectanalysis_controller"),
 				resolvers:              factory,
+				sourceControl:          m.trunkFactory,
 				requestLogMaterializer: requestLogMaterializer,
 			}
 			err := c.recordProjectStatuses(projectStatusContext(), m.store, request)
@@ -887,6 +934,7 @@ func TestRecordProjectStatusesPersistenceMetrics(t *testing.T) {
 				scope:                  m.metricsScope.SubScope("projectanalysis_controller"),
 				requestLogMaterializer: requestLogMaterializer,
 				resolvers:              factory,
+				sourceControl:          m.trunkFactory,
 			}
 			if len(projectStatuses) > 0 {
 				m.factStore.EXPECT().CreateBatch(gomock.Any(), gomock.Any()).Return(tt.factErr)
@@ -998,6 +1046,7 @@ func TestRecordProjectStatusesCountsPersistedOutcomes(t *testing.T) {
 				scope:                  m.metricsScope.SubScope("projectanalysis_controller"),
 				requestLogMaterializer: requestLogMaterializer,
 				resolvers:              factory,
+				sourceControl:          m.trunkFactory,
 			}
 			requestLogMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
 				assert.Equal(t, map[string]string{

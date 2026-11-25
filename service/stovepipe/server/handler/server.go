@@ -21,6 +21,7 @@ import (
 
 	"github.com/uber/submitqueue/stovepipe/core/queuelog"
 	"github.com/uber/submitqueue/stovepipe/core/queuestate"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,6 +38,7 @@ type StovepipeServer struct {
 	ingestController         *controller.IngestController
 	requestHistoryController controller.RequestHistoryController
 	projectStatusController  controller.ProjectStatusController
+	nearestGreenController   controller.NearestGreenCommitController
 	listController           controller.ListController
 	openIssuesController     controller.ListOpenIssuesController
 	requestIssuesController  controller.GetIssuesByRequestIDController
@@ -55,12 +57,14 @@ func NewStovepipeServer(
 	openIssuesController controller.ListOpenIssuesController,
 	requestIssuesController controller.GetIssuesByRequestIDController,
 	projectIssuesController controller.ProjectIssuesController,
+	nearestGreenController controller.NearestGreenCommitController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
 		ingestController:         ingestController,
 		requestHistoryController: requestHistoryController,
 		projectStatusController:  projectStatusController,
+		nearestGreenController:   nearestGreenController,
 		listController:           listController,
 		openIssuesController:     openIssuesController,
 		requestIssuesController:  requestIssuesController,
@@ -104,6 +108,26 @@ func (s *StovepipeServer) GetRequestHistoryByURI(ctx context.Context, req *pb.Ge
 		return nil, err
 	}
 	return &pb.GetRequestHistoryByURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
+}
+
+// NearestGreenCommitThatIncludes finds the first head with a green project fact.
+func (s *StovepipeServer) NearestGreenCommitThatIncludes(ctx context.Context, req *pb.NearestGreenCommitThatIncludesRequest) (*pb.NearestGreenCommitThatIncludesResponse, error) {
+	result, err := s.nearestGreenController.NearestGreenCommitThatIncludes(ctx, mapper.ProtoToNearestGreenCommitRequest(req))
+	if err != nil {
+		switch {
+		case controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case sourcecontrol.IsNotFound(err):
+			return nil, status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, controller.ErrGreenProjectionNotReady):
+			return nil, status.Error(codes.Unavailable, err.Error())
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil, status.FromContextError(err).Err()
+		default:
+			return nil, status.Error(codes.Internal, "nearest green commit lookup failed")
+		}
+	}
+	return mapper.NearestGreenCommitResultToProto(result), nil
 }
 
 // GetProjectStatusByID returns the current validation status for a request ID.

@@ -57,6 +57,15 @@ func WrapNotFound(err error) error {
 	return fmt.Errorf("%w: %w", ErrNotFound, err)
 }
 
+// TrunkPosition identifies a commit's place on a queue's ordered trunk.
+type TrunkPosition struct {
+	// Lineage identifies one order preserved by fast-forwards. An incompatible
+	// rewrite starts a new, never-reused lineage, including for the retained prefix.
+	Lineage string
+	// Position is positive and strictly increases along trunk within Lineage.
+	Position int64
+}
+
 // SourceControl resolves, compares, and promotes commit URIs for the single
 // queue it is bound to. Implementations interpret URIs; callers treat them as
 // opaque tokens.
@@ -81,7 +90,7 @@ type SourceControl interface {
 	// Disabled promotion succeeds without a write.
 	Promote(ctx context.Context, uri, expectedURI string) (bool, error)
 
-	// History returns a bounded page of the queue's commit URIs, newest first.
+	// History returns a bounded page of the queue's ordered trunk commit URIs, newest first.
 	// It is paginated with an opaque cursor so a remote backend stays cheap:
 	// callers pass an empty cursor for the first (newest) page and the page's
 	// NextCursor to walk further back, stopping when NextCursor is empty. limit
@@ -90,6 +99,11 @@ type SourceControl interface {
 	// the greenness/status of each commit. Returns ErrNotFound if the cursor does
 	// not refer to a position on the ref.
 	History(ctx context.Context, cursor string, limit int) (page.Page[string], error)
+
+	// TrunkPosition resolves a commit on the current trunk, even if it has never
+	// been ingested. It returns ErrNotFound for URIs outside the ordered trunk
+	// (including off-trunk merge parents). Positions never change within a lineage.
+	TrunkPosition(ctx context.Context, uri string) (TrunkPosition, error)
 
 	// ChangeInfo returns immutable metadata for uri. The returned CreatedAt must
 	// be positive. Returns ErrNotFound when uri cannot be resolved.

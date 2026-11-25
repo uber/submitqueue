@@ -60,6 +60,11 @@ func TestMySQLStorage(t *testing.T) {
 	require.NoError(t, err, "failed to create storage")
 	factory := mysqlFactory{backend: backend}
 
+	t.Run("NearestGreenProject", func(t *testing.T) {
+		resetStorage(t, db)
+		testNearestGreenProject(t, ctx, factory)
+	})
+
 	t.Run("ValidationFactBatchRetry", func(t *testing.T) {
 		resetStorage(t, db)
 		testValidationFactBatchRetry(t, ctx, backend)
@@ -269,6 +274,8 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE queue",
 		"TRUNCATE TABLE validation_fact",
 		"TRUNCATE TABLE project_fact_by_degree",
+		"TRUNCATE TABLE green_project_by_position",
+		"TRUNCATE TABLE green_project_lineage",
 		"TRUNCATE TABLE request_projects_by_issue",
 		"TRUNCATE TABLE request_issues_by_project",
 	} {

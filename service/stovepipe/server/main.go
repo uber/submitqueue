@@ -316,10 +316,11 @@ func run() error {
 	openIssuesController := controller.NewListOpenIssuesController(logger.Sugar(), scope, storageFty, tenants)
 	requestIssuesController := controller.NewGetIssuesByRequestIDController(logger.Sugar(), scope, storageFty, tenants)
 	projectIssuesController := controller.NewProjectIssuesController(logger.Sugar(), scope, storageFty, tenants)
+	nearestGreenController := controller.NewNearestGreenCommitController(scope, storageFty, sourceControl)
 	srv := handler.NewStovepipeServer(
 		pingController, ingestController, requestHistoryController, projectStatusController,
 		listController, queueStatusController, openIssuesController,
-		requestIssuesController, projectIssuesController,
+		requestIssuesController, projectIssuesController, nearestGreenController,
 	)
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
@@ -448,7 +449,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	projectController := projectanalysis.NewController(logger, scope, store, materializer, projectstatusnoop.New(), projectissuesnoop.New(), registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
+	projectController := projectanalysis.NewController(logger, scope, store, materializer, projectstatusnoop.New(), projectissuesnoop.New(), sourceControl, registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
 	if err := c.Register(projectController); err != nil {
 		return count, fmt.Errorf("failed to register projectanalysis controller: %w", err)
 	}

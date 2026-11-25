@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package storage
+
+//go:generate mockgen -source=green_project_store.go -destination=mock/green_project_store_mock.go -package=mock
+
+import "context"
+
+// GreenProjectStore is the queue-scoped, rebuildable projection of explicit
+// project greens onto an ordered trunk. All writes are create-only.
+type GreenProjectStore interface {
+	// CreateForCommit adds the green projects for one commit. Existing keys are
+	// unchanged. On error some entries may already be durable; replay is safe.
+	CreateForCommit(ctx context.Context, lineage string, position int64, uri string, projects []string) error
+
+	// FindAtOrAfter seeks to the first entry at or above position in the
+	// (lineage, project) primary-key range. An empty URI means no match.
+	FindAtOrAfter(ctx context.Context, lineage, project string, position int64) (string, error)
+
+	// IsLineageReady reports whether initial backfill was completed for the lineage.
+	IsLineageReady(ctx context.Context, lineage string) (bool, error)
+
+	// MarkLineageReady creates the lineage's completion marker if absent.
+	MarkLineageReady(ctx context.Context, lineage string) error
+}

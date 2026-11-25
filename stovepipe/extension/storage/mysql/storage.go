@@ -64,6 +64,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		openIssueStore:              NewOpenIssueStore(s.db, queueScope.SubScope("open_issue_store"), queueName),
 		issueTrackingStore:          NewIssueTrackingStore(s.db, queueScope.SubScope("issue_tracking_store"), queueName),
 		validationFactStore:         NewValidationFactStore(s.db, queueScope.SubScope("validation_fact_store"), queueName),
+		greenProjectStore:           NewGreenProjectStore(s.db, queueScope.SubScope("green_project_store"), queueName),
 		projectFactByDegreeStore:    NewProjectFactByDegreeStore(s.db, queueScope.SubScope("project_fact_by_degree_store"), queueName),
 		requestProjectsByIssueStore: NewRequestProjectsByIssueStore(s.db, queueScope.SubScope("request_projects_by_issue_store"), queueName),
 		requestIssuesByProjectStore: NewRequestIssuesByProjectStore(s.db, queueScope.SubScope("request_issues_by_project_store"), queueName),
@@ -95,6 +96,7 @@ type mysqlStorage struct {
 	openIssueStore              storage.OpenIssueStore
 	issueTrackingStore          storage.IssueTrackingStore
 	validationFactStore         storage.ValidationFactStore
+	greenProjectStore           storage.GreenProjectStore
 	projectFactByDegreeStore    storage.ProjectFactByDegreeStore
 	requestProjectsByIssueStore storage.RequestProjectsByIssueStore
 	requestIssuesByProjectStore storage.RequestIssuesByProjectStore
@@ -141,6 +143,10 @@ func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 // GetValidationFactStore returns the MySQL-backed ValidationFactStore.
 func (f *mysqlStorage) GetValidationFactStore() storage.ValidationFactStore {
 	return f.validationFactStore
+}
+
+func (f *mysqlStorage) GetGreenProjectStore() storage.GreenProjectStore {
+	return f.greenProjectStore
 }
 
 func (f *mysqlStorage) GetProjectFactByDegreeStore() storage.ProjectFactByDegreeStore {

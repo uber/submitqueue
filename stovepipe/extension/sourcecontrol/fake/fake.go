@@ -21,6 +21,8 @@ package fake
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"sync"
 	"time"
 
@@ -37,6 +39,7 @@ type sourceControlFake struct {
 	// cfg is the per-queue identity this source control was built for.
 	cfg     sourcecontrol.Config
 	history []string
+	lineage string
 	// latestCreatedAt is the millisecond timestamp assigned to history[0]; older
 	// ancestors are spaced changeInterval apart behind it.
 	latestCreatedAt int64
@@ -51,9 +54,16 @@ type sourceControlFake struct {
 func New(cfg sourcecontrol.Config, history []string) sourcecontrol.SourceControl {
 	cp := make([]string, len(history))
 	copy(cp, history)
+	// The fake never advances in place. Distinguish separately seeded snapshots
+	// so a changed fixture cannot read an old projection for the same queue.
+	hash := sha256.New()
+	for _, uri := range cp {
+		fmt.Fprintf(hash, "%q\n", uri)
+	}
 	return &sourceControlFake{
 		cfg:             cfg,
 		history:         cp,
+		lineage:         fmt.Sprintf("%x", hash.Sum(nil)),
 		latestCreatedAt: time.Now().UnixMilli(),
 	}
 }
@@ -127,6 +137,15 @@ func (s *sourceControlFake) History(_ context.Context, cursor string, limit int)
 		next = s.history[end]
 	}
 	return page.Page[string]{Items: uris, NextCursor: next}, nil
+}
+
+// TrunkPosition uses ordinals from the oldest end of the seeded history.
+func (s *sourceControlFake) TrunkPosition(_ context.Context, uri string) (sourcecontrol.TrunkPosition, error) {
+	index := s.indexOf(uri)
+	if index < 0 {
+		return sourcecontrol.TrunkPosition{}, sourcecontrol.ErrNotFound
+	}
+	return sourcecontrol.TrunkPosition{Lineage: s.lineage, Position: int64(len(s.history) - index)}, nil
 }
 
 // ChangeInfo returns immutable metadata for a change on the fake's ref.

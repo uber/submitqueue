@@ -34,18 +34,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Stovepipe_Ping_FullMethodName                       = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
-	Stovepipe_Ingest_FullMethodName                     = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
-	Stovepipe_GetRequestHistoryByID_FullMethodName      = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID"
-	Stovepipe_GetRequestHistoryByURI_FullMethodName     = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI"
-	Stovepipe_GetProjectStatusByID_FullMethodName       = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByID"
-	Stovepipe_GetProjectStatusByURI_FullMethodName      = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByURI"
-	Stovepipe_List_FullMethodName                       = "/uber.submitqueue.stovepipe.Stovepipe/List"
-	Stovepipe_GetQueueStatus_FullMethodName             = "/uber.submitqueue.stovepipe.Stovepipe/GetQueueStatus"
-	Stovepipe_ListOpenIssues_FullMethodName             = "/uber.submitqueue.stovepipe.Stovepipe/ListOpenIssues"
-	Stovepipe_GetIssuesByRequestID_FullMethodName       = "/uber.submitqueue.stovepipe.Stovepipe/GetIssuesByRequestID"
-	Stovepipe_ListRequestProjectsByIssue_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestProjectsByIssue"
-	Stovepipe_ListRequestIssuesByProject_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestIssuesByProject"
+	Stovepipe_Ping_FullMethodName                           = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
+	Stovepipe_Ingest_FullMethodName                         = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
+	Stovepipe_GetRequestHistoryByID_FullMethodName          = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID"
+	Stovepipe_GetRequestHistoryByURI_FullMethodName         = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI"
+	Stovepipe_GetProjectStatusByID_FullMethodName           = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByID"
+	Stovepipe_GetProjectStatusByURI_FullMethodName          = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByURI"
+	Stovepipe_List_FullMethodName                           = "/uber.submitqueue.stovepipe.Stovepipe/List"
+	Stovepipe_GetQueueStatus_FullMethodName                 = "/uber.submitqueue.stovepipe.Stovepipe/GetQueueStatus"
+	Stovepipe_ListOpenIssues_FullMethodName                 = "/uber.submitqueue.stovepipe.Stovepipe/ListOpenIssues"
+	Stovepipe_GetIssuesByRequestID_FullMethodName           = "/uber.submitqueue.stovepipe.Stovepipe/GetIssuesByRequestID"
+	Stovepipe_ListRequestProjectsByIssue_FullMethodName     = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestProjectsByIssue"
+	Stovepipe_ListRequestIssuesByProject_FullMethodName     = "/uber.submitqueue.stovepipe.Stovepipe/ListRequestIssuesByProject"
+	Stovepipe_NearestGreenCommitThatIncludes_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/NearestGreenCommitThatIncludes"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -79,6 +80,9 @@ type StovepipeClient interface {
 	ListRequestProjectsByIssue(ctx context.Context, in *ListRequestProjectsByIssueRequest, opts ...grpc.CallOption) (*ListRequestProjectIssuesResponse, error)
 	// ListRequestIssuesByProject returns the issues affecting one request's project.
 	ListRequestIssuesByProject(ctx context.Context, in *ListRequestIssuesByProjectRequest, opts ...grpc.CallOption) (*ListRequestProjectIssuesResponse, error)
+	// NearestGreenCommitThatIncludes finds the first validated head containing the desired
+	// commit with a recorded green result for the requested project, regardless of repository verdict.
+	NearestGreenCommitThatIncludes(ctx context.Context, in *NearestGreenCommitThatIncludesRequest, opts ...grpc.CallOption) (*NearestGreenCommitThatIncludesResponse, error)
 }
 
 type stovepipeClient struct {
@@ -209,6 +213,16 @@ func (c *stovepipeClient) ListRequestIssuesByProject(ctx context.Context, in *Li
 	return out, nil
 }
 
+func (c *stovepipeClient) NearestGreenCommitThatIncludes(ctx context.Context, in *NearestGreenCommitThatIncludesRequest, opts ...grpc.CallOption) (*NearestGreenCommitThatIncludesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NearestGreenCommitThatIncludesResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_NearestGreenCommitThatIncludes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -240,6 +254,9 @@ type StovepipeServer interface {
 	ListRequestProjectsByIssue(context.Context, *ListRequestProjectsByIssueRequest) (*ListRequestProjectIssuesResponse, error)
 	// ListRequestIssuesByProject returns the issues affecting one request's project.
 	ListRequestIssuesByProject(context.Context, *ListRequestIssuesByProjectRequest) (*ListRequestProjectIssuesResponse, error)
+	// NearestGreenCommitThatIncludes finds the first validated head containing the desired
+	// commit with a recorded green result for the requested project, regardless of repository verdict.
+	NearestGreenCommitThatIncludes(context.Context, *NearestGreenCommitThatIncludesRequest) (*NearestGreenCommitThatIncludesResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -285,6 +302,9 @@ func (UnimplementedStovepipeServer) ListRequestProjectsByIssue(context.Context, 
 }
 func (UnimplementedStovepipeServer) ListRequestIssuesByProject(context.Context, *ListRequestIssuesByProjectRequest) (*ListRequestProjectIssuesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListRequestIssuesByProject not implemented")
+}
+func (UnimplementedStovepipeServer) NearestGreenCommitThatIncludes(context.Context, *NearestGreenCommitThatIncludesRequest) (*NearestGreenCommitThatIncludesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method NearestGreenCommitThatIncludes not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -523,6 +543,24 @@ func _Stovepipe_ListRequestIssuesByProject_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_NearestGreenCommitThatIncludes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NearestGreenCommitThatIncludesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).NearestGreenCommitThatIncludes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_NearestGreenCommitThatIncludes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).NearestGreenCommitThatIncludes(ctx, req.(*NearestGreenCommitThatIncludesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -577,6 +615,10 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListRequestIssuesByProject",
 			Handler:    _Stovepipe_ListRequestIssuesByProject_Handler,
+		},
+		{
+			MethodName: "NearestGreenCommitThatIncludes",
+			Handler:    _Stovepipe_NearestGreenCommitThatIncludes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	"github.com/uber/submitqueue/stovepipe/core/greenproject"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -38,6 +39,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/projectissues"
 	"github.com/uber/submitqueue/stovepipe/extension/projectstatus"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -51,6 +53,7 @@ type Controller struct {
 	requestLogMaterializer   requestlog.Materializer
 	projectIssueMaterializer projectissuescore.Materializer
 	resolvers                projectstatus.ResolverFactory
+	sourceControl            sourcecontrol.Factory
 	attributers              projectissues.AttributerFactory
 	registry                 consumer.TopicRegistry
 	topicKey                 consumer.TopicKey
@@ -64,6 +67,7 @@ func NewController(
 	requestLogMaterializer requestlog.Materializer,
 	resolvers projectstatus.ResolverFactory,
 	attributers projectissues.AttributerFactory,
+	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -75,6 +79,7 @@ func NewController(
 		requestLogMaterializer:   requestLogMaterializer,
 		projectIssueMaterializer: projectissuescore.NewMaterializer(scope),
 		resolvers:                resolvers,
+		sourceControl:            sourceControl,
 		attributers:              attributers,
 		registry:                 registry,
 		topicKey:                 topicKey,
@@ -235,6 +240,7 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 		}
 
 		entries := make([]entity.ProjectFactByDegree, 0, len(facts))
+		var greenProjects []string
 		for _, candidate := range facts {
 			fact, found := retained[candidate.Project]
 			if !found {
@@ -250,7 +256,9 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 				return fmt.Errorf("project fact %q is owned by request %q, not %q", fact.Project, fact.RequestID, request.ID)
 			}
 
-			if !fact.IsGreen() {
+			if fact.IsGreen() {
+				greenProjects = append(greenProjects, fact.Project)
+			} else {
 				brokenCount++
 			}
 
@@ -263,6 +271,9 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 
 		if err := store.GetProjectFactByDegreeStore().CreateBatch(ctx, entries); err != nil {
 			return fmt.Errorf("index project facts for request %q: %w", request.ID, err)
+		}
+		if err := greenproject.IndexCommit(ctx, c.sourceControl, store, request.Queue, request.URI, greenProjects); err != nil {
+			return fmt.Errorf("index project greens for request %q: %w", request.ID, err)
 		}
 	}
 
