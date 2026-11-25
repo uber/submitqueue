@@ -51,7 +51,7 @@ func TestProjectIssues(t *testing.T) {
 					Attributions:        []entity.ProjectIssueAttribution{{TaskID: "test", UnitID: "unit", Project: "app"}},
 					AttributionComplete: true, NextPageToken: "next",
 				}
-				server := NewStovepipeServer(nil, nil, nil, nil, nil, nil, nil, nil, c)
+				server := NewStovepipeServer(nil, nil, nil, nil, nil, nil, nil, nil, c, nil)
 				var got *pb.ListRequestProjectIssuesResponse
 				var err error
 				if byProject {

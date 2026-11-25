@@ -42,6 +42,7 @@ type StovepipeServer struct {
 	requestIssuesController  controller.GetIssuesByRequestIDController
 	projectIssuesController  controller.ProjectIssuesController
 	queueStatusController    controller.GetQueueStatusController
+	issueHistoryController   controller.ListIssueHistoryController
 }
 
 // NewStovepipeServer creates a gRPC service handler from Stovepipe controllers.
@@ -55,6 +56,7 @@ func NewStovepipeServer(
 	openIssuesController controller.ListOpenIssuesController,
 	requestIssuesController controller.GetIssuesByRequestIDController,
 	projectIssuesController controller.ProjectIssuesController,
+	issueHistoryController controller.ListIssueHistoryController,
 ) *StovepipeServer {
 	return &StovepipeServer{
 		pingController:           pingController,
@@ -66,6 +68,7 @@ func NewStovepipeServer(
 		requestIssuesController:  requestIssuesController,
 		projectIssuesController:  projectIssuesController,
 		queueStatusController:    queueStatusController,
+		issueHistoryController:   issueHistoryController,
 	}
 }
 
@@ -214,4 +217,20 @@ func projectIssuesError(err error) error {
 	default:
 		return err
 	}
+}
+
+func (s *StovepipeServer) ListIssueHistory(ctx context.Context, req *pb.ListIssueHistoryRequest) (*pb.ListIssueHistoryResponse, error) {
+	result, err := s.issueHistoryController.ListIssueHistory(ctx, mapper.ProtoToListIssueHistoryRequest(req))
+	if err != nil {
+		switch {
+		case controller.IsInvalidRequest(err):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil, status.FromContextError(err).Err()
+		default:
+			return nil, err
+		}
+	}
+
+	return mapper.ListIssueHistoryResultToProto(result), nil
 }
