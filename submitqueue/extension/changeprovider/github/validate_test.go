@@ -16,38 +16,60 @@ func TestValidateChangeConsistency(t *testing.T) {
 		{
 			name: "single PR",
 			changeIDs: []entitygithub.ChangeID{
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
 			},
 		},
 		{
 			name: "consistent stack",
 			changeIDs: []entitygithub.ChangeID{
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 1},
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 2},
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 3},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 2},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 3},
 			},
+		},
+		{
+			name: "PR on another host",
+			changeIDs: []entitygithub.ChangeID{
+				{Scheme: "github", Host: "github.example.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+			},
+			wantErr: true,
+		},
+		{
+			name: "stack spanning hosts",
+			changeIDs: []entitygithub.ChangeID{
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+				{Scheme: "github", Host: "github.example.com", Org: "uber", Repo: "submitqueue", PRNumber: 2},
+			},
+			wantErr: true,
+		},
+		{
+			name: "host with a port it does not name",
+			changeIDs: []entitygithub.ChangeID{
+				{Scheme: "github", Host: "github.com:8443", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+			},
+			wantErr: true,
 		},
 		{
 			name: "different repo",
 			changeIDs: []entitygithub.ChangeID{
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 1},
-				{Scheme: "github", Org: "uber", Repo: "other-repo", PRNumber: 2},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "other-repo", PRNumber: 2},
 			},
 			wantErr: true,
 		},
 		{
 			name: "different org",
 			changeIDs: []entitygithub.ChangeID{
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 1},
-				{Scheme: "github", Org: "other-org", Repo: "submitqueue", PRNumber: 2},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+				{Scheme: "github", Host: "github.com", Org: "other-org", Repo: "submitqueue", PRNumber: 2},
 			},
 			wantErr: true,
 		},
 		{
 			name: "different scheme",
 			changeIDs: []entitygithub.ChangeID{
-				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 1},
-				{Scheme: "other", Org: "uber", Repo: "submitqueue", PRNumber: 2},
+				{Scheme: "github", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 1},
+				{Scheme: "other", Host: "github.com", Org: "uber", Repo: "submitqueue", PRNumber: 2},
 			},
 			wantErr: true,
 		},
@@ -55,7 +77,7 @@ func TestValidateChangeConsistency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateChangeConsistency(tt.changeIDs)
+			err := validateChangeConsistency(tt.changeIDs, "github.com")
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

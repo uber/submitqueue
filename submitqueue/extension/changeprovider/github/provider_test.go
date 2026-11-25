@@ -34,11 +34,41 @@ func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvid
 	t.Helper()
 	client, err := phttp.NewClient(serverURL)
 	require.NoError(t, err)
-	return NewProvider(Params{
+	p, err := NewProvider(Params{
 		HTTPClient:   client,
+		Host:         "github.example.com",
 		Logger:       zaptest.NewLogger(t).Sugar(),
 		MetricsScope: tally.NoopScope,
 	})
+	require.NoError(t, err)
+	return p
+}
+
+func TestNewProvider(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		wantErr bool
+	}{
+		{name: "host set", host: "github.com"},
+		{name: "host missing", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewProvider(Params{
+				HTTPClient:   http.DefaultClient,
+				Host:         tt.host,
+				Logger:       zaptest.NewLogger(t).Sugar(),
+				MetricsScope: tally.NoopScope,
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func servePR(t *testing.T, w http.ResponseWriter, data pullRequestData) {
@@ -86,6 +116,14 @@ func TestProvider_Get(t *testing.T) {
 				"github://github.example.com/uber/submitqueue/pull/123/" + shaA,
 				"github://github.example.com/uber/different-repo/pull/456/" + shaB,
 			},
+			wantErr: true,
+		},
+		{
+			name: "PR on another host returns error without calling GitHub",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("unexpected GitHub request %s %s", r.Method, r.URL.Path)
+			},
+			uris:    []string{"github://github.com/uber/submitqueue/pull/123/" + shaA},
 			wantErr: true,
 		},
 		{

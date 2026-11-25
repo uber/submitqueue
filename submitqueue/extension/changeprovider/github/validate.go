@@ -7,15 +7,21 @@ import (
 )
 
 // validateChangeConsistency validates that all changeIDs in the stack are consistent.
-// Stacked changes must have the same change provider (scheme), org, and repo.
+// Stacked changes must name host and have the same change provider (scheme), org,
+// and repo.
 func validateChangeConsistency(
 	changeIDs []entitygithub.ChangeID,
+	host string,
 ) error {
 	expectedScheme := changeIDs[0].Scheme
 	expectedOrg := changeIDs[0].Org
 	expectedRepo := changeIDs[0].Repo
 
 	for _, cid := range changeIDs {
+		if cid.Host != host {
+			return fmt.Errorf("PR #%d names host %q, not %q", cid.PRNumber, cid.Host, host)
+		}
+
 		// Validate same change provider (scheme)
 		if cid.Scheme != expectedScheme {
 			return fmt.Errorf("stacked changes must use same change provider: expected %s, got %s for PR #%d",

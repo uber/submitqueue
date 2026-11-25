@@ -205,6 +205,8 @@ type githubProviderConfig struct {
 	TokenEnv string `yaml:"tokenEnv"`
 	// BaseURL is the GitHub API root, for GitHub Enterprise.
 	BaseURL string `yaml:"baseUrl"`
+	// Host is the GitHub instance change URIs must name.
+	Host string `yaml:"host"`
 	// Timeout bounds each API call, as a Go duration ("30s").
 	Timeout string `yaml:"timeout"`
 }
@@ -611,6 +613,9 @@ func (c *changeProviderConfig) ensureGitHub() {
 	}
 	if c.GitHub.BaseURL == "" {
 		c.GitHub.BaseURL = defaultGitHubBaseURL
+	}
+	if c.GitHub.Host == "" {
+		c.GitHub.Host = defaultGitHubHost
 	}
 }
 
