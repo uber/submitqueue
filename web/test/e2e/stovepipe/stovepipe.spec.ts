@@ -73,8 +73,8 @@ test.describe("server-rendered styling", () => {
     const issues = page.getByRole("region", { name: "Build and Test Issues", exact: true });
     await expect(issues.getByRole("status")).toHaveText("Issue recording complete");
     await expect(issues.locator("tbody tr")).toHaveCount(50);
-    await expect(issues.getByRole("table", { name: "New Issues" })).toContainText("Task-wide failure");
-    const existing = issues.getByRole("table", { name: "Existing Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+    await expect(issues.getByRole("table", { name: "Opened Issues" })).toContainText("Task-wide failure");
+    const existing = issues.getByRole("table", { name: "Reported Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
     await existing.getByRole("link", { name: "Show projects" }).click();
     await expect(issues.getByRole("region", { name: "Affected projects for buildtest //packages/test-01:go_default_test" }).getByRole("listitem")).toHaveCount(50);
     await existing.getByRole("link", { name: "Hide projects" }).click();
@@ -162,7 +162,7 @@ test("keeps the timestamp popover themed and aligned while toggling appearance",
 
 test("expands request issue projects with paginated links and browser history", async ({ page }) => {
   await page.goto("/web%2Fpagination/request/51?view=issues");
-  const row = page.getByRole("table", { name: "Existing Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
+  const row = page.getByRole("table", { name: "Reported Issues" }).getByRole("row").filter({ hasText: "//packages/test-01:go_default_test" });
   await row.getByRole("link", { name: "Show projects" }).click();
   const projects = page.getByRole("region", { name: "Affected projects for buildtest //packages/test-01:go_default_test" });
   await expect(projects.getByRole("listitem")).toHaveCount(50);
@@ -760,7 +760,7 @@ test("retains project paging across views and resets the cursor when page size c
     await expect(section).toBeVisible();
     if (label === "Build and Test Issues") {
       await expect(section.getByRole("status")).toHaveText("Issue recording complete");
-      await expect(section.getByRole("table", { name: "New Issues" })).toBeVisible();
+      await expect(section.getByRole("table", { name: "Opened Issues" })).toBeVisible();
     }
     if (label === "Fix Attempts") await expect(section.getByText("Coming soon", { exact: true })).toBeVisible();
   }

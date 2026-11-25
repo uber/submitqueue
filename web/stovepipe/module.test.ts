@@ -568,11 +568,11 @@ describe("Stovepipe page loading", () => {
   });
 });
 
-it("loads request issues only for their tab and preserves opaque continuation tokens", async () => {
+it.each(["open", "reported"])("loads request issues with %s events and preserves opaque continuation tokens", async kind => {
   const { app, service, paths } = createPageTestContext();
   const signal = new AbortController().signal;
   vi.mocked(service.getIssuesByRequestID).mockResolvedValue({
-    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind: "new", buildId: "runner/7", firstSeenBuildId: "runner/7" }],
+    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind, buildId: "runner/7", firstSeenBuildId: "runner/7" }],
     status: "in_progress", nextPageToken: "next+/=",
   });
   await app.handle({ path: paths.request("repo/main", summary.requestId), search: new URLSearchParams() });
@@ -585,7 +585,7 @@ it("loads request issues only for their tab and preserves opaque continuation to
   expect(result).toMatchObject({ kind: "render", model: { kind: "request", requestIssues: { ok: true, data: {
     status: "in_progress", firstHref: paths.requestIssues("repo/main", summary.requestId),
     nextHref: paths.requestIssues("repo/main", summary.requestId, "next+/="),
-    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind: "new" }],
+    issues: [{ taskId: "build/test", unitId: "//pkg:a", kind }],
   } } } });
 });
 

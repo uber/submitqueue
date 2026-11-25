@@ -431,7 +431,7 @@ message RequestIssueSummary {
     string task_id = 1;
     // Validation unit; empty identifies a task-wide failure.
     string unit_id = 2;
-    // "new" (including reopened), "existing" (reported and already open), or "closed".
+    // "open" (including reopened), "reported" (already open), or "closed".
     string kind = 3;
     // Build whose accepted update produced this result.
     string build_id = 4;
@@ -452,7 +452,7 @@ message GetIssuesByRequestIDRequest {
 
 // Completed and abandoned results are stable; in-progress pages are not a snapshot.
 message GetIssuesByRequestIDResponse {
-    // Results in ascending bytewise task/unit order, classified as new, existing, or closed.
+    // Results in ascending bytewise task/unit order, classified as open, reported, or closed.
     repeated RequestIssueSummary issues = 1;
     // "in_progress", "complete", "incomplete" (abandoned), or "unavailable".
     // Unavailable means recording has not started or predates retained coverage.

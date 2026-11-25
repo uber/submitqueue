@@ -47,13 +47,13 @@ func TestRequestIssuesAcrossBatches(t *testing.T) {
 	}
 	results := f.requestIssues["100"]
 	require.Len(t, results, 233)
-	require.Equal(t, entity.RequestIssueKindExisting, results[issueKey{"existing", "unit"}].Kind)
+	require.Equal(t, entity.RequestIssueKindReported, results[issueKey{"existing", "unit"}].Kind)
 	require.Equal(t, "older", results[issueKey{"existing", "unit"}].FirstSeenBuildID)
-	require.Equal(t, entity.RequestIssueKindNew, results[issueKey{"reopen", "unit"}].Kind)
+	require.Equal(t, entity.RequestIssueKindOpened, results[issueKey{"reopen", "unit"}].Kind)
 	require.Equal(t, entity.RequestIssueKindClosed, results[issueKey{"close-me", "unit"}].Kind)
 	require.NotContains(t, results, issueKey{"closed", "unit"})
 	for i := 0; i < 230; i++ {
-		require.Equal(t, entity.RequestIssueKindNew, results[issueKey{"test", fmt.Sprintf("unit-%03d", i)}].Kind)
+		require.Equal(t, entity.RequestIssueKindOpened, results[issueKey{"test", fmt.Sprintf("unit-%03d", i)}].Kind)
 	}
 
 	f.source("build/101", "101", entity.BuildStatusSucceeded)
@@ -68,7 +68,7 @@ func TestRequestIssuesAcrossBatches(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, results, f.requestIssues["100"])
-	require.Equal(t, entity.RequestIssueKindNew, f.requestIssues["100"][issueKey{"reopen", "unit"}].Kind)
+	require.Equal(t, entity.RequestIssueKindOpened, f.requestIssues["100"][issueKey{"reopen", "unit"}].Kind)
 	require.Equal(t, entity.RequestIssueKindClosed, f.requestIssues["101"][issueKey{"reopen", "unit"}].Kind)
 }
 
@@ -99,9 +99,9 @@ func TestRequestIssueFailureKeepsCursor(t *testing.T) {
 			require.NotZero(t, retained.TimestampMs)
 			_, err = f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress, true)
 			require.NoError(t, err)
-			kind := entity.RequestIssueKindNew
+			kind := entity.RequestIssueKindOpened
 			if existing {
-				kind = entity.RequestIssueKindExisting
+				kind = entity.RequestIssueKindReported
 			}
 			require.Equal(t, kind, f.requestIssues["100"][issueKey{"task", "unit"}].Kind)
 			require.Len(t, f.requestIssues["100"], 2)
@@ -111,12 +111,12 @@ func TestRequestIssueFailureKeepsCursor(t *testing.T) {
 }
 
 func TestRecoveryRepairsRequestIssueBeforeAbandoning(t *testing.T) {
-	for _, kind := range []entity.RequestIssueKind{entity.RequestIssueKindNew, entity.RequestIssueKindExisting, entity.RequestIssueKindClosed} {
+	for _, kind := range []entity.RequestIssueKind{entity.RequestIssueKindOpened, entity.RequestIssueKindReported, entity.RequestIssueKindClosed} {
 		t.Run(string(kind), func(t *testing.T) {
 			f := newRecoveryFixture(t)
 			f.source("build/100", "100", entity.BuildStatusFailed)
 			progress := currentCursor()
-			if kind != entity.RequestIssueKindNew {
+			if kind != entity.RequestIssueKindOpened {
 				f.seedIssue("task", "unit", entity.IssueStatusOpen)
 			}
 			if kind == entity.RequestIssueKindClosed {
@@ -161,7 +161,7 @@ func TestTaskWideSuppressionDoesNotReportUnseenIssues(t *testing.T) {
 	require.NoError(t, f.deliver(msg, false))
 	require.Equal(t, entity.IssueTrackingPhaseFinalized, f.progress.Phase)
 	require.Len(t, f.requestIssues["100"], 1)
-	require.Equal(t, entity.RequestIssueKindNew, f.requestIssues["100"][issueKey{"entry", ""}].Kind)
+	require.Equal(t, entity.RequestIssueKindOpened, f.requestIssues["100"][issueKey{"entry", ""}].Kind)
 	require.NotContains(t, f.requestIssues["100"], issueKey{"old", "unit"})
 }
 
@@ -174,7 +174,7 @@ func TestRequestIssueReplayRejectsConflict(t *testing.T) {
 	_, err := f.controller.processIssue(context.Background(), f.store, testQueue, progress, issueKey{"task", "unit"}, true)
 	require.NoError(t, err)
 	retained := f.requestIssues["100"][issueKey{"task", "unit"}]
-	retained.Kind = entity.RequestIssueKindExisting
+	retained.Kind = entity.RequestIssueKindReported
 	f.requestIssues["100"][issueKey{"task", "unit"}] = retained
 	_, err = f.controller.processIssue(context.Background(), f.store, testQueue, f.progress, issueKey{"task", "unit"}, true)
 	require.ErrorContains(t, err, "conflicts")
@@ -196,5 +196,5 @@ func TestReportedIssueFailureKeepsCursor(t *testing.T) {
 	_, err = f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress, true)
 	require.NoError(t, err)
 	require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventReported})
-	require.Equal(t, entity.RequestIssueKindExisting, f.requestIssues["100"][issueKey{"task", "unit"}].Kind)
+	require.Equal(t, entity.RequestIssueKindReported, f.requestIssues["100"][issueKey{"task", "unit"}].Kind)
 }

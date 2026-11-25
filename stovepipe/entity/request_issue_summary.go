@@ -20,8 +20,8 @@ import "fmt"
 type RequestIssueKind string
 
 const (
-	RequestIssueKindNew      RequestIssueKind = "new"
-	RequestIssueKindExisting RequestIssueKind = "existing"
+	RequestIssueKindOpened   RequestIssueKind = "open"
+	RequestIssueKindReported RequestIssueKind = "reported"
 	RequestIssueKindClosed   RequestIssueKind = "closed"
 )
 
@@ -34,7 +34,7 @@ type RequestIssueSummary struct {
 	TaskID string `json:"task_id"`
 	// UnitID identifies the validation unit; empty for a task-wide failure.
 	UnitID string `json:"unit_id"`
-	// Kind distinguishes newly opened, already open, and closed issues.
+	// Kind identifies the open, reported, or closed event accepted for this request.
 	Kind RequestIssueKind `json:"kind"`
 	// BuildID identifies the build whose accepted update produced this result.
 	BuildID string `json:"build_id"`
@@ -53,7 +53,7 @@ func (i RequestIssueSummary) Validate() error {
 		return fmt.Errorf("request issue requires request, task, build, and first-seen build IDs")
 	}
 	switch i.Kind {
-	case RequestIssueKindNew, RequestIssueKindExisting, RequestIssueKindClosed:
+	case RequestIssueKindOpened, RequestIssueKindReported, RequestIssueKindClosed:
 		return nil
 	default:
 		return fmt.Errorf("invalid request issue kind %q", i.Kind)

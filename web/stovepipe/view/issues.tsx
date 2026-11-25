@@ -97,9 +97,9 @@ export function RequestIssues({ model, projects }: { model: RequestIssuesModel; 
         : model.status === "unavailable" ? "Issue results are not available. Recording may not have started, or this request predates retained coverage."
           : "Issue recording status is unknown.";
   const groups = [
-    { kind: "new", label: "New Issues" },
-    { kind: "existing", label: "Existing Issues" },
-    { kind: "closed", label: "Resolved Issues" },
+    { kind: "open", label: "Opened Issues" },
+    { kind: "reported", label: "Reported Issues" },
+    { kind: "closed", label: "Closed Issues" },
   ];
   if (model.issues.some(issue => !groups.some(group => group.kind === issue.kind)))
     groups.push({ kind: "unknown", label: "Other Issues" });
@@ -108,7 +108,7 @@ export function RequestIssues({ model, projects }: { model: RequestIssuesModel; 
     <ParagraphSmall color="contentSecondary">Project attribution is available for reported unit-level issues, not task-wide or resolved updates.</ParagraphSmall>
     {groups.map(group => {
       const issues = model.issues.filter(issue => group.kind === "unknown"
-        ? !["new", "existing", "closed"].includes(issue.kind) : issue.kind === group.kind);
+        ? !["open", "reported", "closed"].includes(issue.kind) : issue.kind === group.kind);
       return <Block as="section" key={group.kind} aria-label={group.label} marginBottom="scale500">
         <HeadingSmall as="h3" marginTop="0" marginBottom="scale300">{group.label}</HeadingSmall>
         {issues.length ? <Table label={group.label} headers={["Task", "Unit", "First seen build", "Observed build", "Affected projects"]}>

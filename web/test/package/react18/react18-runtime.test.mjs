@@ -60,7 +60,7 @@ test("renders and hydrates packaged pages with React 18 and host themes", { time
 
   const stovepipe = createStovepipeWeb({ queues: [{ name: "repo/main" }], service: {
     getIssuesByRequestID: async () => ({ issues: [
-      { taskId: "buildtest", unitId: "unit-1", kind: "new", buildId: "build/1", firstSeenBuildId: "build/1" },
+      { taskId: "buildtest", unitId: "unit-1", kind: "open", buildId: "build/1", firstSeenBuildId: "build/1" },
     ], status: "complete", nextPageToken: "" }),
     listRequestProjectsByIssue: async () => ({ attributions: [{ taskId: "buildtest", unitId: "unit-1", project: "example-project" }], attributionComplete: true, nextPageToken: "" }),
     listRequestIssuesByProject: async () => ({ attributions: [{ taskId: "buildtest", unitId: "unit-1", project: "example-project" }], attributionComplete: true, nextPageToken: "" }),

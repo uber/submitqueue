@@ -25,7 +25,7 @@ import (
 func TestRequestIssueMappings(t *testing.T) {
 	require.Empty(t, ProtoToGetIssuesByRequestIDRequest(nil))
 	require.Equal(t, entity.GetIssuesByRequestIDRequest{Queue: "queue", RequestID: "12", PageSize: 10, PageToken: "token"}, ProtoToGetIssuesByRequestIDRequest(&pb.GetIssuesByRequestIDRequest{Queue: "queue", RequestId: "12", PageSize: 10, PageToken: "token"}))
-	result := entity.GetIssuesByRequestIDResult{Issues: []entity.RequestIssueSummary{{RequestID: "12", TaskID: "task", UnitID: "unit", Kind: entity.RequestIssueKindExisting, BuildID: "b/12", FirstSeenBuildID: "b/10"}}, Status: entity.RequestIssuesStatusComplete, NextPageToken: "next"}
-	require.Equal(t, &pb.GetIssuesByRequestIDResponse{Issues: []*pb.RequestIssueSummary{{TaskId: "task", UnitId: "unit", Kind: "existing", BuildId: "b/12", FirstSeenBuildId: "b/10"}}, Status: "complete", NextPageToken: "next"}, GetIssuesByRequestIDResultToProto(result))
+	result := entity.GetIssuesByRequestIDResult{Issues: []entity.RequestIssueSummary{{RequestID: "12", TaskID: "task", UnitID: "unit", Kind: entity.RequestIssueKindReported, BuildID: "b/12", FirstSeenBuildID: "b/10"}}, Status: entity.RequestIssuesStatusComplete, NextPageToken: "next"}
+	require.Equal(t, &pb.GetIssuesByRequestIDResponse{Issues: []*pb.RequestIssueSummary{{TaskId: "task", UnitId: "unit", Kind: "reported", BuildId: "b/12", FirstSeenBuildId: "b/10"}}, Status: "complete", NextPageToken: "next"}, GetIssuesByRequestIDResultToProto(result))
 	require.Empty(t, GetIssuesByRequestIDResultToProto(entity.GetIssuesByRequestIDResult{}).Issues)
 }

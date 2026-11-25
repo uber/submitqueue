@@ -33,8 +33,8 @@ func TestRequestIssueCreate(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		require.NoError(t, err)
 		store := NewRequestIssueSummaryStore(db, testMetrics(), "queue")
-		issue := entity.RequestIssueSummary{RequestID: "12", TaskID: "test", Kind: entity.RequestIssueKindNew, BuildID: "b/12", FirstSeenBuildID: "b/12"}
-		query := mock.ExpectExec("INSERT INTO request_issue_summary").WithArgs("queue", "12", "test", "", "new", "b/12", "b/12", int64(0))
+		issue := entity.RequestIssueSummary{RequestID: "12", TaskID: "test", Kind: entity.RequestIssueKindOpened, BuildID: "b/12", FirstSeenBuildID: "b/12"}
+		query := mock.ExpectExec("INSERT INTO request_issue_summary").WithArgs("queue", "12", "test", "", "open", "b/12", "b/12", int64(0))
 		if dbErr == nil {
 			query.WillReturnResult(sqlmock.NewResult(0, 1))
 		} else {
@@ -61,7 +61,7 @@ func TestRequestIssueGet(t *testing.T) {
 		store := NewRequestIssueSummaryStore(db, testMetrics(), "queue")
 		query := mock.ExpectQuery("SELECT .* FROM request_issue_summary WHERE queue = \\? AND request_id = \\? AND task_id = \\? AND unit_id = \\?").WithArgs("queue", "12", "test", "")
 		if dbErr == nil {
-			query.WillReturnRows(sqlmock.NewRows([]string{"request_id", "task_id", "unit_id", "kind", "build_id", "first_seen_build_id", "version"}).AddRow("12", "test", "", "existing", "b/12", "b/10", int64(0)))
+			query.WillReturnRows(sqlmock.NewRows([]string{"request_id", "task_id", "unit_id", "kind", "build_id", "first_seen_build_id", "version"}).AddRow("12", "test", "", "reported", "b/12", "b/10", int64(0)))
 		} else {
 			query.WillReturnError(dbErr)
 		}
@@ -69,7 +69,7 @@ func TestRequestIssueGet(t *testing.T) {
 		switch dbErr {
 		case nil:
 			require.NoError(t, err)
-			require.Equal(t, entity.RequestIssueKindExisting, got.Kind)
+			require.Equal(t, entity.RequestIssueKindReported, got.Kind)
 		case sql.ErrNoRows:
 			require.ErrorIs(t, err, storage.ErrNotFound)
 		default:

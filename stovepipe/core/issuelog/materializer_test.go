@@ -589,14 +589,14 @@ func TestRequestSummaryRepairAndClosureWins(t *testing.T) {
 	f := newMaterializerFixture(t)
 	opened := testIssueLog("build/z", entity.IssueStatusOpen)
 	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, opened, opened.BuildID))
-	require.Equal(t, entity.RequestIssueKindNew, f.requestSummaries["9:validation:unit"].Kind)
+	require.Equal(t, entity.RequestIssueKindOpened, f.requestSummaries["9:validation:unit"].Kind)
 	report := entity.IssueLog{TaskID: "validation", UnitID: "unit", Event: entity.IssueEventReported, BuildID: "build/a"}
 	f.failures["request-summary/create"] = assert.AnError
 	require.ErrorIs(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID), assert.AnError)
 	retained := f.logs[logKey{"validation", "unit", "build/a", entity.IssueEventReported}]
 	delete(f.failures, "request-summary/create")
 	require.NoError(t, f.m.PersistLog(context.Background(), f.stores, report, opened.BuildID))
-	require.Equal(t, entity.RequestIssueKindExisting, f.requestSummaries["10:validation:unit"].Kind)
+	require.Equal(t, entity.RequestIssueKindReported, f.requestSummaries["10:validation:unit"].Kind)
 	require.Equal(t, retained, f.logs[logKey{"validation", "unit", "build/a", entity.IssueEventReported}])
 	closed := testIssueLog("build/a", entity.IssueStatusClosed)
 	f.failures["request-summary/update"] = assert.AnError

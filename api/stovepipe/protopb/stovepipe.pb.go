@@ -2650,7 +2650,7 @@ type RequestIssueSummary struct {
 	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	// Validation unit; empty identifies a task-wide failure.
 	UnitId string `protobuf:"bytes,2,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
-	// "new" (including reopened), "existing" (reported and already open), or "closed".
+	// "open" (including reopened), "reported" (already open), or "closed".
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	// Build whose accepted update produced this result.
 	BuildId string `protobuf:"bytes,4,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
@@ -2800,7 +2800,7 @@ func (x *GetIssuesByRequestIDRequest) GetPageToken() string {
 // Completed and abandoned results are stable; in-progress pages are not a snapshot.
 type GetIssuesByRequestIDResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Results in ascending bytewise task/unit order, classified as new, existing, or closed.
+	// Results in ascending bytewise task/unit order, classified as open, reported, or closed.
 	Issues []*RequestIssueSummary `protobuf:"bytes,1,rep,name=issues,proto3" json:"issues,omitempty"`
 	// "in_progress", "complete", "incomplete" (abandoned), or "unavailable".
 	// Unavailable means recording has not started or predates retained coverage.

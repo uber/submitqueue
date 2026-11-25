@@ -101,15 +101,8 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 	if retained.FirstSeenBuildID == "" {
 		return nil
 	}
-	kind := entity.RequestIssueKindClosed
-	switch retained.Event {
-	case entity.IssueEventOpened:
-		kind = entity.RequestIssueKindNew
-	case entity.IssueEventReported:
-		kind = entity.RequestIssueKindExisting
-	}
 	result := entity.RequestIssueSummary{RequestID: build.RequestID, TaskID: retained.TaskID, UnitID: retained.UnitID,
-		Kind: kind, BuildID: retained.BuildID, FirstSeenBuildID: retained.FirstSeenBuildID}
+		Kind: entity.RequestIssueKind(retained.Event), BuildID: retained.BuildID, FirstSeenBuildID: retained.FirstSeenBuildID}
 	if err := result.Validate(); err != nil {
 		return fmt.Errorf("invalid request issue summary: %w", err)
 	}

@@ -39,7 +39,7 @@ export async function loadRequestIssues(
   return {
     issues: result.issues.map(issue => ({
       ...issue,
-      projectsHref: issue.unitId && (issue.kind === "new" || issue.kind === "existing")
+      projectsHref: issue.unitId && (issue.kind === "open" || issue.kind === "reported")
         ? paths.issueProjects(queue, requestId, issue.taskId, issue.unitId, pageToken) : null,
     })),
     status: result.status,

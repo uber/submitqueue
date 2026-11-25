@@ -99,7 +99,7 @@ def _pagination_fixture_sql() -> str:
         "INSERT INTO request_log VALUES ('web/pagination','50','tracking-abandoned',3000,'','issue_tracking_abandoned',0,'','{\"build_id\":\"runner/build/50\"}');"
     )
     for i in range(51):
-        kind = ("new", "existing", "closed")[i % 3]
+        kind = ("open", "reported", "closed")[i % 3]
         unit = "" if i == 0 else f"//packages/test-{i:02d}:go_default_test"
         statements.append(
             "INSERT INTO request_issue_summary "

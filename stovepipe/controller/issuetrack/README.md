@@ -111,7 +111,7 @@ Pause admission and drain pre-upgrade validations, completing or explicitly aban
 
 ## Per-request issue summaries
 
-The existing issue log is the source for both queue-level lifecycle projections and request-level summaries. Opening and closing events produce New and Closed request results. A reported event records an already-open issue encountered by a later build and produces Existing; it does not change issue status, transition time, or the open-issue lookup. Each event retains its opening build reference, and the materializer loads the source build to identify the request. Request-wide completion and abandonment events remain in request history.
+The existing issue log is the source for both queue-level lifecycle projections and request-level summaries. Opening and closing events produce Opened and Closed request results. A reported event records an already-open issue encountered by a later build and produces Reported; it does not change issue status, transition time, or the open-issue lookup. Each event retains its opening build reference, and the materializer loads the source build to identify the request. Request-wide completion and abandonment events remain in request history.
 
 The cursor cannot advance until the accepted event and all its projections are durable. Retry repairs missing projections from the retained event, preserving the original timestamp and opening. A closure wins over an opening or report from the same request, with conditional writes preventing an older replay from changing it back. Recovery repairs lifecycle history and any accepted report before abandonment; merely fencing an older row does not attribute a report to the abandoned request.
 
