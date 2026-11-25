@@ -22,7 +22,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -36,6 +35,7 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/lifecycle"
+	"github.com/uber/submitqueue/service/logging"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
 	"github.com/uber/submitqueue/service/submitqueue/core"
 	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
@@ -186,8 +186,7 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Initialize development logger (human-readable console output)
-	logger, err := zap.NewDevelopment()
+	logger, err := logging.New()
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -195,34 +194,6 @@ func run() error {
 
 	// Initialize metrics scope
 	scope := tally.NewTestScope("gateway", nil)
-	metricsStopCh := make(chan interface{}, 1)
-	metricsWgDone := sync.WaitGroup{}
-	metricsWgDone.Add(1)
-	go func() {
-		defer metricsWgDone.Done()
-
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-metricsStopCh:
-				return
-			case <-ticker.C:
-				snapshot := scope.Snapshot()
-				logger.Info("metrics snapshot",
-					zap.Any("counters", snapshot.Counters()),
-					zap.Any("gauges", snapshot.Gauges()),
-					zap.Any("timers", snapshot.Timers()),
-				)
-			}
-		}
-	}()
-
-	defer func() {
-		close(metricsStopCh)
-		metricsWgDone.Wait()
-	}()
 
 	// Open application database connection
 	// Docker Compose healthchecks ensure MySQL is ready before service starts

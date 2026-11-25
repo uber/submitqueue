@@ -32,6 +32,7 @@ go_library(
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/lifecycle:go_default_library",
+        "//service/logging:go_default_library",
         "//service/messagequeue:go_default_library",
         "//service/submitqueue/core:go_default_library",
         "//service/submitqueue/gateway/server/mapper:go_default_library",

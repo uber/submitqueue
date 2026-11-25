@@ -80,6 +80,9 @@ The Runway controllers themselves live under [`runway/controller/`](../../runway
 | Variable          | Required | Description                                   | Default                  |
 |-------------------|----------|-----------------------------------------------|--------------------------|
 | `QUEUE_MYSQL_DSN` | yes      | Queue database DSN                            | —                        |
+| `LOG_LEVEL`       | no       | Service log level: `debug`, `info`, `warn` or `error` | `info` |
+| `LOG_FORMAT`      | no       | Log encoding: `json` or `console`             | `json` (`console` in Docker Compose) |
+| `QUEUE_LOG_LEVEL` | no       | Message-queue logger level; can only raise the queue logger above `LOG_LEVEL`, so queue debug output needs both set to `debug` | `info` |
 | `PORT`            | no       | gRPC listen address                           | `:8086`                  |
 | `HOSTNAME`        | no       | Subscriber name for the queue consumer        | `runway-<unix_ts>`       |
 | `MERGER`          | no       | Explicit merger selection. `git` requires `MERGE_CHECKOUT_PATH` or a `MERGE_CONFIG_PATH` file containing at least one Git target; `noop` forces synthetic success; `fake` is test-only. Unset resolves from the merge configuration and retains the noop fallback. | — |

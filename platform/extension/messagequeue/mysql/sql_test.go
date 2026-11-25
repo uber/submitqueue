@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -70,6 +71,24 @@ func TestNewQueue(t *testing.T) {
 
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("default queue level below the service logger level", func(t *testing.T) {
+		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectPing()
+
+		q, err := NewQueue(Params{
+			DB:           db,
+			Logger:       zaptest.NewLogger(t, zaptest.Level(zap.WarnLevel)),
+			MetricsScope: tally.NewTestScope("test", nil),
+		})
+
+		require.NoError(t, err)
+		require.NoError(t, q.Close())
+	})
+
 	t.Run("accepts a log level", func(t *testing.T) {
 		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 		require.NoError(t, err)

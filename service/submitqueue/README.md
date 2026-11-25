@@ -24,7 +24,9 @@ Each service requires the application and queue MySQL databases. Service-specifi
 | `QUEUE_PAUSE_CONFIG_PATH` | both | no | YAML file of per-queue pause switches, re-read on every land and every gated delivery | pausing disabled when unset |
 | `PROFILES_CONFIG_PATH` | Orchestrator | no | YAML extension profiles and per-queue routing | built-in example profiles |
 | `HOSTNAME` | both | no | Base subscriber name; Gateway appends its PID | time-based service name |
-| `QUEUE_LOG_LEVEL` | both | no | Message-queue logger level | `info` |
+| `QUEUE_LOG_LEVEL` | both | no | Message-queue logger level; can only raise the queue logger above `LOG_LEVEL`, so queue debug output needs both set to `debug` | `info` |
+| `LOG_LEVEL` | both | no | Service log level: `debug`, `info`, `warn` or `error` | `info` |
+| `LOG_FORMAT` | both | no | Log encoding: `json` or `console` | `json` (`console` in Docker Compose) |
 | `CONSUMER_GATE_DIR` | both | no | Directory holding per-consumer gate files | gating disabled when unset |
 | `GITHUB_TOKEN` | Orchestrator | profile-dependent | Default credential for GitHub integrations selected by a profile | — |
 | `GITHUB_BASE_URL` | Orchestrator | no | GitHub API base URL | `https://api.github.com` |

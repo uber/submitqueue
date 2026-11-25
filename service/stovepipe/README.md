@@ -49,7 +49,9 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 |---------------------|----------|------------------------------------------|----------------------|
 | `STORAGE_MYSQL_DSN` | yes      | Storage database DSN | — |
 | `QUEUE_MYSQL_DSN`   | yes      | Queue database DSN                       | —                    |
-| `QUEUE_LOG_LEVEL`   | no       | Message-queue logger level               | `info`               |
+| `QUEUE_LOG_LEVEL`   | no       | Message-queue logger level; can only raise the queue logger above `LOG_LEVEL`, so queue debug output needs both set to `debug` | `info`               |
+| `LOG_LEVEL`         | no       | Service log level: `debug`, `info`, `warn` or `error` | `info` |
+| `LOG_FORMAT`        | no       | Log encoding: `json` or `console`        | `json` (`console` in Docker Compose) |
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
 | `HOSTNAME`          | no       | Subscriber name for the queue consumers  | `stovepipe-<unix_ts>` |
 

@@ -192,13 +192,15 @@ REPO_ROOT="$PWD" ./tool/bazel run @rules_docker_compose//docker_compose -- \
   -p submitqueue logs -f runway-service
 ```
 
-The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn it back up:
+Services log at info in JSON by default; Compose sets `LOG_FORMAT=console` for readable local output. Set `LOG_LEVEL` to `debug`, `info`, `warn` or `error` and `LOG_FORMAT` to `json` or `console` to change that, for example `LOG_LEVEL=debug make local-submitqueue-start`.
+
+The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn both levels up:
 
 ```bash
-QUEUE_LOG_LEVEL=debug make local-submitqueue-start
+LOG_LEVEL=debug QUEUE_LOG_LEVEL=debug make local-submitqueue-start
 ```
 
-`QUEUE_LOG_LEVEL` takes any zap level name. It can only raise the queue's level above the one the service logger was built with, never lower it, so it cannot be used to make a quiet service verbose.
+`QUEUE_LOG_LEVEL` takes any zap level name. It can only raise the queue's level above `LOG_LEVEL`, never lower it, so queue debug output needs both set to debug.
 
 ## What this proves, and what it does not
 
