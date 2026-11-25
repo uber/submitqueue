@@ -442,6 +442,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetQueueRequestStatusStore().Return(permissiveStatusRecords(ctrl)).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	materializer := requestcore.NewMaterializer(factory)
@@ -489,6 +490,12 @@ func TestLand_PublishesToQueue(t *testing.T) {
 			func(_ context.Context, receipt entity.RequestReceipt) error {
 				persistedReceipt = receipt
 				return nil
+			},
+		),
+		// The status record is filed, then the summary re-read to confirm it still holds.
+		summaryStore.EXPECT().Get(gomock.Any(), "123").DoAndReturn(
+			func(context.Context, string) (entity.RequestSummary, error) {
+				return materializedSummary, nil
 			},
 		),
 	)

@@ -146,6 +146,7 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetQueueRequestStatusStore().Return(permissiveStatusRecords(ctrl)).AnyTimes()
 	factory := gwstoragemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	materializer := requestcore.NewMaterializer(factory)
@@ -165,10 +166,24 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 		return materializer
 	}
 	receiptStore.EXPECT().Create(gomock.Any(), entity.RequestReceipt{Queue: "test-queue", ReceivedAtMs: 1, RequestID: "2"}).Return(receiptErr)
+	if receiptErr != nil {
+		return materializer
+	}
+	// Filing the status record re-reads the summary to confirm the status still holds.
+	summaryStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.RequestSummary{RequestID: "2", Queue: "test-queue", Status: entity.RequestStatusAccepted}, nil).AnyTimes()
 	return materializer
 }
 
 func newRequestLog(requestID string, status entity.RequestStatus, requestVersion int32, lastError string, metadata map[string]string) *entity.RequestLog {
 	log := entity.NewRequestStatusLog("test-queue", requestID, status, requestVersion, lastError, metadata)
 	return &log
+}
+
+// permissiveStatusRecords returns a QueueRequestStatusStore that accepts every record write;
+// these tests are not about status records.
+func permissiveStatusRecords(ctrl *gomock.Controller) *storagemock.MockQueueRequestStatusStore {
+	records := storagemock.NewMockQueueRequestStatusStore(ctrl)
+	records.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	records.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return records
 }

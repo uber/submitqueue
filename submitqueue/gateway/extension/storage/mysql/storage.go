@@ -36,11 +36,28 @@ const mysqlErrDuplicateEntry = 1062
 type Storage struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queueRequestStatusRecords reports whether the queue_request_status table is
+	// kept; see WithQueueRequestStatusRecords.
+	queueRequestStatusRecords bool
+}
+
+// StorageOption configures a Storage.
+type StorageOption func(*Storage)
+
+// WithQueueRequestStatusRecords keeps queue_request_status membership records. A
+// deployment enables it once the table exists in its datastore; without it, record
+// writes are no-ops and QueueRequestStatusStore.List fails.
+func WithQueueRequestStatusRecords() StorageOption {
+	return func(s *Storage) { s.queueRequestStatusRecords = true }
 }
 
 // NewStorage creates a new MySQL storage backend over the given connection pool.
-func NewStorage(db *sql.DB, scope tally.Scope) (*Storage, error) {
-	return &Storage{db: db, scope: scope}, nil
+func NewStorage(db *sql.DB, scope tally.Scope, opts ...StorageOption) (*Storage, error) {
+	s := &Storage{db: db, scope: scope}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // For returns the queue-scoped store aggregate bound to queueName over the
@@ -50,11 +67,16 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 	if queueName == "" {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
+	var queueRequestStatusStore basestorage.QueueRequestStatusStore = disabledQueueRequestStatusStore{}
+	if s.queueRequestStatusRecords {
+		queueRequestStatusStore = NewQueueRequestStatusStore(s.db, s.scope.SubScope("queue_request_status_store"), queueName)
+	}
 	return &boundStorage{
-		requestReceiptStore: NewRequestReceiptStore(s.db, s.scope.SubScope("request_receipt_store"), queueName),
-		requestSummaryStore: NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
-		requestLogStore:     NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
-		requestURIStore:     NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
+		requestReceiptStore:     NewRequestReceiptStore(s.db, s.scope.SubScope("request_receipt_store"), queueName),
+		requestSummaryStore:     NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
+		requestLogStore:         NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
+		requestURIStore:         NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
+		queueRequestStatusStore: queueRequestStatusStore,
 	}, nil
 }
 
@@ -69,6 +91,8 @@ type boundStorage struct {
 	requestSummaryStore basestorage.RequestSummaryStore
 	requestLogStore     basestorage.RequestLogStore
 	requestURIStore     basestorage.RequestURIStore
+
+	queueRequestStatusStore basestorage.QueueRequestStatusStore
 }
 
 // Verify boundStorage implements the queue-scoped aggregate at compile time.
@@ -92,4 +116,10 @@ func (f *boundStorage) GetRequestLogStore() basestorage.RequestLogStore {
 // GetRequestURIStore returns the bound MySQL-backed RequestURIStore.
 func (f *boundStorage) GetRequestURIStore() basestorage.RequestURIStore {
 	return f.requestURIStore
+}
+
+// GetQueueRequestStatusStore returns the bound QueueRequestStatusStore: MySQL-backed when
+// the storage keeps records, otherwise one whose writes are no-ops and whose List fails.
+func (f *boundStorage) GetQueueRequestStatusStore() basestorage.QueueRequestStatusStore {
+	return f.queueRequestStatusStore
 }
