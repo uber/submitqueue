@@ -173,7 +173,7 @@ func (m analysisMocks) expectPass(status entity.BuildStatus, issues []entity.Bui
 	load := m.builds.EXPECT().Get(gomock.Any(), testBuildID).
 		Return(entity.Build{ID: testBuildID, RequestID: m.request.ID, Status: status}, nil).After(resolve)
 	detector := m.detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(m.detector, nil).After(load)
-	return m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(issues, err).After(detector)
+	return m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: issues, ValidationComplete: status.IsTerminal()}, err).After(detector)
 }
 
 func TestProcessPersistsBeforeHoldingOrCompleting(t *testing.T) {
@@ -276,11 +276,11 @@ func TestProcessRunsAgainWhenBuildCompletesDuringDetection(t *testing.T) {
 	m.detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(m.detector, nil).Times(2)
 	issue := entity.BuildIssue{TaskID: "validation", UnitID: "final-unit"}
 	gomock.InOrder(
-		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).DoAndReturn(func(context.Context, entity.BuildID) ([]entity.BuildIssue, error) {
+		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).DoAndReturn(func(context.Context, entity.BuildID) (buildissue.Detection, error) {
 			status = entity.BuildStatusFailed
-			return nil, nil
+			return buildissue.Detection{}, nil
 		}),
-		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{issue}, nil),
+		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{issue}, ValidationComplete: true}, nil),
 	)
 
 	first := m.delivery(t)
@@ -461,7 +461,7 @@ func TestCompletionBetweenBuildAndRequestReadStillAnalyzes(t *testing.T) {
 
 	m.detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(m.detector, nil)
 	issue := entity.BuildIssue{TaskID: "validation", UnitID: "unit"}
-	detected := m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{issue}, nil)
+	detected := m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{issue}, ValidationComplete: true}, nil)
 	m.issues.EXPECT().Create(gomock.Any(), testBuildID, issue).Return(nil).After(detected)
 
 	require.NoError(t, c.Process(context.Background(), m.delivery(t)))
@@ -480,12 +480,12 @@ func TestProcessRetriesErrorsAndReloadsStatus(t *testing.T) {
 	issue := entity.BuildIssue{TaskID: "validation", UnitID: "final-unit"}
 	terminalErr := errs.NewRetryableError(assert.AnError)
 	gomock.InOrder(
-		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).DoAndReturn(func(context.Context, entity.BuildID) ([]entity.BuildIssue, error) {
+		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).DoAndReturn(func(context.Context, entity.BuildID) (buildissue.Detection, error) {
 			status = entity.BuildStatusFailed
-			return nil, terminalErr
+			return buildissue.Detection{}, terminalErr
 		}),
-		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(nil, terminalErr),
-		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return([]entity.BuildIssue{issue}, nil),
+		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{}, terminalErr),
+		m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(buildissue.Detection{Issues: []entity.BuildIssue{issue}, ValidationComplete: true}, nil),
 	)
 
 	first := m.delivery(t)
@@ -525,9 +525,9 @@ func TestCancelledAnalysisDoesNotHold(t *testing.T) {
 				m.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{ID: testBuildID, Status: entity.BuildStatusRunning}, nil)
 
 				m.detectorFactory.EXPECT().For(buildissue.DetectorConfig{QueueName: testQueue}).Return(m.detector, nil)
-				m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).DoAndReturn(func(context.Context, entity.BuildID) ([]entity.BuildIssue, error) {
+				m.detector.EXPECT().Detect(gomock.Any(), entity.BuildID{ID: testBuildID}).DoAndReturn(func(context.Context, entity.BuildID) (buildissue.Detection, error) {
 					cancel()
-					return nil, context.Canceled
+					return buildissue.Detection{}, context.Canceled
 				})
 			} else {
 				issue := entity.BuildIssue{TaskID: "validation", UnitID: "unit"}

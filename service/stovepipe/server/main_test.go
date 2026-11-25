@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -68,7 +69,7 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	deadLetter := &recordingConsumer{}
 
 	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
-		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+		&fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
 	require.NoError(t, err)
 
 	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry, noopRepairExecutorFactory{})
@@ -215,7 +216,7 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	require.NoError(t, err)
 	primary := &recordingConsumer{}
 	_, err = registerPrimaryControllers(primary, zaptest.NewLogger(t).Sugar(), tally.NoopScope, stores,
-		requestlog.NewMaterializer(tally.NoopScope), registry, fakeSourceControlFactory{}, fakeBuildRunnerFactory{},
+		requestlog.NewMaterializer(tally.NoopScope), registry, &fakeSourceControlFactory{}, fakeBuildRunnerFactory{},
 		hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
 	require.NoError(t, err)
 	var fixController consumer.Controller
@@ -323,4 +324,27 @@ func TestBuildAnalysisRegistration(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, cfg.DLQ.Enabled)
 	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
+}
+
+func TestFakeSourceControlFactorySharesPromotionPerQueue(t *testing.T) {
+	ctx := context.Background()
+	factory := &fakeSourceControlFactory{}
+	first, err := factory.For(sourcecontrol.Config{QueueName: "repo/main"})
+	require.NoError(t, err)
+	uri, err := first.Latest(ctx)
+	require.NoError(t, err)
+	applied, err := first.Promote(ctx, uri, "")
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	second, err := factory.For(sourcecontrol.Config{QueueName: "repo/main"})
+	require.NoError(t, err)
+	current, err := second.PromotionRef(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uri, current)
+	other, err := factory.For(sourcecontrol.Config{QueueName: "repo/release"})
+	require.NoError(t, err)
+	current, err = other.PromotionRef(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, current)
 }

@@ -76,7 +76,9 @@ A validation remains current after a completed refresh. Its job is acknowledged 
 
 Build IDs are opaque; source order comes from Request IDs. All scans are bounded reads under leading primary-key prefixes. There is no transaction spanning progress, issue state, and history.
 
-A finalized checkpoint retains `issues_reconciled` in its Request's history before acknowledgement or replacement by a newer pass. The build ID identifies the occurrence. Metadata distinguishes normal reconciliation from cancellation or task-wide suppression of absent-issue closure. A completed nonterminal refresh adds no request-history entry. If history fails after checkpoint persistence, the next primary or recovery delivery repairs that entry before replacing the checkpoint.
+A finalized checkpoint retains `issues_reconciled` in its Request's history before acknowledgement or replacement by a newer pass. The build ID identifies the occurrence. Metadata distinguishes normal reconciliation from cancellation, task-wide failures, or incomplete validation coverage suppressing absent-issue closure. A completed nonterminal refresh adds no request-history entry. If history fails after checkpoint persistence, the next primary or recovery delivery repairs that entry before replacing the checkpoint.
+
+Closing unreported issues requires an explicit complete-validation result in the retained terminal-analysis record. Missing coverage, including older completion records, preserves existing issues while reported failures are still opened or refreshed. Tracking finalizes normally so the next validation can proceed.
 
 ## Recovery and activation
 

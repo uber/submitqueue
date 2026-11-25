@@ -103,17 +103,33 @@ func (mr *MockSourceControlMockRecorder) Latest(ctx any) *gomock.Call {
 }
 
 // Promote mocks base method.
-func (m *MockSourceControl) Promote(ctx context.Context, uri string) error {
+func (m *MockSourceControl) Promote(ctx context.Context, uri, expectedURI string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Promote", ctx, uri)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "Promote", ctx, uri, expectedURI)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Promote indicates an expected call of Promote.
-func (mr *MockSourceControlMockRecorder) Promote(ctx, uri any) *gomock.Call {
+func (mr *MockSourceControlMockRecorder) Promote(ctx, uri, expectedURI any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Promote", reflect.TypeOf((*MockSourceControl)(nil).Promote), ctx, uri)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Promote", reflect.TypeOf((*MockSourceControl)(nil).Promote), ctx, uri, expectedURI)
+}
+
+// PromotionRef mocks base method.
+func (m *MockSourceControl) PromotionRef(ctx context.Context) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PromotionRef", ctx)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PromotionRef indicates an expected call of PromotionRef.
+func (mr *MockSourceControlMockRecorder) PromotionRef(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PromotionRef", reflect.TypeOf((*MockSourceControl)(nil).PromotionRef), ctx)
 }
 
 // MockFactory is a mock of Factory interface.

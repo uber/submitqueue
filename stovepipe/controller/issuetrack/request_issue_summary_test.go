@@ -41,7 +41,7 @@ func TestRequestIssuesAcrossBatches(t *testing.T) {
 	progress.Finalize = true
 	f.retain(progress)
 	for f.progress.Phase != entity.IssueTrackingPhaseFinalized {
-		next, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress)
+		next, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress, true)
 		require.NoError(t, err)
 		require.Equal(t, next, f.progress)
 	}
@@ -64,7 +64,7 @@ func TestRequestIssuesAcrossBatches(t *testing.T) {
 	next.CursorTaskID, next.CursorUnitID = "", ""
 	f.retain(next)
 	for f.progress.Phase != entity.IssueTrackingPhaseFinalized {
-		_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress)
+		_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress, true)
 		require.NoError(t, err)
 	}
 	require.Equal(t, results, f.requestIssues["100"])
@@ -86,7 +86,7 @@ func TestRequestIssueFailureKeepsCursor(t *testing.T) {
 			progress.CursorTaskID, progress.CursorUnitID = "", ""
 			f.retain(progress)
 			f.failures["request-issue/create"] = 1
-			_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress)
+			_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress, true)
 			require.ErrorIs(t, err, assert.AnError)
 			require.Equal(t, "task", f.progress.CursorTaskID)
 			require.NotContains(t, f.states, issueKey{"z", "unit"})
@@ -97,7 +97,7 @@ func TestRequestIssueFailureKeepsCursor(t *testing.T) {
 			}
 			retained := f.logs[logKey{issueKey{"task", "unit"}, "build/100", event}]
 			require.NotZero(t, retained.TimestampMs)
-			_, err = f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress)
+			_, err = f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress, true)
 			require.NoError(t, err)
 			kind := entity.RequestIssueKindNew
 			if existing {
@@ -189,11 +189,11 @@ func TestReportedIssueFailureKeepsCursor(t *testing.T) {
 	progress.CursorTaskID, progress.CursorUnitID = "", ""
 	f.retain(progress)
 	f.failures["history/create"] = 1
-	_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress)
+	_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress, true)
 	require.ErrorIs(t, err, assert.AnError)
 	require.Equal(t, "task", f.progress.CursorTaskID)
 	require.Empty(t, f.requestIssues["100"])
-	_, err = f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress)
+	_, err = f.controller.reconcileBatch(context.Background(), f.store, testQueue, f.progress, true)
 	require.NoError(t, err)
 	require.Contains(t, f.logs, logKey{issueKey{"task", "unit"}, "build/100", entity.IssueEventReported})
 	require.Equal(t, entity.RequestIssueKindExisting, f.requestIssues["100"][issueKey{"task", "unit"}].Kind)

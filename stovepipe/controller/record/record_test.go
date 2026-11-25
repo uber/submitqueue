@@ -35,6 +35,7 @@ import (
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
@@ -284,9 +285,10 @@ func TestProcess_PromotesFinalizedGreenAtCurrentBaseline(t *testing.T) {
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
-	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(true, nil)
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Equal(t, entity.DegreeGreen, fact.Degree)
 	assert.Len(t, m.hooks.events, 1)
@@ -300,6 +302,7 @@ func TestProcess_RejectsLegacyBookmark(t *testing.T) {
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
 		Return(queueRow("git://remote/monorepo/main/old", "request/"+testQueue+"/42", 4), nil)
 
@@ -338,9 +341,10 @@ func TestProcess_TimestampReportingFailureDoesNotFailRecord(t *testing.T) {
 				Return(requestWithState(entity.RequestStateSucceeded), nil)
 			var fact entity.ValidationFact
 			m.expectFactCreated(&fact)
+			m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 			m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(tt.info, tt.err)
-			m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+			m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(true, nil)
 
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Empty(t, m.metricsScope.Snapshot().Gauges())
@@ -351,23 +355,17 @@ func TestProcess_TimestampReportingFailureDoesNotFailRecord(t *testing.T) {
 	}
 }
 
-// A backend that cannot be resolved leaves the timestamp unreported, which is
-// counted and swallowed. The promotion that follows needs the same backend, so it
-// is what fails the record and sends the message round again.
-func TestProcess_UnresolvableSourceControlCountsTimestampFailure(t *testing.T) {
+func TestProcess_UnresolvableSourceControlFailsRecord(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
 	c.sourceControl = failingSourceControlFactory{}
-
-	m.reqStore.EXPECT().Get(gomock.Any(), testID).
-		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
-	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 
 	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
-	assert.Empty(t, m.metricsScope.Snapshot().Gauges())
-	counter, ok := m.metricsScope.Snapshot().Counters()["record_controller.record.last_green_timestamp_resolve_errors+queue=monorepo/main"]
+	assert.Empty(t, m.hooks.events)
+	counter, ok := m.metricsScope.Snapshot().Counters()["record_controller.record.source_control_errors+queue=monorepo/main,stage=resolve"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), counter.Value())
 }
@@ -413,6 +411,7 @@ func TestProcess_RecordsFactEventBeforeDerivedWork(t *testing.T) {
 			return nil
 		},
 	)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(
 		func(context.Context, string) (entity.Queue, error) {
 			require.True(t, eventPersisted)
@@ -421,7 +420,7 @@ func TestProcess_RecordsFactEventBeforeDerivedWork(t *testing.T) {
 	)
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
-	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(true, nil)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
@@ -592,10 +591,11 @@ func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
 			m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).Return(tt.stored, nil)
 
 			if tt.wantPromoteStoredFact {
+				m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
-				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(true, nil)
 			}
 
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -617,6 +617,193 @@ func TestProcess_ExistingFactFromDifferentRequestFails(t *testing.T) {
 	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
+func TestProcess_NewerPromotionInvalidatesOlderWriter(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	ctx := queueContext()
+	older := requestWithState(entity.RequestStateSucceeded)
+	newer := older
+	newer.ID = "9"
+	newer.URI = "git://remote/monorepo/main/newer"
+	sc := sourcecontrolfake.New(sourcecontrol.Config{QueueName: testQueue}, []string{newer.URI, older.URI, testBaseURI})
+	applied, err := sc.Promote(ctx, testBaseURI, "")
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), older.ID).Return(older, nil)
+	m.reqStore.EXPECT().Get(gomock.Any(), newer.ID).Return(newer, nil)
+	m.summaries.EXPECT().Get(gomock.Any(), newer.ID).Return(entity.RequestSummary{RequestID: newer.ID}, nil)
+	facts := make(map[string]entity.ValidationFact)
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
+		facts[fact.RequestID] = fact
+		return nil
+	}).Times(2)
+	bookmark := queueRow(older.URI, older.ID, 1)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		return bookmark, nil
+	}).Times(3)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).DoAndReturn(sc.PromotionRef).Times(3)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), gomock.Any()).Return(sourcecontrol.ChangeInfo{}, nil).Times(2)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), newer.URI, testBaseURI).DoAndReturn(func(ctx context.Context, uri, expected string) (bool, error) {
+		require.Contains(t, facts, newer.ID)
+		return sc.Promote(ctx, uri, expected)
+	})
+	m.sourceControl.EXPECT().Promote(gomock.Any(), older.URI, testBaseURI).DoAndReturn(func(ctx context.Context, uri, expected string) (bool, error) {
+		require.Contains(t, facts, older.ID)
+		// Older recording passed its guard; finish the newer delivery before its write.
+		bookmark = queueRow(newer.URI, newer.ID, 2)
+		require.NoError(t, c.Process(ctx, delivery(t, ctrl, recordPayload(t, newer.ID))))
+		return sc.Promote(ctx, uri, expected)
+	})
+
+	require.NoError(t, c.Process(ctx, delivery(t, ctrl, recordPayload(t, older.ID))))
+	current, err := sc.PromotionRef(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, newer.URI, current)
+	assert.Len(t, facts, 2)
+	assert.Len(t, m.hooks.events, 2)
+	counter, ok := m.metricsScope.Snapshot().Counters()["record_controller.record.promotion_conflicts+queue=monorepo/main"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
+}
+
+func TestPromote_ReadsRefBeforeCheckingOwnership(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	ctx := queueContext()
+	newerURI := "git://remote/monorepo/main/newer"
+	bookmark := queueRow(testURI, testID, 1)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).DoAndReturn(func(context.Context) (string, error) {
+		bookmark = queueRow(newerURI, "9", 2)
+		return newerURI, nil
+	})
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(func(context.Context, string) (entity.Queue, error) {
+		return bookmark, nil
+	})
+	require.NoError(t, c.promote(ctx, m.store, requestWithState(entity.RequestStateSucceeded)))
+}
+
+func TestPromote_RechecksOwnershipAndExpectedRefAfterConflict(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	advancedURI := "git://remote/monorepo/main/intermediate"
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil).Times(2)
+	gomock.InOrder(
+		m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil),
+		m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil),
+		m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(false, nil),
+		m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(advancedURI, nil),
+		m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 2), nil),
+		m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, advancedURI).Return(true, nil),
+	)
+	require.NoError(t, c.promote(queueContext(), m.store, requestWithState(entity.RequestStateSucceeded)))
+}
+
+func TestProcess_AlreadyPromotedRedeliveryStillAnnounces(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).Return(entity.ValidationFact{URI: testURI, RequestID: testID, Degree: entity.DegreeGreen}, nil)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testURI, nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 2), nil)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Len(t, m.hooks.events, 1)
+}
+
+func TestProcess_PromotionRefFailureChecksBookmarkOwnership(t *testing.T) {
+	refErr := errors.New("promotion ref unavailable")
+	bookmarkErr := errors.New("bookmark unavailable")
+	tests := []struct {
+		name        string
+		bookmark    entity.Queue
+		bookmarkErr error
+		wantErr     error
+	}{
+		{
+			name:     "obsolete request still announces its result",
+			bookmark: queueRow("git://remote/monorepo/main/newer", "9", 3),
+		},
+		{
+			name:     "current owner returns ref read failure",
+			bookmark: queueRow(testURI, testID, 3),
+			wantErr:  refErr,
+		},
+		{
+			name:        "unknown ownership returns bookmark read failure",
+			bookmarkErr: bookmarkErr,
+			wantErr:     bookmarkErr,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
+			gomock.InOrder(
+				m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return("", refErr),
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(tt.bookmark, tt.bookmarkErr),
+			)
+
+			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
+			assert.Equal(t, testID, fact.RequestID)
+			assert.True(t, fact.IsGreen())
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				assert.Empty(t, m.hooks.events)
+				return
+			}
+			require.NoError(t, err)
+			event := m.hooks.only(t)
+			assert.Equal(t, string(hookevent.TypeValidationRepositoryRecorded), event.GetType())
+			assert.Equal(t, map[string]any{"queue": testQueue, "request_id": testID}, payload(t, event))
+		})
+	}
+}
+
+func TestPromote_ErrorsStopWithoutWriting(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(recordMocks)
+	}{
+		{name: "ref read fails", setup: func(m recordMocks) {
+			m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return("", assert.AnError)
+			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
+		}},
+		{name: "bookmark read fails", setup: func(m recordMocks) {
+			m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
+			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, assert.AnError)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			tt.setup(m)
+			require.ErrorIs(t, c.promote(queueContext(), m.store, requestWithState(entity.RequestStateSucceeded)), assert.AnError)
+		})
+	}
+}
+
+func TestPromote_CancellationStopsConflictRetry(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	ctx, cancel := context.WithCancel(queueContext())
+	defer cancel()
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).DoAndReturn(func(context.Context, string, string) (bool, error) {
+		cancel()
+		return false, nil
+	})
+	require.ErrorIs(t, c.promote(ctx, m.store, requestWithState(entity.RequestStateSucceeded)), context.Canceled)
+}
+
 func TestProcessPromotesOnlyCurrentBaselineOwner(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -624,15 +811,11 @@ func TestProcessPromotesOnlyCurrentBaselineOwner(t *testing.T) {
 		wantPromote bool
 	}{
 		{
-			// The request already holds the bookmark, so it still owns the ref:
-			// the promotion is retried in case the first attempt never landed.
 			name:        "same request redelivered",
 			stored:      queueRow(testURI, testID, 3),
 			wantPromote: true,
 		},
 		{
-			// A newer green commit owns the bookmark and the ref, so promoting
-			// this one would move the ref backwards.
 			name:   "stored bookmark is newer",
 			stored: queueRow("git://remote/monorepo/main/newer", "9", 5),
 		},
@@ -647,12 +830,13 @@ func TestProcessPromotesOnlyCurrentBaselineOwner(t *testing.T) {
 				Return(requestWithState(entity.RequestStateSucceeded), nil)
 			var fact entity.ValidationFact
 			m.expectFactCreated(&fact)
+			m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(tt.stored, nil)
 			// No Update: the bookmark only moves forward.
 
 			if tt.wantPromote {
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(sourcecontrol.ChangeInfo{}, nil)
-				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(true, nil)
 			}
 
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -673,13 +857,14 @@ func TestProcess_SkipsPromotionWhenCommitLeftTheRef(t *testing.T) {
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 
 	// A rewritten history dropped the commit from the ref: no retry can promote
 	// it, so the message is acked rather than sent round again.
-	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(sourcecontrol.ErrNotFound)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(false, sourcecontrol.ErrNotFound)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
@@ -689,18 +874,13 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 		name  string
 		setup func(c *Controller, m recordMocks)
 	}{
-		{
-			name: "source control resolve fails",
-			setup: func(c *Controller, _ recordMocks) {
-				c.sourceControl = failingSourceControlFactory{}
-			},
-		},
+
 		{
 			name: "promote fails",
 			setup: func(_ *Controller, m recordMocks) {
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
-				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(errors.New("boom"))
+				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(false, errors.New("boom"))
 			},
 		},
 	}
@@ -714,11 +894,10 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 				Return(requestWithState(entity.RequestStateSucceeded), nil)
 			var fact entity.ValidationFact
 			m.expectFactCreated(&fact)
+			m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 			tt.setup(c, m)
 
-			// The bookmark already advanced, so the redelivery re-promotes the
-			// same commit; failing here is what makes that retry happen.
 			err := c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID)))
 			require.Error(t, err)
 		})
@@ -788,10 +967,11 @@ func TestProcess_AnnouncesRecordedValidation(t *testing.T) {
 			m.expectFactCreated(&fact)
 
 			if tt.wantDegree == entity.DegreeGreen {
+				m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
-				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).Return(true, nil)
 			} else {
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
 					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
@@ -836,13 +1016,14 @@ func TestProcess_AnnouncesOnlyAfterDerivedCachesMove(t *testing.T) {
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(testURI, testID, 1), nil)
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
 		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
-	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).
-		DoAndReturn(func(context.Context, string) error {
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI, testBaseURI).
+		DoAndReturn(func(context.Context, string, string) (bool, error) {
 			assert.Empty(t, m.hooks.events, "the promotion must land before the announcement")
-			return nil
+			return true, nil
 		})
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -919,6 +1100,7 @@ func TestProcess_MalformedRequestIDFails(t *testing.T) {
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
 		Return(queueRow("git://remote/monorepo/main/old", "not-a-request-id", 1), nil)
 
@@ -962,6 +1144,7 @@ func TestProcess_StorageErrorsPropagate(t *testing.T) {
 					Return(requestWithState(entity.RequestStateSucceeded), nil)
 				var fact entity.ValidationFact
 				m.expectFactCreated(&fact)
+				m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
 					Return(entity.Queue{}, errors.New("boom"))
 			},
@@ -1036,6 +1219,7 @@ func TestProcessRecordsPersistedProjectCount(t *testing.T) {
 			var fact entity.ValidationFact
 			m.expectFactCreated(&fact)
 			if tt.degree == entity.DegreeGreen {
+				m.sourceControl.EXPECT().PromotionRef(gomock.Any()).Return(testBaseURI, nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("other", "8", 1), nil)
 			}
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))

@@ -72,6 +72,24 @@ func TestReconciliationHistoryClosureModes(t *testing.T) {
 	}
 }
 
+func TestReconciledHistoryReplaysWithoutCoverageMetadata(t *testing.T) {
+	f := newFixture(t)
+	f.source("build", "10", entity.BuildStatusFailed)
+	f.seedIssue("task", "unit", entity.IssueStatusOpen)
+	msg := f.message("build", true)
+	require.NoError(t, f.deliver(msg, true))
+	require.NoError(t, f.deliver(msg, false))
+	reconciled := f.requestHistory["10:event/issues_reconciled/build"]
+	require.Equal(t, "reconciled", reconciled.Metadata[requestlog.MetadataKeyClosureMode])
+
+	analysis := f.requestHistory["10:event/build_analysis_completed/build"]
+	delete(analysis.Metadata, requestlog.MetadataKeyValidationComplete)
+	f.requestHistory["10:"+analysis.ID] = analysis
+
+	require.NoError(t, f.deliver(msg, false))
+	require.Equal(t, reconciled, f.requestHistory["10:event/issues_reconciled/build"])
+}
+
 func TestCompletedReconciliationRepairsHistoryBeforeReplacingCheckpoint(t *testing.T) {
 	f := newFixture(t)
 	f.source("old", "10", entity.BuildStatusSucceeded)

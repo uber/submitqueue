@@ -12,4 +12,6 @@ A successful detection after build completion must return the complete cumulativ
 
 Detectors must support concurrent calls. Dependency failures return plain errors; issue results returned with an error must not be used.
 
+The detection result separately reports whether all required validation work produced usable outcomes. Incomplete or unknown coverage does not prevent retaining confirmed issues or completing terminal issue analysis, but it cannot establish that an existing issue was resolved merely because it was not reported. A no-op detector does not establish coverage.
+
 `DetectorFactory` resolves the detector for a validation queue.

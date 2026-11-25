@@ -25,19 +25,19 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
-func terminalAnalysisEvent(ctx context.Context, store storage.Storage, request entity.Request, buildID string) (entity.RequestEvent, error) {
+func terminalAnalysisLog(ctx context.Context, store storage.Storage, request entity.Request, buildID string) (entity.RequestLog, error) {
 	for _, event := range []entity.RequestEvent{entity.RequestEventBuildAnalysisCompleted, entity.RequestEventBuildAnalysisAbandoned} {
 		log := requestlog.NewRequestEventLog(request, event, buildID, nil)
-		_, err := store.GetRequestLogStore().Get(ctx, request.ID, log.ID)
+		retained, err := store.GetRequestLogStore().Get(ctx, request.ID, log.ID)
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			return entity.RequestEventUnknown, fmt.Errorf("read terminal analysis readiness: %w", err)
+			return entity.RequestLog{}, fmt.Errorf("read terminal analysis readiness: %w", err)
 		}
-		return event, nil
+		return retained, nil
 	}
-	return entity.RequestEventUnknown, nil
+	return entity.RequestLog{}, nil
 }
 
 func persistIssuesReconciledLog(ctx context.Context, materializer requestlog.Materializer, store storage.Storage, queue string, progress entity.IssueTrackingState) error {
@@ -57,18 +57,31 @@ func persistIssuesReconciledLog(ctx context.Context, materializer requestlog.Mat
 	if err := requireTerminalBuild(build, request); err != nil {
 		return err
 	}
+	log := requestlog.NewRequestEventLog(request, entity.RequestEventIssuesReconciled, build.ID,
+		map[string]string{requestlog.MetadataKeyBuildID: build.ID})
+	retained, err := store.GetRequestLogStore().Get(ctx, request.ID, log.ID)
+	if err == nil {
+		return materializer.PersistLog(ctx, store, retained)
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("read retained issue reconciliation: %w", err)
+	}
 	mode := "reconciled"
 	switch {
 	case build.Status == entity.BuildStatusCancelled:
 		mode = "suppressed_cancelled"
 	case progress.HasTaskWideIssues:
 		mode = "suppressed_task_wide_issue"
+	default:
+		analysis, err := terminalAnalysisLog(ctx, store, request, build.ID)
+		if err != nil {
+			return err
+		}
+		if analysis.Metadata[requestlog.MetadataKeyValidationComplete] != "true" {
+			mode = "suppressed_incomplete_validation"
+		}
 	}
-	log := requestlog.NewRequestEventLog(request, entity.RequestEventIssuesReconciled, build.ID,
-		map[string]string{
-			requestlog.MetadataKeyBuildID:     build.ID,
-			requestlog.MetadataKeyClosureMode: mode,
-		})
+	log.Metadata[requestlog.MetadataKeyClosureMode] = mode
 	if err := materializer.PersistLog(ctx, store, log); err != nil {
 		return fmt.Errorf("retain issue reconciliation for build %q: %w", build.ID, err)
 	}

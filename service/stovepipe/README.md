@@ -25,7 +25,7 @@ Stovepipe therefore needs two MySQL databases: a **storage** database (the `queu
 `server/main.go` is the composition root and supplies the concrete extension implementations. Demo implementations must be replaced for any real deployment:
 
 - **`inMemoryCounter`** — a process-local `counter.Counter` for sequence numbers; not durable. A real deployment uses a persistent implementation (e.g. `platform/extension/counter/mysql`).
-- **`fakeSourceControlFactory`** — seeds each queue with a deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting the same queue exercises the dedup path). A real deployment supplies a VCS-backed `sourcecontrol.Factory`, which is also where a queue's promotion ref is resolved. The fake has no ref to move, so a promotion locally shows up only in the record consumer's logs.
+- **`fakeSourceControlFactory`** — seeds each queue with a deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting the same queue exercises the dedup path). A real deployment supplies a VCS-backed `sourcecontrol.Factory`, which is also where a queue's promotion ref is resolved. The fake factory shares one in-memory instance per queue.
 - **`noopRepairExecutorFactory`** — accepts repairs without launching work and returns `noop/<buildID>`. The fix controller stores per-item submission decisions under registration ID `noop`. A different registration ID has independent eligibility. The default no-op issue detector reports no failures, so the reference stack does not normally reach repair submission.
 
 ## Layout

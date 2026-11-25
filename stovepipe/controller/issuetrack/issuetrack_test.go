@@ -25,7 +25,7 @@ import (
 )
 
 func TestBatchRejectsInvalidClosingPass(t *testing.T) {
-	for _, scenario := range []string{"missing terminal intent", "task-wide failure", "canceled build", "running build", "not terminal build"} {
+	for _, scenario := range []string{"missing terminal intent", "task-wide failure", "canceled build", "running build", "not terminal build", "incomplete validation"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newFixture(t)
 			f.source("build/100", "100", entity.BuildStatusSucceeded)
@@ -34,12 +34,15 @@ func TestBatchRejectsInvalidClosingPass(t *testing.T) {
 			progress := currentCursor()
 			progress.Phase = entity.IssueTrackingPhaseFinalizing
 			progress.Finalize = true
+			validationComplete := true
 
 			switch scenario {
 			case "missing terminal intent":
 				progress.Finalize = false
 			case "task-wide failure":
 				progress.HasTaskWideIssues = true
+			case "incomplete validation":
+				validationComplete = false
 			case "canceled build":
 				f.source("build/100", "100", entity.BuildStatusCancelled)
 			case "running build":
@@ -52,7 +55,7 @@ func TestBatchRejectsInvalidClosingPass(t *testing.T) {
 			f.progress = progress
 			f.hasProgress = true
 
-			_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress)
+			_, err := f.controller.reconcileBatch(context.Background(), f.store, testQueue, progress, validationComplete)
 			require.Error(t, err)
 			require.Equal(t, original, f.states[issueKey{"task", "unit"}])
 			require.Equal(t, progress, f.progress)
