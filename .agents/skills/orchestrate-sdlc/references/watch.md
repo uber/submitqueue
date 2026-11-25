@@ -51,7 +51,7 @@ Stop/expiry does not close PRs, mark Ready, merge, archive owners, delete branch
 
 ## Mutation fence
 
-Immediately before every watch-triggered push, reply, readiness action, or merge, run:
+Immediately before every watch-triggered push, reply, conversation resolution, readiness action, or merge, run:
 
 ```bash
 ./tool/bazel run //.agents/skills/orchestrate-sdlc/scripts:watch-control -- --state /absolute/campaign.json --run-id CURRENT_RUN CHECK
