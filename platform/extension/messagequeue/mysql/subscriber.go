@@ -362,13 +362,6 @@ func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 		return err
 	}
 
-	d.subscriber.logger.Debugw("message nacked",
-		"topic", d.topic,
-		"partition_key", d.partitionKey,
-		"message_id", d.messageID,
-		"retry_delay_ms", retryDelayMs,
-	)
-
 	d.acknowledged = true
 	return nil
 }
@@ -387,13 +380,6 @@ func (d *sqlDelivery) Postpone(ctx context.Context, delayMs int64) error {
 	if err := d.subscriber.deliveryStateStore.MarkPostponed(ctx, d.consumerGroup, d.tenant, d.topic, d.partitionKey, d.offset, delayMs); err != nil {
 		return err
 	}
-
-	d.subscriber.logger.Debugw("message postponed",
-		"topic", d.topic,
-		"partition_key", d.partitionKey,
-		"message_id", d.messageID,
-		"delay_millis", delayMs,
-	)
 
 	d.acknowledged = true
 	return nil
@@ -596,7 +582,6 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	// until the subscription context is cancelled (via Close or explicit cancel).
 	go s.managePartitions(subCtx, sub)
 
-	s.logger.Debugw("subscription created", "topic", topic, "consumer_group", config.ConsumerGroup, "subscriber_name", config.SubscriberName)
 	return sub.deliveryCh, nil
 }
 
@@ -833,7 +818,7 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 			s.stopPartitionWorker(sub, partition)
 			if rows > 0 {
 				s.recordLeaseReleased(sub, tenant, leaseReasonIdle, rows)
-				s.logger.Infow("released idle partition lease",
+				s.logger.Debugw("released idle partition lease",
 					append(leaseLogFields(sub, tenant, pk), logReason, leaseReasonIdle)...,
 				)
 			}
@@ -1181,7 +1166,7 @@ func (w *partitionWorker) run(ctx context.Context) {
 				// deliberately cancelled to interrupt any in-flight store call, so
 				// the resulting error is part of normal teardown.
 				if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
-					w.subscriber.logger.Infow("poll canceled while stopping partition worker",
+					w.subscriber.logger.Debugw("poll canceled while stopping partition worker",
 						"tenant", w.tenant,
 						"topic", w.sub.topic,
 						"partition_key", w.partitionKey,

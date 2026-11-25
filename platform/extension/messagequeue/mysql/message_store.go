@@ -62,12 +62,6 @@ func (s *sqlmessageStore) Insert(ctx context.Context, tenant string, topic strin
 		return nil
 	}
 
-	s.logger.Debugw("inserting messages",
-		logTenant, tenant,
-		logTopic, topic,
-		"count", len(messages),
-	)
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction tenant=%s topic=%s: %w", tenant, topic, err)
@@ -134,12 +128,6 @@ func (s *sqlmessageStore) Insert(ctx context.Context, tenant string, topic strin
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction tenant=%s topic=%s: %w", tenant, topic, err)
 	}
-
-	s.logger.Debugw("inserted messages",
-		logTenant, tenant,
-		logTopic, topic,
-		"count", len(messages),
-	)
 
 	return nil
 }
@@ -214,12 +202,14 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, tenant string, topi
 		return nil, fmt.Errorf("row iteration tenant=%s topic=%s partition=%s: %w", tenant, topic, partitionKey, err)
 	}
 
-	s.logger.Debugw("fetched messages",
-		logTenant, tenant,
-		logTopic, topic,
-		logPartitionKey, partitionKey,
-		"count", len(results),
-	)
+	if len(results) > 0 {
+		s.logger.Debugw("fetched messages",
+			logTenant, tenant,
+			logTopic, topic,
+			logPartitionKey, partitionKey,
+			"count", len(results),
+		)
+	}
 
 	return results, nil
 }
@@ -275,7 +265,7 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, tenant string, topic st
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// Message already deleted or doesn't exist
-			s.logger.Debugw("message not found for DLQ move",
+			s.logger.Infow("message not found for DLQ move",
 				logTenant, tenant,
 				logTopic, topic,
 				logMessageID, messageID,
