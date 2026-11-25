@@ -62,7 +62,7 @@ func (c *pingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *p
 
 	hostname, _ := os.Hostname()
 
-	c.logger.Info("ping request received",
+	c.logger.Debug("ping request received",
 		zap.String("message", req.Message),
 		zap.Bool("is_echo", isEcho),
 		zap.String("hostname", hostname),

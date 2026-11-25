@@ -66,11 +66,6 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 		changeIDs = append(changeIDs, parsed)
 	}
 
-	p.logger.Debugw("fetching PR data from GitHub",
-		"pr_count", len(changeIDs),
-		"uris", change.URIs,
-	)
-
 	// Validate stacked changes are consistent (same provider, org, and repo)
 	if err := validateChangeConsistency(changeIDs); err != nil {
 		return nil, err
@@ -81,10 +76,6 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 	if err != nil {
 		return nil, err
 	}
-
-	p.logger.Debugw("successfully fetched PR data",
-		"pr_count", len(changeIDs),
-	)
 
 	return changeInfos, nil
 }
