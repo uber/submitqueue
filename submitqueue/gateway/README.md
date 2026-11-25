@@ -25,6 +25,10 @@ The gateway owns the request log read model and is the only service that reads i
 
 The materializer appends every audit event, selects the current authoritative winner, and repairs the queue projection. The normal orchestrator pipeline does not read or write the request-log store directly.
 
+## Request hook events
+
+The materializer publishes SubmitQueue's request hook events (`submitqueue/core/hookevent`) to the `submitqueue-hook` topic, which the orchestrator pipeline's hook stage consumes, one event per change of the request. The update that takes the summary out of `accepting` announces `request.received`, once. That is normally `Land`, and a later log only when `Land` failed to record `accepted`; a failed receipt publish is only counted on `request_hook.publish_errors` and never repeated. Every delivery of a log that restates a `landed` or `error` summary announces `request.landed` or `request.failed`, so a failed publish is returned and the log's redelivery repairs it; a copy that arrives after the queue has forgotten the event id reaches hooks twice. Events therefore follow the summary users see, including a request whose start failed before the orchestrator saved it, and a stale or unfinished log publishes nothing.
+
 ## Final log recovery
 
 The primary `gateway-log` consumer sends failed deliveries to `log_dlq` after a non-retryable error or exhaustion of its finite retry budget. The gateway's `gateway-log-dlq` consumer replays retained entries through the same log controller and materializer, with unlimited attempts, capped backoff, and no second-level DLQ. Valid log deliveries are acknowledged only after history, summary, URI mappings, and receipt projection succeed. Replays may append equivalent history rows; terminal-summary precedence and mapping repair are unchanged.

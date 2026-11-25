@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
@@ -47,6 +48,8 @@ func newGatewayTopicRegistry(queue extqueue.Queue, subscriberName string) (consu
 		{Key: topickey.TopicKeyStart, Name: "start", Queue: queue},
 		{Key: topickey.TopicKeyCancel, Name: "cancel", Queue: queue},
 		{Key: topickey.TopicKeyLog, Name: "log", Queue: queue, Subscription: primary},
+		// Publish-only: the orchestrator pipeline's hook stage consumes it under this name.
+		{Key: basehook.TopicKeyHook, Name: "submitqueue-hook", Queue: queue},
 		{
 			Key: logDLQTopicKey, Name: "log" + logDLQSuffix, Queue: queue,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, logDLQConsumerGroup),
