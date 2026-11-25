@@ -107,7 +107,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get request %s: %w", result.Id, err)
 	}
 
-	c.logger.Infow("received landconflict signal",
+	c.logger.Debugw("received landconflict signal",
 		"request_id", request.ID,
 		"landable", result.Outcome == runwaypb.Outcome_SUCCEEDED,
 		"attempt", delivery.Attempt(),
@@ -121,7 +121,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	if entity.IsRequestStateHalted(request.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("skipping landconflict signal for halted request",
+		c.logger.Debugw("skipping landconflict signal for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
 		)
@@ -130,7 +130,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	if result.Outcome != runwaypb.Outcome_SUCCEEDED {
 		metrics.NamedCounter(c.metricsScope, opName, "not_landable", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("request not landable",
+		c.logger.Debugw("request not landable",
 			"request_id", request.ID,
 			"reason", result.Reason,
 		)
@@ -160,11 +160,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to batch: %w", err)
 	}
-
-	c.logger.Infow("request validated and published to batch",
-		"request_id", request.ID,
-		"topic_key", topickey.TopicKeyBatch,
-	)
 
 	return nil // Success - message will be acked
 }

@@ -299,7 +299,7 @@ func (c *Controller) startPath(ctx context.Context, store orchstorage.Storage, b
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "build_triggered", 1, metrics.TagsFromContext(ctx)...)
-	c.logger.Infow("triggered build for speculation path",
+	c.logger.Debugw("triggered build for speculation path",
 		"batch_id", batch.ID,
 		"path_id", entry.ID,
 		"attempt", entry.Attempt,
@@ -338,7 +338,7 @@ func (c *Controller) ensureSignal(ctx context.Context, store orchstorage.Storage
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "signal_ensured", 1, metrics.TagsFromContext(ctx)...)
-	c.logger.Debugw("re-published build signal on redelivery",
+	c.logger.Infow("re-published build signal on redelivery",
 		"batch_id", batch.ID,
 		"path_id", entry.ID,
 		"attempt", entry.Attempt,

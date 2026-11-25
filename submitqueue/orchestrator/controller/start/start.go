@@ -104,7 +104,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Version:      1,
 	}
 
-	c.logger.Infow("received land request event",
+	c.logger.Debugw("received land request event",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"state", string(request.State),
@@ -134,11 +134,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
-
-	c.logger.Infow("published request to validate",
-		"request_id", request.ID,
-		"topic_key", topickey.TopicKeyValidate,
-	)
 
 	return nil
 }

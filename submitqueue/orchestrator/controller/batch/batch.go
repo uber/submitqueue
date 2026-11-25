@@ -113,7 +113,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
 	}
 
-	c.logger.Infow("received batch event",
+	c.logger.Debugw("received batch event",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"state", string(request.State),
@@ -128,7 +128,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// If cancellation races with an attempt already initializing below, speculate re-checks the contained request state before starting work.
 	if entity.IsRequestStateHalted(request.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("skipping batch for halted request",
+		c.logger.Debugw("skipping batch for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
 		)
@@ -198,13 +198,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish batch ID to dependency-analysis topic: %w", err)
 	}
-
-	c.logger.Infow("published batch to dependency-analysis topic",
-		"batch_id", batch.ID,
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"topic_key", topickey.TopicKeyDependencyAnalysis,
-	)
 
 	return nil // Success - message will be acked
 }

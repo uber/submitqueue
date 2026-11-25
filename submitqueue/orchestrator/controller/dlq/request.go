@@ -133,7 +133,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 
 	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
-	c.logger.Warnw("dlq message received",
+	c.logger.Debugw("dlq message received",
 		"request_id", rid.ID,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", dmeta["dlq.original_topic"],

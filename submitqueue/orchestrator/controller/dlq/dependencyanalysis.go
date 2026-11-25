@@ -113,7 +113,7 @@ func (c *dependencyAnalysisController) Process(ctx context.Context, delivery con
 
 	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
-	c.logger.Warnw("dlq message received",
+	c.logger.Debugw("dlq message received",
 		"batch_id", bid.ID,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", dmeta["dlq.original_topic"],

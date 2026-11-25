@@ -99,7 +99,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
-	c.logger.Infow("received conclude event",
+	c.logger.Debugw("received conclude event",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"state", string(batch.State),

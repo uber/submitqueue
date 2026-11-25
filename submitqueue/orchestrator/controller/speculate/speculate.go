@@ -185,7 +185,7 @@ func (c *Controller) admit(ctx context.Context, store orchstorage.Storage, batch
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "admitted", 1, metrics.TagsFromContext(ctx)...)
-	c.logger.Infow("admitted batch to speculation",
+	c.logger.Debugw("admitted batch to speculation",
 		"batch_id", updated.ID,
 		"queue", updated.Queue,
 		"dependencies", updated.Dependencies,
