@@ -193,7 +193,7 @@ func run() error {
 	}
 	defer mysqlQueue.Close()
 
-	logger.Info("initialized queue", zap.String("dsn", queueDSN))
+	logger.Info("initialized queue", zap.String("queue_db", core.DescribeDSN(queueDSN)))
 
 	// Subscriber name for consumer group identity
 	subscriberName := os.Getenv("HOSTNAME")
