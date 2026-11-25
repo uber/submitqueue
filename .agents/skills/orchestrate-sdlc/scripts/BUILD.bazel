@@ -1,12 +1,41 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 filegroup(
-    name = "watch-control-source",
-    srcs = ["watch_control.py"],
+    name = "control-source",
+    srcs = [
+        "pew.py",
+        "watch_control.py",
+        "worktree_control.py",
+    ],
     visibility = [
         "//.agents/skills/orchestrate-sdlc:__pkg__",
         "//.claude/skills/orchestrate-sdlc:__pkg__",
     ],
+)
+
+py_binary(
+    name = "pew",
+    srcs = [
+        "pew.py",
+        "worktree_control.py",
+    ],
+    imports = ["."],
+    legacy_create_init = 0,
+    main = "pew.py",
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "pew-test",
+    size = "small",
+    srcs = [
+        "pew.py",
+        "pew_test.py",
+        "worktree_control.py",
+    ],
+    imports = ["."],
+    legacy_create_init = 0,
+    main = "pew_test.py",
 )
 
 py_binary(
@@ -27,4 +56,24 @@ py_test(
     imports = ["."],
     legacy_create_init = 0,
     main = "watch_control_test.py",
+)
+
+py_binary(
+    name = "worktree-control",
+    srcs = ["worktree_control.py"],
+    legacy_create_init = 0,
+    main = "worktree_control.py",
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "worktree-control-test",
+    size = "small",
+    srcs = [
+        "worktree_control.py",
+        "worktree_control_test.py",
+    ],
+    imports = ["."],
+    legacy_create_init = 0,
+    main = "worktree_control_test.py",
 )

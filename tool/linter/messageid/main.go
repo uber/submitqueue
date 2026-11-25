@@ -59,6 +59,7 @@ var allowedRoots = []string{
 // skipDirs are directory names never worth walking.
 var skipDirs = map[string]bool{
 	".git":     true,
+	".sdlc":    true,
 	"bazel-in": true,
 }
 

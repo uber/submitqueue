@@ -2,21 +2,21 @@
 
 ## State and runtime
 
-Keep one campaign ledger outside tracked files. The orchestrator is its writer; workers receive the absolute path and their operation/run IDs. Preserve the agent/issue/PR registry, permissions, exact heads/readiness/dependencies, feedback revisions and reply IDs, event cursors, retry budgets, and per-PR operation ownership. Keep tokens and other secrets out of it.
+Keep one campaign ledger outside tracked files, at `.sdlc/campaign.json` in the main checkout (see Worktrees in [workflow.md](workflow.md)). The orchestrator is its writer; workers receive the absolute path and their operation/run IDs. Preserve the agent/issue/PR registry, permissions, exact heads/readiness/dependencies, feedback revisions and reply IDs, event cursors, retry budgets, and per-PR operation ownership. Keep tokens and other secrets out of it.
 
-Keep these records separate: `agents` includes each name/ID, role, task, worktree, PRs, live/dormant state, and archive flag; `prs` includes the current head, readiness, dependencies, and owner; `permissions`, `feedback`, `reply_ids`, `cursors`, `budgets`, and `operations` retain their corresponding evidence. Register watcher/receiver identities and verification evidence under `watch.runtime`, tagged with the current run ID.
+Keep these records separate: `agents` is keyed by agent name, and each entry holds its agent ID, task, worktree path and branch, `reviews` (a reviewer's bound implementer name), and the fields the [PEW renderer](../scripts/pew.py) reads: `role` (`investigator`, `implementer`, or `reviewer`), `model` (concrete model name: spawn-time resolution, replaced by the agent's self-report), `issue` (issue ID), `prs` (PR numbers), `artifacts` (kind to `{"path": absolute path, "at": UTC delivery time}`), `state` (`working` or `idle`), `archived` (boolean), `next_step` and `last_action` (short phrases), `last_update` (UTC time of the last meaningful event), and `author_action` (the pending change-author action, or null); `prs` includes the current head, readiness, dependencies, and owner; `parameters` (`display_timezone` and any per-role models), `permissions`, `feedback`, `reply_ids`, `cursors`, `budgets`, and `operations` retain their corresponding evidence. Register watcher/receiver identities and verification evidence under `watch.runtime`, tagged with the current run ID.
 
-Record per-work-item last meaningful update time, last action, and whether action by the change author running the orchestrator is pending; waiting for other reviewers is not operator input. A new event or instruction changes that record; an unchanged poll or `PEW` does not. Store absolute UTC times; render all displayed event/deadline/status output using configurable `display_timezone` (default `America/Los_Angeles`, PST/PDT) with date, time, and short timezone abbreviation. A display-timezone change never changes an absolute deadline or watch window. After one week from merge, an inactive implementer with no other/shared ownership or unresolved follow-up may leave the active ledger only after its complete record is preserved in history.
+Record each agent's `last_update`, `last_action`, and `author_action`; waiting for other reviewers is not operator input. A new event or instruction changes that record; an unchanged poll or `PEW` does not. Store absolute UTC times; render all displayed event/deadline/status output using the ledger's `display_timezone` (see Skill parameters in `SKILL.md`) with date, time, and short timezone abbreviation. A display-timezone change never changes an absolute deadline or watch window. After one week from merge, an inactive implementer with no other/shared ownership or unresolved follow-up may leave the active ledger only after its complete record is preserved in history.
 
 The control helper changes only the ledger's `watch`/`watch_history` fields and preserves other fields. It uses POSIX file locking and atomic replacement; use it from a POSIX checkout such as the repository's supported Linux environment. Run it through Bazel from the repository root:
 
 ```bash
-./tool/bazel run //.agents/skills/orchestrate-sdlc/scripts:watch-control -- --state /absolute/campaign.json STARTWATCH 48h
+./tool/bazel run //.agents/skills/orchestrate-sdlc/scripts:watch-control -- --state /path/to/checkout/.sdlc/campaign.json STARTWATCH 48h
 ```
 
 The user-facing commands are also orchestration instructions: the helper alone does not query GitHub, start processes, stop native agent tasks, wake the main agent, or prove a backend exists. Connect the available harness tools as below. Do not substitute an unverified background log file for an autonomous dispatcher.
 
-Place `--state` and, for internal commands, `--run-id` before the command name, as in `--state /absolute/campaign.json --run-id CURRENT_RUN ARM`.
+Place `--state` and, for internal commands, `--run-id` before the command name, as in `--state /path/to/checkout/.sdlc/campaign.json --run-id CURRENT_RUN ARM`.
 
 ## STARTWATCH [maximum]
 
@@ -54,7 +54,7 @@ Stop/expiry does not close PRs, mark Ready, merge, archive owners, delete branch
 Immediately before every watch-triggered push, reply, conversation resolution, readiness action, or merge, run:
 
 ```bash
-./tool/bazel run //.agents/skills/orchestrate-sdlc/scripts:watch-control -- --state /absolute/campaign.json --run-id CURRENT_RUN CHECK
+./tool/bazel run //.agents/skills/orchestrate-sdlc/scripts:watch-control -- --state /path/to/checkout/.sdlc/campaign.json --run-id CURRENT_RUN CHECK
 ```
 
 Also verify the action's authorization, actual PR state/head, operation ownership, and action-specific gates. The helper's success is a time/run/stop fence, not a permission grant or an atomic transaction with GitHub. Recheck at the final mutation boundary; drain already-started calls before confirming stop.

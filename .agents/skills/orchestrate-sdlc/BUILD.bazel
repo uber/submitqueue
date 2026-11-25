@@ -4,7 +4,7 @@ filegroup(
         "SKILL.md",
         "references/watch.md",
         "references/workflow.md",
-        "//.agents/skills/orchestrate-sdlc/scripts:watch-control-source",
+        "//.agents/skills/orchestrate-sdlc/scripts:control-source",
     ],
     visibility = ["//visibility:public"],
 )
