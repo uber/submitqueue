@@ -225,7 +225,7 @@ func (m *githubMerger) mergeStep(ctx context.Context, step *runwaymq.MergeStep) 
 	if len(pending) > 0 {
 		top := pending[len(pending)-1]
 		method := mergeMethods[m.resolveStrategy(step)]
-		m.logger.Infow("merging github stack",
+		m.logger.Debugw("merging github stack",
 			"step_id", step.GetStepId(),
 			"top_pull", top.ref.PRNumber,
 			"pull_count", len(pending),
