@@ -239,9 +239,6 @@ func (c *DLQController) finishAbandonment(ctx context.Context, store storage.Sto
 	}
 	progress.Phase = entity.IssueTrackingPhaseAbandoned
 	checkpoint, err := saveProgress(ctx, store.GetIssueTrackingStore(), progress)
-	if err == nil {
-		c.logger.Infow("abandoned issue tracking", "queue", queue, "request_id", checkpoint.RequestID, "build_id", checkpoint.BuildID, "notification_id", checkpoint.NotificationID)
-	}
 	return checkpoint, err
 }
 

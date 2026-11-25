@@ -171,7 +171,7 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 		}
 	}
 
-	c.logger.Infow("ingested request",
+	c.logger.Debugw("ingested request",
 		"id", request.ID,
 		"queue", request.Queue,
 		"uri", request.URI,

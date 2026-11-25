@@ -400,7 +400,7 @@ func (c *Controller) promote(ctx context.Context, store storage.Storage, request
 		}
 
 		metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("promoted green commit",
+		c.logger.Debugw("promoted green commit",
 			"queue", request.Queue,
 			"request_id", request.ID,
 			"uri", request.URI,

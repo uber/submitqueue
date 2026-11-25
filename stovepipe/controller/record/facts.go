@@ -89,7 +89,7 @@ func publishHookEvent(
 	metrics.NamedCounter(scope, _opName, "hook_events_published", 1,
 		metrics.TagsFromContext(ctx, metrics.NewTag("event_type", event.GetType()))...,
 	)
-	logger.Infow("announced validation outcome",
+	logger.Debugw("announced validation outcome",
 		"queue", request.Queue,
 		"request_id", request.ID,
 		"uri", request.URI,

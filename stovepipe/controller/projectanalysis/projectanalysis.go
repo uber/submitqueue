@@ -279,7 +279,7 @@ func (c *Controller) recordProjectStatuses(ctx context.Context, store storage.St
 		return fmt.Errorf("failed to record project facts for request %s: %w", request.ID, err)
 	}
 
-	c.logger.Infow("recorded project validation facts",
+	c.logger.Debugw("recorded project validation facts",
 		"request_id", request.ID, "uri", request.URI,
 		"project_count", len(facts), "broken_project_count", brokenCount)
 	return nil

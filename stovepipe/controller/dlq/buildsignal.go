@@ -119,7 +119,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 	}
 
 	dmeta := delivery.Metadata()
-	c.logger.Warnw("dlq message received",
+	c.logger.Debugw("dlq message received",
 		"build_id", sig.Id,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", dmeta["dlq.original_topic"],

@@ -88,7 +88,7 @@ func (c *buildController) Process(ctx context.Context, delivery consumer.Deliver
 	}
 
 	metadata := delivery.Metadata()
-	c.logger.Warnw("dlq message received",
+	c.logger.Debugw("dlq message received",
 		"request_id", buildRequest.Id,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", metadata["dlq.original_topic"],

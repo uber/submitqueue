@@ -197,7 +197,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 				return err
 			}
 		}
-		c.logger.Infow("terminal issue analysis ready", "queue", request.Queue, "request_id", request.ID, "build_id", build.ID, "issue_count", len(detection.Issues))
+		c.logger.Debugw("terminal issue analysis ready", "queue", request.Queue, "request_id", request.ID, "build_id", build.ID, "issue_count", len(detection.Issues))
 	}
 
 	if !complete && request.State.IsTerminal() {
