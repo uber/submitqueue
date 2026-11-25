@@ -1,0 +1,11 @@
+stages:
+  process:
+    gateWaitDelay: 250ms
+  buildSignal:
+    acceptedPollDelay: 250ms
+    runningPollDelay: 250ms
+  buildAnalysis:
+    pollDelay: 250ms
+  issueTrack:
+    recheckDelay: 250ms
+    recoveryWaitDelay: 250ms

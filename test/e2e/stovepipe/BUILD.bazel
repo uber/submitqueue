@@ -16,6 +16,8 @@ go_test(
         "suite_test.go",
     ],
     data = [
+        "docker-compose.e2e.yml",
+        "queues.yaml",
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
         "//service/stovepipe:docker-compose.yml",
