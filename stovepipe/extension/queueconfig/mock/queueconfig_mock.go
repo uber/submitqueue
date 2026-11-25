@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	entity "github.com/uber/submitqueue/stovepipe/entity"
+	queueconfig "github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,10 +42,10 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 }
 
 // Get mocks base method.
-func (m *MockStore) Get(ctx context.Context, name string) (entity.QueueConfig, error) {
+func (m *MockStore) Get(ctx context.Context, name string) (queueconfig.QueueConfig, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Get", ctx, name)
-	ret0, _ := ret[0].(entity.QueueConfig)
+	ret0, _ := ret[0].(queueconfig.QueueConfig)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -57,10 +57,10 @@ func (mr *MockStoreMockRecorder) Get(ctx, name any) *gomock.Call {
 }
 
 // List mocks base method.
-func (m *MockStore) List(ctx context.Context) ([]entity.QueueConfig, error) {
+func (m *MockStore) List(ctx context.Context) ([]queueconfig.QueueConfig, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx)
-	ret0, _ := ret[0].([]entity.QueueConfig)
+	ret0, _ := ret[0].([]queueconfig.QueueConfig)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

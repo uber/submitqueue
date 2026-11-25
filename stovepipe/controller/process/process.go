@@ -35,9 +35,10 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
+	queueconfigprovider "github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -51,7 +52,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	materializer  requestlog.Materializer
-	queueConfigs  queueconfig.Store
+	queueConfigs  queueconfigprovider.Store
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -70,7 +71,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	materializer requestlog.Materializer,
-	queueConfigs queueconfig.Store,
+	queueConfigs queueconfigprovider.Store,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -185,8 +186,6 @@ func (c *Controller) processAccepted(ctx context.Context, store storage.Storage,
 
 	cfg, err := c.queueConfigs.Get(ctx, request.Queue)
 	if err != nil {
-		// TODO(queueconfig): decide retryability when a real config store lands — is a
-		// missing queue "drop" (non-retryable) or "retry until configured"?
 		return fmt.Errorf("failed to load queue config for %s: %w", request.Queue, err)
 	}
 
@@ -228,9 +227,9 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 
 // admitRequest holds the delivery while the build-slot gate is closed; otherwise it marks the
 // request processing, counts its build slot, and publishes it to build.
-func (c *Controller) admitRequest(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
-	if queueRow.InFlightCount >= cfg.MaxConcurrent {
-		return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
+func (c *Controller) admitRequest(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg queueconfig.QueueConfig) error {
+	if queueRow.InFlightCount >= cfg.Stages.Process.MaxConcurrent {
+		return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.Stages.Process.GateWaitDelayMs)
 	}
 
 	strategy, baseURI, err := c.deriveBuildStrategy(ctx, queueRow, request)
