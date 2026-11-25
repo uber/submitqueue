@@ -6,6 +6,8 @@ Payloads are defined in proto3 (`proto/`, generated into `protopb/`) and seriali
 
 ## Stages
 
+- **periodicmetrics** (`TopicKeyPeriodicMetrics`, `PeriodicMetrics`) — one durable recurring task per queue. Replicas seed the same task identity; one consumer group holds it between observations. See [queue health metrics](../../controller/periodicmetrics/README.md).
+
 - **process** (`TopicKeyProcess`, `ProcessRequest`) — ingest publishes the minted request id here once it accepts a new head; the process controller reloads the `Request` from storage and decides the build strategy. Only the id travels: producer and consumer share the store, so messages stay small and redelivery is idempotent.
 - **build** (`TopicKeyBuild`, `BuildRequest`) — process publishes the request id here once its build scope (`BuildStrategy`/`BaseURI`) is decided; the build controller reloads the `Request`, triggers the build, and persists the resulting `Build`. Partitioned by request id.
 - **buildsignal** (`TopicKeyBuildSignal`, `BuildSignal`) — build publishes the build id here after triggering; buildsignal holds the delivery between polls until the build reaches a terminal status. Partitioned by build id, so each build's poll loop is an independent partition.

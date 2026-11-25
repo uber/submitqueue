@@ -53,6 +53,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/fix"
 	"github.com/uber/submitqueue/stovepipe/controller/issuetrack"
+	"github.com/uber/submitqueue/stovepipe/controller/periodicmetrics"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/projectanalysis"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
@@ -240,6 +241,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
+	if err := seedPeriodicMetrics(ctx, registry, tenants); err != nil {
+		return err
+	}
 
 	// Two consumers share the topic registry but apply different error classification
 	// policies. The primary consumer runs the standard classifier walk. The DLQ consumer
@@ -385,6 +389,18 @@ func run() error {
 	return err
 }
 
+func seedPeriodicMetrics(ctx context.Context, registry consumer.TopicRegistry, tenants []string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for _, queue := range tenants {
+		if err := periodicmetrics.Schedule(ctx, registry, stovepipemq.TopicKeyPeriodicMetrics, queue); err != nil {
+			return fmt.Errorf("schedule metrics for queue %q: %w", queue, err)
+		}
+	}
+	return nil
+}
+
 // registerPrimaryControllers creates the primary-pipeline queue controllers and
 // registers them with c, returning how many were registered.
 func registerPrimaryControllers(
@@ -401,6 +417,10 @@ func registerPrimaryControllers(
 	repairExecutors fixer.Factory,
 ) (int, error) {
 	var count int
+	if err := c.Register(periodicmetrics.NewTask(logger, periodicmetrics.New(scope, store, sourceControl), stovepipemq.TopicKeyPeriodicMetrics, "stovepipe-periodicmetrics")); err != nil {
+		return count, fmt.Errorf("failed to register periodic metrics controller: %w", err)
+	}
+	count++
 
 	processController := process.NewController(
 		logger,
@@ -541,7 +561,17 @@ func registerDLQControllers(
 
 // Hook topics are domain-qualified because several domains share the logical hook key.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
+	metricsSubscription := extqueue.SingleMessageSubscriptionConfig(subscriberName, "stovepipe-periodicmetrics")
+	// The recurring task must survive crashes and failed postponements indefinitely.
+	metricsSubscription.Retry.MaxAttempts = 0
+	metricsSubscription.DLQ.Enabled = false
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{
+			Key:          stovepipemq.TopicKeyPeriodicMetrics,
+			Name:         "periodicmetrics",
+			Queue:        q,
+			Subscription: metricsSubscription,
+		},
 		{
 			Key:   stovepipemq.TopicKeyProcess,
 			Name:  "process",
