@@ -218,7 +218,7 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 		return false, err
 	}
 	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1, metrics.TagsFromContext(ctx)...)
-	c.logger.Infow("superseded request for newer head",
+	c.logger.Debugw("superseded request for newer head",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"latest_request_id", latestRequestID,
@@ -285,7 +285,7 @@ func (c *Controller) admitRequest(ctx context.Context, store storage.Storage, de
 	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
 		metrics.TagsFromContext(ctx, metrics.NewTag("strategy", string(request.BuildStrategy)))...,
 	)
-	c.logger.Infow("admitted request to build",
+	c.logger.Debugw("admitted request to build",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"uri", request.URI,
@@ -450,7 +450,7 @@ func (c *Controller) holdForBuildSlot(ctx context.Context, delivery consumer.Del
 	}
 
 	delivery.Hold(delayMs)
-	c.logger.Infow("holding request awaiting build slot",
+	c.logger.Debugw("holding request awaiting build slot",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"uri", request.URI,

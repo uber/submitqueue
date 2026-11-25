@@ -39,7 +39,7 @@ func Persist(
 	switch {
 	case err == nil:
 		metrics.NamedCounter(scope, "record", "fact_created", 1, metrics.TagsFromContext(ctx)...)
-		logger.Infow("recorded validation fact",
+		logger.Debugw("recorded validation fact",
 			"request_id", fact.RequestID,
 			"uri", fact.URI,
 			"project", fact.Project,

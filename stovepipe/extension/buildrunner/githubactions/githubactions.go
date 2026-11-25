@@ -167,13 +167,6 @@ func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata 
 		return entity.BuildID{}, fmt.Errorf("github actions: dispatch workflow: response missing workflow_run_id (requires return_run_details support)")
 	}
 
-	r.logger.Debugw("dispatched GitHub Actions workflow",
-		"owner", r.client.Owner(),
-		"repo", r.client.Repo(),
-		"workflow_id", r.client.WorkflowID(),
-		"ref", r.ref,
-		"github_run_id", resp.WorkflowRunID,
-	)
 	return entity.BuildID{ID: platformgithubactions.EncodeRunID(resp.WorkflowRunID)}, nil
 }
 

@@ -229,12 +229,9 @@ func (c *Controller) trackRequest(ctx context.Context, delivery consumer.Deliver
 				return fmt.Errorf("start issue tracking pass: %w", err)
 			}
 			if progress.RequestID != request.ID {
-				c.logger.Infow("tracking validation", "queue", queue, "request_id", request.ID, "build_id", build.ID, "notification_id", notificationID)
+				c.logger.Debugw("tracking validation", "queue", queue, "request_id", request.ID, "build_id", build.ID, "notification_id", notificationID)
 			}
 			progress = next
-			if finalize {
-				c.logger.Infow("starting issue finalization", "queue", queue, "request_id", request.ID, "build_id", build.ID)
-			}
 		}
 		checkpoint, err := c.reconcileBatch(ctx, store, queue, progress, analysis.Metadata[requestlog.MetadataKeyValidationComplete] == "true")
 		if err != nil {
@@ -358,7 +355,7 @@ func (c *Controller) reconcileBatch(ctx context.Context, store storage.Storage, 
 		}
 		checkpoint, err := saveProgress(ctx, store.GetIssueTrackingStore(), next)
 		if err == nil && checkpoint.Phase == entity.IssueTrackingPhaseFinalized {
-			c.logger.Infow("completed issue finalization", "queue", queue, "request_id", checkpoint.RequestID, "build_id", checkpoint.BuildID,
+			c.logger.Debugw("completed issue finalization", "queue", queue, "request_id", checkpoint.RequestID, "build_id", checkpoint.BuildID,
 				"has_task_wide_issues", checkpoint.HasTaskWideIssues, "status", build.Status)
 		}
 		return checkpoint, err

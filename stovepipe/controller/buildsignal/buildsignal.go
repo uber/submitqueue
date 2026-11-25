@@ -197,7 +197,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := errs.Group(recordErr, analysisErr); err != nil {
 			return err
 		}
-		c.logger.Infow("build reached terminal status",
+		c.logger.Debugw("build reached terminal status",
 			"build_id", build.ID,
 			"request_id", request.ID,
 			"status", string(effective),
@@ -405,7 +405,7 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 		}
 
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1, metrics.TagsFromContext(ctx)...)
-		c.logger.Infow("advanced last green bookmark",
+		c.logger.Debugw("advanced last green bookmark",
 			"queue", request.Queue,
 			"request_id", request.ID,
 			"last_green_uri", request.URI,

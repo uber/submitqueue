@@ -88,7 +88,6 @@ func (c *Controller) processBuild(ctx context.Context, queueName, buildID string
 	var failures []error
 	for _, registration := range registrations {
 		if err := c.submitIssues(ctx, store, request, buildID, registration, observations, issues); err != nil {
-			c.logger.Errorw("repair executor failed", "queue", queueName, "build_id", buildID, "executor_id", registration.ID, "error", err)
 			failures = append(failures, fmt.Errorf("executor %q: %w", registration.ID, err))
 		}
 	}

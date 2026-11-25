@@ -139,9 +139,6 @@ func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata 
 		return entity.BuildID{}, err
 	}
 
-	r.logger.Debugw("triggered Buildkite build",
-		"buildkite_number", resp.Number,
-	)
 	return entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(resp.Number)}, nil
 }
 
