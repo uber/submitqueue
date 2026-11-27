@@ -34,6 +34,8 @@ import (
 	"github.com/uber-go/tally"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -308,6 +310,39 @@ func (s *E2EIntegrationSuite) publishIDMessage(queueName string, topic consumer.
 		PartitionKey: queueName,
 	}), "failed to publish %s message", topic)
 	return messageID
+}
+
+// redeliverLandConflictSignal publishes a second land-conflict result for the
+// request, which is what the orchestrator sees when the signal delivery is
+// retried after its ack was lost. The message ID is fresh for the reason given
+// on redeliverBatchMessage.
+func (s *E2EIntegrationSuite) redeliverLandConflictSignal(req request, outcome runwaypb.Outcome, reason string) {
+	t := s.T()
+	t.Helper()
+
+	queue, err := queuemysql.NewQueue(queuemysql.Params{
+		DB:           s.queueDB,
+		Logger:       zap.NewNop(),
+		MetricsScope: tally.NoopScope,
+		Tenants:      []string{req.queue},
+	})
+	require.NoError(t, err, "failed to open the queue for a manual publish")
+	defer func() { require.NoError(t, queue.Close()) }()
+
+	topic := runwaymq.TopicKeyMergeConflictCheckSignal
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topic, Name: topic.String(), Queue: queue},
+	})
+	require.NoError(t, err)
+
+	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: req.sqid, QueueName: req.queue, Outcome: outcome, Reason: reason})
+	require.NoError(t, err)
+	require.NoError(t, publish.Message(entityqueue.WithQueueName(s.ctx, req.queue), registry, topic, publish.MessageParams{
+		Tenant:       req.queue,
+		ID:           publish.UniqueID(req.sqid),
+		Payload:      payload,
+		PartitionKey: req.queue,
+	}), "failed to publish %s message", topic)
 }
 
 // batchState reads a batch's current state from the operating store.

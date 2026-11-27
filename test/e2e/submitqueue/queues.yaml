@@ -9,6 +9,8 @@ queues:
   - name: e2e-partial-coverage-queue
   - name: e2e-land-wakeup-queue
   - name: e2e-redelivery-queue
+  - name: e2e-stale-validation-queue
+  - name: e2e-stale-not-landable-queue
   - name: e2e-strand-queue
   - name: e2e-conflict-error-queue
   - name: e2e-respeculate-queue

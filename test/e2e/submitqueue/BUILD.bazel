@@ -58,6 +58,7 @@ go_test(
         "//api/base/change/protopb:go_default_library",
         "//api/base/mergestrategy/protopb:go_default_library",
         "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
         "//platform/base/change:go_default_library",
