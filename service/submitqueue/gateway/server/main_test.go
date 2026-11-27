@@ -22,8 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
@@ -136,4 +138,13 @@ func TestGatewayStatusError(t *testing.T) {
 
 	infraErr := errors.New("storage unavailable")
 	assert.Equal(t, infraErr, gatewayStatusError(infraErr))
+}
+
+func TestGatewayStatusErrorUnknownLandStrategy(t *testing.T) {
+	_, err := mapper.ProtoToLandRequest(&pb.LandRequest{
+		Queue:    "test-queue",
+		Strategy: mergestrategypb.Strategy(9999),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(gatewayStatusError(err)))
 }
