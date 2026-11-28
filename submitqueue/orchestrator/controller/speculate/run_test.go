@@ -573,6 +573,35 @@ func TestRun_BrokenPathsAreVisibleToTheSpeculator(t *testing.T) {
 		"the Speculator must see the broken path as already cancelling")
 }
 
+// An undispatched path must free its slot when it breaks: a quiet queue may
+// never send another signal to finish cancelling it.
+func TestRun_BrokenUndispatchedPathIsCancelledInTheSameRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
+	spec := &scriptedSpeculator{}
+
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead()})
+	h.noBuildsDispatched()
+	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateFailed}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSpeculating}, nil)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head:    head,
+		Paths:   []entity.SpeculationPathEntry{entryFor(broken, entity.SpeculationPathStatusPending)},
+		Version: 2,
+	}, nil)
+	h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), int32(2), int32(3)).
+		DoAndReturn(func(_ context.Context, set entity.SpeculationPathSet, _, _ int32) error {
+			assert.Equal(t, entity.SpeculationPathStatusCancelled, set.Paths[0].Status)
+			return nil
+		})
+
+	require.NoError(t, h.run(head))
+
+	require.Len(t, spec.gotSets, 1)
+	assert.Equal(t, entity.SpeculationPathStatusCancelled, spec.gotSets[0].Paths[0].Status,
+		"the Speculator must see the slot as free in the run that broke the path")
+}
+
 // cancelBrokenPathsInSet marks broken paths cancelling, not cancelled: their builds
 // may still be occupying CI, and only the signal that sees them stop can call
 // it done.

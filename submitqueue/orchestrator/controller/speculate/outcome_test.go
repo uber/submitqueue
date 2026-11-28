@@ -434,14 +434,14 @@ func TestSupersede(t *testing.T) {
 		entity.SpeculationPathStatusFailed)
 
 	set := setOf(winner, sibling, finished)
-	assert.True(t, supersede(&set, winner.ID, 99))
+	assert.True(t, supersede(&set, winner.ID, 99, nil))
 
 	assert.Equal(t, entity.SpeculationPathStatusPassed, set.Paths[0].Status, "the winner is untouched")
 	assert.Equal(t, entity.SpeculationPathStatusCancelling, set.Paths[1].Status)
 	assert.Equal(t, int64(99), set.Paths[1].UpdatedAtMs)
 	assert.Equal(t, entity.SpeculationPathStatusFailed, set.Paths[2].Status, "a finished path is left alone")
 
-	assert.False(t, supersede(&set, winner.ID, 100), "a second pass changes nothing")
+	assert.False(t, supersede(&set, winner.ID, 100, nil), "a second pass changes nothing")
 }
 
 func TestAllPathsStopped(t *testing.T) {
@@ -466,10 +466,31 @@ func TestCancelAllPaths(t *testing.T) {
 		entity.SpeculationPathStatusPassed)
 
 	set := setOf(running, done)
-	assert.True(t, cancelAllPaths(&set, 7))
+	assert.True(t, cancelAllPaths(&set, 7, nil))
 	assert.Equal(t, entity.SpeculationPathStatusCancelling, set.Paths[0].Status)
 	assert.Equal(t, entity.SpeculationPathStatusPassed, set.Paths[1].Status,
 		"a finished build has no slot to release")
 
-	assert.False(t, cancelAllPaths(&set, 8), "a second pass changes nothing")
+	assert.False(t, cancelAllPaths(&set, 8, nil), "a second pass changes nothing")
+}
+
+func TestCancellationHelpersPreserveLiveBuilds(t *testing.T) {
+	for _, reason := range []string{"superseded", "user-cancelled"} {
+		t.Run(reason, func(t *testing.T) {
+			set := entity.SpeculationPathSet{Paths: []entity.SpeculationPathEntry{
+				{ID: "pending", Status: entity.SpeculationPathStatusPending},
+				{ID: "live", Status: entity.SpeculationPathStatusBuilding},
+				{ID: "winner", Status: entity.SpeculationPathStatusPassed},
+			}}
+			absent := map[string]bool{"pending": true}
+			if reason == "superseded" {
+				assert.True(t, supersede(&set, "winner", 99, absent))
+			} else {
+				assert.True(t, cancelAllPaths(&set, 99, absent))
+			}
+			assert.Equal(t, entity.SpeculationPathStatusCancelled, set.Paths[0].Status)
+			assert.Equal(t, entity.SpeculationPathStatusCancelling, set.Paths[1].Status)
+			assert.Equal(t, entity.SpeculationPathStatusPassed, set.Paths[2].Status)
+		})
+	}
 }

@@ -104,7 +104,7 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				if !ok {
 					winner, bypassed = bypassablePath(batch, set, *snap)
 				}
-				if supersede(&set, winner.ID, nowMs) {
+				if supersede(&set, winner.ID, nowMs, snap.undispatched) {
 					snap.pathSets[batch.ID] = set
 					snap.markDirty(batch.ID)
 				}
@@ -210,7 +210,7 @@ func (c *Controller) finalizeCancellations(ctx context.Context, snap *snapshot, 
 		metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1, metrics.TagsFromContext(ctx)...)
 
 		set, exists := snap.pathSets[batch.ID]
-		if exists && cancelAllPaths(&set, nowMs) {
+		if exists && cancelAllPaths(&set, nowMs, snap.undispatched) {
 			snap.pathSets[batch.ID] = set
 			snap.markDirty(batch.ID)
 		}
@@ -434,10 +434,14 @@ func (c *Controller) recoverable(ctx context.Context, store orchstorage.Storage,
 // is one neither terminal nor already cancelling.
 //
 // Cancelling is intent, not fact: the build may still be occupying CI, and
-// only an observation of it actually stopping (or of nothing ever having been
-// dispatched) moves the path on to cancelled. cancelBrokenPathsInSet,
-// supersede, and cancelAllPaths are the three reasons to ask.
-func markCancelling(set *entity.SpeculationPathSet, nowMs int64, keep func(entity.SpeculationPathEntry) bool) bool {
+// only an observation of it actually stopping moves the path on to cancelled.
+// A path in undispatched has no build to observe, so it is cancelled outright;
+// leaving it cancelling would hold its budget slot until some later run, and
+// nothing guarantees one comes — a quiet queue would wedge behind it. A build
+// dispatched after the read is stopped by the poll loop, which treats
+// cancelled like cancelling. cancelBrokenPathsInSet, supersede, and
+// cancelAllPaths are the three reasons to ask.
+func markCancelling(set *entity.SpeculationPathSet, nowMs int64, undispatched map[string]bool, keep func(entity.SpeculationPathEntry) bool) bool {
 	changed := false
 	for i := range set.Paths {
 		entry := &set.Paths[i]
@@ -448,6 +452,9 @@ func markCancelling(set *entity.SpeculationPathSet, nowMs int64, keep func(entit
 			continue
 		}
 		entry.Status = entity.SpeculationPathStatusCancelling
+		if undispatched[entry.ID] {
+			entry.Status = entity.SpeculationPathStatusCancelled
+		}
 		entry.UpdatedAtMs = nowMs
 		changed = true
 	}
@@ -458,7 +465,7 @@ func markCancelling(set *entity.SpeculationPathSet, nowMs int64, keep func(entit
 // Those guesses can no longer come true, so their builds are only spending
 // budget.
 func cancelBrokenPathsInSet(set *entity.SpeculationPathSet, snap snapshot, nowMs int64) bool {
-	return markCancelling(set, nowMs, func(entry entity.SpeculationPathEntry) bool {
+	return markCancelling(set, nowMs, snap.undispatched, func(entry entity.SpeculationPathEntry) bool {
 		return !assumptionBroken(entry.Path, snap)
 	})
 }
@@ -466,16 +473,16 @@ func cancelBrokenPathsInSet(set *entity.SpeculationPathSet, snap snapshot, nowMs
 // supersede stops every path other than the winner once the head can land.
 // Its live siblings cannot help any more but still hold CI slots the rest of
 // the queue could use.
-func supersede(set *entity.SpeculationPathSet, winnerID string, nowMs int64) bool {
-	return markCancelling(set, nowMs, func(entry entity.SpeculationPathEntry) bool {
+func supersede(set *entity.SpeculationPathSet, winnerID string, nowMs int64, undispatched map[string]bool) bool {
+	return markCancelling(set, nowMs, undispatched, func(entry entity.SpeculationPathEntry) bool {
 		return entry.ID == winnerID
 	})
 }
 
 // cancelAllPaths stops every path that is still running. Used when the head
 // itself was cancelled by the user, so no path can help it any more.
-func cancelAllPaths(set *entity.SpeculationPathSet, nowMs int64) bool {
-	return markCancelling(set, nowMs, func(entity.SpeculationPathEntry) bool {
+func cancelAllPaths(set *entity.SpeculationPathSet, nowMs int64, undispatched map[string]bool) bool {
+	return markCancelling(set, nowMs, undispatched, func(entity.SpeculationPathEntry) bool {
 		return false
 	})
 }
